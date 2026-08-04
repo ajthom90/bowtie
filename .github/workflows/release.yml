@@ -135,6 +135,9 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
+      - name: Stage license and readme into workdir
+        run: cp LICENSE README.md server/
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

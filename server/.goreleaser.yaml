@@ -32,10 +32,11 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
-      # Paths relative to this config (server/); LICENSE + README live at repo root.
-      - src: ../LICENSE
+      # LICENSE + README are staged into server/ by the release workflow
+      # (goreleaser cannot glob parent-relative paths from its workdir).
+      - src: LICENSE
         dst: LICENSE
-      - src: ../README.md
+      - src: README.md
         dst: README.md
 
 checksum:
