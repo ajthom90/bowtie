@@ -451,10 +451,10 @@ func Probe(ctx context.Context, ffmpegPath string) Capabilities
 func (c Capabilities) Select(forced string) (Backend, error) // forced=="auto" → first Available; else that backend if Available, error otherwise
 ```
 
-- [ ] **Step 1: Failing tests** — probe against a fake `ffmpeg` shell script in `t.TempDir()` (exits 0 only for chosen encoder args) → asserts Available/HEVC parsing and Select logic. Tagged test runs real Probe and just logs the result (asserts `software` is always available when real ffmpeg present).
-- [ ] **Step 2: Run** — FAIL. **Implement** (exec with 10s timeout per probe; cache result; expose via `Deps.Probe` on `GET /api/v1/admin/transcode` (admin) → `{available, hevc, ffmpegVersion, selected}`).
-- [ ] **Step 3: Run** — PASS. On your Mac, `go test -tags ffmpeg ./internal/transcode/` should report videotoolbox available.
-- [ ] **Step 4: Update openapi.yaml. Commit** `git commit -m "feat: ffmpeg encoder probing with ranked backends"`
+- [x] **Step 1: Failing tests** — probe against a fake `ffmpeg` shell script in `t.TempDir()` (exits 0 only for chosen encoder args) → asserts Available/HEVC parsing and Select logic. Tagged test runs real Probe and just logs the result (asserts `software` is always available when real ffmpeg present).
+- [x] **Step 2: Run** — FAIL. **Implement** (exec with 10s timeout per probe; cache result; expose via `Deps.Probe` on `GET /api/v1/admin/transcode` (admin) → `{available, hevc, ffmpegVersion, selected}`).
+- [x] **Step 3: Run** — PASS. On your Mac, `go test -tags ffmpeg ./internal/transcode/` should report videotoolbox available.
+- [x] **Step 4: Update openapi.yaml. Commit** `git commit -m "feat: ffmpeg encoder probing with ranked backends"`
 
 ### Task 12: Profiles + codec negotiation
 
@@ -478,10 +478,10 @@ func Negotiate(caps ClientCaps, userMaxQuality string, hw Capabilities, forced s
 func SessionKey(channelID int64, d Decision) string // fmt: "ch%d|%s|%s|%s" channelID, VideoCodec, Profile.Name, "copy"|"aac"
 ```
 
-- [ ] **Step 1: Failing tests** — table-driven: h264-only web client → h264+aac; hevc TV client with ac3 + allowHEVC → hevc+copy; user capped "medium" requesting "original" → medium; MaxHeight 480 → low; no common video codec → error; forced backend unavailable → error; SessionKey stability.
-- [ ] **Step 2: Run** — FAIL. **Implement.**
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: Commit** `git commit -m "feat: quality profiles and codec negotiation"`
+- [x] **Step 1: Failing tests** — table-driven: h264-only web client → h264+aac; hevc TV client with ac3 + allowHEVC → hevc+copy; user capped "medium" requesting "original" → medium; MaxHeight 480 → low; no common video codec → error; forced backend unavailable → error; SessionKey stability.
+- [x] **Step 2: Run** — FAIL. **Implement.**
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: Commit** `git commit -m "feat: quality profiles and codec negotiation"`
 
 ### Task 13: FFmpeg command builder
 
@@ -514,11 +514,11 @@ func BuildArgs(s JobSpec) []string
 func Command(ctx context.Context, ffmpegPath string, s JobSpec) *exec.Cmd // exec.CommandContext, Stdout/Stderr to a prefixed logger
 ```
 
-- [ ] **Step 1: Failing tests** — golden-args tests for software/videotoolbox/qsv/vaapi/nvenc (compare full `[]string`), audio copy vs aac.
-- [ ] **Step 2: Run** — FAIL. **Implement.**
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: Tagged e2e (dev machine):** run Command with software backend against `hdhrfake` stream URL for ~10s into `t.TempDir()`; assert `live.m3u8` exists and ≥1 `seg*.ts`; then probe first segment with `ffprobe -show_streams` → h264 + aac. On the Mac also run with videotoolbox.
-- [ ] **Step 5: Commit** `git commit -m "feat: ffmpeg command builder for all hardware backends"`
+- [x] **Step 1: Failing tests** — golden-args tests for software/videotoolbox/qsv/vaapi/nvenc (compare full `[]string`), audio copy vs aac.
+- [x] **Step 2: Run** — FAIL. **Implement.**
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: Tagged e2e (dev machine):** run Command with software backend against `hdhrfake` stream URL for ~10s into `t.TempDir()`; assert `live.m3u8` exists and ≥1 `seg*.ts`; then probe first segment with `ffprobe -show_streams` → h264 + aac. On the Mac also run with videotoolbox.
+- [x] **Step 5: Commit** `git commit -m "feat: ffmpeg command builder for all hardware backends"`
 
 ### Task 14: Stream session manager
 

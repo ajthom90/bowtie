@@ -143,3 +143,19 @@ ok  	github.com/ajthom90/bowtie/server/internal/auth	0.445s
 ok  	github.com/ajthom90/bowtie/server/internal/config	0.065s
 ok  	github.com/ajthom90/bowtie/server/internal/store	0.119s
 ```
+
+## Task 11 (worktree track/transcode)
+2026-08-04 — Encoder probe: `transcode.Probe` with fake-ffmpeg-script tests + `ffmpeg`-tagged real test.
+Evidence: full suite green; tagged run on Apple Silicon detected videotoolbox with h264+hevc
+(`probe_ffmpeg_test.go:51: selected backend: videotoolbox`). API wiring (GET /api/v1/admin/transcode)
+deferred to main line — wire it in Task 14/16.
+
+## Task 12 (worktree track/transcode)
+2026-08-04 — Profiles + negotiation: `Profile`, `Negotiate`, `SessionKey` with 12-case table tests
+covering caps/user-cap/MaxHeight clamping, HEVC fallback, forced-backend errors. Suite green.
+
+## Task 13 (worktree track/transcode)
+2026-08-04 — FFmpeg command builder: golden-args tests for all five backends + audio copy/aac.
+Tagged e2e transcoded generated MPEG-2/AC-3 → HLS on this machine via libx264 AND h264_videotoolbox;
+ffprobe confirmed h264+aac segments (2 segs each). Deviation: e2e generates its own input instead of
+using hdhrfake (branch isolation); Task 14's session tests still cover hdhrfake integration.
