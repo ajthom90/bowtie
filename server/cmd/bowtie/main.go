@@ -15,6 +15,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/api"
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
@@ -63,11 +64,16 @@ func main() {
 	// Initial refresh (best-effort) then periodic every 60s.
 	go runTunerRefresh(tuners)
 
+	epgSvc := epg.NewService(st, cfg)
+	// Background EPG refresh loops (xmltv / schedules direct when configured).
+	go epgSvc.Run(context.Background())
+
 	apiHandler := api.New(api.Deps{
 		Cfg:    cfg,
 		Store:  st,
 		Auth:   authSvc,
 		Tuners: tuners,
+		EPG:    epgSvc,
 	})
 
 	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)

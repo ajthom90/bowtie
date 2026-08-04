@@ -303,3 +303,48 @@ UTC-no-offset, bad-time skip case), ParseTime layouts per plan. Suite green.
 (500-batching), ToStore. 7 tests green against httptest fake SD. Wire-shape deltas found against
 the SD wiki and adopted: TOKEN_EXPIRED is code 4006 (not 4003); POST /programs returns an array
 keyed by embedded programID (not a map); multiple StationSchedule entries per station handled.
+
+## Task 10
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/epg/service.go`: `Service` with injectable clock/HTTP/sd client
+  - `RefreshAll`: XMLTV (file path or http(s) URL → Parse → ToStore → ReplaceEPG("xmltv")); SD when username+password+lineupId set (Token→Lineup→Schedules 14 days→Programs→ReplaceEPG("sd")); `PrunePrograms(now-24h)`; per-source LastSuccess/LastError in settings keys `epg.{xmltv,sd}.last{Success,Error}`
+  - `Run`: per-source loops with ±10% jitter (xmltv = RefreshHours, sd = 12h), 15m retry on error; background prune loop
+  - `Status()` → `SourceStatus{XMLTV, SD}` with `Stale = configured && lastSuccess older than 2× interval`
+  - `Guide(ctx, start, stop)` → enabled channels only; one `ProgramsInRange` for all mapped IDs; unmapped → empty Programs
+- `server/internal/api/guide_handlers.go` + `Deps.EPG`:
+  - `GET /api/v1/guide?start=&stop=` (defaults now..now+4h; span > 24h → 422; auth)
+  - `GET /api/v1/admin/epg/status`, `POST /api/v1/admin/epg/refresh` (202 background), `GET /api/v1/admin/epg/channels`
+- `cmd/bowtie/main.go`: construct `epg.NewService`, `go epgSvc.Run(context.Background())`, wire into `api.Deps`
+- `docs/api/openapi.yaml`: guide + admin EPG paths/schemas
+- Tests: `epg/service_test.go` (RefreshAll+prune, Status stale thresholds, Guide enabled/unmapped), `api/guide_handlers_test.go` (enabled-only, defaults/span 422, admin status/channels/refresh 202, viewer 403)
+
+### Notes / deltas
+
+- SD client wire shapes from Task 9 used as-is (array programs response, TOKEN_EXPIRED 4006).
+- Settings persist RFC3339 lastSuccess; zero time when never succeeded → stale when configured.
+- `Run` starts per-source refresh immediately then sleeps with jitter (not a shared RefreshAll ticker), matching different XMLTV vs SD intervals.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	3.161s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.505s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.166s
+ok  	github.com/ajthom90/bowtie/server/internal/epg	0.239s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd	0.221s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv	0.182s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.201s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.466s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.223s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.401s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.243s
+```

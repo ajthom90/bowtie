@@ -378,6 +378,99 @@ paths:
                   $ref: '#/components/schemas/ViewerChannel'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/guide:
+    get:
+      summary: TV guide for enabled channels in a time window
+      operationId: getGuide
+      tags: [guide]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: start
+          in: query
+          required: false
+          description: Window start (RFC3339). Defaults to now (UTC).
+          schema:
+            type: string
+            format: date-time
+        - name: stop
+          in: query
+          required: false
+          description: Window stop (RFC3339). Defaults to now+4h. Span must not exceed 24h.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Enabled channels with programmes overlapping the window
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuideChannel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Time span exceeds 24 hours
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/admin/epg/status:
+    get:
+      summary: EPG source status (configured, last success/error, stale)
+      operationId: adminEPGStatus
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Status of XMLTV and Schedules Direct sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EPGSourceStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/epg/refresh:
+    post:
+      summary: Trigger an immediate EPG refresh for all configured sources
+      operationId: adminEPGRefresh
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Refresh started in the background
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/epg/channels:
+    get:
+      summary: List EPG channels available for mapping
+      operationId: adminEPGChannels
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All EPG channels from imported sources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EPGChannel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 components:
   securitySchemes:
     bearerAuth:
@@ -567,6 +660,80 @@ components:
         logoUrl:
           type: string
           description: Icon URL from mapped EPG channel, or empty
+    GuideChannel:
+      type: object
+      required: [channelId, guideNumber, name, logoUrl, programs]
+      properties:
+        channelId:
+          type: integer
+          format: int64
+        guideNumber:
+          type: string
+        name:
+          type: string
+        logoUrl:
+          type: string
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/GuideProgram'
+    GuideProgram:
+      type: object
+      required: [start, stop, title, subtitle, description, category]
+      properties:
+        start:
+          type: string
+          format: date-time
+        stop:
+          type: string
+          format: date-time
+        title:
+          type: string
+        subtitle:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+    EPGSourceStatus:
+      type: object
+      required: [xmltv, sd]
+      properties:
+        xmltv:
+          $ref: '#/components/schemas/EPGSourceState'
+        sd:
+          $ref: '#/components/schemas/EPGSourceState'
+    EPGSourceState:
+      type: object
+      required: [configured, lastSuccess, lastError, stale]
+      properties:
+        configured:
+          type: boolean
+        lastSuccess:
+          type: string
+          format: date-time
+          description: RFC3339; zero time when never succeeded
+        lastError:
+          type: string
+          description: Empty when last refresh succeeded
+        stale:
+          type: boolean
+          description: True when configured and lastSuccess is older than 2× refresh interval
+    EPGChannel:
+      type: object
+      required: [id, displayName, callsign, iconUrl, source]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        callsign:
+          type: string
+        iconUrl:
+          type: string
+        source:
+          type: string
+          enum: [xmltv, sd]
   responses:
     BadRequest:
       description: Invalid request body

@@ -6,17 +6,19 @@ import (
 
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
 // Deps holds dependencies for the HTTP API.
-// Later tasks add fields when their packages exist (EPG, Probe, Streams).
+// Later tasks add fields when their packages exist (Probe, Streams).
 type Deps struct {
 	Cfg    config.Config
 	Store  *store.Store
 	Auth   *auth.Auth
 	Tuners *tuner.Manager // Task 7
+	EPG    *epg.Service   // Task 10
 }
 
 // Server is the HTTP API surface.
@@ -39,6 +41,9 @@ func New(deps Deps) http.Handler {
 	// Viewer channel list (enabled only).
 	mux.Handle("GET /api/v1/channels", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleListChannels)))
 
+	// Viewer guide (Task 10).
+	mux.Handle("GET /api/v1/guide", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleGuide)))
+
 	// Admin user management (Task 5).
 	admin := auth.RequireAdmin(deps.Auth)
 	mux.Handle("GET /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminListUsers)))
@@ -53,6 +58,11 @@ func New(deps Deps) http.Handler {
 	mux.Handle("POST /api/v1/admin/channels/sync", admin(http.HandlerFunc(s.handleAdminSyncChannels)))
 	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.handleAdminListChannels)))
 	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.handleAdminPatchChannel)))
+
+	// Admin EPG (Task 10).
+	mux.Handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
+	mux.Handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
+	mux.Handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
 
 	return mux
 }

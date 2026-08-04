@@ -422,10 +422,10 @@ func (s *Service) Guide(ctx context.Context, start, stop time.Time) ([]GuideChan
 
 Endpoints: `GET /api/v1/guide?start=RFC3339&stop=RFC3339` (default now..now+4h, max span 24h → 422), auth required. Admin: `GET /api/v1/admin/epg/status`, `POST /api/v1/admin/epg/refresh` (fires RefreshAll in background, 202), `GET /api/v1/admin/epg/channels` (ListEPGChannels — feeds the mapping dropdown).
 
-- [ ] **Step 1: Failing tests** — service with injected clock + file XMLTV fixture: `TestRefreshAllImportsAndPrunes`, `TestStatusStale`; guide API: seed store, `TestGuideReturnsEnabledOnly`, `TestGuideDefaultsAndSpanLimit`.
-- [ ] **Step 2: Run** — FAIL. **Implement.**
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: Update openapi.yaml. Commit** `git commit -m "feat: epg service with xmltv + schedules direct, guide api"`
+- [x] **Step 1: Failing tests** — service with injected clock + file XMLTV fixture: `TestRefreshAllImportsAndPrunes`, `TestStatusStale`; guide API: seed store, `TestGuideReturnsEnabledOnly`, `TestGuideDefaultsAndSpanLimit`.
+- [x] **Step 2: Run** — FAIL. **Implement.**
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: Update openapi.yaml. Commit** `git commit -m "feat: epg service with xmltv + schedules direct, guide api"`
 
 ---
 
