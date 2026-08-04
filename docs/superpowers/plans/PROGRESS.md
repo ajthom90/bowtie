@@ -44,3 +44,31 @@ web not yet scaffolded
 cd server && go build -o ../dist/bowtie ./cmd/bowtie
 # dist/bowtie runs; healthz=ok
 ```
+
+## Task 2
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/store` package: `Open`/`Close` with embedded SQL migrations (`go:embed migrations/*.sql`), applied in filename order, tracked in `schema_migrations`
+- Migration `migrations/0001_init.sql`: tables `users`, `devices`, `channels`, `epg_channels`, `programs`, `refresh_tokens`, `settings`, `schema_migrations`; unique `(device_id, guide_number)` on channels; index `programs(epg_channel_id, start)`; unique `refresh_tokens(token_hash)`
+- Domain methods per plan Interfaces: users CRUD + CountUsers; devices Upsert/List/Delete; SyncLineup (preserves Enabled + EPGChannelID); EPG Replace/List/ProgramsInRange/Prune; refresh tokens; settings Get/Set
+- Times stored as RFC3339 UTC strings
+- Driver: `modernc.org/sqlite` v1.34.5 (pure Go, `CGO_ENABLED=0`); Go module remains `go 1.22`
+
+### Notes
+
+- Pinned `modernc.org/sqlite` to v1.34.5 (go 1.21) rather than `@latest` (v1.56 requires go 1.25) so the module stays on Go 1.22 as specified in Global Constraints.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.074s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.152s
+```

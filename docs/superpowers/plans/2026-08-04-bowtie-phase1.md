@@ -170,11 +170,11 @@ func (s *Store) GetSetting(key string) (string, error)      // "" if missing
 func (s *Store) SetSetting(key, value string) error
 ```
 
-- [ ] **Step 1: Write failing tests** — `store_test.go` using `t.TempDir()` DB: `TestMigrateAndCRUDUsers` (create/read/update/delete round-trip; duplicate username errors); `TestSyncLineupPreservesEnabled` (sync 3 channels, enable one + map EPG id, re-sync with same guide numbers + 1 new + 1 removed → enabled/mapping preserved, new present disabled, removed gone); `TestReplaceEPGAndRange` (insert 2 sources; ReplaceEPG for one replaces only that source; ProgramsInRange with fixed times `time.Date(2026, 8, 4, ...)` returns programs overlapping the window, i.e. `Stop > start && Start < stop`); `TestRefreshTokens` (save/get/delete/expire); `TestSettings`.
-- [ ] **Step 2: Run** — FAIL (types missing).
-- [ ] **Step 3: Implement** — `0001_init.sql` with tables `users, devices, channels, epg_channels, programs, refresh_tokens, settings, schema_migrations`; indexes: `channels(device_id, guide_number)` unique, `programs(epg_channel_id, start)`, `refresh_tokens(token_hash)` unique. Times stored as RFC3339 strings (UTC).
-- [ ] **Step 4: Run** `go test ./internal/store/` — PASS.
-- [ ] **Step 5: Commit** `git add server && git commit -m "feat: sqlite store with migrations for users, devices, channels, epg, tokens"`
+- [x] **Step 1: Write failing tests** — `store_test.go` using `t.TempDir()` DB: `TestMigrateAndCRUDUsers` (create/read/update/delete round-trip; duplicate username errors); `TestSyncLineupPreservesEnabled` (sync 3 channels, enable one + map EPG id, re-sync with same guide numbers + 1 new + 1 removed → enabled/mapping preserved, new present disabled, removed gone); `TestReplaceEPGAndRange` (insert 2 sources; ReplaceEPG for one replaces only that source; ProgramsInRange with fixed times `time.Date(2026, 8, 4, ...)` returns programs overlapping the window, i.e. `Stop > start && Start < stop`); `TestRefreshTokens` (save/get/delete/expire); `TestSettings`.
+- [x] **Step 2: Run** — FAIL (types missing).
+- [x] **Step 3: Implement** — `0001_init.sql` with tables `users, devices, channels, epg_channels, programs, refresh_tokens, settings, schema_migrations`; indexes: `channels(device_id, guide_number)` unique, `programs(epg_channel_id, start)`, `refresh_tokens(token_hash)` unique. Times stored as RFC3339 strings (UTC).
+- [x] **Step 4: Run** `go test ./internal/store/` — PASS.
+- [x] **Step 5: Commit** `git add server && git commit -m "feat: sqlite store with migrations for users, devices, channels, epg, tokens"`
 
 ### Task 3: Auth core — Argon2id, JWT, refresh tokens, bootstrap admin
 
