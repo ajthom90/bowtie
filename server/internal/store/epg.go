@@ -81,7 +81,7 @@ func (s *Store) ListEPGChannels() ([]EPGChannel, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []EPGChannel
 	for rows.Next() {
@@ -122,7 +122,7 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Program
 	for rows.Next() {

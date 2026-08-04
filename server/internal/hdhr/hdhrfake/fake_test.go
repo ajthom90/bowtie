@@ -27,7 +27,7 @@ func TestFakeServesDiscoverLineupStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("discover status = %d", resp.StatusCode)
 	}
@@ -62,7 +62,7 @@ func TestFakeServesDiscoverLineupStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lineup: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var gotLineup []hdhrfake.LineupEntry
 	if err := json.NewDecoder(resp.Body).Decode(&gotLineup); err != nil {
 		t.Fatalf("decode lineup: %v", err)
@@ -76,7 +76,7 @@ func TestFakeServesDiscoverLineupStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var status []map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		t.Fatalf("decode status: %v", err)

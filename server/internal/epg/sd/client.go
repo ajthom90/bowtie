@@ -286,7 +286,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, dest any, wi
 	if err != nil {
 		return fmt.Errorf("sd: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

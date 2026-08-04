@@ -42,7 +42,7 @@ func (s *Store) SyncLineup(deviceID string, chans []Channel) error {
 		var en int
 		var epg string
 		if err := rows.Scan(&id, &guide, &en, &epg); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		byGuide[guide] = existing{id: id, enabled: en != 0, epgChannelID: epg}
@@ -105,7 +105,7 @@ func (s *Store) ListChannels(enabledOnly bool) ([]Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Channel
 	for rows.Next() {

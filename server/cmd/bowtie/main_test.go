@@ -33,11 +33,11 @@ func TestSmokeAssembledServer(t *testing.T) {
 	}
 	adminPW, err := bootstrapAdmin(st)
 	if err != nil {
-		st.Close()
+		_ = st.Close()
 		t.Fatalf("bootstrapAdmin: %v", err)
 	}
 	if adminPW == "" {
-		st.Close()
+		_ = st.Close()
 		t.Fatal("expected bootstrap password on empty store")
 	}
 	if err := st.Close(); err != nil {
@@ -70,7 +70,7 @@ func TestSmokeAssembledServer(t *testing.T) {
 		t.Fatalf("GET /healthz: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz status=%d body=%q", resp.StatusCode, body)
 	}
@@ -88,7 +88,7 @@ func TestSmokeAssembledServer(t *testing.T) {
 		t.Fatalf("POST /auth/login: %v", err)
 	}
 	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login status=%d body=%q", resp.StatusCode, body)
 	}

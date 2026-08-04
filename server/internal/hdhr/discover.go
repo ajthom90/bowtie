@@ -43,7 +43,7 @@ func Discover(ctx context.Context, timeout time.Duration) ([]DiscoverInfo, error
 	if err != nil {
 		return nil, fmt.Errorf("hdhr discover listen: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return nil, fmt.Errorf("hdhr discover write deadline: %w", err)

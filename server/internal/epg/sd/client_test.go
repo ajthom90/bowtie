@@ -182,7 +182,7 @@ func TestTokenFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without token header, got %d", resp.StatusCode)
 	}

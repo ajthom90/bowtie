@@ -79,7 +79,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request, root fs.FS) {
 		notBuilt(w)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		notBuilt(w)
