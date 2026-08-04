@@ -531,9 +531,7 @@ func (m *Manager) supervise(sess *session) {
 
 		if proc == nil || crashed {
 			// Wait for maintain() to restart, or termination.
-			select {
-			case <-time.After(playlistPollEvery):
-			}
+			<-time.After(playlistPollEvery)
 			continue
 		}
 
