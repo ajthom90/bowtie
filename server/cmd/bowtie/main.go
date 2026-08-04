@@ -1,13 +1,19 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
 const version = "0.1.0-dev"
@@ -33,6 +39,21 @@ func main() {
 		log.Fatalf("create segment dir: %v", err)
 	}
 
+	st, err := store.Open(filepath.Join(cfg.DataDir, "bowtie.db"))
+	if err != nil {
+		log.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	if _, err := loadOrCreateJWTSecret(st); err != nil {
+		log.Fatalf("jwt secret: %v", err)
+	}
+	// auth.Auth is constructed and wired into HTTP handlers in Task 4.
+
+	if err := bootstrapAdmin(st); err != nil {
+		log.Fatalf("bootstrap admin: %v", err)
+	}
+
 	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)
 
 	mux := http.NewServeMux()
@@ -48,4 +69,75 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve: %v", err)
 	}
+}
+
+func loadOrCreateJWTSecret(st *store.Store) ([]byte, error) {
+	const key = "jwt_secret"
+	hexSecret, err := st.GetSetting(key)
+	if err != nil {
+		return nil, err
+	}
+	if hexSecret == "" {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return nil, fmt.Errorf("generate jwt secret: %w", err)
+		}
+		hexSecret = hex.EncodeToString(raw)
+		if err := st.SetSetting(key, hexSecret); err != nil {
+			return nil, err
+		}
+	}
+	secret, err := hex.DecodeString(hexSecret)
+	if err != nil {
+		return nil, fmt.Errorf("decode jwt secret: %w", err)
+	}
+	if len(secret) == 0 {
+		return nil, fmt.Errorf("empty jwt secret")
+	}
+	return secret, nil
+}
+
+func bootstrapAdmin(st *store.Store) error {
+	n, err := st.CountUsers()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+
+	pw, err := randomPassword(16)
+	if err != nil {
+		return err
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		return err
+	}
+	_, err = st.CreateUser(store.User{
+		Username:     "admin",
+		PasswordHash: hash,
+		Role:         "admin",
+		MaxQuality:   "",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf("first run: created admin user %q with password %q — change it after login", "admin", pw)
+	return nil
+}
+
+func randomPassword(n int) (string, error) {
+	// 16 hex chars from 8 random bytes when n==16; general: ceil(n/2) bytes hex-truncated.
+	nbytes := (n + 1) / 2
+	b := make([]byte, nbytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	s := hex.EncodeToString(b)
+	if len(s) > n {
+		s = s[:n]
+	}
+	return s, nil
 }

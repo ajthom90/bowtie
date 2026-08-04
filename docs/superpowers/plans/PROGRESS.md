@@ -72,3 +72,40 @@ $ CGO_ENABLED=0 go test ./... -count=1
 ok  	github.com/ajthom90/bowtie/server/internal/config	0.074s
 ok  	github.com/ajthom90/bowtie/server/internal/store	0.152s
 ```
+
+## Task 3
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/auth/password.go`: `HashPassword` / `VerifyPassword` — Argon2id PHC (`t=3`, `m=65536` KiB, `p=2`, salt 16B, key 32B), constant-time compare
+- `server/internal/auth/tokens.go`: `Auth`, `Claims`, `NewAccessToken` / `ParseAccessToken` (HS256, 15m, `sub`+username+role; parse honors fixed `now` via `jwt.WithTimeFunc`), `NewRefreshToken` / `Rotate` / `Revoke` (raw base64url 32B, SHA-256 hex stored, 30d expiry)
+- Tests: `password_test.go`, `tokens_test.go` (all six plan cases)
+- `cmd/bowtie/main.go`: opens `<dataDir>/bowtie.db`; settings key `jwt_secret` (32 random bytes hex on first run); if `CountUsers()==0`, creates `admin` with 16-char hex password printed once via the plan's log line
+- Deps: `golang.org/x/crypto v0.31.0`, `github.com/golang-jwt/jwt/v5 v5.2.1` (pinned; Go module stays `go 1.22`)
+
+### Notes / deltas
+
+- DB path for bootstrap: `filepath.Join(dataDir, "bowtie.db")` (not named in Task 3 Interfaces; chosen as conventional and consistent with Open(path) API).
+- `auth.Auth` is not yet attached to HTTP handlers (Task 4); JWT secret is only persisted in settings for now.
+- Avoided `@latest` for `x/crypto` (would force Go ≥ 1.25).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.412s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.080s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.151s
+
+# smoke: first run prints admin password once; second start does not
+$ bowtie --data-dir "$TMP"
+# first run: created admin user "admin" with password "…" — change it after login
+# bowtie 0.1.0-dev listening on :8400 …
+$ curl -sf localhost:8400/healthz → ok
+```

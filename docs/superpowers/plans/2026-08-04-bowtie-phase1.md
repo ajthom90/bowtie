@@ -200,11 +200,11 @@ func (a *Auth) Rotate(raw string, now time.Time) (store.User, string, error) // 
 func (a *Auth) Revoke(raw string) error
 ```
 
-- [ ] **Step 1: Failing tests** — `TestHashVerifyRoundTrip`, `TestVerifyWrongPassword`, `TestAccessTokenRoundTrip` (fixed `now`), `TestAccessTokenExpired` (parse with now+16m → error), `TestRefreshRotate` (issue → rotate returns user + new token, old token now invalid), `TestRefreshExpired`.
-- [ ] **Step 2: Run** — FAIL.
-- [ ] **Step 3: Implement** — argon2id via `golang.org/x/crypto/argon2.IDKey(pw, salt, 3, 64*1024, 2, 32)`; constant-time compare. JWT via `github.com/golang-jwt/jwt/v5`. In `main.go` startup: JWT secret from settings key `jwt_secret` (create 32 random bytes hex on first run); if `CountUsers()==0`, create `admin` with a generated 16-char password **printed once to stdout** (`log.Printf("first run: created admin user %q with password %q — change it after login", ...)`).
-- [ ] **Step 4: Run** `go test ./...` — PASS.
-- [ ] **Step 5: Commit** `git commit -m "feat: argon2id passwords, jwt access + rotating refresh tokens, bootstrap admin"`
+- [x] **Step 1: Failing tests** — `TestHashVerifyRoundTrip`, `TestVerifyWrongPassword`, `TestAccessTokenRoundTrip` (fixed `now`), `TestAccessTokenExpired` (parse with now+16m → error), `TestRefreshRotate` (issue → rotate returns user + new token, old token now invalid), `TestRefreshExpired`.
+- [x] **Step 2: Run** — FAIL.
+- [x] **Step 3: Implement** — argon2id via `golang.org/x/crypto/argon2.IDKey(pw, salt, 3, 64*1024, 2, 32)`; constant-time compare. JWT via `github.com/golang-jwt/jwt/v5`. In `main.go` startup: JWT secret from settings key `jwt_secret` (create 32 random bytes hex on first run); if `CountUsers()==0`, create `admin` with a generated 16-char password **printed once to stdout** (`log.Printf("first run: created admin user %q with password %q — change it after login", ...)`).
+- [x] **Step 4: Run** `go test ./...` — PASS.
+- [x] **Step 5: Commit** `git commit -m "feat: argon2id passwords, jwt access + rotating refresh tokens, bootstrap admin"`
 
 ### Task 4: HTTP API skeleton + auth endpoints & middleware
 
