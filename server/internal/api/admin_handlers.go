@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/auth"
+	"github.com/ajthom90/bowtie/server/internal/hdhr"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
 func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
@@ -211,4 +214,334 @@ func isUniqueConstraint(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "constraint failed")
+}
+
+// --- Device / tuner / channel admin (Task 7) ---
+
+type deviceJSON struct {
+	DeviceID   string    `json:"deviceId"`
+	IP         string    `json:"ip"`
+	Model      string    `json:"model"`
+	TunerCount int       `json:"tunerCount"`
+	Manual     bool      `json:"manual"`
+	LastSeen   time.Time `json:"lastSeen"`
+	StreamPort int       `json:"streamPort"`
+}
+
+type tunerStatusJSON struct {
+	Resource               string `json:"resource"`
+	VctNumber              string `json:"vctNumber"`
+	VctName                string `json:"vctName"`
+	Frequency              int64  `json:"frequency"`
+	SignalStrengthPercent  int    `json:"signalStrengthPercent"`
+	SignalQualityPercent   int    `json:"signalQualityPercent"`
+	SymbolQualityPercent   int    `json:"symbolQualityPercent"`
+	TargetIP               string `json:"targetIp"`
+}
+
+type deviceStatusJSON struct {
+	Device    deviceJSON        `json:"device"`
+	Reachable bool              `json:"reachable"`
+	Tuners    []tunerStatusJSON `json:"tuners"`
+}
+
+type adminChannelJSON struct {
+	ID           int64  `json:"id"`
+	DeviceID     string `json:"deviceId"`
+	GuideNumber  string `json:"guideNumber"`
+	Name         string `json:"name"`
+	Enabled      bool   `json:"enabled"`
+	EPGChannelID string `json:"epgChannelId"`
+}
+
+type viewerChannelJSON struct {
+	ID          int64  `json:"id"`
+	GuideNumber string `json:"guideNumber"`
+	Name        string `json:"name"`
+	LogoURL     string `json:"logoUrl"`
+}
+
+func deviceToJSON(d store.Device) deviceJSON {
+	return deviceJSON{
+		DeviceID:   d.DeviceID,
+		IP:         d.IP,
+		Model:      d.Model,
+		TunerCount: d.TunerCount,
+		Manual:     d.Manual,
+		LastSeen:   d.LastSeen,
+		StreamPort: d.StreamPort,
+	}
+}
+
+func deviceStatusToJSON(ds tuner.DeviceStatus) deviceStatusJSON {
+	tuners := make([]tunerStatusJSON, 0, len(ds.Tuners))
+	for _, t := range ds.Tuners {
+		tuners = append(tuners, tunerStatusJSON{
+			Resource:              t.Resource,
+			VctNumber:             t.VctNumber,
+			VctName:               t.VctName,
+			Frequency:             t.Frequency,
+			SignalStrengthPercent: t.SignalStrengthPercent,
+			SignalQualityPercent:  t.SignalQualityPercent,
+			SymbolQualityPercent:  t.SymbolQualityPercent,
+			TargetIP:              t.TargetIP,
+		})
+	}
+	return deviceStatusJSON{
+		Device:    deviceToJSON(ds.Device),
+		Reachable: ds.Reachable,
+		Tuners:    tuners,
+	}
+}
+
+func adminChannelToJSON(c store.Channel) adminChannelJSON {
+	return adminChannelJSON{
+		ID:           c.ID,
+		DeviceID:     c.DeviceID,
+		GuideNumber:  c.GuideNumber,
+		Name:         c.Name,
+		Enabled:      c.Enabled,
+		EPGChannelID: c.EPGChannelID,
+	}
+}
+
+func (s *Server) handleAdminListTuners(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Tuners == nil {
+		writeError(w, http.StatusInternalServerError, "tuners not configured")
+		return
+	}
+	statuses := s.deps.Tuners.Devices()
+	out := make([]deviceStatusJSON, 0, len(statuses))
+	for _, ds := range statuses {
+		out = append(out, deviceStatusToJSON(ds))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleAdminAddDevice(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Tuners == nil {
+		writeError(w, http.StatusInternalServerError, "tuners not configured")
+		return
+	}
+	var req struct {
+		IP string `json:"ip"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.IP = strings.TrimSpace(req.IP)
+	if req.IP == "" {
+		writeError(w, http.StatusBadRequest, "ip required")
+		return
+	}
+
+	baseURL := hdhr.BaseURLFromManual(req.IP)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	info, err := hdhr.FetchDiscover(ctx, baseURL)
+	if err != nil || info.DeviceID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "device unreachable")
+		return
+	}
+
+	ip := hdhr.HostFromBaseURL(info.BaseURL)
+	if ip == "" {
+		ip = hdhr.HostFromBaseURL(baseURL)
+	}
+	streamPort := hdhr.StreamPortFromBaseURL(info.BaseURL)
+	if streamPort <= 0 {
+		streamPort = hdhr.StreamPortFromBaseURL(baseURL)
+	}
+	now := time.Now().UTC()
+	dev := store.Device{
+		DeviceID:   info.DeviceID,
+		IP:         ip,
+		Model:      info.ModelNumber,
+		TunerCount: info.TunerCount,
+		Manual:     true,
+		LastSeen:   now,
+		StreamPort: streamPort,
+	}
+	if err := s.deps.Store.UpsertDevice(dev); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save device")
+		return
+	}
+
+	// Lineup sync for this device.
+	lineupBase := info.BaseURL
+	if lineupBase == "" {
+		lineupBase = baseURL
+	}
+	if err := syncDeviceLineup(ctx, s.deps.Store, info.DeviceID, lineupBase); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync lineup")
+		return
+	}
+
+	// Refresh manager cache so GET /admin/tuners sees the device.
+	if err := s.deps.Tuners.Refresh(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to refresh tuners")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, deviceToJSON(dev))
+}
+
+func (s *Server) handleAdminDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Tuners == nil {
+		writeError(w, http.StatusInternalServerError, "tuners not configured")
+		return
+	}
+	deviceID := r.PathValue("deviceId")
+	if deviceID == "" {
+		writeError(w, http.StatusBadRequest, "device id required")
+		return
+	}
+	if err := s.deps.Store.DeleteDevice(deviceID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete device")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	// Best-effort refresh; device is already gone from store.
+	_ = s.deps.Tuners.Refresh(ctx)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAdminSyncChannels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	devices, err := s.deps.Store.ListDevices()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list devices")
+		return
+	}
+	for _, d := range devices {
+		base := hdhr.HTTPBaseURL(d.IP, d.StreamPort)
+		if base == "" {
+			continue
+		}
+		if err := syncDeviceLineup(ctx, s.deps.Store, d.DeviceID, base); err != nil {
+			// Skip unreachable devices; continue with others.
+			continue
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAdminListChannels(w http.ResponseWriter, r *http.Request) {
+	chans, err := s.deps.Store.ListChannels(false)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list channels")
+		return
+	}
+	out := make([]adminChannelJSON, 0, len(chans))
+	for _, c := range chans {
+		out = append(out, adminChannelToJSON(c))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleAdminPatchChannel(w http.ResponseWriter, r *http.Request) {
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	ch, err := s.deps.Store.ChannelByID(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+
+	var req struct {
+		Enabled      *bool   `json:"enabled"`
+		EPGChannelID *string `json:"epgChannelId"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Enabled != nil {
+		ch.Enabled = *req.Enabled
+	}
+	if req.EPGChannelID != nil {
+		ch.EPGChannelID = *req.EPGChannelID
+	}
+	if err := s.deps.Store.UpdateChannel(ch.ID, ch.Enabled, ch.EPGChannelID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "channel not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to update channel")
+		return
+	}
+	ch, err = s.deps.Store.ChannelByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload channel")
+		return
+	}
+	writeJSON(w, http.StatusOK, adminChannelToJSON(ch))
+}
+
+// handleListChannels is the viewer-facing enabled-channel list.
+func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
+	chans, err := s.deps.Store.ListChannels(true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list channels")
+		return
+	}
+	epgIcons, err := epgIconByID(s.deps.Store)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load epg icons")
+		return
+	}
+	out := make([]viewerChannelJSON, 0, len(chans))
+	for _, c := range chans {
+		logo := ""
+		if c.EPGChannelID != "" {
+			logo = epgIcons[c.EPGChannelID]
+		}
+		out = append(out, viewerChannelJSON{
+			ID:          c.ID,
+			GuideNumber: c.GuideNumber,
+			Name:        c.Name,
+			LogoURL:     logo,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func syncDeviceLineup(ctx context.Context, st *store.Store, deviceID, baseURL string) error {
+	entries, err := hdhr.FetchLineup(ctx, baseURL)
+	if err != nil {
+		return err
+	}
+	chans := make([]store.Channel, 0, len(entries))
+	for _, e := range entries {
+		chans = append(chans, store.Channel{
+			DeviceID:    deviceID,
+			GuideNumber: e.GuideNumber,
+			Name:        e.GuideName,
+		})
+	}
+	return st.SyncLineup(deviceID, chans)
+}
+
+func epgIconByID(st *store.Store) (map[string]string, error) {
+	epgs, err := st.ListEPGChannels()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(epgs))
+	for _, e := range epgs {
+		out[e.ID] = e.IconURL
+	}
+	return out, nil
 }

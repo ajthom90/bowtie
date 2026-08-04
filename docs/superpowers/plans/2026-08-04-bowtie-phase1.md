@@ -336,11 +336,11 @@ func (m *Manager) StreamURL(ch store.Channel) (string, error) // "http://<ip>:50
   - `PATCH /api/v1/admin/channels/{id} {enabled?, epgChannelId?}`
   - `GET /api/v1/channels` (any authenticated user) → enabled channels only: `[{id, guideNumber, name, logoUrl}]` (logoUrl from mapped EPG channel icon, else "")
 
-- [ ] **Step 1: Failing tests** — httptest with hdhrfake behind a real `tuner.Manager`: add device by IP → sync → list → enable one → viewer `GET /api/v1/channels` sees only the enabled channel; viewer hitting admin routes → 403.
-- [ ] **Step 2: Run** — FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Update openapi.yaml. Commit** `git commit -m "feat: device and channel admin api, viewer channel list"`
+- [x] **Step 1: Failing tests** — httptest with hdhrfake behind a real `tuner.Manager`: add device by IP → sync → list → enable one → viewer `GET /api/v1/channels` sees only the enabled channel; viewer hitting admin routes → 403.
+- [x] **Step 2: Run** — FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Update openapi.yaml. Commit** `git commit -m "feat: device and channel admin api, viewer channel list"`
 
 # Milestone B — EPG
 

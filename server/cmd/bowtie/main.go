@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
@@ -15,6 +16,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
 const version = "0.1.0-dev"
@@ -56,10 +58,16 @@ func main() {
 	}
 
 	authSvc := &auth.Auth{Secret: secret, Store: st}
+
+	tuners := tuner.New(st, cfg)
+	// Initial refresh (best-effort) then periodic every 60s.
+	go runTunerRefresh(tuners)
+
 	apiHandler := api.New(api.Deps{
-		Cfg:   cfg,
-		Store: st,
-		Auth:  authSvc,
+		Cfg:    cfg,
+		Store:  st,
+		Auth:   authSvc,
+		Tuners: tuners,
 	})
 
 	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)
@@ -77,6 +85,23 @@ func main() {
 	}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve: %v", err)
+	}
+}
+
+// runTunerRefresh does an immediate Refresh, then every 60s.
+func runTunerRefresh(m *tuner.Manager) {
+	do := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := m.Refresh(ctx); err != nil {
+			log.Printf("tuner refresh: %v", err)
+		}
+	}
+	do()
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		do()
 	}
 }
 

@@ -7,14 +7,16 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
 // Deps holds dependencies for the HTTP API.
-// Later tasks add fields when their packages exist (Tuners, EPG, Probe, Streams).
+// Later tasks add fields when their packages exist (EPG, Probe, Streams).
 type Deps struct {
-	Cfg   config.Config
-	Store *store.Store
-	Auth  *auth.Auth
+	Cfg    config.Config
+	Store  *store.Store
+	Auth   *auth.Auth
+	Tuners *tuner.Manager // Task 7
 }
 
 // Server is the HTTP API surface.
@@ -34,12 +36,23 @@ func New(deps Deps) http.Handler {
 	mux.Handle("GET /api/v1/me", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleMe)))
 	mux.Handle("POST /api/v1/me/password", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
 
+	// Viewer channel list (enabled only).
+	mux.Handle("GET /api/v1/channels", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleListChannels)))
+
 	// Admin user management (Task 5).
 	admin := auth.RequireAdmin(deps.Auth)
 	mux.Handle("GET /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminListUsers)))
 	mux.Handle("POST /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminCreateUser)))
 	mux.Handle("PATCH /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminPatchUser)))
 	mux.Handle("DELETE /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminDeleteUser)))
+
+	// Admin tuners / devices / channels (Task 7).
+	mux.Handle("GET /api/v1/admin/tuners", admin(http.HandlerFunc(s.handleAdminListTuners)))
+	mux.Handle("POST /api/v1/admin/devices", admin(http.HandlerFunc(s.handleAdminAddDevice)))
+	mux.Handle("DELETE /api/v1/admin/devices/{deviceId}", admin(http.HandlerFunc(s.handleAdminDeleteDevice)))
+	mux.Handle("POST /api/v1/admin/channels/sync", admin(http.HandlerFunc(s.handleAdminSyncChannels)))
+	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.handleAdminListChannels)))
+	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.handleAdminPatchChannel)))
 
 	return mux
 }

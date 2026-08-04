@@ -250,3 +250,46 @@ ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.330s
 ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.169s
 ```
 
+## Task 7
+
+**Date:** 2026-08-04
+
+### Built
+
+- `api.Deps.Tuners *tuner.Manager` + routes in `server.go`
+- Admin handlers in `admin_handlers.go`:
+  - `GET /api/v1/admin/tuners` → device status (camelCase JSON)
+  - `POST /api/v1/admin/devices {ip}` → FetchDiscover validate (422 if unreachable), UpsertDevice Manual=true, lineup sync, Refresh cache → 201
+  - `DELETE /api/v1/admin/devices/{deviceId}` → 204
+  - `POST /api/v1/admin/channels/sync` → FetchLineup + SyncLineup per stored device (skip unreachable) → 204
+  - `GET /api/v1/admin/channels` → all channels with mapping state
+  - `PATCH /api/v1/admin/channels/{id} {enabled?, epgChannelId?}`
+  - `GET /api/v1/channels` (auth) → enabled only, `logoUrl` from mapped EPG channel IconURL ("" if unmapped)
+- `cmd/bowtie/main.go`: construct `tuner.New`, background `runTunerRefresh` (immediate + every 60s)
+- `docs/api/openapi.yaml`: all new paths + Device/DeviceStatus/AdminChannel/ViewerChannel schemas
+- Tests: `admin_channels_test.go` — real `tuner.Manager` + hdhrfake, UDP suppressed via `SetDiscoverFunc`; full flow + 422 + viewer 403
+
+### Notes / deltas
+
+- IP field accepts host:port (and http URL) via existing `hdhr.BaseURLFromManual` so hdhrfake works in tests.
+- Viewer logo join uses `ListEPGChannels` map in the handler (no new store method needed).
+- Channel rows are not cascade-deleted when a device is removed (plan only required device delete).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	2.662s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.489s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.149s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.184s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.450s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.206s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.303s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.227s
+```
+

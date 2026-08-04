@@ -219,6 +219,165 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/admin/tuners:
+    get:
+      summary: List HDHomeRun devices with live tuner status
+      operationId: adminListTuners
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Device status list from last refresh plus live tuner status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeviceStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/devices:
+    post:
+      summary: Add a manual HDHomeRun device by IP and sync its lineup
+      operationId: adminAddDevice
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddDeviceRequest'
+      responses:
+        '201':
+          description: Device validated and stored; lineup synced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Device unreachable (discover failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/admin/devices/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      summary: Remove a known device
+      operationId: adminDeleteDevice
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Device deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/channels/sync:
+    post:
+      summary: Re-fetch lineup.json for every stored device and sync channels
+      operationId: adminSyncChannels
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Sync attempted for all devices (unreachable devices skipped)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/channels:
+    get:
+      summary: List all channels with enable/mapping state
+      operationId: adminListChannels
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminChannel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      summary: Update channel enabled flag and/or EPG mapping
+      operationId: adminPatchChannel
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchChannelRequest'
+      responses:
+        '200':
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminChannel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/channels:
+    get:
+      summary: List enabled channels for the viewer
+      operationId: listChannels
+      tags: [channels]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Enabled channels with optional EPG logo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ViewerChannel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
   securitySchemes:
     bearerAuth:
@@ -309,6 +468,105 @@ components:
           type: string
           format: password
           description: If set, replaces the user's password
+    Device:
+      type: object
+      required: [deviceId, ip, model, tunerCount, manual, lastSeen, streamPort]
+      properties:
+        deviceId:
+          type: string
+        ip:
+          type: string
+          description: Hostname or IP (no port); streamPort used for stream URLs
+        model:
+          type: string
+        tunerCount:
+          type: integer
+        manual:
+          type: boolean
+        lastSeen:
+          type: string
+          format: date-time
+        streamPort:
+          type: integer
+          description: Port for /auto/v* streams (5004 for real devices)
+    TunerStatus:
+      type: object
+      properties:
+        resource:
+          type: string
+        vctNumber:
+          type: string
+        vctName:
+          type: string
+        frequency:
+          type: integer
+          format: int64
+        signalStrengthPercent:
+          type: integer
+        signalQualityPercent:
+          type: integer
+        symbolQualityPercent:
+          type: integer
+        targetIp:
+          type: string
+    DeviceStatus:
+      type: object
+      required: [device, reachable, tuners]
+      properties:
+        device:
+          $ref: '#/components/schemas/Device'
+        reachable:
+          type: boolean
+        tuners:
+          type: array
+          items:
+            $ref: '#/components/schemas/TunerStatus'
+    AddDeviceRequest:
+      type: object
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          description: Device IP, host:port, or http(s) base URL
+    AdminChannel:
+      type: object
+      required: [id, deviceId, guideNumber, name, enabled, epgChannelId]
+      properties:
+        id:
+          type: integer
+          format: int64
+        deviceId:
+          type: string
+        guideNumber:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        epgChannelId:
+          type: string
+          description: Mapped EPG channel id, or empty if unmapped
+    PatchChannelRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        epgChannelId:
+          type: string
+    ViewerChannel:
+      type: object
+      required: [id, guideNumber, name, logoUrl]
+      properties:
+        id:
+          type: integer
+          format: int64
+        guideNumber:
+          type: string
+        name:
+          type: string
+        logoUrl:
+          type: string
+          description: Icon URL from mapped EPG channel, or empty
   responses:
     BadRequest:
       description: Invalid request body
