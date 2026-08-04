@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv SYSTEM "xmltv.dtd">
+<tv generator-info-name="bowtie-test">
+  <channel id="ch1.example">
+    <display-name>WABC (5.1 ABC)</display-name>
+    <display-name>WABC</display-name>
+    <display-name>5.1</display-name>
+    <icon src="https://example.com/wabc.png"/>
+  </channel>
+  <channel id="ch2.example">
+    <display-name>Example Two</display-name>
+    <display-name>EX2</display-name>
+  </channel>
+  <programme start="20260804190000 -0500" stop="20260804200000 -0500" channel="ch1.example">
+    <title>Evening News</title>
+    <sub-title>August 4 Edition</sub-title>
+    <desc>Local and national headlines.</desc>
+    <category>News</category>
+    <category>Local</category>
+    <icon src="https://example.com/news.png"/>
+  </programme>
+  <programme start="20260805010000" stop="20260805020000" channel="ch2.example">
+    <title>Late Night Movie</title>
+    <desc>A classic film, times in UTC with no offset.</desc>
+    <category>Movie</category>
+  </programme>
+  <programme start="not-a-valid-time" stop="20260804210000 -0500" channel="ch1.example">
+    <title>Broken Timeslot</title>
+    <desc>This programme has an unparseable start and must be skipped.</desc>
+  </programme>
+</tv>
