@@ -3,50 +3,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.app {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid #2a2a2a;
-  background: #121212;
-}
-
-.headerRight {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.main {
-  flex: 1;
-  padding: 1.5rem;
+  background: var(--bg);
 }
 
 .muted {
-  color: #9a9a9a;
+  color: var(--text-dim);
   margin: 0;
-}
-
-.linkBtn {
-  background: transparent;
-  border: 1px solid #444;
-  color: #ddd;
-  border-radius: 4px;
-  padding: 0.3rem 0.65rem;
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.linkBtn:hover {
-  border-color: #666;
+  font-family: var(--font-ui);
 }

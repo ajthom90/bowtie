@@ -1,4 +1,22 @@
-/* Minimal dark theme scaffold — real design language lands in Task 18. */
+/* Design tokens — Bowtie broadcast heritage (dark-first). */
+:root {
+  --bg: #101418;
+  --surface: #1a2027;
+  --surface-raised: #232b34;
+  --line: #2e3843;
+  --text: #f2efe8;
+  --text-dim: #9ba5ae;
+  --accent: #f0a428;
+  --accent-ink: #101418;
+  --signal: #5dbb63;
+  --alert: #e4574b;
+  --radius: 4px;
+  --motion: 140ms ease-out;
+  --font-display: 'Barlow Condensed', system-ui, sans-serif;
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
 *,
 *::before,
 *::after {
@@ -13,21 +31,51 @@ body,
 }
 
 body {
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    Helvetica,
-    Arial,
-    sans-serif;
-  background: #0d0d0d;
-  color: #e8e8e8;
+  font-family: var(--font-ui);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--text);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
+  color: inherit;
+}
+
+/* Focus ring — accessibility floor */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

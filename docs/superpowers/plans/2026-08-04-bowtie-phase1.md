@@ -664,10 +664,10 @@ export function layoutRow(programs: GuideProgram[], windowStart: Date, windowSto
 
 - Guide: sticky channel column, 30-min gridlines, now marker, click program/channel → Player. Player: hls.js (native HLS on Safari via `canPlayType('application/vnd.apple.mpegurl')`), quality picker re-creates session with `profile` set, stats overlay (profile/codec from session response + hls.js bandwidth estimate), Back to guide stops session (`DELETE`), `beforeunload`/`visibilitychange` best-effort stop via `navigator.sendBeacon`.
 
-- [ ] **Step 1: Failing tests** — guideModel layout (clip/gap/percent math with fixed dates); caps detection with mocked `MediaSource`.
-- [ ] **Step 2: Run** — FAIL. **Implement** model + components.
-- [ ] **Step 3: Run** vitest + typecheck + build — PASS. Manual dev check against server + hdhrfake or real device.
-- [ ] **Step 4: Commit** `git commit -m "feat: guide grid and hls player with capability detection"`
+- [x] **Step 1: Failing tests** — guideModel layout (clip/gap/percent math with fixed dates); caps detection with mocked `MediaSource`.
+- [x] **Step 2: Run** — FAIL. **Implement** model + components.
+- [x] **Step 3: Run** vitest + typecheck + build — PASS. Manual dev check against server + hdhrfake or real device.
+- [x] **Step 4: Commit** `git commit -m "feat: guide grid and hls player with capability detection"`
 
 ### Task 19: Admin UI
 

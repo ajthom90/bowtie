@@ -1,9 +1,17 @@
+import { useState } from 'react'
+import { Admin } from './admin/Admin'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { Login } from './auth/Login'
+import { Guide, type WatchTarget } from './guide/Guide'
+import { Player } from './player/Player'
 import styles from './App.module.css'
 
+type View = 'guide' | 'admin'
+
 function Shell() {
-  const { user, ready, logout } = useAuth()
+  const { user, ready } = useAuth()
+  const [watching, setWatching] = useState<WatchTarget | null>(null)
+  const [view, setView] = useState<View>('guide')
 
   if (!ready) {
     return (
@@ -17,24 +25,20 @@ function Shell() {
     return <Login />
   }
 
+  if (watching) {
+    return <Player target={watching} onBack={() => setWatching(null)} />
+  }
+
+  // Role guard: viewers never see admin route or nav entry.
+  if (view === 'admin' && user.role === 'admin') {
+    return <Admin onBack={() => setView('guide')} />
+  }
+
   return (
-    <div className={styles.app}>
-      <header className={styles.header}>
-        <strong>Bowtie</strong>
-        <div className={styles.headerRight}>
-          <span className={styles.muted}>
-            {user.username}
-            {user.role === 'admin' ? ' · admin' : ''}
-          </span>
-          <button type="button" className={styles.linkBtn} onClick={() => void logout()}>
-            Sign out
-          </button>
-        </div>
-      </header>
-      <main className={styles.main}>
-        <p className={styles.muted}>Signed in. Guide and player arrive in Task 18.</p>
-      </main>
-    </div>
+    <Guide
+      onWatch={setWatching}
+      onAdmin={user.role === 'admin' ? () => setView('admin') : undefined}
+    />
   )
 }
 

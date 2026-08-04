@@ -4,14 +4,15 @@
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
+  background: var(--bg);
 }
 
 .card {
   width: 100%;
   max-width: 22rem;
-  background: #161616;
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 1.75rem 1.5rem;
   display: flex;
   flex-direction: column;
@@ -20,14 +21,16 @@
 
 .title {
   margin: 0;
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
 }
 
 .subtitle {
   margin: 0 0 0.5rem;
-  color: #9a9a9a;
+  color: var(--text-dim);
   font-size: 0.9rem;
 }
 
@@ -36,33 +39,35 @@
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.85rem;
-  color: #c8c8c8;
+  font-weight: 500;
+  color: var(--text-dim);
 }
 
 .input {
-  background: #0d0d0d;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: #eee;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
   padding: 0.55rem 0.65rem;
   font: inherit;
+  font-family: var(--font-ui);
 }
 
 .input:focus {
-  outline: 1px solid #666;
-  border-color: #555;
+  border-color: var(--accent);
 }
 
 .button {
   margin-top: 0.35rem;
-  background: #2a5cff;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 0.6rem 0.75rem;
   font: inherit;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
+  transition: filter var(--motion);
 }
 
 .button:disabled {
@@ -71,11 +76,11 @@
 }
 
 .button:hover:not(:disabled) {
-  background: #3d6cff;
+  filter: brightness(1.05);
 }
 
 .error {
   margin: 0;
-  color: #f07178;
+  color: var(--alert);
   font-size: 0.85rem;
 }

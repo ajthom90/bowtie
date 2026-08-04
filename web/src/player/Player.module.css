@@ -1,0 +1,219 @@
+.stage {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  z-index: 10;
+}
+
+.videoWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  position: relative;
+}
+
+.video {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: var(--bg);
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--motion);
+}
+
+.overlayHidden {
+  opacity: 0;
+}
+
+.overlayVisible {
+  opacity: 1;
+}
+
+.topLeft {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.channelNum {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+}
+
+.programTitle {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--text);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  max-width: min(28rem, 70vw);
+}
+
+.channelName {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(transparent, rgba(16, 20, 24, 0.92));
+  pointer-events: auto;
+}
+
+.btn {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  filter: brightness(1.05);
+  background: var(--accent);
+}
+
+.select {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.volume input[type='range'] {
+  width: 5rem;
+  accent-color: var(--accent);
+}
+
+.spacer {
+  flex: 1;
+  min-width: 0.5rem;
+}
+
+.stats {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--accent);
+  background: rgba(16, 20, 24, 0.88);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  pointer-events: none;
+  min-width: 12rem;
+  white-space: pre;
+}
+
+.statsRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.statsKey {
+  color: var(--text-dim);
+}
+
+.errorBox {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+  background: var(--bg);
+  z-index: 5;
+}
+
+.errorMsg {
+  max-width: 28rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+}
+
+.errorActions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  pointer-events: none;
+}
