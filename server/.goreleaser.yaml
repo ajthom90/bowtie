@@ -1,0 +1,60 @@
+# GoReleaser config for bowtie binaries.
+# Invoked from CI with workdir=server after the web UI is built into internal/web/dist.
+# https://goreleaser.com
+version: 2
+
+project_name: bowtie
+
+builds:
+  - id: bowtie
+    main: ./cmd/bowtie
+    binary: bowtie
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Phase 1 ships darwin/arm64 only (Apple Silicon).
+      - goos: darwin
+        goarch: amd64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      # Paths relative to this config (server/); LICENSE + README live at repo root.
+      - src: ../LICENSE
+        dst: LICENSE
+      - src: ../README.md
+        dst: README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: ajthom90
+    name: bowtie
+  name_template: "v{{.Version}}"
+  draft: false
+  prerelease: auto

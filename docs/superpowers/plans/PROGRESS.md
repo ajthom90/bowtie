@@ -618,3 +618,40 @@ mapping + numeric-aware sort), EPG source status/refresh, Users CRUD with qualit
 live Sessions with terminate + encoder status readout. 36 vitest tests total across web,
 tsc clean, role-guarded routes. Verified: tsc --noEmit, vitest run, vite build, go test
 ./internal/web/ all green.
+
+## Task 21
+
+**Date:** 2026-08-04
+
+### Built
+
+- `.github/workflows/release.yml` on tag `v*`:
+  - **docker** job: qemu + buildx multi-arch (`linux/amd64`, `linux/arm64`) → push `ghcr.io/ajthom90/bowtie:<version>` and `:latest` (GHCR login via `GITHUB_TOKEN`, `permissions: packages: write` + `contents: write`)
+  - **goreleaser** job: Node 22 `npm ci` + Vite build into `server/internal/web/dist`, then GoReleaser v2 release (CGO off) attaching binaries + changelog to a GitHub Release
+- `server/.goreleaser.yaml`: project_name `bowtie`, main `./cmd/bowtie`, builds darwin/arm64 + linux/amd64 + linux/arm64, ldflags stamp `main.version`, archives include repo-root LICENSE + README
+- `cmd/bowtie/main.go`: `const version` → `var version = "0.1.0-dev"` so `-X main.version=` works
+- `README.md`: Install section — GHCR image (recommended) + release binary table + from-source; Quickstart kept for first-run flow
+
+### Notes / deltas
+
+- Step 2 end-to-end (buildx push + real Release) is **(validated at rc tag)** — orchestrator tags `v0.1.0-rc1`; no tags created in this task.
+- No `git push` / `gh` / tags (standing rules).
+
+### Verification (evidence)
+
+```
+$ cd server && go run github.com/goreleaser/goreleaser/v2@latest check
+# checking path=.goreleaser.yaml
+# 1 configuration file(s) validated
+
+$ cd server && go build ./cmd/bowtie && ./bowtie --help 2>&1 | head -3 && rm -f bowtie
+Usage of ./bowtie:
+  -data-dir string
+    data directory (env BOWTIE_DATA_DIR) (default "./data")
+
+$ cd server && CGO_ENABLED=0 go test ./... && golangci-lint run
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie	1.170s
+ok  	github.com/ajthom90/bowtie/server/internal/api	(cached)
+# … all packages ok …
+0 issues.
+```

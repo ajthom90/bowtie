@@ -704,9 +704,9 @@ Dockerfile (multi-stage): 1) `node:22-slim` build web; 2) `golang:1.22` build se
 - Create: `.github/workflows/release.yml`, `server/.goreleaser.yaml`
 - Modify: `README.md` (install section: ghcr image + binaries)
 
-- [ ] **Step 1:** `release.yml` on tag `v*`: (a) buildx multi-arch (linux/amd64, linux/arm64) push `ghcr.io/ajthom90/bowtie:{version,latest}`; (b) GoReleaser: `bowtie` binaries darwin/arm64, linux/amd64, linux/arm64 (CGO off), attach to GitHub Release with changelog.
-- [ ] **Step 2:** Validate: `goreleaser check` + `act`-free dry run isn't possible for buildx — rely on tagging `v0.1.0-rc1` after merge to test the pipeline end-to-end.
-- [ ] **Step 3: Commit** `git commit -m "feat: release workflow with multi-arch images and binaries"`
+- [x] **Step 1:** `release.yml` on tag `v*`: (a) buildx multi-arch (linux/amd64, linux/arm64) push `ghcr.io/ajthom90/bowtie:{version,latest}`; (b) GoReleaser: `bowtie` binaries darwin/arm64, linux/amd64, linux/arm64 (CGO off), attach to GitHub Release with changelog.
+- [x] **Step 2:** Validate: `goreleaser check` + `act`-free dry run isn't possible for buildx — rely on tagging `v0.1.0-rc1` after merge to test the pipeline end-to-end. (validated at rc tag)
+- [x] **Step 3: Commit** `git commit -m "feat: release workflow with multi-arch images and binaries"`
 
 ### Task 22: OpenAPI completeness + final review sweep
 

@@ -26,7 +26,8 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
-const version = "0.1.0-dev"
+// Stamped by GoReleaser via -ldflags "-X main.version=...". Dev default stays "0.1.0-dev".
+var version = "0.1.0-dev"
 
 func main() {
 	dataDirDefault := "./data"

@@ -16,9 +16,19 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 
 ---
 
-## Quickstart
+## Install
 
-### Docker Compose (recommended)
+### Docker image (recommended)
+
+Images are multi-arch (`linux/amd64`, `linux/arm64`) and published to GHCR on every version tag:
+
+```bash
+docker pull ghcr.io/ajthom90/bowtie:latest
+# or pin a release:
+docker pull ghcr.io/ajthom90/bowtie:0.1.0
+```
+
+Compose (recommended for a permanent install):
 
 ```bash
 # From a checkout, or drop deploy/docker-compose.yml into a folder and:
@@ -27,30 +37,33 @@ docker compose up -d
 docker compose logs -f
 ```
 
-On first start, Bowtie creates an `admin` user and **prints the password once** in the logs:
+The Compose file uses `ghcr.io/ajthom90/bowtie:latest`, mounts `/dev/dri` for hardware encode, and keeps data in the `bowtie-data` volume.
 
-```text
-created admin user "admin" with password "…" — change it after login
-```
-
-Then:
-
-1. Open **http://localhost:8400** (or `http://<host>:8400` on your LAN).
-2. Log in as `admin` and **change the password** (Profile / password API).
-3. **Admin → Tuners** — add your HDHomeRun by IP if it is not discovered automatically.
-4. **Admin → Channels** — enable the channels you want to stream.
-5. Open the **guide**, pick a channel, and watch.
-
-Persistent data lives in the `bowtie-data` Docker volume (`/data` in the container). HLS segments use a tmpfs mount so they do not wear the volume.
-
-Image: `ghcr.io/ajthom90/bowtie:latest` (published by the release workflow).
-
-To build locally:
+To build the image yourself:
 
 ```bash
 docker build -f deploy/Dockerfile -t bowtie:dev .
 docker run --rm -p 8400:8400 -v bowtie-data:/data bowtie:dev
 ```
+
+### Release binaries
+
+Each GitHub Release attaches pre-built `bowtie` binaries (web UI embedded, `CGO_ENABLED=0`):
+
+| Platform | Archive |
+|----------|---------|
+| macOS Apple Silicon | `bowtie_*_darwin_arm64.tar.gz` |
+| Linux x86_64 | `bowtie_*_linux_amd64.tar.gz` |
+| Linux arm64 | `bowtie_*_linux_arm64.tar.gz` |
+
+```bash
+# Example: latest Linux amd64
+curl -sL "https://github.com/ajthom90/bowtie/releases/latest/download/bowtie_$(curl -sL https://api.github.com/repos/ajthom90/bowtie/releases/latest | grep -oP '"tag_name": "v\K[^"]+')_linux_amd64.tar.gz" \
+  | tar -xz
+./bowtie --data-dir ./data
+```
+
+Or download from the [Releases](https://github.com/ajthom90/bowtie/releases) page. You still need **FFmpeg** on `PATH` (or set `BOWTIE_FFMPEG_PATH`).
 
 ### From source
 
@@ -67,6 +80,26 @@ Dev loop (two terminals):
 make dev-server     # Go API on :8400
 make dev            # Vite on :5173, proxies /api → :8400
 ```
+
+---
+
+## Quickstart
+
+On first start, Bowtie creates an `admin` user and **prints the password once** in the logs:
+
+```text
+created admin user "admin" with password "…" — change it after login
+```
+
+Then:
+
+1. Open **http://localhost:8400** (or `http://<host>:8400` on your LAN).
+2. Log in as `admin` and **change the password** (Profile / password API).
+3. **Admin → Tuners** — add your HDHomeRun by IP if it is not discovered automatically.
+4. **Admin → Channels** — enable the channels you want to stream.
+5. Open the **guide**, pick a channel, and watch.
+
+Persistent data lives under `--data-dir` / `BOWTIE_DATA_DIR` (Docker: the `bowtie-data` volume at `/data`). HLS segments use a tmpfs mount in Compose so they do not wear the volume.
 
 ---
 
