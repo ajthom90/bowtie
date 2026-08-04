@@ -389,3 +389,11 @@ ok  	github.com/ajthom90/bowtie/server/internal/api	…
 ok  	github.com/ajthom90/bowtie/server/internal/web	…
 # (+ all other packages ok)
 ```
+
+## Task 14 (worktree track/stream)
+2026-08-04 — Stream session manager: create/join by SessionKey, viewer reap (30s) + session
+grace (60s), crash restart with 1s..30s backoff and healthy-reset, ctx-cancel teardown,
+SessionDirOf, injectable StreamURL/Clock/Runner. 13 tests + -race clean.
+Review found a duplicate-key race that could register a dead session (proc stopped, dir
+deleted, restarts never recreate dir); fixed in a follow-up commit with a bounded 3-attempt
+create-or-join retry, MkdirAll on restart, and a deterministic race test.

@@ -549,10 +549,10 @@ type Process interface { Done() <-chan error; Stop() }
 type Runner interface { Start(ctx context.Context, spec transcode.JobSpec) (Process, error) }
 ```
 
-- [ ] **Step 1: Failing tests** — with a stub Runner (writes a fake `live.m3u8` immediately; Done channel controllable) + fake clock: `TestStartCreatesSession`, `TestSecondViewerSharesSession` (same caps → 1 runner start, 2 viewers), `TestDifferentQualityNewSession`, `TestViewerReapAndSessionGrace` (advance clock: viewer reaped at >30s, session torn down 60s after empty), `TestCrashRestartBackoff` (Done fires error → runner restarted; assert 1s then 2s delays via fake clock), `TestTerminate`.
-- [ ] **Step 2: Run** — FAIL. **Implement** (mutex-guarded maps; per-session goroutine supervising Process).
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: Commit** `git commit -m "feat: shared stream sessions with reaping and crash restart"`
+- [x] **Step 1: Failing tests** — with a stub Runner (writes a fake `live.m3u8` immediately; Done channel controllable) + fake clock: `TestStartCreatesSession`, `TestSecondViewerSharesSession` (same caps → 1 runner start, 2 viewers), `TestDifferentQualityNewSession`, `TestViewerReapAndSessionGrace` (advance clock: viewer reaped at >30s, session torn down 60s after empty), `TestCrashRestartBackoff` (Done fires error → runner restarted; assert 1s then 2s delays via fake clock), `TestTerminate`.
+- [x] **Step 2: Run** — FAIL. **Implement** (mutex-guarded maps; per-session goroutine supervising Process).
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: Commit** `git commit -m "feat: shared stream sessions with reaping and crash restart"`
 
 ### Task 15: Stream HTTP endpoints + signed tokens
 
