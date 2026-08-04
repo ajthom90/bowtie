@@ -159,3 +159,47 @@ covering caps/user-cap/MaxHeight clamping, HEVC fallback, forced-backend errors.
 Tagged e2e transcoded generated MPEG-2/AC-3 → HLS on this machine via libx264 AND h264_videotoolbox;
 ffprobe confirmed h264+aac segments (2 segs each). Deviation: e2e generates its own input instead of
 using hdhrfake (branch isolation); Task 14's session tests still cover hdhrfake integration.
+
+## Task 5
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/api/admin_handlers.go`: admin user CRUD
+  - `GET /api/v1/admin/users` — list users (no password hashes)
+  - `POST /api/v1/admin/users` — create `{username,password,role,maxQuality}` → 201
+  - `PATCH /api/v1/admin/users/{id}` — optional `role`, `maxQuality`, `password`
+  - `DELETE /api/v1/admin/users/{id}` — 409 when deleting the last admin; also refuse demoting last admin on PATCH
+- Routes wired in `server.go` via `auth.RequireAdmin` (viewer → 403)
+- `server/internal/hdhr/hdhrfake`: in-process fake HDHomeRun
+  - Own `LineupEntry` type (deliberate JSON-level coupling; real `hdhr` arrives Task 6)
+  - `GET /discover.json`, `/lineup.json`, `/status.json`, `/auto/v{n}`
+  - `/auto/v{n}` loops embedded `testdata/fixture.ts` at ~real-time (~376 KB/s via 50ms ticker); 503 body `all tuners in use` when `ActiveStreams() == TunerCount`
+- Fixture copied (not regenerated) from scratchpad: 729,440-byte MPEG-2/AC-3 720x480 interlaced testsrc2; documented in `testdata/README.md`
+- `docs/api/openapi.yaml`: admin/users paths + CreateUserRequest/PatchUserRequest + Forbidden/NotFound responses
+- Tests: `api/admin_users_test.go` (CRUD, viewer 403, last-admin 409), `hdhrfake/fake_test.go` (discover/lineup/status, dual stream + 503 + ActiveStreams decrement)
+
+### Notes / deltas
+
+- Store/auth APIs matched the plan — no interface changes.
+- Create returns **201** (plan listed endpoint shape without status; 201 is conventional for create).
+- Last-admin protection also applied to demotion via PATCH (extra safety; delete 409 was the only plan requirement).
+- Unique-username collision on create → 409 (string match on sqlite constraint error).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	2.137s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.426s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.082s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.388s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.156s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.332s
+```
+

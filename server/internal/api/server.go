@@ -34,6 +34,13 @@ func New(deps Deps) http.Handler {
 	mux.Handle("GET /api/v1/me", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleMe)))
 	mux.Handle("POST /api/v1/me/password", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
 
+	// Admin user management (Task 5).
+	admin := auth.RequireAdmin(deps.Auth)
+	mux.Handle("GET /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminListUsers)))
+	mux.Handle("POST /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminCreateUser)))
+	mux.Handle("PATCH /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminPatchUser)))
+	mux.Handle("DELETE /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminDeleteUser)))
+
 	return mux
 }
 

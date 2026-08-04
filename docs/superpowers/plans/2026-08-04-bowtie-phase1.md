@@ -275,11 +275,11 @@ func (f *Fake) ActiveStreams() int
 
   - Fixture: `testdata/fixture.ts` is a ~2s 480i MPEG-2/AC-3 transport stream ≤ 1 MiB, generated once on a dev machine with `ffmpeg -f lavfi -i "testsrc2=duration=2:size=720x480:rate=29.97" -f lavfi -i "sine=frequency=440:duration=2" -c:v mpeg2video -b:v 2M -flags +ilme+ildct -c:a ac3 -b:a 192k -f mpegts fixture.ts` and committed (binary test fixture; document the command in a sibling README.md).
 
-- [ ] **Step 1: Failing tests** — users CRUD via httptest (admin token vs viewer token 403; last-admin delete 409). Fake: `TestFakeServesDiscoverLineupStatus`, `TestFakeStreamsAndCountsTuners` (open 2 readers on 2-tuner fake → both stream bytes; third gets 503; close one → ActiveStreams decrements).
-- [ ] **Step 2: Run** — FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Update openapi.yaml (admin/users). Commit** `git commit -m "feat: admin user management api; test fake hdhomerun server"`
+- [x] **Step 1: Failing tests** — users CRUD via httptest (admin token vs viewer token 403; last-admin delete 409). Fake: `TestFakeServesDiscoverLineupStatus`, `TestFakeStreamsAndCountsTuners` (open 2 readers on 2-tuner fake → both stream bytes; third gets 503; close one → ActiveStreams decrements).
+- [x] **Step 2: Run** — FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Update openapi.yaml (admin/users). Commit** `git commit -m "feat: admin user management api; test fake hdhomerun server"`
 
 ### Task 6: HDHomeRun client + discovery + Tuner Manager
 
