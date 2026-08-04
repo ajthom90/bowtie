@@ -362,11 +362,11 @@ func ParseTime(s string) (time.Time, error) // layouts: "20060102150405 -0700", 
 func ToStore(tv *TV) ([]store.EPGChannel, []store.Program) // Source:"xmltv"; Callsign = shortest display-name; skip programmes with unparseable times (count returned via third value: skipped int)
 ```
 
-- [ ] **Step 1: Golden file** — hand-write `testdata/guide.xml`: 2 channels (`ch1.example` "WABC (5.1 ABC)", `ch2.example`), 3 programmes incl. one with timezone offset `-0500`, one UTC-no-offset, one with bad start (skip case).
-- [ ] **Step 2: Failing tests** — `TestParseGolden` (counts, first programme fields, time equality against `time.Date(...)` values), `TestToStoreSkipsBad` (skipped==1).
-- [ ] **Step 3: Run** — FAIL. **Implement** with `encoding/xml` streaming decoder (`xml.NewDecoder`, handle large files without slurping: decode `<channel>`/`<programme>` elements one at a time).
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** `git commit -m "feat: xmltv parser with golden-file tests"`
+- [x] **Step 1: Golden file** — hand-write `testdata/guide.xml`: 2 channels (`ch1.example` "WABC (5.1 ABC)", `ch2.example`), 3 programmes incl. one with timezone offset `-0500`, one UTC-no-offset, one with bad start (skip case).
+- [x] **Step 2: Failing tests** — `TestParseGolden` (counts, first programme fields, time equality against `time.Date(...)` values), `TestToStoreSkipsBad` (skipped==1).
+- [x] **Step 3: Run** — FAIL. **Implement** with `encoding/xml` streaming decoder (`xml.NewDecoder`, handle large files without slurping: decode `<channel>`/`<programme>` elements one at a time).
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Commit** `git commit -m "feat: xmltv parser with golden-file tests"`
 
 ### Task 9: Schedules Direct client
 
@@ -392,10 +392,10 @@ func (c *Client) ToStore(lineup Lineup, scheds []StationSchedule, details map[st
 
 **Implementation note for Grok:** verify request/response shapes against the SD wiki (https://github.com/SchedulesDirect/JSON-Service/wiki) with WebFetch before coding; the shapes above are the contract our code consumes — adapt JSON tags to reality, keep Go signatures as written.
 
-- [ ] **Step 1: Failing tests** — httptest fake SD: token flow (401 without token header afterwards), lineup parse, schedules batch request body assertion, programs batching (600 IDs → 2 POSTs), `ToStore` mapping (fixed times).
-- [ ] **Step 2: Run** — FAIL. **Implement.**
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: Commit** `git commit -m "feat: schedules direct client"`
+- [x] **Step 1: Failing tests** — httptest fake SD: token flow (401 without token header afterwards), lineup parse, schedules batch request body assertion, programs batching (600 IDs → 2 POSTs), `ToStore` mapping (fixed times).
+- [x] **Step 2: Run** — FAIL. **Implement.**
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: Commit** `git commit -m "feat: schedules direct client"`
 
 ### Task 10: EPG service + guide API
 

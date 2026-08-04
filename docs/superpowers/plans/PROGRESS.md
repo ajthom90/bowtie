@@ -293,3 +293,13 @@ ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.303s
 ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.227s
 ```
 
+
+## Task 8 (worktree track/epg)
+2026-08-04 — XMLTV parser: streaming element-wise decode, golden-file tests (timezone offset,
+UTC-no-offset, bad-time skip case), ParseTime layouts per plan. Suite green.
+
+## Task 9 (worktree track/epg)
+2026-08-04 — Schedules Direct client: token flow with re-auth retry, lineup/schedules/programs
+(500-batching), ToStore. 7 tests green against httptest fake SD. Wire-shape deltas found against
+the SD wiki and adopted: TOKEN_EXPIRED is code 4006 (not 4003); POST /programs returns an array
+keyed by embedded programID (not a map); multiple StationSchedule entries per station handled.
