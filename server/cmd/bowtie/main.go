@@ -7,9 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/api"
@@ -41,39 +45,69 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Background stack hangs off its own root ctx (cancelled only in shutdown)
+	// so SIGTERM sequence can be: stop HTTP → cancel workers → close store.
+	addr, shutdown, err := run(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("run: %v", err)
+	}
+	log.Printf("bowtie %s listening on %s (data=%s)", version, addr, cfg.DataDir)
+
+	<-sigCtx.Done()
+	log.Printf("shutdown signal received")
+	shutdown()
+}
+
+// run assembles the full server stack and starts listening.
+// Background work (tuner refresh, EPG, stream manager) hangs off a root context
+// that is cancelled only by the returned shutdown func (HTTP stop first, then
+// cancel, then store close). The parent ctx is reserved for future use /
+// test control of startup lifetime; it is not used as the worker root so that
+// signal handling in main can enforce the graceful-shutdown order.
+// Returns the actual listen address (useful when ListenAddr is ":0" or "127.0.0.1:0").
+func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), err error) {
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
 	if err := os.MkdirAll(cfg.SegmentDir, 0o755); err != nil {
-		log.Fatalf("create segment dir: %v", err)
+		return "", nil, fmt.Errorf("create segment dir: %w", err)
 	}
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "bowtie.db"))
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return "", nil, fmt.Errorf("open store: %w", err)
 	}
-	defer st.Close()
 
 	secret, err := loadOrCreateJWTSecret(st)
 	if err != nil {
-		log.Fatalf("jwt secret: %v", err)
+		_ = st.Close()
+		return "", nil, fmt.Errorf("jwt secret: %w", err)
 	}
 
-	if err := bootstrapAdmin(st); err != nil {
-		log.Fatalf("bootstrap admin: %v", err)
+	if _, err := bootstrapAdmin(st); err != nil {
+		_ = st.Close()
+		return "", nil, fmt.Errorf("bootstrap admin: %w", err)
 	}
 
 	authSvc := &auth.Auth{Secret: secret, Store: st}
 
 	streamSecret, err := loadOrCreateStreamTokenSecret(st)
 	if err != nil {
-		log.Fatalf("stream token secret: %v", err)
+		_ = st.Close()
+		return "", nil, fmt.Errorf("stream token secret: %w", err)
 	}
 
+	// Root context for ALL background goroutines (tuners, epg, stream manager).
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
 	tuners := tuner.New(st, cfg)
-	// Initial refresh (best-effort) then periodic every 60s.
-	go runTunerRefresh(tuners)
+	go runTunerRefresh(rootCtx, tuners)
 
 	epgSvc := epg.NewService(st, cfg)
-	// Background EPG refresh loops (xmltv / schedules direct when configured).
-	go epgSvc.Run(context.Background())
+	go epgSvc.Run(rootCtx)
 
 	// Probe encoders once at startup; cache for negotiation + admin endpoint.
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -88,9 +122,7 @@ func main() {
 		Caps:   caps,
 		Runner: &stream.FFmpegRunner{Path: cfg.FFmpegPath},
 	})
-	streamCtx, streamCancel := context.WithCancel(context.Background())
-	defer streamCancel()
-	go streamMgr.Run(streamCtx)
+	go streamMgr.Run(rootCtx)
 
 	apiHandler := api.New(api.Deps{
 		Cfg:               cfg,
@@ -103,8 +135,6 @@ func main() {
 		StreamTokenSecret: streamSecret,
 	})
 
-	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -112,29 +142,82 @@ func main() {
 	})
 	mux.Handle("/", apiHandler)
 
-	srv := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: mux,
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		rootCancel()
+		_ = st.Close()
+		return "", nil, fmt.Errorf("listen %s: %w", cfg.ListenAddr, err)
 	}
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("serve: %v", err)
+	actualAddr := ln.Addr().String()
+
+	srv := &http.Server{Handler: mux}
+
+	serveErr := make(chan error, 1)
+	go func() {
+		err := srv.Serve(ln)
+		if err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+			return
+		}
+		serveErr <- nil
+	}()
+
+	var once sync.Once
+	doShutdown := func() {
+		once.Do(func() {
+			log.Printf("shutdown: stopping HTTP (10s timeout)")
+			httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer httpCancel()
+			if err := srv.Shutdown(httpCtx); err != nil {
+				log.Printf("shutdown: http.Server.Shutdown: %v", err)
+			}
+
+			log.Printf("shutdown: cancelling root context (sessions, tuners, epg)")
+			rootCancel()
+
+			// Brief wait so stream manager reaper can finish teardown.
+			time.Sleep(100 * time.Millisecond)
+
+			log.Printf("shutdown: closing store")
+			if err := st.Close(); err != nil {
+				log.Printf("shutdown: store.Close: %v", err)
+			}
+			log.Printf("shutdown: complete")
+		})
 	}
+
+	// Surface unexpected Serve errors (listener already closed is normal on shutdown).
+	go func() {
+		if err := <-serveErr; err != nil {
+			log.Printf("serve error: %v", err)
+		}
+	}()
+
+	return actualAddr, doShutdown, nil
 }
 
-// runTunerRefresh does an immediate Refresh, then every 60s.
-func runTunerRefresh(m *tuner.Manager) {
+// runTunerRefresh does an immediate Refresh, then every 60s until ctx is done.
+func runTunerRefresh(ctx context.Context, m *tuner.Manager) {
 	do := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := m.Refresh(ctx); err != nil {
-			log.Printf("tuner refresh: %v", err)
+		if err := m.Refresh(rctx); err != nil {
+			// Don't log on context cancel during shutdown.
+			if ctx.Err() == nil {
+				log.Printf("tuner refresh: %v", err)
+			}
 		}
 	}
 	do()
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		do()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			do()
+		}
 	}
 }
 
@@ -171,22 +254,24 @@ func loadOrCreateHexSecret(st *store.Store, key string) ([]byte, error) {
 	return secret, nil
 }
 
-func bootstrapAdmin(st *store.Store) error {
+// bootstrapAdmin creates the first admin user when the store is empty.
+// Returns the generated password when a user was created, or "" if users already exist.
+func bootstrapAdmin(st *store.Store) (password string, err error) {
 	n, err := st.CountUsers()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if n > 0 {
-		return nil
+		return "", nil
 	}
 
 	pw, err := randomPassword(16)
 	if err != nil {
-		return err
+		return "", err
 	}
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, err = st.CreateUser(store.User{
 		Username:     "admin",
@@ -196,10 +281,10 @@ func bootstrapAdmin(st *store.Store) error {
 		CreatedAt:    time.Now().UTC(),
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	log.Printf("first run: created admin user %q with password %q — change it after login", "admin", pw)
-	return nil
+	return pw, nil
 }
 
 func randomPassword(n int) (string, error) {

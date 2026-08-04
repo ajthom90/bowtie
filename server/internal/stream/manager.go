@@ -367,6 +367,39 @@ func (m *Manager) SessionDirOf(viewerID string) (string, bool) {
 	return sess.dir, true
 }
 
+// SessionInfoOf returns a snapshot of the session the viewer is attached to.
+func (m *Manager) SessionInfoOf(viewerID string) (SessionInfo, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.viewers[viewerID]
+	if !ok {
+		return SessionInfo{}, false
+	}
+	sess, ok := m.sessions[v.SessionID]
+	if !ok || sess.terminated {
+		return SessionInfo{}, false
+	}
+	viewers := make([]ViewerInfo, 0, len(sess.viewers))
+	for _, vv := range sess.viewers {
+		viewers = append(viewers, ViewerInfo{
+			ID:       vv.ID,
+			Username: vv.Username,
+			LastSeen: vv.LastSeen,
+		})
+	}
+	return SessionInfo{
+		ID:          sess.id,
+		ChannelID:   sess.channelID,
+		ChannelName: sess.channelName,
+		Key:         sess.key,
+		VideoCodec:  sess.decision.VideoCodec,
+		Profile:     sess.decision.Profile.Name,
+		Backend:     string(sess.decision.Backend),
+		Viewers:     viewers,
+		StartedAt:   sess.startedAt,
+	}, true
+}
+
 // Terminate admin-kills a session: stop ffmpeg, remove dir, drop viewers.
 func (m *Manager) Terminate(sessionID string) {
 	m.mu.Lock()

@@ -89,6 +89,28 @@ func (s *stubStreams) SessionDirOf(viewerID string) (string, bool) {
 	return d, ok
 }
 
+func (s *stubStreams) SessionInfoOf(viewerID string) (stream.SessionInfo, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.viewers[viewerID] {
+		return stream.SessionInfo{}, false
+	}
+	for _, info := range s.sessions {
+		for _, v := range info.Viewers {
+			if v.ID == viewerID {
+				return info, true
+			}
+		}
+	}
+	// Default minimal info when registered without an explicit sessions entry.
+	return stream.SessionInfo{
+		VideoCodec:  "h264",
+		Profile:     "high",
+		Backend:     "software",
+		ChannelName: "TEST",
+	}, true
+}
+
 func (s *stubStreams) register(viewerID, dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -662,12 +684,33 @@ func TestE2EStreamLifecycle(t *testing.T) {
 	var sessResp struct {
 		ViewerID    string `json:"viewerId"`
 		PlaylistURL string `json:"playlistUrl"`
+		Session     *struct {
+			VideoCodec  string `json:"videoCodec"`
+			Profile     string `json:"profile"`
+			Backend     string `json:"backend"`
+			ChannelName string `json:"channelName"`
+		} `json:"session"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&sessResp); err != nil {
 		t.Fatal(err)
 	}
 	if sessResp.ViewerID == "" || !strings.Contains(sessResp.PlaylistURL, "token=") {
 		t.Fatalf("session resp=%+v", sessResp)
+	}
+	if sessResp.Session == nil {
+		t.Fatal("create session response missing session object")
+	}
+	if sessResp.Session.VideoCodec != "h264" {
+		t.Errorf("session.videoCodec=%q, want h264", sessResp.Session.VideoCodec)
+	}
+	if sessResp.Session.Profile != "high" {
+		t.Errorf("session.profile=%q, want high", sessResp.Session.Profile)
+	}
+	if sessResp.Session.Backend != "software" {
+		t.Errorf("session.backend=%q, want software", sessResp.Session.Backend)
+	}
+	if sessResp.Session.ChannelName != "WABC" {
+		t.Errorf("session.channelName=%q, want WABC", sessResp.Session.ChannelName)
 	}
 
 	// Fetch playlist — assert rewrite.

@@ -30,6 +30,7 @@ type StreamController interface {
 	Sessions() []stream.SessionInfo
 	Terminate(string)
 	SessionDirOf(viewerID string) (string, bool)
+	SessionInfoOf(viewerID string) (stream.SessionInfo, bool)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -74,10 +75,21 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(streamTokenTTL)
 	tok := stream.SignStreamToken(s.deps.StreamTokenSecret, h.ViewerID, exp)
 	playlistURL := "/api/v1/stream/" + h.ViewerID + "/index.m3u8?token=" + tok
-	writeJSON(w, http.StatusOK, map[string]string{
+
+	// Session overlay fields for the client stats UI (codec/profile/backend/channel).
+	resp := map[string]any{
 		"viewerId":    h.ViewerID,
 		"playlistUrl": playlistURL,
-	})
+	}
+	if info, ok := s.deps.Streams.SessionInfoOf(h.ViewerID); ok {
+		resp["session"] = map[string]string{
+			"videoCodec":  info.VideoCodec,
+			"profile":     info.Profile,
+			"backend":     info.Backend,
+			"channelName": info.ChannelName,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) writeStartError(w http.ResponseWriter, err error) {

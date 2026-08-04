@@ -976,13 +976,32 @@ components:
           $ref: '#/components/schemas/ClientCaps'
     CreateSessionResponse:
       type: object
-      required: [viewerId, playlistUrl]
+      required: [viewerId, playlistUrl, session]
       properties:
         viewerId:
           type: string
         playlistUrl:
           type: string
           description: Path to index.m3u8 with signed token query param
+        session:
+          $ref: '#/components/schemas/CreateSessionSessionInfo'
+    CreateSessionSessionInfo:
+      type: object
+      description: Negotiated session fields for client stats overlay
+      required: [videoCodec, profile, backend, channelName]
+      properties:
+        videoCodec:
+          type: string
+          example: h264
+        profile:
+          type: string
+          example: high
+        backend:
+          type: string
+          example: videotoolbox
+        channelName:
+          type: string
+          example: WABC
     ViewerInfo:
       type: object
       required: [id, username, lastSeen]

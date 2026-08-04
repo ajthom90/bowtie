@@ -593,11 +593,11 @@ Endpoints:
 - Modify: `server/cmd/bowtie/main.go` (final assembly: store→auth→tuners→epg→probe→stream manager→api; graceful shutdown on SIGTERM: stop sessions, close store)
 - Create: `server/cmd/bowtie/main_test.go` (smoke: start on random port with temp dir, hit /healthz and /api/v1/auth/login)
 
-- [ ] **Step 1: Failing smoke test.**
-- [ ] **Step 2: Implement assembly + graceful shutdown.**
-- [ ] **Step 3: Run** `go test ./...` — ALL PASS.
-- [ ] **Step 4 (manual, requires the user's LAN):** `make dev-server`, add the real HDHomeRun IP, enable a channel, `curl` a session, open playlist in VLC/Safari. Document findings in the PR/commit message. This step is best-effort for Grok (no hardware in its environment) — the user validates.
-- [ ] **Step 5: Commit** `git commit -m "feat: full server assembly with graceful shutdown"`
+- [x] **Step 1: Failing smoke test.**
+- [x] **Step 2: Implement assembly + graceful shutdown.**
+- [x] **Step 3: Run** `go test ./...` — ALL PASS.
+- [ ] **Step 4 (manual, requires the user's LAN) (pending user hardware validation):** `make dev-server`, add the real HDHomeRun IP, enable a channel, `curl` a session, open playlist in VLC/Safari. Document findings in the PR/commit message. This step is best-effort for Grok (no hardware in its environment) — the user validates.
+- [x] **Step 5: Commit** `git commit -m "feat: full server assembly with graceful shutdown"`
 
 # Milestone D — Web Viewer
 

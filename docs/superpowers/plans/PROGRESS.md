@@ -451,3 +451,66 @@ ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.262s
 ok  	github.com/ajthom90/bowtie/server/internal/web	0.218s
 ```
 
+## Task 16
+
+**Date:** 2026-08-04
+
+### Built
+
+#### Part 1 — API extension (session info on create)
+
+- `stream.Manager.SessionInfoOf(viewerID) (SessionInfo, bool)` — snapshot of the session a viewer joined
+- `StreamController` interface + stub updated
+- `POST /api/v1/sessions` response now includes:
+  `{"viewerId","playlistUrl","session":{"videoCodec","profile","backend","channelName"}}`
+- `docs/api/openapi.yaml`: `CreateSessionResponse.session` → `CreateSessionSessionInfo`
+- `TestE2EStreamLifecycle` asserts session fields (`h264`/`high`/`software`/`WABC`)
+
+#### Part 2 — Final assembly + graceful shutdown
+
+- `cmd/bowtie/main.go` refactored to testable `run(ctx, cfg) (addr, shutdown, err)`
+  - Assembly order: store → auth secrets/bootstrap → tuners (60s refresh) → epg `Run` → probe → stream manager `Run` → API
+  - **All** background goroutines (tuner refresh, EPG, stream manager) hang off one root ctx
+  - Listen via `net.Listen` so `127.0.0.1:0` returns the real bound address
+  - Graceful shutdown (logged sequence):
+    1. `http.Server.Shutdown` (10s timeout)
+    2. cancel root ctx (stops sessions/ffmpeg via Manager, tickers)
+    3. close store
+  - `bootstrapAdmin` now returns `(password string, err)` for tests (still logs on first run)
+- `cmd/bowtie/main_test.go`:
+  - `TestSmokeAssembledServer` — random free port, `/healthz` 200, login as bootstrap admin 200, clean shutdown ≤15s
+  - `TestBootstrapAdminIdempotent`
+
+### Notes / deltas
+
+- Plan Step 4 (manual real-hardware validation) is **pending-user** — not attempted (no HDHomeRun in agent environment). User should run `make dev-server`, add device IP, enable a channel, curl a session, open playlist in VLC/Safari.
+- Signal handling lives in `main()`; `run` uses an independent root ctx so shutdown can enforce HTTP-first order rather than cancelling workers on SIGTERM before HTTP drain.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie	1.065s
+ok  	github.com/ajthom90/bowtie/server/internal/api	4.403s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.454s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.155s
+ok  	github.com/ajthom90/bowtie/server/internal/epg	0.177s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd	0.224s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv	0.126s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.190s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.455s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.217s
+ok  	github.com/ajthom90/bowtie/server/internal/stream	0.308s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.332s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.229s
+ok  	github.com/ajthom90/bowtie/server/internal/web	0.163s
+
+$ go test -race ./cmd/... ./internal/api/ ./internal/stream/ -count=1
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie	4.069s
+ok  	github.com/ajthom90/bowtie/server/internal/api	46.978s
+ok  	github.com/ajthom90/bowtie/server/internal/stream	1.640s
+```
+
