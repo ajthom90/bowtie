@@ -348,3 +348,44 @@ ok  	github.com/ajthom90/bowtie/server/internal/store	0.223s
 ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.401s
 ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.243s
 ```
+
+## Task 17
+
+**Date:** 2026-08-04
+
+### Built
+
+- `web/`: Vite + React 18 + TypeScript scaffold (React pinned to 18 per plan; create-vite had defaulted to 19)
+  - `src/api/client.ts`: typed `ApiClient` — Bearer attach, single 401 → refresh → retry, then `onAuthFail`; concurrent 401s share one refresh
+  - `src/api/client.test.ts`: vitest (mock fetch) — success after refresh, retry still 401, refresh fail, missing refresh token
+  - `src/auth/AuthContext.tsx`: localStorage tokens + user; refresh on boot; login/logout
+  - `src/auth/Login.tsx` + CSS modules: minimal dark centered card (no design system; Task 18 owns visual language)
+  - `src/App.tsx` / `main.tsx` / `global.css`: signed-in shell placeholder
+  - `vite.config.ts`: dev proxy `/api` → `:8400`; build `outDir` → `server/internal/web/dist`
+- `server/internal/web/embed.go`: `//go:embed all:dist`, SPA fallback to `index.html`, 404 for `/api*`, "bowtie: web ui not built" when no index
+- `server/internal/web/dist/index.html`: committed **placeholder** (gitignored build artifacts via `dist/**` + `!index.html`); `make build-web` overwrites
+- `server/internal/web/embed_test.go`: index serve, SPA fallback, /api rejection
+- `api/server.go`: `mux.Handle("/", web.Handler())` as non-API catch-all
+- Makefile: real `build-web` / `dev` / `dev-server`
+- CI: `web` job (node 22, npm ci, tsc, vitest, build); server job unchanged
+
+### Notes / deltas
+
+- `ApiClient` constructor matches plan `(getToken, onAuthFail)` and adds optional `TokenHooks` for refresh-token read/write required by the 401 retry path.
+- Placeholder dist kept committed so CI `go test` embeds without a prior web build; production binaries still need `make build-web` first.
+
+### Verification (evidence)
+
+```
+$ cd web && npm ci && npx tsc --noEmit && npx vitest run && npm run build
+# vitest: 4 passed (client 401 retry suite)
+# vite build → server/internal/web/dist/{index.html,assets/...}
+
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./...
+ok  	github.com/ajthom90/bowtie/server/internal/api	…
+ok  	github.com/ajthom90/bowtie/server/internal/web	…
+# (+ all other packages ok)
+```

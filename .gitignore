@@ -5,10 +5,16 @@
 data/
 
 # Build artifacts
-server/internal/web/dist/
+# server/internal/web/dist keeps a committed placeholder index.html so
+# //go:embed always has a directory; `make build-web` overwrites contents.
+# Ignore built assets under dist, but keep the placeholder.
+server/internal/web/dist/**
+!server/internal/web/dist/
+!server/internal/web/dist/index.html
 web/node_modules/
 web/dist/
-dist/
+# Top-level binary output only (not server/internal/web/dist)
+/dist/
 /bowtie
 server/bowtie
 

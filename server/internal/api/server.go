@@ -9,6 +9,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
+	"github.com/ajthom90/bowtie/server/internal/web"
 )
 
 // Deps holds dependencies for the HTTP API.
@@ -63,6 +64,10 @@ func New(deps Deps) http.Handler {
 	mux.Handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
 	mux.Handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
 	mux.Handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
+
+	// Embedded SPA (Task 17): catch-all for non-/api paths. More-specific
+	// /api/v1/... patterns above take precedence in Go 1.22 ServeMux.
+	mux.Handle("/", web.Handler())
 
 	return mux
 }

@@ -634,11 +634,11 @@ var dist embed.FS
 func Handler() http.Handler // serves dist; SPA fallback: unknown non-/api paths → index.html; if dist empty (dev build without web), serve 200 "bowtie: web ui not built"
 ```
 
-- [ ] **Step 1: Scaffold** `npm create vite@latest` (react-ts), prune boilerplate.
-- [ ] **Step 2: Failing tests** — vitest: ApiClient retry-on-401-once logic (mock fetch); Go: embed handler SPA fallback.
-- [ ] **Step 3: Implement** client, AuthContext (tokens in localStorage; refresh on boot), Login page; wire `web.Handler()` into `api/server.go` as the non-/api fallback.
-- [ ] **Step 4: Run** `npm run build && cd ../server && go test ./...` + manual: `make dev` (vite) login against dev server.
-- [ ] **Step 5: Commit** `git commit -m "feat: web scaffold with auth flow, embedded spa serving"`
+- [x] **Step 1: Scaffold** `npm create vite@latest` (react-ts), prune boilerplate.
+- [x] **Step 2: Failing tests** — vitest: ApiClient retry-on-401-once logic (mock fetch); Go: embed handler SPA fallback.
+- [x] **Step 3: Implement** client, AuthContext (tokens in localStorage; refresh on boot), Login page; wire `web.Handler()` into `api/server.go` as the non-/api fallback.
+- [x] **Step 4: Run** `npm run build && cd ../server && go test ./...` + manual: `make dev` (vite) login against dev server.
+- [x] **Step 5: Commit** `git commit -m "feat: web scaffold with auth flow, embedded spa serving"`
 
 ### Task 18: Guide + player
 

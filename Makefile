@@ -1,4 +1,4 @@
-.PHONY: build test lint dev build-web
+.PHONY: build test lint dev build-web dev-server
 
 # CGO is always disabled for clean cross-compilation.
 export CGO_ENABLED=0
@@ -8,32 +8,20 @@ build: build-web
 	cd server && go build -o ../dist/bowtie ./cmd/bowtie
 
 build-web:
-	@if [ -d web ] && [ -f web/package.json ]; then \
-		cd web && npm ci && npm run build; \
-	else \
-		echo "web not yet scaffolded"; \
-	fi
+	cd web && npm ci && npm run build
 
 test:
 	cd server && go test ./...
-	@if [ -d web ] && [ -f web/package.json ]; then \
-		cd web && npm test; \
-	else \
-		echo "web not yet scaffolded"; \
-	fi
+	cd web && npm ci && npm test
 
 lint:
 	cd server && golangci-lint run ./...
-	@if [ -d web ] && [ -f web/package.json ]; then \
-		cd web && npm run lint; \
-	else \
-		echo "web not yet scaffolded"; \
-	fi
+	cd web && npm run lint
 
+# Vite dev server (proxies /api → :8400). Run the Go server separately:
+#   make dev-server
 dev:
-	@if [ -d web ] && [ -f web/package.json ]; then \
-		cd web && npm run dev; \
-	else \
-		echo "web not yet scaffolded — starting server only"; \
-		cd server && go run ./cmd/bowtie --data-dir ../data; \
-	fi
+	cd web && npm run dev
+
+dev-server:
+	cd server && go run ./cmd/bowtie --data-dir ../data

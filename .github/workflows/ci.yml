@@ -29,4 +29,28 @@ jobs:
         env:
           CGO_ENABLED: "0"
 
-  # web job added in Task 17
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install
+        run: npm ci
+
+      - name: typecheck
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: test
+        run: npx vitest run
+
+      - name: build
+        run: npm run build
