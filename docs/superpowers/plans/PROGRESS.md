@@ -451,3 +451,36 @@ ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.262s
 ok  	github.com/ajthom90/bowtie/server/internal/web	0.218s
 ```
 
+
+## Task 18
+
+**Date:** 2026-08-04
+
+### Built
+
+- Design system in `web/src/global.css`: broadcast tokens (`--bg`, `--surface`, `--accent` amber, etc.), focus ring, reduced-motion
+- Self-hosted fonts via `@fontsource/*`: Barlow Condensed, IBM Plex Sans, IBM Plex Mono
+- `web/src/guide/guideModel.ts` + tests: `layoutRow` (clip/gap/percent), `halfHourTicks`, `nowLinePct`, window paging helpers
+- `web/src/guide/Guide.tsx`: sticky channel column (big condensed numbers), 30-min grid, NOW line, program cells with on-air accent border, prev/next/now paging, click → Player
+- `web/src/player/caps.ts` + tests: `detectCaps` (h264 always; hevc via MSE or Safari canPlayType; aac/ac3), `canPlayNativeHls`
+- `web/src/player/Player.tsx`: hls.js (or native HLS), session create/delete, quality re-session, overlay controls, stats overlay (tolerates missing `session` meta → "—"), 503 tuner-busy copy
+- `ApiClient`: `getGuide`, `getChannels`, `createSession`, `deleteSession` + typed session response with optional `session`
+- Deps: `hls.js`, `@fontsource/barlow-condensed`, `@fontsource/ibm-plex-sans`, `@fontsource/ibm-plex-mono`
+- App shell routes Guide ↔ Player; Login restyled to design tokens
+
+### Notes / deltas
+
+- `CreateSessionResponse.session` optional (parallel branch may add it); stats show "—" for missing fields.
+- Unload cleanup uses `fetch(..., { method: 'DELETE', keepalive: true })` because `sendBeacon` is POST-only and cannot DELETE. Also calls `sendBeacon` with stream-token query as a secondary best-effort signal. Uses `beforeunload` + `pagehide` instead of `visibilitychange-hidden` so alt-tab does not tear down a live session (pagehide covers mobile unload).
+- Quality ladder labels: Original / High / Medium / Low; profile sent via `caps.profile`.
+
+### Verification (evidence)
+
+```
+$ cd web && npx tsc --noEmit && npx vitest run && npm run build
+# vitest: 23 passed (guideModel 12, caps 7, client 4)
+# vite build → server/internal/web/dist/
+
+$ cd server && CGO_ENABLED=0 go test ./internal/web/
+ok  	github.com/ajthom90/bowtie/server/internal/web	0.122s
+```

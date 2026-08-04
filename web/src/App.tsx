@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { Login } from './auth/Login'
+import { Guide, type WatchTarget } from './guide/Guide'
+import { Player } from './player/Player'
 import styles from './App.module.css'
 
 function Shell() {
-  const { user, ready, logout } = useAuth()
+  const { user, ready } = useAuth()
+  const [watching, setWatching] = useState<WatchTarget | null>(null)
 
   if (!ready) {
     return (
@@ -17,25 +21,11 @@ function Shell() {
     return <Login />
   }
 
-  return (
-    <div className={styles.app}>
-      <header className={styles.header}>
-        <strong>Bowtie</strong>
-        <div className={styles.headerRight}>
-          <span className={styles.muted}>
-            {user.username}
-            {user.role === 'admin' ? ' · admin' : ''}
-          </span>
-          <button type="button" className={styles.linkBtn} onClick={() => void logout()}>
-            Sign out
-          </button>
-        </div>
-      </header>
-      <main className={styles.main}>
-        <p className={styles.muted}>Signed in. Guide and player arrive in Task 18.</p>
-      </main>
-    </div>
-  )
+  if (watching) {
+    return <Player target={watching} onBack={() => setWatching(null)} />
+  }
+
+  return <Guide onWatch={setWatching} />
 }
 
 export default function App() {

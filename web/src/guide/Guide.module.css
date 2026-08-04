@@ -1,0 +1,364 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.toolbarLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.windowLabel {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.userMeta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-right: 0.35rem;
+}
+
+.btn {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+/* Grid layout: sticky channel col + time body */
+.grid {
+  display: grid;
+  grid-template-columns: var(--channel-col, 9.5rem) 1fr;
+  min-width: max(100%, calc(var(--channel-col, 9.5rem) + 48rem));
+}
+
+.corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  height: 2.25rem;
+}
+
+.timeAxis {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 2.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: stretch;
+}
+
+.timeAxisInner {
+  position: relative;
+  flex: 1;
+  height: 100%;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--line);
+  padding-left: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.nowTag {
+  position: absolute;
+  top: 0.15rem;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--accent-ink);
+  background: var(--accent);
+  padding: 0.05rem 0.3rem;
+  border-radius: 2px;
+  z-index: 2;
+  letter-spacing: 0.04em;
+}
+
+.channelCell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  min-height: 3.5rem;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  appearance: none;
+  border-top: none;
+  border-left: none;
+  color: inherit;
+  transition: background var(--motion);
+}
+
+.channelCell:hover {
+  background: var(--surface-raised);
+}
+
+.channelNum {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.channelMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.callSign {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channelName {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--bg);
+}
+
+.rowPrograms {
+  position: relative;
+  min-height: 3.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.gridlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--line);
+}
+
+.nowLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--accent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.cells {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.35rem 0.5rem;
+  overflow: hidden;
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  appearance: none;
+  transition: background var(--motion);
+}
+
+.cell:hover {
+  background: var(--surface-raised);
+  z-index: 1;
+}
+
+.cellOnAir {
+  border-left: 2px solid var(--accent);
+  padding-left: calc(0.5rem - 1px);
+}
+
+.cellGap {
+  background: transparent;
+  cursor: pointer;
+}
+
+.cellGap:hover {
+  background: color-mix(in srgb, var(--surface-raised) 40%, transparent);
+}
+
+.cellTitle {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cellTime {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 0.15rem;
+}
+
+.cellDesc {
+  display: none;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 0.2rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell:hover .cellDesc {
+  display: block;
+}
+
+.cellEmpty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  appearance: none;
+}
+
+.cellEmpty:hover {
+  background: color-mix(in srgb, var(--surface-raised) 50%, transparent);
+}
+
+.status {
+  padding: 2rem 1.25rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  max-width: 36rem;
+}
+
+.statusError {
+  color: var(--alert);
+}
+
+.emptyGuide {
+  padding: 2rem 1.25rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  max-width: 36rem;
+  line-height: 1.5;
+}

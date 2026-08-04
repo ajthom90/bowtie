@@ -11,6 +11,51 @@ export interface LoginResponse {
   user: User
 }
 
+export interface ViewerChannel {
+  id: number
+  guideNumber: string
+  name: string
+  logoUrl: string
+}
+
+export interface GuideProgram {
+  start: string
+  stop: string
+  title: string
+  subtitle: string
+  description: string
+  category: string
+}
+
+export interface GuideChannel {
+  channelId: number
+  guideNumber: string
+  name: string
+  logoUrl: string
+  programs: GuideProgram[]
+}
+
+export interface ClientCapsPayload {
+  videoCodecs: string[]
+  audioCodecs: string[]
+  maxHeight: number
+  profile: string
+}
+
+export interface SessionMeta {
+  videoCodec?: string
+  profile?: string
+  backend?: string
+  channelName?: string
+}
+
+/** POST /api/v1/sessions — session meta may be absent on older servers. */
+export interface CreateSessionResponse {
+  viewerId: string
+  playlistUrl: string
+  session?: SessionMeta
+}
+
 export type TokenHooks = {
   /** Return the current refresh token (used for silent refresh on 401). */
   getRefreshToken: () => string | null
@@ -65,6 +110,32 @@ export class ApiClient {
     if (!res.ok && res.status !== 204) {
       // Logout is best-effort; ignore body errors.
     }
+  }
+
+  async getGuide(start: Date, stop: Date): Promise<GuideChannel[]> {
+    const q = new URLSearchParams({
+      start: start.toISOString(),
+      stop: stop.toISOString(),
+    })
+    return this.request<GuideChannel[]>('GET', `/api/v1/guide?${q}`)
+  }
+
+  async getChannels(): Promise<ViewerChannel[]> {
+    return this.request<ViewerChannel[]>('GET', '/api/v1/channels')
+  }
+
+  async createSession(
+    channelId: number,
+    caps: ClientCapsPayload,
+  ): Promise<CreateSessionResponse> {
+    return this.request<CreateSessionResponse>('POST', '/api/v1/sessions', {
+      channelId,
+      caps,
+    })
+  }
+
+  async deleteSession(viewerId: string): Promise<void> {
+    await this.request<void>('DELETE', `/api/v1/sessions/${encodeURIComponent(viewerId)}`)
   }
 
   /**
