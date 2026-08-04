@@ -451,18 +451,12 @@ ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.262s
 ok  	github.com/ajthom90/bowtie/server/internal/web	0.218s
 ```
 
-<<<<<<< HEAD
 ## Task 16
-=======
-
-## Task 18
->>>>>>> track/web
 
 **Date:** 2026-08-04
 
 ### Built
 
-<<<<<<< HEAD
 #### Part 1 — API extension (session info on create)
 
 - `stream.Manager.SessionInfoOf(viewerID) (SessionInfo, bool)` — snapshot of the session a viewer joined
@@ -491,28 +485,10 @@ ok  	github.com/ajthom90/bowtie/server/internal/web	0.218s
 
 - Plan Step 4 (manual real-hardware validation) is **pending-user** — not attempted (no HDHomeRun in agent environment). User should run `make dev-server`, add device IP, enable a channel, curl a session, open playlist in VLC/Safari.
 - Signal handling lives in `main()`; `run` uses an independent root ctx so shutdown can enforce HTTP-first order rather than cancelling workers on SIGTERM before HTTP drain.
-=======
-- Design system in `web/src/global.css`: broadcast tokens (`--bg`, `--surface`, `--accent` amber, etc.), focus ring, reduced-motion
-- Self-hosted fonts via `@fontsource/*`: Barlow Condensed, IBM Plex Sans, IBM Plex Mono
-- `web/src/guide/guideModel.ts` + tests: `layoutRow` (clip/gap/percent), `halfHourTicks`, `nowLinePct`, window paging helpers
-- `web/src/guide/Guide.tsx`: sticky channel column (big condensed numbers), 30-min grid, NOW line, program cells with on-air accent border, prev/next/now paging, click → Player
-- `web/src/player/caps.ts` + tests: `detectCaps` (h264 always; hevc via MSE or Safari canPlayType; aac/ac3), `canPlayNativeHls`
-- `web/src/player/Player.tsx`: hls.js (or native HLS), session create/delete, quality re-session, overlay controls, stats overlay (tolerates missing `session` meta → "—"), 503 tuner-busy copy
-- `ApiClient`: `getGuide`, `getChannels`, `createSession`, `deleteSession` + typed session response with optional `session`
-- Deps: `hls.js`, `@fontsource/barlow-condensed`, `@fontsource/ibm-plex-sans`, `@fontsource/ibm-plex-mono`
-- App shell routes Guide ↔ Player; Login restyled to design tokens
-
-### Notes / deltas
-
-- `CreateSessionResponse.session` optional (parallel branch may add it); stats show "—" for missing fields.
-- Unload cleanup uses `fetch(..., { method: 'DELETE', keepalive: true })` because `sendBeacon` is POST-only and cannot DELETE. Also calls `sendBeacon` with stream-token query as a secondary best-effort signal. Uses `beforeunload` + `pagehide` instead of `visibilitychange-hidden` so alt-tab does not tear down a live session (pagehide covers mobile unload).
-- Quality ladder labels: Original / High / Medium / Low; profile sent via `caps.profile`.
->>>>>>> track/web
 
 ### Verification (evidence)
 
 ```
-<<<<<<< HEAD
 $ cd server && CGO_ENABLED=0 go vet ./...
 # (no output — pass)
 
@@ -595,25 +571,50 @@ ok  	github.com/ajthom90/bowtie/server/internal/stream	0.366s
 ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.384s
 ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.229s
 ok  	github.com/ajthom90/bowtie/server/internal/web	0.157s
-=======
+```
+## Task 18
+
+**Date:** 2026-08-04
+
+### Built
+
+- Design system in `web/src/global.css`: broadcast tokens (`--bg`, `--surface`, `--accent` amber, etc.), focus ring, reduced-motion
+- Self-hosted fonts via `@fontsource/*`: Barlow Condensed, IBM Plex Sans, IBM Plex Mono
+- `web/src/guide/guideModel.ts` + tests: `layoutRow` (clip/gap/percent), `halfHourTicks`, `nowLinePct`, window paging helpers
+- `web/src/guide/Guide.tsx`: sticky channel column (big condensed numbers), 30-min grid, NOW line, program cells with on-air accent border, prev/next/now paging, click → Player
+- `web/src/player/caps.ts` + tests: `detectCaps` (h264 always; hevc via MSE or Safari canPlayType; aac/ac3), `canPlayNativeHls`
+- `web/src/player/Player.tsx`: hls.js (or native HLS), session create/delete, quality re-session, overlay controls, stats overlay (tolerates missing `session` meta → "—"), 503 tuner-busy copy
+- `ApiClient`: `getGuide`, `getChannels`, `createSession`, `deleteSession` + typed session response with optional `session`
+- Deps: `hls.js`, `@fontsource/barlow-condensed`, `@fontsource/ibm-plex-sans`, `@fontsource/ibm-plex-mono`
+- App shell routes Guide ↔ Player; Login restyled to design tokens
+
+### Notes / deltas
+
+- `CreateSessionResponse.session` optional (parallel branch may add it); stats show "—" for missing fields.
+- Unload cleanup uses `fetch(..., { method: 'DELETE', keepalive: true })` because `sendBeacon` is POST-only and cannot DELETE. Also calls `sendBeacon` with stream-token query as a secondary best-effort signal. Uses `beforeunload` + `pagehide` instead of `visibilitychange-hidden` so alt-tab does not tear down a live session (pagehide covers mobile unload).
+- Quality ladder labels: Original / High / Medium / Low; profile sent via `caps.profile`.
+
+### Verification (evidence)
+
+```
 $ cd web && npx tsc --noEmit && npx vitest run && npm run build
 # vitest: 23 passed (guideModel 12, caps 7, client 4)
 # vite build → server/internal/web/dist/
 
 $ cd server && CGO_ENABLED=0 go test ./internal/web/
 ok  	github.com/ajthom90/bowtie/server/internal/web	0.122s
->>>>>>> track/web
 ```
 
-## Task 18 (worktree track/web)
-2026-08-04 — Guide grid (sticky channel column with condensed channel numbers, 30-min gridlines,
-amber NOW line, on-air cell lamp) + HLS player (hls.js/native, quality switch via session
-re-create, mono stats overlay, sendBeacon teardown) on the broadcast-amber design system
-(self-hosted Barlow Condensed / IBM Plex Sans / IBM Plex Mono). 23 vitest tests.
-Review fix: Task 18 had committed a built dist/index.html referencing gitignored hashed assets;
-restored the generic placeholder in a follow-up commit.
+### Review fix (Task 18)
+
+Task 18's commit had overwritten the committed dist placeholder with a built
+index.html referencing gitignored hashed assets; the generic placeholder was
+restored in follow-up commit 3b0d17c.
 
 ## Task 19 (worktree track/web)
-2026-08-04 — Admin UI: Tuners (signal bars, add-device, sync), Channels (toggle + EPG mapping +
-numeric-aware sort), EPG source status/refresh, Users CRUD with quality caps, live Sessions with
-terminate + encoder status. 36 vitest tests total, tsc clean, role-guarded routes.
+
+2026-08-04 — Admin UI: Tuners (signal bars, add-device, sync), Channels (toggle + EPG
+mapping + numeric-aware sort), EPG source status/refresh, Users CRUD with quality caps,
+live Sessions with terminate + encoder status readout. 36 vitest tests total across web,
+tsc clean, role-guarded routes. Verified: tsc --noEmit, vitest run, vite build, go test
+./internal/web/ all green.

@@ -679,7 +679,7 @@ export function layoutRow(programs: GuideProgram[], windowStart: Date, windowSto
 
 Pages (admin role only; route guard): **Tuners** (device cards: tuners, signal bars, add-device-by-IP form, sync lineup button), **Channels** (table: enable toggle, EPG mapping dropdown fed by `/admin/epg/channels`, filter box), **EPG** (source status incl. stale warnings + refresh-now), **Users** (CRUD, role, max quality dropdown, reset password), **Sessions** (live sessions w/ viewers, encoder backend from `/admin/transcode`, terminate button; poll every 5s).
 
-- [ ] **Step 1: Failing tests** for pure logic; **Step 2: Implement**; **Step 3: vitest/typecheck/build PASS + manual pass**; **Step 4: Commit** `git commit -m "feat: admin ui for tuners, channels, epg, users, sessions"`
+- [x] **Step 1: Failing tests** for pure logic; **Step 2: Implement**; **Step 3: vitest/typecheck/build PASS + manual pass**; **Step 4: Commit** `git commit -m "feat: admin ui for tuners, channels, epg, users, sessions"`
 
 ---
 
