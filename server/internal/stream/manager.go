@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,6 +28,7 @@ const (
 	restartBackoffCap   = 30 * time.Second
 	reaperInterval      = 5 * time.Second
 	playlistPollEvery   = 20 * time.Millisecond
+	startMaxAttempts    = 3
 )
 
 // Process is a running transcode job supervised by the manager.
@@ -102,6 +104,10 @@ func (m *Manager) now() time.Time {
 // Start joins or creates a session for the channel and returns a viewer handle.
 // Errors: negotiation failure, unknown/disabled channel, stream URL / runner failure,
 // playlist timeout (or process exit before playlist).
+//
+// Create-or-join is retried up to startMaxAttempts times when a duplicate-key race
+// loses to a competing session that then vanishes before we can join it — so we never
+// register a session whose process was already stopped and dir already deleted.
 func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (ViewerHandle, error) {
 	ch, err := m.store.ChannelByID(channelID)
 	if err != nil {
@@ -120,27 +126,47 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 	}
 	key := transcode.SessionKey(channelID, decision)
 
-	m.mu.Lock()
-	if existing, ok := m.byKey[key]; ok && !existing.terminated {
-		h, err := m.addViewerLocked(existing, user.Username)
-		m.mu.Unlock()
-		return h, err
-	}
-	m.mu.Unlock()
-
 	inputURL, err := m.streamURL(ch)
 	if err != nil {
 		// Surface underlying error (Task 15 maps acquisition failures to 503).
 		return ViewerHandle{}, err
 	}
 
+	var lastErr error
+	for attempt := 0; attempt < startMaxAttempts; attempt++ {
+		h, err, retry := m.startAttempt(ctx, user, ch, key, decision, inputURL)
+		if err == nil {
+			return h, nil
+		}
+		if !retry {
+			return ViewerHandle{}, err
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("session start failed after %d attempts", startMaxAttempts)
+	}
+	return ViewerHandle{}, fmt.Errorf("session start failed after %d attempts: %w", startMaxAttempts, lastErr)
+}
+
+// startAttempt tries one join-or-create. retry=true means the caller should try again
+// with a fresh sessionID/dir/process (duplicate-key race left us with a dead candidate).
+func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Channel, key string, decision transcode.Decision, inputURL string) (ViewerHandle, error, bool) {
+	m.mu.Lock()
+	if existing, ok := m.byKey[key]; ok && !existing.terminated {
+		h, err := m.addViewerLocked(existing, user.Username)
+		m.mu.Unlock()
+		return h, err, false
+	}
+	m.mu.Unlock()
+
 	sessionID, err := randomID()
 	if err != nil {
-		return ViewerHandle{}, err
+		return ViewerHandle{}, err, false
 	}
 	dir := filepath.Join(m.cfg.SegmentDir, sessionID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return ViewerHandle{}, fmt.Errorf("mkdir session dir: %w", err)
+		return ViewerHandle{}, fmt.Errorf("mkdir session dir: %w", err), false
 	}
 
 	procCtx, procCancel := context.WithCancel(context.Background())
@@ -149,20 +175,20 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 	if err != nil {
 		procCancel()
 		_ = os.RemoveAll(dir)
-		return ViewerHandle{}, err
+		return ViewerHandle{}, err, false
 	}
 
 	if err := m.waitPlaylist(ctx, dir, proc); err != nil {
 		proc.Stop()
 		procCancel()
 		_ = os.RemoveAll(dir)
-		return ViewerHandle{}, err
+		return ViewerHandle{}, err, false
 	}
 
 	now := m.now()
 	sess := &session{
 		id:          sessionID,
-		channelID:   channelID,
+		channelID:   ch.ID,
 		channelName: ch.Name,
 		key:         key,
 		decision:    decision,
@@ -179,6 +205,7 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 	// Race: another Start may have registered the same key while we waited.
 	if existing, ok := m.byKey[key]; ok && !existing.terminated {
 		m.mu.Unlock()
+		// Abandon our candidate (stop process, remove dir) then try to join the winner.
 		proc.Stop()
 		procCancel()
 		_ = os.RemoveAll(dir)
@@ -186,22 +213,29 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 		if existing, ok := m.byKey[key]; ok && !existing.terminated {
 			h, err := m.addViewerLocked(existing, user.Username)
 			m.mu.Unlock()
-			return h, err
+			return h, err, false
 		}
-		// Other session vanished; fall through and register ours.
+		m.mu.Unlock()
+		// Competing session vanished after we tore down ours. Do not register the
+		// dead candidate (stopped proc, deleted dir) — retry with a fresh attempt.
+		return ViewerHandle{}, fmt.Errorf("duplicate-key race: competing session gone"), true
 	}
 	m.sessions[sessionID] = sess
 	m.byKey[key] = sess
 	h, err := m.addViewerLocked(sess, user.Username)
 	m.mu.Unlock()
 	if err != nil {
-		return ViewerHandle{}, err
+		// Unlikely (randomID failure); tear down what we registered.
+		m.mu.Lock()
+		m.teardownSessionLocked(sess)
+		m.mu.Unlock()
+		return ViewerHandle{}, err, false
 	}
 
 	m.wg.Add(1)
 	go m.supervise(sess)
 
-	return h, nil
+	return h, nil, false
 }
 
 func (m *Manager) addViewerLocked(sess *session, username string) (ViewerHandle, error) {
@@ -403,6 +437,13 @@ func (m *Manager) maintain() {
 func (m *Manager) restartSessionLocked(sess *session) {
 	if sess.procCancel != nil {
 		sess.procCancel()
+	}
+	// Defensive: ensure the segment dir exists (e.g. was removed by a failed race path).
+	if err := os.MkdirAll(sess.dir, 0o755); err != nil {
+		log.Printf("stream: mkdir session dir %s for restart: %v", sess.dir, err)
+		sess.backoff = nextBackoff(sess.backoff)
+		sess.restartAfter = m.now().Add(sess.backoff)
+		return
 	}
 	procCtx, procCancel := context.WithCancel(context.Background())
 	spec := transcode.JobSpec{InputURL: sess.inputURL, OutDir: sess.dir, D: sess.decision}

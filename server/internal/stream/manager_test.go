@@ -635,3 +635,188 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	}
 	t.Fatal("condition not met within timeout")
 }
+
+// gateProcess is a Process whose Stop signals then blocks until release,
+// letting tests force work between unlock and re-lock in Start's race path.
+type gateProcess struct {
+	*stubProcess
+	stopEntered chan struct{} // closed when Stop is entered (once)
+	stopBlock   <-chan struct{}
+	stopOnce    sync.Once
+}
+
+func (p *gateProcess) Stop() {
+	p.stopOnce.Do(func() {
+		if p.stopEntered != nil {
+			close(p.stopEntered)
+		}
+	})
+	if p.stopBlock != nil {
+		<-p.stopBlock
+	}
+	p.stubProcess.Stop()
+}
+
+// raceRunner coordinates the duplicate-key race:
+//   start #1 (B): signals entered, waits for release, returns process with Stop gate
+//   start #2 (A): succeeds immediately (A wins the key)
+//   start #3+ (B retry): succeeds immediately with a live dir
+type raceRunner struct {
+	mu          sync.Mutex
+	starts      int
+	bEntered    chan struct{} // closed when B's first Start begins blocking
+	bRelease    chan struct{} // B waits here before returning from Start
+	bStopGate   chan struct{} // B's abandoned process Stop waits here
+	bStopEnter  chan struct{} // closed when B's abandoned Stop is entered
+	procs       []*stubProcess
+}
+
+func newRaceRunner() *raceRunner {
+	return &raceRunner{
+		bEntered:   make(chan struct{}),
+		bRelease:   make(chan struct{}),
+		bStopGate:  make(chan struct{}),
+		bStopEnter: make(chan struct{}),
+	}
+}
+
+func (r *raceRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, error) {
+	r.mu.Lock()
+	r.starts++
+	n := r.starts
+	r.mu.Unlock()
+
+	if n == 1 {
+		// Viewer B's first create attempt: park until A is fully registered.
+		close(r.bEntered)
+		<-r.bRelease
+	}
+
+	p := newStubProcess()
+	r.mu.Lock()
+	r.procs = append(r.procs, p)
+	r.mu.Unlock()
+
+	path := filepath.Join(spec.OutDir, "live.m3u8")
+	if err := os.WriteFile(path, []byte("#EXTM3U\n"), 0o644); err != nil {
+		return nil, err
+	}
+
+	if n == 1 {
+		// Only the abandoned candidate gates Stop so the test can Terminate A
+		// while B is between unlock and re-lock.
+		return &gateProcess{
+			stubProcess: p,
+			stopEntered: r.bStopEnter,
+			stopBlock:   r.bStopGate,
+		}, nil
+	}
+	return p, nil
+}
+
+func (r *raceRunner) Starts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.starts
+}
+
+// TestDuplicateKeyRaceDoesNotRegisterDeadSession forces the Start race where B
+// loses to A, cleans up its candidate, and A is terminated before B re-locks.
+// B must end with a working session (fresh dir + SessionDirOf), not a dead one.
+func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
+	st, cfg, clock, _, chID, userA := setupEnv(t)
+	runner := newRaceRunner()
+	m := NewManager(ManagerDeps{
+		Cfg:   cfg,
+		Store: st,
+		StreamURL: func(ch store.Channel) (string, error) {
+			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
+		},
+		Caps:   softwareCaps(),
+		Runner: runner,
+		Clock:  clock.Now,
+	})
+
+	userB := store.User{ID: 2, Username: "bob", Role: "viewer"}
+
+	// 1) Begin B first so it enters create (byKey empty) and blocks in Runner.Start.
+	type startResult struct {
+		h   ViewerHandle
+		err error
+	}
+	bDone := make(chan startResult, 1)
+	go func() {
+		h, err := m.Start(context.Background(), userB, chID, clientCaps(""))
+		bDone <- startResult{h, err}
+	}()
+
+	select {
+	case <-runner.bEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("B never entered Runner.Start")
+	}
+
+	// 2) A creates and registers the session for this key.
+	hA, err := m.Start(context.Background(), userA, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start A: %v", err)
+	}
+	if len(m.Sessions()) != 1 {
+		t.Fatalf("want 1 session after A, got %d", len(m.Sessions()))
+	}
+
+	// 3) Release B so it finishes Start → waitPlaylist → double-check sees A.
+	close(runner.bRelease)
+
+	// 4) Wait until B is parked inside proc.Stop() on the race cleanup path.
+	select {
+	case <-runner.bStopEnter:
+	case <-time.After(3 * time.Second):
+		t.Fatal("B never entered race-path Stop")
+	}
+
+	// Terminate A while B holds the unlock-window; re-lock will find no competitor.
+	m.Terminate(hA.SessionID)
+	if len(m.Sessions()) != 0 {
+		t.Fatalf("want 0 sessions after terminate A, got %d", len(m.Sessions()))
+	}
+
+	// 5) Unblock B's abandoned Stop; B should retry and create a live session.
+	close(runner.bStopGate)
+
+	var bRes startResult
+	select {
+	case bRes = <-bDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("B Start did not return")
+	}
+	if bRes.err != nil {
+		t.Fatalf("Start B: %v", bRes.err)
+	}
+	if bRes.h.ViewerID == "" || bRes.h.SessionID == "" || bRes.h.SessionDir == "" {
+		t.Fatalf("empty B handle: %+v", bRes.h)
+	}
+
+	// Working session: dir exists with playlist, SessionDirOf resolves.
+	if _, err := os.Stat(filepath.Join(bRes.h.SessionDir, "live.m3u8")); err != nil {
+		t.Fatalf("B playlist dir not usable: %v (dir=%s)", err, bRes.h.SessionDir)
+	}
+	dir, ok := m.SessionDirOf(bRes.h.ViewerID)
+	if !ok || dir != bRes.h.SessionDir {
+		t.Fatalf("SessionDirOf = %q %v, want %q true", dir, ok, bRes.h.SessionDir)
+	}
+	if bRes.h.SessionID == hA.SessionID {
+		t.Fatal("B should not reuse terminated A session id")
+	}
+	// Retry means at least 3 Runner.Start calls: B attempt1, A, B retry.
+	if runner.Starts() < 3 {
+		t.Fatalf("starts=%d, want >= 3 (B abandoned + A + B retry)", runner.Starts())
+	}
+	sessions := m.Sessions()
+	if len(sessions) != 1 || len(sessions[0].Viewers) != 1 {
+		t.Fatalf("want 1 session with B only, got %+v", sessions)
+	}
+	if sessions[0].Viewers[0].Username != "bob" {
+		t.Errorf("viewer username = %q, want bob", sessions[0].Viewers[0].Username)
+	}
+}
