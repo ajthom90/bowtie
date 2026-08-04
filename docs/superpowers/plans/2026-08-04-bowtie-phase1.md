@@ -312,11 +312,11 @@ func (m *Manager) StreamURL(ch store.Channel) (string, error) // "http://<ip>:50
 
 **Note:** `StreamURL` must work for both real devices (port 5004) and the fake (same port as its HTTP listener). Rule: if the device's BaseURL port is 80 or empty → use port 5004; otherwise reuse the BaseURL host:port. Encode this rule in a unit test.
 
-- [ ] **Step 1: Failing tests** — client fetch trio against `hdhrfake`; `TestDiscoverPacketRoundTrip` (encode discover request → parse it back; parse a hand-built response packet constructed with our own encoder — plus a `//go:build hdhr_live` tagged test that broadcasts on the real network for manual verification); manager: `TestRefreshAggregatesManualAndStored`, `TestStreamURLPortRule` (BaseURL `http://1.2.3.4:80` → `http://1.2.3.4:5004/auto/v5.1`; fake URL `http://127.0.0.1:54321` → same port).
-- [ ] **Step 2: Run** — FAIL.
-- [ ] **Step 3: Implement.** Add `StreamPort`/migration `0002_device_stream_port.sql` if simpler than parsing at call time — implementer's choice, but the port rule test must pass.
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Commit** `git commit -m "feat: hdhomerun client, udp discovery, tuner manager"`
+- [x] **Step 1: Failing tests** — client fetch trio against `hdhrfake`; `TestDiscoverPacketRoundTrip` (encode discover request → parse it back; parse a hand-built response packet constructed with our own encoder — plus a `//go:build hdhr_live` tagged test that broadcasts on the real network for manual verification); manager: `TestRefreshAggregatesManualAndStored`, `TestStreamURLPortRule` (BaseURL `http://1.2.3.4:80` → `http://1.2.3.4:5004/auto/v5.1`; fake URL `http://127.0.0.1:54321` → same port).
+- [x] **Step 2: Run** — FAIL.
+- [x] **Step 3: Implement.** Add `StreamPort`/migration `0002_device_stream_port.sql` if simpler than parsing at call time — implementer's choice, but the port rule test must pass.
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Commit** `git commit -m "feat: hdhomerun client, udp discovery, tuner manager"`
 
 ### Task 7: Channel management + tuner/device admin API
 

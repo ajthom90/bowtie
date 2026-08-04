@@ -203,3 +203,50 @@ ok  	github.com/ajthom90/bowtie/server/internal/store	0.156s
 ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.332s
 ```
 
+## Task 6
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/hdhr/client.go`: `DiscoverInfo`, `LineupEntry`, `TunerStatus`; `FetchDiscover` / `FetchLineup` / `FetchStatus` against device HTTP API; helpers `StreamPortFromBaseURL` (port rule), `HostFromBaseURL`, `HTTPBaseURL`, `BaseURLFromManual`
+- `server/internal/hdhr/discover.go`: UDP discovery on port 65001 implementing libhdhomerun packet format (type/len BE, TLV payload, CRC LE); `Discover(ctx, timeout)` best-effort (socket failure only is fatal)
+- `server/internal/hdhr/discover_live_test.go` (`//go:build hdhr_live`): real-network broadcast for manual verification — not run in CI
+- `server/internal/tuner/manager.go`: `Manager` with injectable discover/fetch hooks; `Refresh` aggregates UDP + `cfg.Devices` + stored rows; unreachable devices keep stored row with `Reachable=false`; `Devices()` returns cache + live status; `StreamURL` uses stored `StreamPort`
+- Store: `Device.StreamPort` + migration `0002_device_stream_port.sql` (default 5004); `DeviceByID` added for StreamURL lookup
+- Tests: `hdhr/client_test.go` (against hdhrfake), `hdhr/discover_test.go` (packet round-trip + CRC reject + port rule), `tuner/manager_test.go` (`TestRefreshAggregatesManualAndStored`, `TestStreamURLPortRule`)
+
+### Discovery packet format verification
+
+Fetched and followed Silicondust libhdhomerun sources:
+- https://raw.githubusercontent.com/Silicondust/libhdhomerun/master/hdhomerun_pkt.h — frame layout, tag IDs (`DEVICE_TYPE=0x01`, `DEVICE_ID=0x02`, `TUNER_COUNT=0x10`, `BASE_URL=0x2A`, `LINEUP_URL=0x27`), types `DISCOVER_REQ=0x0002` / `DISCOVER_RPY=0x0003`, var-length encoding
+- https://raw.githubusercontent.com/Silicondust/libhdhomerun/master/hdhomerun_pkt.c — `hdhomerun_pkt_seal_frame` / `open_frame` and the custom bit-sliced CRC (`calcCRC`), little-endian CRC footer
+- https://raw.githubusercontent.com/Silicondust/libhdhomerun/master/hdhomerun_discover.c — request tags (tuner type + device id), IPv4 broadcast to port 65001, reply TLV parsing
+
+Unit test encodes a request, re-opens it, builds a reply with the same encoder, decodes it, and rejects a corrupted CRC.
+
+### Notes / deltas
+
+- Chose stored `StreamPort` (migration 0002) over re-parsing BaseURL at StreamURL time — matches plan's preferred option.
+- `Manager.SetDiscoverFunc` used in tests to suppress real UDP broadcast in CI.
+- Request packets always include both DEVICE_TYPE and DEVICE_ID tags (wildcard `0xFFFFFFFF`) for older-firmware compatibility; newer lib sometimes omits wildcard ID.
+- API package untouched (Task 7 wires tuners into HTTP).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	2.113s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.508s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.106s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.127s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.408s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.148s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.330s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.169s
+```
+
