@@ -140,7 +140,9 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # --skip=validate: the web build intentionally overwrites the committed
+          # dist placeholder so binaries embed the real UI; that dirtiness is expected.
+          args: release --clean --skip=validate
           workdir: server
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
