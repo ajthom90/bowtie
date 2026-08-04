@@ -471,6 +471,199 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/transcode:
+    get:
+      summary: Encoder probe status (available backends, HEVC support, selected)
+      operationId: adminTranscode
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cached FFmpeg encoder probe result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/sessions:
+    post:
+      summary: Start or join a shared HLS stream session for a channel
+      operationId: createSession
+      tags: [stream]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '200':
+          description: Viewer handle and signed playlist URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown or disabled channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Codec/profile negotiation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: All tuners in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunersBusyError'
+  /api/v1/sessions/{viewerId}:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      summary: Stop a viewer (Bearer JWT or valid stream token)
+      operationId: deleteSession
+      tags: [stream]
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: Signed stream token (alternative to Bearer auth)
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Viewer stopped (idempotent)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/stream/{viewerId}/index.m3u8:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: token
+        in: query
+        required: true
+        description: Signed stream token for this viewer
+        schema:
+          type: string
+    get:
+      summary: HLS media playlist (rewritten segment URLs; heartbeats viewer)
+      operationId: getPlaylist
+      tags: [stream]
+      responses:
+        '200':
+          description: application/vnd.apple.mpegurl playlist
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/stream/{viewerId}/{segment}:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: segment
+        in: path
+        required: true
+        description: Segment filename matching seg#####.ts
+        schema:
+          type: string
+          pattern: '^seg\d{5}\.ts$'
+      - name: token
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      summary: HLS MPEG-TS segment
+      operationId: getSegment
+      tags: [stream]
+      responses:
+        '200':
+          description: video/mp2t segment
+          content:
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/admin/sessions:
+    get:
+      summary: List live stream sessions
+      operationId: adminListSessions
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active sessions with viewers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/sessions/{sessionId}:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      summary: Force-terminate a stream session
+      operationId: adminTerminateSession
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Session terminated (idempotent)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 components:
   securitySchemes:
     bearerAuth:
@@ -734,6 +927,110 @@ components:
         source:
           type: string
           enum: [xmltv, sd]
+    TranscodeStatus:
+      type: object
+      required: [available, hevc, ffmpegVersion, selected]
+      properties:
+        available:
+          type: array
+          items:
+            type: string
+          description: Encoder backends discovered at startup
+        hevc:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Map of backend name → HEVC support
+        ffmpegVersion:
+          type: string
+        selected:
+          type: string
+          description: Backend chosen for config.encoder (auto or forced)
+    ClientCaps:
+      type: object
+      properties:
+        videoCodecs:
+          type: array
+          items:
+            type: string
+          description: e.g. h264, hevc, av1
+        audioCodecs:
+          type: array
+          items:
+            type: string
+          description: e.g. aac, ac3, eac3
+        maxHeight:
+          type: integer
+          description: 0 = no limit
+        profile:
+          type: string
+          description: Quality ladder name; empty defaults to original
+    CreateSessionRequest:
+      type: object
+      required: [channelId, caps]
+      properties:
+        channelId:
+          type: integer
+          format: int64
+        caps:
+          $ref: '#/components/schemas/ClientCaps'
+    CreateSessionResponse:
+      type: object
+      required: [viewerId, playlistUrl]
+      properties:
+        viewerId:
+          type: string
+        playlistUrl:
+          type: string
+          description: Path to index.m3u8 with signed token query param
+    ViewerInfo:
+      type: object
+      required: [id, username, lastSeen]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        lastSeen:
+          type: string
+          format: date-time
+    SessionInfo:
+      type: object
+      required: [id, channelId, channelName, key, videoCodec, profile, backend, viewers, startedAt]
+      properties:
+        id:
+          type: string
+        channelId:
+          type: integer
+          format: int64
+        channelName:
+          type: string
+        key:
+          type: string
+        videoCodec:
+          type: string
+        profile:
+          type: string
+        backend:
+          type: string
+        viewers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ViewerInfo'
+        startedAt:
+          type: string
+          format: date-time
+    TunersBusyError:
+      type: object
+      required: [error, sessions]
+      properties:
+        error:
+          type: string
+          example: all tuners in use
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionInfo'
   responses:
     BadRequest:
       description: Invalid request body

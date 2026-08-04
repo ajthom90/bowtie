@@ -8,18 +8,22 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/transcode"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
 	"github.com/ajthom90/bowtie/server/internal/web"
 )
 
 // Deps holds dependencies for the HTTP API.
-// Later tasks add fields when their packages exist (Probe, Streams).
+// Later tasks add fields when their packages exist.
 type Deps struct {
-	Cfg    config.Config
-	Store  *store.Store
-	Auth   *auth.Auth
-	Tuners *tuner.Manager // Task 7
-	EPG    *epg.Service   // Task 10
+	Cfg               config.Config
+	Store             *store.Store
+	Auth              *auth.Auth
+	Tuners            *tuner.Manager // Task 7
+	EPG               *epg.Service   // Task 10
+	Probe             func() transcode.Capabilities // Task 11
+	Streams           StreamController              // Task 15
+	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
 }
 
 // Server is the HTTP API surface.
@@ -64,6 +68,17 @@ func New(deps Deps) http.Handler {
 	mux.Handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
 	mux.Handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
 	mux.Handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
+
+	// Admin transcode probe (Task 11).
+	mux.Handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
+
+	// Stream sessions (Task 15).
+	mux.Handle("POST /api/v1/sessions", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleCreateSession)))
+	mux.HandleFunc("GET /api/v1/stream/{viewerId}/index.m3u8", s.handlePlaylist)
+	mux.HandleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
+	mux.HandleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
+	mux.Handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
+	mux.Handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
 
 	// Embedded SPA (Task 17): catch-all for non-/api paths. More-specific
 	// /api/v1/... patterns above take precedence in Go 1.22 ServeMux.

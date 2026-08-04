@@ -17,6 +17,8 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/stream"
+	"github.com/ajthom90/bowtie/server/internal/transcode"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
 )
 
@@ -60,6 +62,11 @@ func main() {
 
 	authSvc := &auth.Auth{Secret: secret, Store: st}
 
+	streamSecret, err := loadOrCreateStreamTokenSecret(st)
+	if err != nil {
+		log.Fatalf("stream token secret: %v", err)
+	}
+
 	tuners := tuner.New(st, cfg)
 	// Initial refresh (best-effort) then periodic every 60s.
 	go runTunerRefresh(tuners)
@@ -68,12 +75,32 @@ func main() {
 	// Background EPG refresh loops (xmltv / schedules direct when configured).
 	go epgSvc.Run(context.Background())
 
-	apiHandler := api.New(api.Deps{
+	// Probe encoders once at startup; cache for negotiation + admin endpoint.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	caps := transcode.Probe(probeCtx, cfg.FFmpegPath)
+	probeCancel()
+	log.Printf("encoder probe: available=%v version=%s", caps.Available, caps.FFmpegVersion)
+
+	streamMgr := stream.NewManager(stream.ManagerDeps{
 		Cfg:    cfg,
 		Store:  st,
-		Auth:   authSvc,
 		Tuners: tuners,
-		EPG:    epgSvc,
+		Caps:   caps,
+		Runner: &stream.FFmpegRunner{Path: cfg.FFmpegPath},
+	})
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	defer streamCancel()
+	go streamMgr.Run(streamCtx)
+
+	apiHandler := api.New(api.Deps{
+		Cfg:               cfg,
+		Store:             st,
+		Auth:              authSvc,
+		Tuners:            tuners,
+		EPG:               epgSvc,
+		Probe:             func() transcode.Capabilities { return caps },
+		Streams:           streamMgr,
+		StreamTokenSecret: streamSecret,
 	})
 
 	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)
@@ -112,7 +139,14 @@ func runTunerRefresh(m *tuner.Manager) {
 }
 
 func loadOrCreateJWTSecret(st *store.Store) ([]byte, error) {
-	const key = "jwt_secret"
+	return loadOrCreateHexSecret(st, "jwt_secret")
+}
+
+func loadOrCreateStreamTokenSecret(st *store.Store) ([]byte, error) {
+	return loadOrCreateHexSecret(st, "stream_token_secret")
+}
+
+func loadOrCreateHexSecret(st *store.Store, key string) ([]byte, error) {
 	hexSecret, err := st.GetSetting(key)
 	if err != nil {
 		return nil, err
@@ -120,7 +154,7 @@ func loadOrCreateJWTSecret(st *store.Store) ([]byte, error) {
 	if hexSecret == "" {
 		raw := make([]byte, 32)
 		if _, err := rand.Read(raw); err != nil {
-			return nil, fmt.Errorf("generate jwt secret: %w", err)
+			return nil, fmt.Errorf("generate %s: %w", key, err)
 		}
 		hexSecret = hex.EncodeToString(raw)
 		if err := st.SetSetting(key, hexSecret); err != nil {
@@ -129,10 +163,10 @@ func loadOrCreateJWTSecret(st *store.Store) ([]byte, error) {
 	}
 	secret, err := hex.DecodeString(hexSecret)
 	if err != nil {
-		return nil, fmt.Errorf("decode jwt secret: %w", err)
+		return nil, fmt.Errorf("decode %s: %w", key, err)
 	}
 	if len(secret) == 0 {
-		return nil, fmt.Errorf("empty jwt secret")
+		return nil, fmt.Errorf("empty %s", key)
 	}
 	return secret, nil
 }

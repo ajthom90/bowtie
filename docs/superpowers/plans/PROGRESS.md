@@ -397,3 +397,57 @@ SessionDirOf, injectable StreamURL/Clock/Runner. 13 tests + -race clean.
 Review found a duplicate-key race that could register a dead session (proc stopped, dir
 deleted, restarts never recreate dir); fixed in a follow-up commit with a bounded 3-attempt
 create-or-join retry, MkdirAll on restart, and a deterministic race test.
+
+## Task 15
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/stream/token.go`: `SignStreamToken` / `VerifyStreamToken` — base64url of
+  `viewerID|expUnix|hex(hmacSHA256(secret, viewerID|expUnix))`; constant-time HMAC compare + expiry
+- `server/internal/stream/runner.go`: `FFmpegRunner` wrapping `transcode.Command` as `stream.Runner`
+- `server/internal/api/stream_handlers.go` + `StreamController` interface on `Deps.Streams`
+  - `POST /api/v1/sessions` (Bearer) → `{viewerId, playlistUrl}` with 12h signed token
+  - 503 `{"error":"all tuners in use","sessions":[...]}`; 404 unknown/disabled; 422 negotiate
+  - `GET .../index.m3u8?token=` — verify + Touch + rewrite `seg#####.ts` lines; `application/vnd.apple.mpegurl`, `Cache-Control: no-store`
+  - `GET .../{segment}?token=` — `^seg\d{5}\.ts$` only; `video/mp2t`
+  - `DELETE /api/v1/sessions/{viewerId}` — Bearer **or** valid stream token → 204
+  - Admin: `GET/DELETE /api/v1/admin/sessions[...]`
+- **Task 11 wiring:** `Deps.Probe` + `GET /api/v1/admin/transcode` → `{available, hevc, ffmpegVersion, selected}`
+- `main.go`: load/create `stream_token_secret` (32B hex, settings); probe FFmpeg once; construct
+  `stream.Manager` with real `FFmpegRunner` + cached caps; `go manager.Run(ctx)`
+- `docs/api/openapi.yaml`: sessions, stream playlist/segment, admin sessions + transcode schemas
+- Tests: `stream/token_test.go`; `api/stream_handlers_test.go` (stub controller suite +
+  keystone `TestE2EStreamLifecycle` with hdhrfake + stub Runner writing realistic m3u8+segs)
+
+### Notes / deltas
+
+- Stream token secret uses the same settings hex pattern as `jwt_secret` (`loadOrCreateHexSecret`).
+- Start error mapping uses substring match on manager error strings (`all tuners in use`,
+  `unknown channel` / `is disabled`, `negotiate:`) per Task 14 surface notes.
+- Playlist path is `/api/v1/stream/{viewerId}/index.m3u8` while on-disk file remains `live.m3u8`.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	4.372s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.529s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.177s
+ok  	github.com/ajthom90/bowtie/server/internal/epg	0.285s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd	0.249s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv	0.216s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.221s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.511s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.242s
+ok  	github.com/ajthom90/bowtie/server/internal/stream	0.440s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.449s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.262s
+ok  	github.com/ajthom90/bowtie/server/internal/web	0.218s
+```
+

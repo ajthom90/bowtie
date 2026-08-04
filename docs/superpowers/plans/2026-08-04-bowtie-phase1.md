@@ -581,11 +581,11 @@ Endpoints:
 - `DELETE /api/v1/sessions/{viewerId}` (Bearer or token) → StopViewer, 204.
 - Admin: `GET /api/v1/admin/sessions` → `[]SessionInfo`; `DELETE /api/v1/admin/sessions/{sessionId}` → Terminate, 204.
 
-- [ ] **Step 1: Failing tests** — token round-trip/expiry/tamper; handlers with a stub StreamController: playlist rewrite (feed a real ffmpeg-style live.m3u8 fixture with `#EXTINF` lines), token-viewer mismatch 403, segment name traversal 400, heartbeat calls Touch, 503 shape, admin terminate.
-- [ ] **Step 2: Run** — FAIL. **Implement.**
-- [ ] **Step 3: Run** — PASS.
-- [ ] **Step 4: E2E CI test (no ffmpeg):** full server with hdhrfake + stub Runner: login → list channels → POST sessions → GET playlist (200, rewritten) → DELETE. This is the integration keystone test — name it `TestE2EStreamLifecycle` in `api/stream_handlers_test.go`.
-- [ ] **Step 5: Update openapi.yaml. Commit** `git commit -m "feat: hls delivery endpoints with signed stream tokens"`
+- [x] **Step 1: Failing tests** — token round-trip/expiry/tamper; handlers with a stub StreamController: playlist rewrite (feed a real ffmpeg-style live.m3u8 fixture with `#EXTINF` lines), token-viewer mismatch 403, segment name traversal 400, heartbeat calls Touch, 503 shape, admin terminate.
+- [x] **Step 2: Run** — FAIL. **Implement.**
+- [x] **Step 3: Run** — PASS.
+- [x] **Step 4: E2E CI test (no ffmpeg):** full server with hdhrfake + stub Runner: login → list channels → POST sessions → GET playlist (200, rewritten) → DELETE. This is the integration keystone test — name it `TestE2EStreamLifecycle` in `api/stream_handlers_test.go`.
+- [x] **Step 5: Update openapi.yaml. Commit** `git commit -m "feat: hls delivery endpoints with signed stream tokens"`
 
 ### Task 16: Wire it together — main.go assembly + dev loop against real hardware
 
