@@ -240,11 +240,11 @@ Endpoints (all JSON; errors as `{"error": "message"}` with proper status):
 - `POST /api/v1/me/password {currentPassword,newPassword}` → 204 (403 if current wrong)
 - Middleware: `auth.RequireUser(a *Auth) func(http.Handler) http.Handler` (Bearer → Claims in context via `auth.ClaimsFrom(ctx)`), `auth.RequireAdmin` wraps RequireUser + role check (403).
 
-- [ ] **Step 1: Failing tests** — `httptest` against `api.New` with real store (temp DB) + seeded user: `TestLoginSuccessAndMe`, `TestLoginBadPassword401`, `TestRefreshRotation`, `TestMeRequiresAuth401`, `TestPasswordChange` (old refresh flow still valid; new login with new password works), `TestAdminRouteForbiddenForViewer` (register a dummy admin-only route in test via exported router option or use `/api/v1/admin/users` from Task 5 — instead: test `RequireAdmin` middleware directly with a stub handler).
-- [ ] **Step 2: Run** — FAIL.
-- [ ] **Step 3: Implement** — stdlib `net/http` + `http.ServeMux` (Go 1.22 method patterns, e.g. `mux.HandleFunc("POST /api/v1/auth/login", ...)`). No router dependency.
-- [ ] **Step 4: Run** — PASS.
-- [ ] **Step 5: Update** `docs/api/openapi.yaml` with these paths/schemas. **Commit** `git commit -m "feat: api skeleton with login, refresh, logout, me endpoints"`
+- [x] **Step 1: Failing tests** — `httptest` against `api.New` with real store (temp DB) + seeded user: `TestLoginSuccessAndMe`, `TestLoginBadPassword401`, `TestRefreshRotation`, `TestMeRequiresAuth401`, `TestPasswordChange` (old refresh flow still valid; new login with new password works), `TestAdminRouteForbiddenForViewer` (register a dummy admin-only route in test via exported router option or use `/api/v1/admin/users` from Task 5 — instead: test `RequireAdmin` middleware directly with a stub handler).
+- [x] **Step 2: Run** — FAIL.
+- [x] **Step 3: Implement** — stdlib `net/http` + `http.ServeMux` (Go 1.22 method patterns, e.g. `mux.HandleFunc("POST /api/v1/auth/login", ...)`). No router dependency.
+- [x] **Step 4: Run** — PASS.
+- [x] **Step 5: Update** `docs/api/openapi.yaml` with these paths/schemas. **Commit** `git commit -m "feat: api skeleton with login, refresh, logout, me endpoints"`
 
 ### Task 5: User admin API + fake HDHomeRun test server
 

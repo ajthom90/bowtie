@@ -109,3 +109,37 @@ $ bowtie --data-dir "$TMP"
 # bowtie 0.1.0-dev listening on :8400 …
 $ curl -sf localhost:8400/healthz → ok
 ```
+
+## Task 4
+
+**Date:** 2026-08-04
+
+### Built
+
+- `server/internal/api/server.go`: `Deps{Cfg, Store, Auth}`, `New(deps) http.Handler` — stdlib `http.ServeMux` with Go 1.22 method patterns; no router dependency
+- `server/internal/api/auth_handlers.go`: `POST /api/v1/auth/login|refresh|logout`, `GET /api/v1/me`, `POST /api/v1/me/password` — camelCase JSON, errors `{"error":"..."}`
+- `server/internal/auth/middleware.go`: `RequireUser`, `RequireAdmin`, `ClaimsFrom(ctx)` — Bearer JWT → context Claims
+- `cmd/bowtie/main.go`: wires `auth.Auth` + `api.New`; keeps `GET /healthz` on root mux, mounts API at `/`
+- `docs/api/openapi.yaml`: paths + schemas for login, refresh, logout, me, me/password
+- Tests: `api/auth_handlers_test.go` (login/me, bad password, refresh rotation, me 401, password change, logout), `auth/middleware_test.go` (`TestAdminRouteForbiddenForViewer`)
+
+### Notes / deltas
+
+- Plan/reality: store and auth APIs matched the plan (no interface changes needed).
+- Deps holds only Cfg/Store/Auth as required for this stage; later tasks add Tuners/EPG/Probe/Streams.
+- Password change does **not** revoke existing refresh tokens (per plan: “old refresh flow still valid”).
+- Middleware test issues JWTs at `time.Now()` because `RequireUser` validates with wall clock (unlike unit token tests that inject fixed `now`).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./...
+# (no output — pass)
+
+$ CGO_ENABLED=0 go test ./... -count=1
+?   	github.com/ajthom90/bowtie/server/cmd/bowtie	[no test files]
+ok  	github.com/ajthom90/bowtie/server/internal/api	1.191s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.445s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.065s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.119s
+```

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/api"
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -45,14 +46,21 @@ func main() {
 	}
 	defer st.Close()
 
-	if _, err := loadOrCreateJWTSecret(st); err != nil {
+	secret, err := loadOrCreateJWTSecret(st)
+	if err != nil {
 		log.Fatalf("jwt secret: %v", err)
 	}
-	// auth.Auth is constructed and wired into HTTP handlers in Task 4.
 
 	if err := bootstrapAdmin(st); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)
 	}
+
+	authSvc := &auth.Auth{Secret: secret, Store: st}
+	apiHandler := api.New(api.Deps{
+		Cfg:   cfg,
+		Store: st,
+		Auth:  authSvc,
+	})
 
 	log.Printf("bowtie %s listening on %s (data=%s)", version, cfg.ListenAddr, cfg.DataDir)
 
@@ -61,6 +69,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "ok")
 	})
+	mux.Handle("/", apiHandler)
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
