@@ -150,3 +150,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CGO_ENABLED: "0"
+          # Pin the version to the tag that triggered this run — auto-detection
+          # picks the wrong tag when multiple tags point at the same commit.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
