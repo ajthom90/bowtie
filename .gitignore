@@ -1,1 +1,18 @@
+# Local Claude settings
 .claude/settings.local.json
+
+# Runtime data
+data/
+
+# Build artifacts
+server/internal/web/dist/
+web/node_modules/
+web/dist/
+dist/
+/bowtie
+server/bowtie
+
+# OS / editor
+.DS_Store
+*.swp
+*~

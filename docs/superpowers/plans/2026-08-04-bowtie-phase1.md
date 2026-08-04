@@ -105,12 +105,12 @@ type Config struct {
 }
 ```
 
-- [ ] **Step 1: Write failing test** — `config_test.go`: `TestLoadDefaults` (empty dir → defaults: `:8400`, segmentDir under dataDir, ffmpeg path "ffmpeg", encoder "auto"); `TestLoadYAMLAndEnvOverride` (write `config.yaml` with `listenAddr: ":9000"`, set `BOWTIE_LISTEN_ADDR=":9100"` via `t.Setenv` → env wins).
-- [ ] **Step 2: Run** `cd server && go test ./internal/config/` — expect FAIL (package missing).
-- [ ] **Step 3: Implement** `config.Load`: read `<dataDir>/config.yaml` if present (`gopkg.in/yaml.v3`), then apply env overrides `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_ENCODER`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES` (comma-separated). `main.go`: parse `--data-dir` flag (default `./data`, env `BOWTIE_DATA_DIR`), `os.MkdirAll` data+segment dirs, load config, print version, start placeholder `http.Server` on ListenAddr serving 200 on `/healthz`.
-- [ ] **Step 4: Run** `go test ./...` + `go vet ./...` — PASS. `go run ./cmd/bowtie --data-dir /tmp/bowtie-dev` then `curl localhost:8400/healthz` → 200.
-- [ ] **Step 5: Scaffold the rest** — Makefile targets: `build` (web build → copy into `server/internal/web/dist` → `go build`), `test`, `lint`, `dev`. `ci.yml`: on PR/push — job `server`: setup-go, `golangci-lint run`, `go test ./...` in `server/`; job `web` added in Task 17 (leave placeholder comment, not a failing job). `.gitignore`: `data/`, `server/internal/web/dist/`, `web/node_modules/`, `web/dist/`, `dist/`.
-- [ ] **Step 6: Create GitHub repo and push**
+- [x] **Step 1: Write failing test** — `config_test.go`: `TestLoadDefaults` (empty dir → defaults: `:8400`, segmentDir under dataDir, ffmpeg path "ffmpeg", encoder "auto"); `TestLoadYAMLAndEnvOverride` (write `config.yaml` with `listenAddr: ":9000"`, set `BOWTIE_LISTEN_ADDR=":9100"` via `t.Setenv` → env wins).
+- [x] **Step 2: Run** `cd server && go test ./internal/config/` — expect FAIL (package missing).
+- [x] **Step 3: Implement** `config.Load`: read `<dataDir>/config.yaml` if present (`gopkg.in/yaml.v3`), then apply env overrides `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_ENCODER`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES` (comma-separated). `main.go`: parse `--data-dir` flag (default `./data`, env `BOWTIE_DATA_DIR`), `os.MkdirAll` data+segment dirs, load config, print version, start placeholder `http.Server` on ListenAddr serving 200 on `/healthz`.
+- [x] **Step 4: Run** `go test ./...` + `go vet ./...` — PASS. `go run ./cmd/bowtie --data-dir /tmp/bowtie-dev` then `curl localhost:8400/healthz` → 200.
+- [x] **Step 5: Scaffold the rest** — Makefile targets: `build` (web build → copy into `server/internal/web/dist` → `go build`), `test`, `lint`, `dev`. `ci.yml`: on PR/push — job `server`: setup-go, `golangci-lint run`, `go test ./...` in `server/`; job `web` added in Task 17 (leave placeholder comment, not a failing job). `.gitignore`: `data/`, `server/internal/web/dist/`, `web/node_modules/`, `web/dist/`, `dist/`.
+- [ ] **Step 6: Create GitHub repo and push** (skipped — handled by orchestrator)
 
 ```bash
 git add -A && git commit -m "feat: scaffold bowtie server, config loader, CI"
