@@ -1,13 +1,17 @@
 import { useState } from 'react'
+import { Admin } from './admin/Admin'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { Login } from './auth/Login'
 import { Guide, type WatchTarget } from './guide/Guide'
 import { Player } from './player/Player'
 import styles from './App.module.css'
 
+type View = 'guide' | 'admin'
+
 function Shell() {
   const { user, ready } = useAuth()
   const [watching, setWatching] = useState<WatchTarget | null>(null)
+  const [view, setView] = useState<View>('guide')
 
   if (!ready) {
     return (
@@ -25,7 +29,17 @@ function Shell() {
     return <Player target={watching} onBack={() => setWatching(null)} />
   }
 
-  return <Guide onWatch={setWatching} />
+  // Role guard: viewers never see admin route or nav entry.
+  if (view === 'admin' && user.role === 'admin') {
+    return <Admin onBack={() => setView('guide')} />
+  }
+
+  return (
+    <Guide
+      onWatch={setWatching}
+      onAdmin={user.role === 'admin' ? () => setView('admin') : undefined}
+    />
+  )
 }
 
 export default function App() {

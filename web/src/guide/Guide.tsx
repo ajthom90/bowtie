@@ -21,9 +21,11 @@ export type WatchTarget = {
 
 type Props = {
   onWatch: (target: WatchTarget) => void
+  /** Present only for admins — opens the admin area. Viewers never receive this. */
+  onAdmin?: () => void
 }
 
-export function Guide({ onWatch }: Props) {
+export function Guide({ onWatch, onAdmin }: Props) {
   const { client, user, logout } = useAuth()
   const [{ start, stop }, setWindow] = useState(() => defaultWindow())
   const [channels, setChannels] = useState<GuideChannel[] | null>(null)
@@ -94,6 +96,11 @@ export function Guide({ onWatch }: Props) {
             {user?.username}
             {user?.role === 'admin' ? ' · admin' : ''}
           </span>
+          {onAdmin ? (
+            <button type="button" className={styles.btn} onClick={onAdmin}>
+              Admin
+            </button>
+          ) : null}
           <button type="button" className={styles.btn} onClick={() => void logout()}>
             Sign out
           </button>
