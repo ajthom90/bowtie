@@ -693,10 +693,10 @@ Pages (admin role only; route guard): **Tuners** (device cards: tuners, signal b
 
 Dockerfile (multi-stage): 1) `node:22-slim` build web; 2) `golang:1.22` build server with dist copied in, `CGO_ENABLED=0`; 3) runtime `debian:bookworm-slim` + `apt-get install -y --no-install-recommends ffmpeg intel-media-va-driver-non-free mesa-va-drivers tini` (enable `non-free non-free-firmware` components), `ENTRYPOINT ["tini","--","/usr/local/bin/bowtie"]`, `ENV BOWTIE_DATA_DIR=/data`, `EXPOSE 8400`, volume `/data`. compose: `devices: [/dev/dri:/dev/dri]` for QSV/VAAPI, tmpfs mount for `/data/segments`, comments explaining each line. remote-access.md: Caddy reverse-proxy block, Cloudflare Tunnel, Tailscale — copy-pasteable configs.
 
-- [ ] **Step 1: Build** `docker build -f deploy/Dockerfile .` locally (arm64) — image runs, `/healthz` 200, `ffmpeg -version` works inside.
-- [ ] **Step 2: CI job** builds (no push) on PR for amd64 only (speed).
-- [ ] **Step 3: README:** what/why, screenshot placeholder comment `<!-- TODO screenshot after user runs it -->` is FORBIDDEN by plan rules — instead: quickstart (docker compose up, first-run admin password from logs, add device, enable channels, watch), hardware transcode matrix, EPG setup, remote access pointer, license badge.
-- [ ] **Step 4: Commit** `git commit -m "feat: docker packaging with vaapi/qsv support and deploy docs"`
+- [x] **Step 1: Build** `docker build -f deploy/Dockerfile .` locally (arm64) — image runs, `/healthz` 200, `ffmpeg -version` works inside.
+- [x] **Step 2: CI job** builds (no push) on PR for amd64 only (speed).
+- [x] **Step 3: README:** what/why, screenshot placeholder comment `<!-- TODO screenshot after user runs it -->` is FORBIDDEN by plan rules — instead: quickstart (docker compose up, first-run admin password from logs, add device, enable channels, watch), hardware transcode matrix, EPG setup, remote access pointer, license badge.
+- [x] **Step 4: Commit** `git commit -m "feat: docker packaging with vaapi/qsv support and deploy docs"`
 
 ### Task 21: Release automation
 

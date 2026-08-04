@@ -1,0 +1,45 @@
+# Bowtie — local / home-lab deployment
+#
+#   cd deploy && docker compose up -d
+#   docker compose logs -f   # first-run admin password is printed once
+#
+# Image is published by the release workflow as ghcr.io/ajthom90/bowtie:latest.
+# To build from a local checkout instead, uncomment the `build:` block.
+
+services:
+  bowtie:
+    image: ghcr.io/ajthom90/bowtie:latest
+    # build:
+    #   context: ..
+    #   dockerfile: deploy/Dockerfile
+    ports:
+      - "8400:8400"
+    volumes:
+      # Persistent state: SQLite, config.yaml, JWT secrets, etc.
+      - bowtie-data:/data
+    # HLS segments are short-lived (4s × 30-window) and high-churn. Keep them on
+    # tmpfs so they never hit the data volume, avoid SSD wear, and disappear on
+    # container restart (sessions recreate segments from the live tuner stream).
+    tmpfs:
+      - /data/segments
+    # Intel Quick Sync / VAAPI: expose the GPU render nodes so FFmpeg can use
+    # h264_qsv / h264_vaapi. Harmless on machines without /dev/dri (drivers
+    # simply are not selected by the encoder probe).
+    devices:
+      - /dev/dri:/dev/dri
+    # HDHomeRun discovery uses UDP broadcast on port 65001. Bridge networking
+    # cannot receive those broadcasts, so either:
+    #   (a) set network_mode: host (comment ports: when you do — host mode
+    #       publishes 8400 on the host directly), or
+    #   (b) leave bridge mode and add devices by IP via Admin → Tuners or
+    #       BOWTIE_DEVICES / config.yaml `devices:`.
+    # network_mode: host
+    restart: unless-stopped
+    environment:
+      # Optional overrides (env wins over /data/config.yaml):
+      # BOWTIE_ENCODER: auto   # auto|qsv|vaapi|nvenc|software
+      # BOWTIE_DEVICES: 192.168.1.50
+      BOWTIE_DATA_DIR: /data
+
+volumes:
+  bowtie-data:

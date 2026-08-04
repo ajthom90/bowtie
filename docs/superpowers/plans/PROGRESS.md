@@ -514,3 +514,61 @@ ok  	github.com/ajthom90/bowtie/server/internal/api	46.978s
 ok  	github.com/ajthom90/bowtie/server/internal/stream	1.640s
 ```
 
+
+## Task 20
+
+**Date:** 2026-08-04
+
+### Built
+
+- `deploy/Dockerfile` multi-stage:
+  1. `node:22-slim` — `npm ci` + Vite build → `server/internal/web/dist`
+  2. `golang:1.22` — copy dist, `CGO_ENABLED=0` static binary
+  3. `debian:bookworm-slim` — non-free + non-free-firmware enabled; `ffmpeg`, `mesa-va-drivers`, `tini`, `ca-certificates`; `intel-media-va-driver-non-free` only when `TARGETARCH=amd64` (arm64-safe)
+  - `ENTRYPOINT ["tini","--","/usr/local/bin/bowtie"]`, `ENV BOWTIE_DATA_DIR=/data`, `EXPOSE 8400`, `VOLUME /data`
+- `deploy/docker-compose.yml`: `ghcr.io/ajthom90/bowtie:latest`, `/dev/dri` device pass-through, tmpfs `/data/segments`, host-network option documented for HDHomeRun UDP discovery
+- `docs/deploy/remote-access.md`: complete Caddy reverse-proxy, Cloudflare Tunnel, and Tailscale Serve/Funnel examples
+- `README.md` rewrite: what/why, docker quickstart, hardware matrix (VideoToolbox / QSV+VAAPI / NVENC community / software), EPG (XMLTV + SD), remote-access pointer, Apache-2.0 badge, v0.1.0 Phase 1 status
+- CI: `docker` job on `ci.yml` — buildx linux/amd64, `--load`, no push
+
+### Notes / deltas
+
+- Intel QSV package gated on `TARGETARCH=amd64` so local arm64 Docker Desktop builds succeed (plan packages are amd64-only).
+- `mesa-va-drivers` installed on all arches.
+
+### Verification (evidence)
+
+```
+$ docker build -f deploy/Dockerfile -t bowtie:dev .
+# exit 0 — multi-stage build completes (linux/arm64 locally)
+
+$ docker run --rm -d -p 18400:8400 --name bowtie-smoke bowtie:dev
+$ sleep 2 && curl -sf http://localhost:18400/healthz
+ok
+
+$ docker exec bowtie-smoke ffmpeg -version | head -1
+ffmpeg version 5.1.9-0+deb12u1 Copyright (c) 2000-2026 the FFmpeg developers
+
+$ docker logs bowtie-smoke
+# first run: created admin user "admin" with password "…" — change it after login
+# encoder probe: available=[software] version=5.1.9-0+deb12u1
+# bowtie 0.1.0-dev listening on [::]:8400 (data=/data)
+
+$ docker rm -f bowtie-smoke
+
+$ cd server && CGO_ENABLED=0 go test ./... -count=1
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie	1.165s
+ok  	github.com/ajthom90/bowtie/server/internal/api	4.491s
+ok  	github.com/ajthom90/bowtie/server/internal/auth	0.473s
+ok  	github.com/ajthom90/bowtie/server/internal/config	0.155s
+ok  	github.com/ajthom90/bowtie/server/internal/epg	0.207s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd	0.193s
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv	0.154s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr	0.159s
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake	0.453s
+ok  	github.com/ajthom90/bowtie/server/internal/store	0.220s
+ok  	github.com/ajthom90/bowtie/server/internal/stream	0.366s
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	0.384s
+ok  	github.com/ajthom90/bowtie/server/internal/tuner	0.229s
+ok  	github.com/ajthom90/bowtie/server/internal/web	0.157s
+```
