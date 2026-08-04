@@ -687,3 +687,31 @@ ok  	github.com/ajthom90/bowtie/server/internal/api	…  (includes TestOpenAPICo
 # … all packages ok …
 0 issues.
 ```
+
+## Release build split
+
+**Date:** 2026-08-04
+
+### Built
+
+- Refactored `.github/workflows/release.yml` image publish from one QEMU multi-arch buildx job to native split builds:
+  - **`build-image`** matrix: `linux/amd64` → `ubuntu-24.04`, `linux/arm64` → `ubuntu-24.04-arm` (no QEMU)
+  - Push by digest (`push-by-digest=true`, `name-canonical=true`); digest artifacts `digests-linux-amd64` / `digests-linux-arm64`
+  - GHA layer cache scoped per platform (`cache-from`/`cache-to` type=gha, scope=PLATFORM_PAIR)
+  - **`merge-manifest`**: download digests → `docker buildx imagetools create` tags `:VERSION` + `:latest` → `imagetools inspect`
+  - VERSION still from tag with leading `v` stripped (`TAG#v`)
+- **GoReleaser job unchanged**
+- **ci.yml docker job left alone** (already amd64-only with `--load`, no QEMU)
+
+### Verification (evidence)
+
+```
+$ python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))" && echo YAML_OK
+YAML_OK
+
+$ which actionlint
+# not installed
+
+$ cd server && CGO_ENABLED=0 go test ./... && golangci-lint run
+# all packages ok; 0 issues
+```
