@@ -714,10 +714,10 @@ Dockerfile (multi-stage): 1) `node:22-slim` build web; 2) `golang:1.22` build se
 - Modify: `docs/api/openapi.yaml`, `README.md`
 - Test: `server/internal/api/openapi_test.go`
 
-- [ ] **Step 1: Failing test** — `TestOpenAPICoversRoutes`: walk the mux route table (export route list from `api.New` as `func Routes() []string` built alongside registration) and assert every `/api/v1/...` route appears in openapi.yaml (parse yaml, compare paths with `{param}` normalization).
-- [ ] **Step 2:** Fix omissions. Run full suite: `go test ./...`, `npm test`, `npm run build`, docker build.
-- [ ] **Step 3:** Tag `v0.1.0-rc1`, verify release workflow artifacts, then `v0.1.0`.
-- [ ] **Step 4: Commit** `git commit -m "docs: complete openapi spec; cut v0.1.0"`
+- [x] **Step 1: Failing test** — `TestOpenAPICoversRoutes`: walk the mux route table (export route list from `api.New` as `func Routes() []string` built alongside registration) and assert every `/api/v1/...` route appears in openapi.yaml (parse yaml, compare paths with `{param}` normalization).
+- [x] **Step 2:** Fix omissions. Run full suite: `go test ./...`, `npm test`, `npm run build`, docker build.
+- [ ] **Step 3:** Tag `v0.1.0-rc1`, verify release workflow artifacts, then `v0.1.0`. (orchestrator tags)
+- [x] **Step 4: Commit** `git commit -m "docs: complete openapi spec; cut v0.1.0"`
 
 ---
 

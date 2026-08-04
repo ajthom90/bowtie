@@ -655,3 +655,35 @@ ok  	github.com/ajthom90/bowtie/server/internal/api	(cached)
 # … all packages ok …
 0 issues.
 ```
+
+## Task 22
+
+**Date:** 2026-08-04
+
+### Built
+
+- `api.Routes() []string` — returns every registered `/api/v1` pattern as `METHOD /path`, built alongside registration via `mountAPI` (single source of truth with `New`)
+- `server/internal/api/openapi_test.go`: `TestOpenAPICoversRoutes` — parses `docs/api/openapi.yaml` with `gopkg.in/yaml.v3`, normalizes path params (`{id}` → `{}`), asserts:
+  - every `Routes()` entry appears in the spec
+  - every `/api/v1` path+method in the spec has a registered route
+- `README.md`: dedicated **API** section pointing at `docs/api/openapi.yaml` as the Phase 2/3 client contract
+- Plan Task 22 steps 1/2/4 ticked; step 3 tags left for orchestrator
+
+### Spec omissions found + fixed
+
+None. The OpenAPI document already listed all 26 registered `/api/v1` path+method pairs; the test passed on first run after `Routes()` was added. No path/method needed to be added or removed on either side.
+
+### Notes / deltas
+
+- Tagging (`v0.1.0-rc1` / `v0.1.0`) is **(orchestrator tags)** — not done here.
+- Commit message uses the user-specified form (`docs: complete openapi spec with route-coverage test`) rather than the plan's older "cut v0.1.0" wording, since tags are out of scope.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie	…
+ok  	github.com/ajthom90/bowtie/server/internal/api	…  (includes TestOpenAPICoversRoutes)
+# … all packages ok …
+0 issues.
+```

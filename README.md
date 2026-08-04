@@ -178,14 +178,22 @@ Default listen address: `:8400`. Health check: `GET /healthz` → `ok`.
 
 ---
 
+## API
+
+All JSON API routes live under `/api/v1`. The OpenAPI 3.0 document is the **client contract** for the Phase 2/3 native apps (iOS/tvOS, Android, Roku, Fire TV) and any third-party client:
+
+**[docs/api/openapi.yaml](docs/api/openapi.yaml)**
+
+A server test (`TestOpenAPICoversRoutes`) asserts that every registered `/api/v1/...` route appears in the spec and that the spec has no orphaned path+method pairs.
+
+---
+
 ## Development
 
 ```bash
 cd server && CGO_ENABLED=0 go test ./...   # no real HDHomeRun / FFmpeg required
 cd web && npm ci && npm test && npm run build
 ```
-
-API surface: [docs/api/openapi.yaml](docs/api/openapi.yaml).
 
 ---
 

@@ -35,56 +35,78 @@ type Server struct {
 func New(deps Deps) http.Handler {
 	s := &Server{deps: deps}
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/v1/auth/refresh", s.handleRefresh)
-	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
-
-	mux.Handle("GET /api/v1/me", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleMe)))
-	mux.Handle("POST /api/v1/me/password", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
-
-	// Viewer channel list (enabled only).
-	mux.Handle("GET /api/v1/channels", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleListChannels)))
-
-	// Viewer guide (Task 10).
-	mux.Handle("GET /api/v1/guide", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleGuide)))
-
-	// Admin user management (Task 5).
-	admin := auth.RequireAdmin(deps.Auth)
-	mux.Handle("GET /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminListUsers)))
-	mux.Handle("POST /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminCreateUser)))
-	mux.Handle("PATCH /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminPatchUser)))
-	mux.Handle("DELETE /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminDeleteUser)))
-
-	// Admin tuners / devices / channels (Task 7).
-	mux.Handle("GET /api/v1/admin/tuners", admin(http.HandlerFunc(s.handleAdminListTuners)))
-	mux.Handle("POST /api/v1/admin/devices", admin(http.HandlerFunc(s.handleAdminAddDevice)))
-	mux.Handle("DELETE /api/v1/admin/devices/{deviceId}", admin(http.HandlerFunc(s.handleAdminDeleteDevice)))
-	mux.Handle("POST /api/v1/admin/channels/sync", admin(http.HandlerFunc(s.handleAdminSyncChannels)))
-	mux.Handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.handleAdminListChannels)))
-	mux.Handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.handleAdminPatchChannel)))
-
-	// Admin EPG (Task 10).
-	mux.Handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
-	mux.Handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
-	mux.Handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
-
-	// Admin transcode probe (Task 11).
-	mux.Handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
-
-	// Stream sessions (Task 15).
-	mux.Handle("POST /api/v1/sessions", auth.RequireUser(deps.Auth)(http.HandlerFunc(s.handleCreateSession)))
-	mux.HandleFunc("GET /api/v1/stream/{viewerId}/index.m3u8", s.handlePlaylist)
-	mux.HandleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
-	mux.HandleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
-	mux.Handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
-	mux.Handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
-
+	s.mountAPI(mux)
 	// Embedded SPA (Task 17): catch-all for non-/api paths. More-specific
 	// /api/v1/... patterns above take precedence in Go 1.22 ServeMux.
 	mux.Handle("/", web.Handler())
-
 	return mux
+}
+
+// Routes returns every registered /api/v1 pattern as "METHOD /path" (Go 1.22
+// ServeMux form, including {param} placeholders). Built alongside mountAPI so
+// OpenAPI coverage tests stay in lockstep with registration.
+func Routes() []string {
+	return (&Server{}).mountAPI(http.NewServeMux())
+}
+
+// mountAPI registers all /api/v1 routes on mux and returns their patterns.
+// The SPA catch-all is registered separately in New (not part of the API surface).
+func (s *Server) mountAPI(mux *http.ServeMux) []string {
+	var routes []string
+	handle := func(pattern string, h http.Handler) {
+		routes = append(routes, pattern)
+		mux.Handle(pattern, h)
+	}
+	handleFunc := func(pattern string, h http.HandlerFunc) {
+		routes = append(routes, pattern)
+		mux.HandleFunc(pattern, h)
+	}
+
+	handleFunc("POST /api/v1/auth/login", s.handleLogin)
+	handleFunc("POST /api/v1/auth/refresh", s.handleRefresh)
+	handleFunc("POST /api/v1/auth/logout", s.handleLogout)
+
+	handle("GET /api/v1/me", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleMe)))
+	handle("POST /api/v1/me/password", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
+
+	// Viewer channel list (enabled only).
+	handle("GET /api/v1/channels", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListChannels)))
+
+	// Viewer guide (Task 10).
+	handle("GET /api/v1/guide", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleGuide)))
+
+	// Admin user management (Task 5).
+	admin := auth.RequireAdmin(s.deps.Auth)
+	handle("GET /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminListUsers)))
+	handle("POST /api/v1/admin/users", admin(http.HandlerFunc(s.handleAdminCreateUser)))
+	handle("PATCH /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminPatchUser)))
+	handle("DELETE /api/v1/admin/users/{id}", admin(http.HandlerFunc(s.handleAdminDeleteUser)))
+
+	// Admin tuners / devices / channels (Task 7).
+	handle("GET /api/v1/admin/tuners", admin(http.HandlerFunc(s.handleAdminListTuners)))
+	handle("POST /api/v1/admin/devices", admin(http.HandlerFunc(s.handleAdminAddDevice)))
+	handle("DELETE /api/v1/admin/devices/{deviceId}", admin(http.HandlerFunc(s.handleAdminDeleteDevice)))
+	handle("POST /api/v1/admin/channels/sync", admin(http.HandlerFunc(s.handleAdminSyncChannels)))
+	handle("GET /api/v1/admin/channels", admin(http.HandlerFunc(s.handleAdminListChannels)))
+	handle("PATCH /api/v1/admin/channels/{id}", admin(http.HandlerFunc(s.handleAdminPatchChannel)))
+
+	// Admin EPG (Task 10).
+	handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
+	handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
+	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
+
+	// Admin transcode probe (Task 11).
+	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
+
+	// Stream sessions (Task 15).
+	handle("POST /api/v1/sessions", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateSession)))
+	handleFunc("GET /api/v1/stream/{viewerId}/index.m3u8", s.handlePlaylist)
+	handleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
+	handleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
+	handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
+	handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
+
+	return routes
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
