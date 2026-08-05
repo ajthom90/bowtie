@@ -715,3 +715,13 @@ $ which actionlint
 $ cd server && CGO_ENABLED=0 go test ./... && golangci-lint run
 # all packages ok; 0 issues
 ```
+
+## Phase 2 iOS Tasks 1-6 (worktree track/ios)
+2026-08-05 — Scaffold (XcodeGen, ATS local networking, CI ios job), BowtieKit (models with
+wire-shape fixtures, ServerURL query-preserving resolution, actor client with single-flight
+refresh + request-body assertions, Keychain/InMemory stores, pure Caps, GuideLogic now/next,
+ChannelListModel), app state machines (AppModel phases; PlayerModel session-replace with
+ManualClock-driven debounce tests, effectiveCaps profile contract, 422→Auto retry), and the
+iOS screens (Connect/Login/ChannelList/Settings + Player stub) with tvOS target building.
+Evidence: 55 BowtieKit tests + 17 SharedTests on simulator, TEST SUCCEEDED; tvOS build clean;
+simulator launch to Connect verified visually by orchestrator (screenshot sent to user).

@@ -72,11 +72,11 @@ ios/
 **Interfaces:**
 - Produces: buildable Bowtie (iOS) + BowtieTV (tvOS) targets depending on local package BowtieKit; `Theme` enum with the 9 token colors as `Color` statics + `Font` helpers `channelNumber(_ size:)` (SF Condensed weight-700 via `.width(.condensed)`), `mono(_ size:)`.
 
-- [ ] **Step 1:** `brew list xcodegen || brew install xcodegen`. Write `project.yml`: two targets, deploymentTarget 17.0, `packages: BowtieKit: {path: BowtieKit}`; both Info.plists set `NSAppTransportSecurity → NSAllowsLocalNetworking: true`; iOS target adds `UIBackgroundModes: [audio]` (PiP/AirPlay continuity).
-- [ ] **Step 2:** BowtieKit `Package.swift` platforms `[.iOS(.v17), .tvOS(.v17), .macOS(.v14)]`; SmokeTests asserts `true` (replaced next task).
-- [ ] **Step 3:** `xcodegen generate` then `xcodebuild -project Bowtie.xcodeproj -scheme Bowtie -destination 'generic/platform=iOS Simulator' build` and same for `BowtieTV` with `generic/platform=tvOS Simulator` — both succeed.
-- [ ] **Step 4:** CI `ios` job (runs-on macos-15): install xcodegen, `xcodegen generate`, swift test for BowtieKit (`swift test --package-path ios/BowtieKit`), build both targets against generic simulator destinations.
-- [ ] **Step 5:** Commit `feat: ios scaffold with xcodegen, bowtiekit package, ats config`
+- [x] **Step 1:** `brew list xcodegen || brew install xcodegen`. Write `project.yml`: two targets, deploymentTarget 17.0, `packages: BowtieKit: {path: BowtieKit}`; both Info.plists set `NSAppTransportSecurity → NSAllowsLocalNetworking: true`; iOS target adds `UIBackgroundModes: [audio]` (PiP/AirPlay continuity).
+- [x] **Step 2:** BowtieKit `Package.swift` platforms `[.iOS(.v17), .tvOS(.v17), .macOS(.v14)]`; SmokeTests asserts `true` (replaced next task).
+- [x] **Step 3:** `xcodegen generate` then `xcodebuild -project Bowtie.xcodeproj -scheme Bowtie -destination 'generic/platform=iOS Simulator' build` and same for `BowtieTV` with `generic/platform=tvOS Simulator` — both succeed.
+- [x] **Step 4:** CI `ios` job (runs-on macos-15): install xcodegen, `xcodegen generate`, swift test for BowtieKit (`swift test --package-path ios/BowtieKit`), build both targets against generic simulator destinations.
+- [x] **Step 5:** Commit `feat: ios scaffold with xcodegen, bowtiekit package, ats config`
 
 ### Task 2: BowtieKit — Models, ServerURL, errors
 
@@ -116,8 +116,8 @@ public enum ServerURL {
 
 JSON decoding: RFC3339 dates via `.iso8601` strategy; all requests/responses camelCase (matches API — no key strategy conversion needed).
 
-- [ ] **Step 1: Failing tests** — `ServerURLTests`: normalize("192.168.1.50:8400") → `http://192.168.1.50:8400`; normalize("https://tv.example.com/") strips slash; normalize("") → nil; resolve(path:"/api/v1/stream/x/index.m3u8?token=abc", against:) keeps `token=abc`. `ModelsTests`: decode fixture JSON strings for TokenPair, GuideChannel (RFC3339 date asserts), CreatedSession with & without `session`.
-- [ ] **Step 2:** Run `swift test --package-path ios/BowtieKit` — FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat: bowtiekit models, server url handling, error taxonomy`
+- [x] **Step 1: Failing tests** — `ServerURLTests`: normalize("192.168.1.50:8400") → `http://192.168.1.50:8400`; normalize("https://tv.example.com/") strips slash; normalize("") → nil; resolve(path:"/api/v1/stream/x/index.m3u8?token=abc", against:) keeps `token=abc`. `ModelsTests`: decode fixture JSON strings for TokenPair, GuideChannel (RFC3339 date asserts), CreatedSession with & without `session`.
+- [x] **Step 2:** Run `swift test --package-path ios/BowtieKit` — FAIL. **Step 3:** Implement. **Step 4:** PASS. **Step 5:** Commit `feat: bowtiekit models, server url handling, error taxonomy`
 
 ### Task 3: BowtieKit — SessionStore + BowtieClient with single-flight refresh
 
@@ -160,8 +160,8 @@ Behavior contract (write tests FIRST for each):
 4. 503 with `{"error":"all tuners in use","sessions":[...]}` → `.tunersBusy`; 422 → `.negotiationFailed(message)`; 404 → `.notFound`.
 5. `deleteSession`/`logout` swallow errors (best-effort).
 
-- [ ] **Step 1: Failing tests** — URLProtocol stub (`StubProtocol` recording requests, scripted responses). Cases: `testBearerAttached`, `testSingleFlightRefresh` (3 concurrent calls hit 401; assert exactly 1 POST /auth/refresh recorded, all 3 retried successfully, store.refreshToken == new value before retries — script the stub to assert ordering), `testRefreshFailureSignsOut`, `testTunersBusyDecoded`, `testNegotiation422`, `testDeleteSwallowsErrors`.
-- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS incl. `swift test --package-path ios/BowtieKit`. **Step 5:** Commit `feat: bowtie client with single-flight refresh and keychain session store`
+- [x] **Step 1: Failing tests** — URLProtocol stub (`StubProtocol` recording requests, scripted responses). Cases: `testBearerAttached`, `testSingleFlightRefresh` (3 concurrent calls hit 401; assert exactly 1 POST /auth/refresh recorded, all 3 retried successfully, store.refreshToken == new value before retries — script the stub to assert ordering), `testRefreshFailureSignsOut`, `testTunersBusyDecoded`, `testNegotiation422`, `testDeleteSwallowsErrors`.
+- [x] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS incl. `swift test --package-path ios/BowtieKit`. **Step 5:** Commit `feat: bowtie client with single-flight refresh and keychain session store`
 
 ### Task 4: BowtieKit — Caps + GuideLogic (now/next)
 
@@ -197,8 +197,8 @@ public enum GuideLogic {
 // Tests: join logic (channel with/without guide data), failure → .failed, empty → .empty, refresh window math.
 ```
 
-- [ ] **Step 1: Failing tests** — nowNext: mid-program, exact boundary (stop is exclusive), gap (no current → next only), empty. allowedProfiles: "", "medium" → [medium,low], "original" → all, unknown → all (defensive).
-- [ ] **Step 2-4:** FAIL → implement → PASS. **Step 5:** Commit `feat: capability reporting and now-next guide logic`
+- [x] **Step 1: Failing tests** — nowNext: mid-program, exact boundary (stop is exclusive), gap (no current → next only), empty. allowedProfiles: "", "medium" → [medium,low], "original" → all, unknown → all (defensive).
+- [x] **Step 2-4:** FAIL → implement → PASS. **Step 5:** Commit `feat: capability reporting and now-next guide logic`
 
 ### Task 5: App models — AppModel auth state machine + PlayerModel session-replace machine
 
@@ -237,7 +237,7 @@ public enum GuideLogic {
 }
 ```
 
-- [ ] **Step 0: XcodeGen test wiring** — add to project.yml a `SharedTests` unit-test-bundle target hosted by the Bowtie app:
+- [x] **Step 0: XcodeGen test wiring** — add to project.yml a `SharedTests` unit-test-bundle target hosted by the Bowtie app:
 ```yaml
 targets:
   SharedTests:
@@ -252,9 +252,9 @@ schemes:
     test: {targets: [SharedTests]}
 ```
 (Adjust to real XcodeGen syntax as needed; acceptance = `xcodebuild test -scheme Bowtie` runs SharedTests. `ENABLE_TESTABILITY` is on for Debug by default; tests `@testable import Bowtie`.)
-- [ ] **Step 0b: TestClock** — the plan bans third-party deps, and XCTest has no controllable clock. Add `App/SharedTests/ManualClock.swift` (~20 lines): a `Clock<Duration>` whose `sleep` suspends on a continuation queue and a `func advance(by:)` that resumes due sleepers. All debounce tests use it — never wall-clock sleeps.
-- [ ] **Step 1: Failing tests** — with InMemorySessionStore + stubbed client (URLProtocol): AppModel phase transitions (fresh → connect; stored server+token → checking → ready; bootstrap failure → login). PlayerModel with ManualClock: rapid `play` × 3 within debounce window then `advance(by: .milliseconds(400))` → exactly ONE createSession (assert via stub recording); zap after playing → deleteSession(old) then create(new); setProfile keeps channel and sends effectiveCaps with the new profile (assert request body); 422 once → auto-retry with profile "" (assert second body), 422 twice → .failed; stop → delete + idle; playbackAuthFailed once → replace, twice → failed.
-- [ ] **Step 2-4:** FAIL → implement → PASS (`xcodebuild test -scheme Bowtie -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:SharedTests`). **Step 5:** Commit `feat: app auth state machine and session-replace player model`
+- [x] **Step 0b: TestClock** — the plan bans third-party deps, and XCTest has no controllable clock. Add `App/SharedTests/ManualClock.swift` (~20 lines): a `Clock<Duration>` whose `sleep` suspends on a continuation queue and a `func advance(by:)` that resumes due sleepers. All debounce tests use it — never wall-clock sleeps.
+- [x] **Step 1: Failing tests** — with InMemorySessionStore + stubbed client (URLProtocol): AppModel phase transitions (fresh → connect; stored server+token → checking → ready; bootstrap failure → login). PlayerModel with ManualClock: rapid `play` × 3 within debounce window then `advance(by: .milliseconds(400))` → exactly ONE createSession (assert via stub recording); zap after playing → deleteSession(old) then create(new); setProfile keeps channel and sends effectiveCaps with the new profile (assert request body); 422 once → auto-retry with profile "" (assert second body), 422 twice → .failed; stop → delete + idle; playbackAuthFailed once → replace, twice → failed.
+- [x] **Step 2-4:** FAIL → implement → PASS (`xcodebuild test -scheme Bowtie -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:SharedTests`). **Step 5:** Commit `feat: app auth state machine and session-replace player model`
 
 ### Task 6: iOS UI — Connect, Login, ChannelList (now/next), Settings
 
@@ -267,10 +267,10 @@ Screens (all tokens from Theme; sentence-case copy):
 - ChannelList: rows = oversized condensed guide number (amber when playing), name, now-title + progress capsule, next-title dim; pull-to-refresh; auto-refresh 5min while visible; tap → Player. Empty state: "No channels yet. Ask your admin to enable some."
 - Settings: server (address, change server), account (username, change password form → `client.changePassword`, sign out). Change-password success copy: "Password changed."
 
-- [ ] **Step 1:** Build all views with previews; navigation flows from AppModel.phase.
-- [ ] **Step 2:** `xcodebuild build` both targets zero warnings; SharedTests still green.
-- [ ] **Step 3 (acceptance):** app boots to the Connect screen in the iPhone simulator (`xcrun simctl launch`). Screenshot review of all screens is done by the orchestrator after this task lands.
-- [ ] **Step 4:** Commit `feat: ios connect, login, channel list, settings screens`
+- [x] **Step 1:** Build all views with previews; navigation flows from AppModel.phase.
+- [x] **Step 2:** `xcodebuild build` both targets zero warnings; SharedTests still green.
+- [x] **Step 3 (acceptance):** app boots to the Connect screen in the iPhone simulator (`xcrun simctl launch`). Screenshot review of all screens is done by the orchestrator after this task lands.
+- [x] **Step 4:** Commit `feat: ios connect, login, channel list, settings screens`
 
 ### Task 7: iOS Player — AVPlayerViewController wrapper + stats + quality + lifecycle
 
