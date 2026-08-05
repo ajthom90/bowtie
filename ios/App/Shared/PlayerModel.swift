@@ -1,0 +1,236 @@
+import Foundation
+import Observation
+import BowtieKit
+
+/// Session-replace playback state machine shared by iOS and tvOS players.
+///
+/// CONTRACT:
+/// - Every `createSession` sends `effectiveCaps` = base `caps` with
+///   `profile = selectedProfile` (`""` = Auto).
+/// - On 422: reset `selectedProfile` to `""` and retry ONCE; a second 422
+///   → `.failed` with the device-can't-play copy.
+/// - `stop` is for real leave only (dismissal, sign-out, change-server,
+///   termination) — never background / PiP.
+@Observable
+@MainActor
+public final class PlayerModel {
+    public enum State: Equatable {
+        case idle
+        case starting
+        case playing(CreatedSession)
+        case stalled
+        case failed(String)
+        case tunersBusy([ActiveSessionSummary])
+
+        public static func == (lhs: State, rhs: State) -> Bool {
+            switch (lhs, rhs) {
+            case (.idle, .idle), (.starting, .starting), (.stalled, .stalled):
+                return true
+            case let (.playing(a), .playing(b)):
+                return a.viewerId == b.viewerId
+                    && a.playlistUrl == b.playlistUrl
+                    && a.session == b.session
+            case let (.failed(a), .failed(b)):
+                return a == b
+            case let (.tunersBusy(a), .tunersBusy(b)):
+                return a == b
+            default:
+                return false
+            }
+        }
+    }
+
+    /// Spec-mandated copy for double-422 negotiation failure.
+    public static let deviceCantPlayMessage =
+        "This device can't play this channel at that quality"
+
+    /// Surface after a second mid-play 403 without a successful silent replace.
+    public static let playbackAuthFailedMessage =
+        "Playback authorization failed"
+
+    public private(set) var state: State = .idle
+    public private(set) var currentChannel: Channel?
+    /// `""` = Auto.
+    public var selectedProfile: String = ""
+
+    private let client: BowtieClient
+    private let caps: ClientCaps
+    private let debounce: Duration
+    private let clock: any Clock<Duration>
+
+    private var replaceTask: Task<Void, Never>?
+    private var activeViewerId: String?
+    /// Generation token so cancelled replace tasks never clobber newer state.
+    private var generation: UInt64 = 0
+    /// Mid-play 403: one silent replace, then fail.
+    private var authFailureRetried = false
+
+    public init(
+        client: BowtieClient,
+        caps: ClientCaps,
+        debounce: Duration = .milliseconds(400),
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        self.client = client
+        self.caps = caps
+        self.debounce = debounce
+        self.clock = clock
+    }
+
+    /// Caps sent on every create: base device caps + current profile selection.
+    public var effectiveCaps: ClientCaps {
+        var copy = caps
+        copy.profile = selectedProfile
+        return copy
+    }
+
+    // MARK: - Public API
+
+    /// Session-replace play: cancel in-flight create, DELETE old, debounce, POST new.
+    public func play(channel: Channel) async {
+        currentChannel = channel
+        authFailureRetried = false
+        await scheduleReplace()
+    }
+
+    /// Quality change: same replace machine, keeps the current channel.
+    public func setProfile(_ p: String) async {
+        selectedProfile = p
+        guard currentChannel != nil else { return }
+        authFailureRetried = false
+        await scheduleReplace()
+    }
+
+    /// Real leave only: DELETE active session and return to idle.
+    public func stop() async {
+        replaceTask?.cancel()
+        replaceTask = nil
+        generation &+= 1
+
+        let viewerId = activeViewerId
+        activeViewerId = nil
+        currentChannel = nil
+        authFailureRetried = false
+
+        if let viewerId {
+            await client.deleteSession(viewerId: viewerId)
+        }
+        state = .idle
+    }
+
+    /// Mid-play playlist/segment 403: one silent session replace, then `.failed`.
+    public func playbackAuthFailed() async {
+        guard case .playing = state else { return }
+        if authFailureRetried {
+            state = .failed(Self.playbackAuthFailedMessage)
+            return
+        }
+        authFailureRetried = true
+        await scheduleReplace()
+    }
+
+    // MARK: - Replace machine
+
+    private func scheduleReplace() async {
+        replaceTask?.cancel()
+        generation &+= 1
+        let gen = generation
+        let task = Task { @MainActor in
+            await self.performReplace(generation: gen)
+        }
+        replaceTask = task
+        await task.value
+    }
+
+    private func performReplace(generation gen: UInt64) async {
+        guard let channel = currentChannel else { return }
+
+        let oldViewerId = activeViewerId
+        activeViewerId = nil
+        state = .starting
+
+        if let oldViewerId {
+            await client.deleteSession(viewerId: oldViewerId)
+        }
+
+        guard isCurrent(gen) else { return }
+
+        do {
+            try await clock.sleep(for: debounce)
+        } catch {
+            // Cancelled during debounce — a newer replace owns the machine.
+            return
+        }
+
+        guard isCurrent(gen) else { return }
+
+        await createSession(channel: channel, generation: gen, isRetry: false)
+    }
+
+    private func createSession(channel: Channel, generation gen: UInt64, isRetry: Bool) async {
+        do {
+            let session = try await client.createSession(
+                channelId: channel.id,
+                caps: effectiveCaps
+            )
+            guard isCurrent(gen) else {
+                // Orphaned success — tear down so we don't leak a tuner.
+                await client.deleteSession(viewerId: session.viewerId)
+                return
+            }
+            activeViewerId = session.viewerId
+            state = .playing(session)
+        } catch let error as BowtieError {
+            guard isCurrent(gen) else { return }
+            await handleCreateError(
+                error,
+                channel: channel,
+                generation: gen,
+                isRetry: isRetry
+            )
+        } catch {
+            guard isCurrent(gen) else { return }
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func handleCreateError(
+        _ error: BowtieError,
+        channel: Channel,
+        generation gen: UInt64,
+        isRetry: Bool
+    ) async {
+        switch error {
+        case .negotiationFailed:
+            // 422: force Auto and retry once; second 422 → device-can't-play.
+            selectedProfile = ""
+            if !isRetry {
+                await createSession(channel: channel, generation: gen, isRetry: true)
+            } else {
+                state = .failed(Self.deviceCantPlayMessage)
+            }
+
+        case .tunersBusy(let sessions):
+            state = .tunersBusy(sessions)
+
+        case .notFound:
+            state = .failed("Channel not found")
+
+        case .unauthorized:
+            state = .failed("Signed out")
+
+        case .server(_, let message):
+            state = .failed(message)
+
+        case .network(let message):
+            state = .failed(message)
+
+        case .invalidServerURL:
+            state = .failed("Invalid server")
+        }
+    }
+
+    private func isCurrent(_ gen: UInt64) -> Bool {
+        !Task.isCancelled && gen == generation
+    }
+}

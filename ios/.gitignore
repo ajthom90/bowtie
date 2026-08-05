@@ -1,0 +1,26 @@
+# XcodeGen output — regenerate with `xcodegen generate`
+Bowtie.xcodeproj/
+*.xcodeproj/
+
+# Build products
+DerivedData/
+build/
+*.xcarchive
+
+# User-specific
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# macOS
+.DS_Store

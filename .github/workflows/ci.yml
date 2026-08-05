@@ -73,3 +73,30 @@ jobs:
           load: true
           push: false
           tags: bowtie:ci
+
+  ios:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Test BowtieKit
+        run: swift test --package-path BowtieKit
+
+      - name: Build Bowtie (iOS)
+        run: |
+          xcodebuild -project Bowtie.xcodeproj -scheme Bowtie \
+            -destination 'generic/platform=iOS Simulator' build
+
+      - name: Build BowtieTV (tvOS)
+        run: |
+          xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV \
+            -destination 'generic/platform=tvOS Simulator' build
