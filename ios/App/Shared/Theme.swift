@@ -16,7 +16,7 @@ public enum Theme {
 
     // MARK: - Fonts
 
-    /// Channel numbers — SF Condensed, weight 700.
+    /// Channel numbers — SF Condensed, weight 700. Signature look: oversized.
     public static func channelNumber(_ size: CGFloat) -> Font {
         .system(size: size, weight: .bold).width(.condensed)
     }
@@ -24,6 +24,60 @@ public enum Theme {
     /// Readouts / technical values — SF Mono.
     public static func mono(_ size: CGFloat) -> Font {
         .system(size: size, design: .monospaced)
+    }
+
+    /// Primary body copy.
+    public static func body(_ size: CGFloat = 17) -> Font {
+        .system(size: size, weight: .regular)
+    }
+
+    /// Section / control labels.
+    public static func label(_ size: CGFloat = 15) -> Font {
+        .system(size: size, weight: .medium)
+    }
+
+    /// Screen titles.
+    public static func title(_ size: CGFloat = 22) -> Font {
+        .system(size: size, weight: .semibold)
+    }
+
+    // MARK: - Layout
+
+    public static let cornerRadius: CGFloat = 10
+    public static let fieldPadding: CGFloat = 14
+    /// Default channel-row guide number size.
+    public static let channelNumberSize: CGFloat = 28
+}
+
+// MARK: - Themed field chrome (keyboard-visible focus ring)
+
+struct ThemedFieldModifier: ViewModifier {
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .font(Theme.body())
+            .foregroundStyle(Theme.text)
+            .padding(Theme.fieldPadding)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                    .stroke(isFocused ? Theme.amber : Theme.line, lineWidth: isFocused ? 2 : 1)
+            )
+    }
+}
+
+extension View {
+    /// Text field surface with amber focus ring when the keyboard/focus is active.
+    func themedField(focused: Bool) -> some View {
+        modifier(ThemedFieldModifier(isFocused: focused))
+    }
+
+    /// Full-screen charcoal background used by auth + list shells.
+    func bowtieScreenBackground() -> some View {
+        frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.bg.ignoresSafeArea())
     }
 }
 

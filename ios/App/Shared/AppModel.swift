@@ -17,6 +17,9 @@ public final class AppModel {
     public private(set) var user: User?
     public var client: BowtieClient?
 
+    /// Currently configured server base URL (nil on Connect).
+    public var serverURL: URL? { store.loadServer() }
+
     private let store: SessionStore
     private let urlSession: URLSession
 

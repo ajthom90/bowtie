@@ -31,7 +31,7 @@ public struct TokenPair: Codable, Sendable {
 
 // MARK: - Channels / guide
 
-public struct Channel: Codable, Equatable, Identifiable, Sendable {
+public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let id: Int64
     public let guideNumber: String
     public let name: String
