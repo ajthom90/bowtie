@@ -1,0 +1,243 @@
+package app.bowtie
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import app.bowtie.core.ActiveSessionSummary
+import app.bowtie.core.BowtieClient
+import app.bowtie.core.BowtieError
+import app.bowtie.core.Channel
+import app.bowtie.core.ClientCaps
+import app.bowtie.core.CreatedSession
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * Session-replace playback state machine.
+ *
+ * CONTRACT:
+ * - Every [createSession] sends `effectiveCaps` = base [caps] with
+ *   `profile = selectedProfile` (`""` = Auto).
+ * - On 422: reset [selectedProfile] to `""` and retry ONCE; a second 422
+ *   → [State.Failed] with the device-can't-play copy.
+ * - On 404: [State.Failed] + [channelsStale] = true (channel list should refresh).
+ * - Mid-play 403 via [onPlaybackAuthError]: one silent replace, then fail.
+ * - [stop] is for real leave only (dismissal, sign-out, change-server) — never PiP.
+ * - Zap / quality: cancel in-flight → DELETE old → debounce → POST new.
+ */
+class PlayerViewModel(
+    private val client: BowtieClient,
+    private val caps: ClientCaps,
+    private val debounceMs: Long = 400,
+    private val scope: CoroutineScope? = null,
+) : ViewModel() {
+
+    sealed class State {
+        data object Idle : State()
+        data object Starting : State()
+        data class Playing(val s: CreatedSession) : State()
+        data object Stalled : State()
+        data class Failed(val message: String) : State()
+        data class TunersBusy(val sessions: List<ActiveSessionSummary>) : State()
+    }
+
+    companion object {
+        /** Spec-mandated copy for double-422 negotiation failure. */
+        const val DEVICE_CANT_PLAY_MESSAGE =
+            "This device can't play this channel at that quality"
+
+        /** Surface after a second mid-play 403 without a successful silent replace. */
+        const val PLAYBACK_AUTH_FAILED_MESSAGE =
+            "Playback authorization failed"
+
+        const val CHANNEL_NOT_FOUND_MESSAGE = "Channel not found"
+    }
+
+    private val workScope: CoroutineScope = scope ?: viewModelScope
+
+    private val _state = MutableStateFlow<State>(State.Idle)
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _currentChannel = MutableStateFlow<Channel?>(null)
+    val currentChannel: StateFlow<Channel?> = _currentChannel.asStateFlow()
+
+    /**
+     * Becomes true when create fails with 404 (unknown/disabled channel).
+     * UI should refresh the channel list when this flips to true; call
+     * [clearChannelsStale] after handling.
+     */
+    private val _channelsStale = MutableStateFlow(false)
+    val channelsStale: StateFlow<Boolean> = _channelsStale.asStateFlow()
+
+    /** `""` = Auto. */
+    var selectedProfile: String = ""
+
+    private var replaceJob: Job? = null
+    private var activeViewerId: String? = null
+    /** Generation token so cancelled replace tasks never clobber newer state. */
+    private var generation: Long = 0
+    /** Mid-play 403: one silent replace, then fail. */
+    private var authFailureRetried: Boolean = false
+
+    /** Caps sent on every create: base device caps + current profile selection. */
+    val effectiveCaps: ClientCaps
+        get() = caps.copy(profile = selectedProfile)
+
+    // ── Public API ──────────────────────────────────────────────────────────
+
+    /** Session-replace play: cancel in-flight create, DELETE old, debounce, POST new. */
+    fun play(channel: Channel) {
+        _currentChannel.value = channel
+        authFailureRetried = false
+        scheduleReplace()
+    }
+
+    /** Quality change: same replace machine, keeps the current channel. */
+    fun setProfile(p: String) {
+        selectedProfile = p
+        if (_currentChannel.value == null) return
+        authFailureRetried = false
+        scheduleReplace()
+    }
+
+    /** Real leave only: DELETE active session and return to idle. */
+    fun stop() {
+        replaceJob?.cancel()
+        replaceJob = null
+        generation++
+
+        val viewerId = activeViewerId
+        activeViewerId = null
+        _currentChannel.value = null
+        authFailureRetried = false
+
+        if (viewerId != null) {
+            workScope.launch {
+                client.deleteSession(viewerId)
+            }
+        }
+        _state.value = State.Idle
+    }
+
+    /**
+     * Mid-play playlist/segment 403 handler: one silent session replace, then
+     * [State.Failed].
+     */
+    fun onPlaybackAuthError() {
+        if (_state.value !is State.Playing) return
+        if (authFailureRetried) {
+            _state.value = State.Failed(PLAYBACK_AUTH_FAILED_MESSAGE)
+            return
+        }
+        authFailureRetried = true
+        scheduleReplace()
+    }
+
+    fun clearChannelsStale() {
+        _channelsStale.value = false
+    }
+
+    // ── Replace machine ─────────────────────────────────────────────────────
+
+    private fun scheduleReplace() {
+        replaceJob?.cancel()
+        generation++
+        val gen = generation
+        replaceJob = workScope.launch {
+            performReplace(gen)
+        }
+    }
+
+    private suspend fun performReplace(gen: Long) {
+        val channel = _currentChannel.value ?: return
+
+        val oldViewerId = activeViewerId
+        activeViewerId = null
+        _state.value = State.Starting
+
+        if (oldViewerId != null) {
+            client.deleteSession(oldViewerId)
+        }
+
+        if (!isCurrent(gen)) return
+
+        delay(debounceMs)
+
+        if (!isCurrent(gen)) return
+
+        createSession(channel = channel, gen = gen, isRetry = false)
+    }
+
+    private suspend fun createSession(
+        channel: Channel,
+        gen: Long,
+        isRetry: Boolean,
+    ) {
+        try {
+            val session = client.createSession(
+                channelId = channel.id,
+                caps = effectiveCaps,
+            )
+            if (!isCurrent(gen)) {
+                // Orphaned success — tear down so we don't leak a tuner.
+                client.deleteSession(session.viewerId)
+                return
+            }
+            activeViewerId = session.viewerId
+            _channelsStale.value = false
+            _state.value = State.Playing(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: BowtieError) {
+            if (!isCurrent(gen)) return
+            handleCreateError(e, channel, gen, isRetry)
+        } catch (e: Exception) {
+            if (!isCurrent(gen)) return
+            _state.value = State.Failed(e.message ?: e.toString())
+        }
+    }
+
+    private suspend fun handleCreateError(
+        error: BowtieError,
+        channel: Channel,
+        gen: Long,
+        isRetry: Boolean,
+    ) {
+        when (error) {
+            is BowtieError.NegotiationFailed -> {
+                // 422: force Auto and retry once; second 422 → device-can't-play.
+                selectedProfile = ""
+                if (!isRetry) {
+                    createSession(channel = channel, gen = gen, isRetry = true)
+                } else {
+                    _state.value = State.Failed(DEVICE_CANT_PLAY_MESSAGE)
+                }
+            }
+            is BowtieError.TunersBusy -> {
+                _state.value = State.TunersBusy(error.sessions)
+            }
+            is BowtieError.NotFound -> {
+                _channelsStale.value = true
+                _state.value = State.Failed(CHANNEL_NOT_FOUND_MESSAGE)
+            }
+            is BowtieError.Unauthorized -> {
+                _state.value = State.Failed("Signed out")
+            }
+            is BowtieError.Server -> {
+                _state.value = State.Failed(error.message)
+            }
+            is BowtieError.Network -> {
+                _state.value = State.Failed(
+                    error.cause2.message ?: error.cause2.toString(),
+                )
+            }
+        }
+    }
+
+    private fun isCurrent(gen: Long): Boolean = gen == generation
+}
