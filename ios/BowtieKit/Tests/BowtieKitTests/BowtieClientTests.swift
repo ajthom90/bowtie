@@ -1,110 +1,6 @@
 import XCTest
 @testable import BowtieKit
 
-// MARK: - URLProtocol stub
-
-/// Records requests and returns scripted responses for BowtieClient tests.
-final class StubURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var recorded: [URLRequest] = []
-    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (Int, Data, [String: String]))?
-
-    static func reset() {
-        recorded = []
-        handler = nil
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        Self.recorded.append(request)
-        do {
-            guard let handler = Self.handler else {
-                throw URLError(.badServerResponse)
-            }
-            let (status, data, headers) = try handler(request)
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: status,
-                httpVersion: "HTTP/1.1",
-                headerFields: headers.merging(["Content-Type": "application/json"]) { _, new in new }
-            )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {}
-}
-
-// MARK: - Helpers
-
-private extension BowtieClientTests {
-    static let baseURL = URL(string: "http://test.bowtie.local:8400")!
-
-    static let sampleUserJSON = """
-    {
-      "id": 1,
-      "username": "alice",
-      "role": "viewer",
-      "maxQuality": "high"
-    }
-    """
-
-    static func tokenPairJSON(
-        access: String = "access-1",
-        refresh: String = "refresh-1"
-    ) -> Data {
-        """
-        {
-          "accessToken": "\(access)",
-          "refreshToken": "\(refresh)",
-          "user": {
-            "id": 1,
-            "username": "alice",
-            "role": "viewer",
-            "maxQuality": "high"
-          }
-        }
-        """.data(using: .utf8)!
-    }
-
-    func makeSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [StubURLProtocol.self]
-        return URLSession(configuration: config)
-    }
-
-    func jsonBody(of request: URLRequest) throws -> [String: Any] {
-        guard let data = request.httpBody ?? request.httpBodyStream.flatMap({ stream in
-            let buffer = NSMutableData()
-            let s = stream
-            s.open()
-            defer { s.close() }
-            let chunk = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
-            defer { chunk.deallocate() }
-            while s.hasBytesAvailable {
-                let n = s.read(chunk, maxLength: 1024)
-                if n > 0 { buffer.append(chunk, length: n) }
-                else { break }
-            }
-            return buffer as Data
-        }) else {
-            throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "missing body"])
-        }
-        let obj = try JSONSerialization.jsonObject(with: data)
-        guard let dict = obj as? [String: Any] else {
-            throw NSError(domain: "test", code: 2, userInfo: [NSLocalizedDescriptionKey: "body not object"])
-        }
-        return dict
-    }
-
-}
-
 // MARK: - Tests
 
 final class BowtieClientTests: XCTestCase {
@@ -121,6 +17,10 @@ final class BowtieClientTests: XCTestCase {
         super.tearDown()
     }
 
+    private func makeSession() -> URLSession {
+        TestFixtures.makeStubSession()
+    }
+
     // MARK: Request body OpenAPI field names (behavior contract item 0)
 
     func testLoginRequestBodyFieldNames() async throws {
@@ -128,14 +28,14 @@ final class BowtieClientTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/api/v1/auth/login")
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
-            return (200, Self.tokenPairJSON(), [:])
+            return (200, TestFixtures.tokenPairJSON(), [:])
         }
 
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         let user = try await client.login(username: "alice", password: "s3cret")
         XCTAssertEqual(user.username, "alice")
         XCTAssertEqual(store.loadRefreshToken(), "refresh-1")
-        XCTAssertEqual(store.loadServer(), Self.baseURL)
+        XCTAssertEqual(store.loadServer(), TestFixtures.baseURL)
 
         let body = try jsonBody(of: StubURLProtocol.recorded[0])
         XCTAssertEqual(body["username"] as? String, "alice")
@@ -144,16 +44,16 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testRefreshRequestBodyFieldNames() async throws {
-        store.save(server: Self.baseURL, refreshToken: "old-refresh")
+        store.save(server: TestFixtures.baseURL, refreshToken: "old-refresh")
 
         StubURLProtocol.handler = { request in
             if request.url?.path == "/api/v1/auth/refresh" {
-                return (200, Self.tokenPairJSON(access: "a2", refresh: "r2"), [:])
+                return (200, TestFixtures.tokenPairJSON(access: "a2", refresh: "r2"), [:])
             }
             return (500, Data(), [:])
         }
 
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         _ = try await client.bootstrapFromStoredToken()
 
         let refreshReqs = StubURLProtocol.recorded.filter { $0.url?.path == "/api/v1/auth/refresh" }
@@ -165,8 +65,8 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testLogoutRequestBodyFieldNames() async throws {
-        store.save(server: Self.baseURL, refreshToken: "to-revoke")
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        store.save(server: TestFixtures.baseURL, refreshToken: "to-revoke")
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-x")
 
         StubURLProtocol.handler = { request in
@@ -178,7 +78,7 @@ final class BowtieClientTests: XCTestCase {
 
         XCTAssertNil(store.loadRefreshToken())
         // Server URL kept for reconnect.
-        XCTAssertEqual(store.loadServer(), Self.baseURL)
+        XCTAssertEqual(store.loadServer(), TestFixtures.baseURL)
 
         let body = try jsonBody(of: StubURLProtocol.recorded[0])
         XCTAssertEqual(body["refreshToken"] as? String, "to-revoke")
@@ -186,7 +86,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testChangePasswordRequestBodyFieldNames() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         StubURLProtocol.handler = { request in
@@ -204,7 +104,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testCreateSessionRequestBodyFieldNames() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         let sessionJSON = """
@@ -254,7 +154,7 @@ final class BowtieClientTests: XCTestCase {
     // MARK: Bearer attachment
 
     func testBearerAttached() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("tok-abc")
 
         StubURLProtocol.handler = { request in
@@ -271,7 +171,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testNoAuthorizationOnStreamPaths() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("tok-abc")
 
         let streamPath = "/api/v1/stream/vid-1/index.m3u8?token=secret"
@@ -295,11 +195,11 @@ final class BowtieClientTests: XCTestCase {
 
     func testSingleFlightRefresh() async throws {
         let sessionStore = store!
-        sessionStore.save(server: Self.baseURL, refreshToken: "old-refresh")
-        let client = BowtieClient(server: Self.baseURL, store: sessionStore, urlSession: makeSession())
+        sessionStore.save(server: TestFixtures.baseURL, refreshToken: "old-refresh")
+        let client = BowtieClient(server: TestFixtures.baseURL, store: sessionStore, urlSession: makeSession())
         await client.setAccessTokenForTesting("old-access")
 
-        let userData = Self.sampleUserJSON.data(using: .utf8)!
+        let userData = TestFixtures.sampleUserJSON.data(using: .utf8)!
         // Box shared counters so the @Sendable handler can mutate safely under a lock.
         final class FlightState: @unchecked Sendable {
             let lock = NSLock()
@@ -346,7 +246,7 @@ final class BowtieClientTests: XCTestCase {
                 state.lock.lock()
                 state.refreshCompleted = true
                 state.lock.unlock()
-                return (200, Self.tokenPairJSON(access: "new-access", refresh: "new-refresh"), [:])
+                return (200, TestFixtures.tokenPairJSON(access: "new-access", refresh: "new-refresh"), [:])
             }
             return (500, Data(), [:])
         }
@@ -370,8 +270,8 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testRefreshFailureSignsOut() async throws {
-        store.save(server: Self.baseURL, refreshToken: "dead-refresh")
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        store.save(server: TestFixtures.baseURL, refreshToken: "dead-refresh")
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("old-access")
 
         StubURLProtocol.handler = { request in
@@ -393,7 +293,7 @@ final class BowtieClientTests: XCTestCase {
         }
 
         XCTAssertNil(store.loadRefreshToken(), "token cleared on refresh failure")
-        XCTAssertEqual(store.loadServer(), Self.baseURL, "server kept on refresh failure")
+        XCTAssertEqual(store.loadServer(), TestFixtures.baseURL, "server kept on refresh failure")
         let user = await client.currentUser
         XCTAssertNil(user)
     }
@@ -401,7 +301,7 @@ final class BowtieClientTests: XCTestCase {
     // MARK: Error mapping
 
     func testTunersBusyDecoded() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         let body = """
@@ -442,7 +342,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testNegotiation422() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         let body = #"{"error":"no compatible codec"}"#.data(using: .utf8)!
@@ -458,7 +358,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testNotFound404() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         StubURLProtocol.handler = { _ in
@@ -477,7 +377,7 @@ final class BowtieClientTests: XCTestCase {
     // MARK: Best-effort teardown
 
     func testDeleteSwallowsErrors() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         StubURLProtocol.handler = { _ in
@@ -492,8 +392,8 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testLogoutSwallowsErrors() async throws {
-        store.save(server: Self.baseURL, refreshToken: "r1")
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        store.save(server: TestFixtures.baseURL, refreshToken: "r1")
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         StubURLProtocol.handler = { _ in
@@ -502,13 +402,13 @@ final class BowtieClientTests: XCTestCase {
 
         await client.logout()
         XCTAssertNil(store.loadRefreshToken())
-        XCTAssertEqual(store.loadServer(), Self.baseURL)
+        XCTAssertEqual(store.loadServer(), TestFixtures.baseURL)
         let user = await client.currentUser
         XCTAssertNil(user)
     }
 
     func testGuideQueryParams() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         await client.setAccessTokenForTesting("access-1")
 
         StubURLProtocol.handler = { request in
@@ -529,7 +429,7 @@ final class BowtieClientTests: XCTestCase {
     }
 
     func testBootstrapUnauthorizedWhenNoToken() async throws {
-        let client = BowtieClient(server: Self.baseURL, store: store, urlSession: makeSession())
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
         do {
             _ = try await client.bootstrapFromStoredToken()
             XCTFail("expected unauthorized")
