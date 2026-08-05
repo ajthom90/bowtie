@@ -75,9 +75,9 @@ android/
   (mirrors iOS `NSAllowsLocalNetworking`; remote access remains HTTPS via BYO
   proxy; revisit if Play Store review demands tightening).
 
-- [ ] **Step 1:** Scaffold; `./gradlew :app:assembleDebug` succeeds; MainActivity renders name on #101418.
-- [ ] **Step 2:** CI android job green locally via same commands.
-- [ ] **Step 3:** Commit `feat: android scaffold with core/app modules, compose, cleartext config`
+- [x] **Step 1:** Scaffold; `./gradlew :app:assembleDebug` succeeds; MainActivity renders name on #101418.
+- [x] **Step 2:** CI android job green locally via same commands.
+- [x] **Step 3:** Commit `feat: android scaffold with core/app modules, compose, cleartext config`
 
 ### Task 2: :core — Models, ServerUrl, BowtieError
 
@@ -116,8 +116,8 @@ object ServerUrl {
 }
 ```
 
-- [ ] **Step 1: Failing tests** mirroring iOS Task 2 (normalize/resolve-preserves-query/decode fixtures incl. optional `session`).
-- [ ] **Step 2-4:** FAIL → implement → PASS (`./gradlew :core:test`). **Step 5:** Commit `feat: core models, server url, error taxonomy`
+- [x] **Step 1: Failing tests** mirroring iOS Task 2 (normalize/resolve-preserves-query/decode fixtures incl. optional `session`).
+- [x] **Step 2-4:** FAIL → implement → PASS (`./gradlew :core:test`). **Step 5:** Commit `feat: core models, server url, error taxonomy`
 
 ### Task 3: :core — TokenStore + BowtieClient with single-flight refresh
 
@@ -152,7 +152,7 @@ class BowtieClient(val server: HttpUrl, private val store: TokenStore, okHttp: O
 
 Behavior contract == iOS Task 3 exactly (single-flight via `Mutex` + shared in-flight `Deferred`; persist new refresh before retry; error mapping incl. 503 body parse). Test list mirrors iOS: `bearerAttached`, `singleFlightRefresh` (launch 3 concurrent calls against MockWebServer scripted 401,401,401,refresh-200,retry-200×3 → assert exactly one `/auth/refresh` request), `refreshFailureSignsOut`, `tunersBusyDecoded`, `negotiation422`, `deleteSwallows`, `noAuthHeaderOnStreamPaths`.
 
-- [ ] **Steps 1-5** as pattern. Commit `feat: bowtie client with single-flight refresh and encrypted token store`
+- [x] **Steps 1-5** as pattern. Commit `feat: bowtie client with single-flight refresh and encrypted token store`
 
 ### Task 4: :core — Caps + GuideLogic
 
@@ -170,7 +170,7 @@ object GuideLogic {
 }
 ```
 
-- [ ] Tests mirror iOS Task 4 exactly (same fixtures/cases). Commit `feat: capability detection and now-next guide logic`
+- [x] Tests mirror iOS Task 4 exactly (same fixtures/cases). Commit `feat: capability detection and now-next guide logic`
 
 ### Task 5: :app — AppViewModel + PlayerViewModel (session-replace machine)
 
@@ -199,7 +199,7 @@ class PlayerViewModel(private val client: BowtieClient, private val caps: Client
 }
 ```
 
-- [ ] Test list mirrors iOS Task 5 (debounced triple-zap → 1 create; replace deletes old; stop; auth-error once/twice) PLUS: 404 on create → Failed with channel-list-refresh signal (expose `channelsStale: StateFlow<Boolean>` or equivalent event). Test harness requirements (binding): `Dispatchers.setMain(StandardTestDispatcher())` in @Before, tests in `runTest`, ViewModels take the injected test scope, debounce advanced via `advanceTimeBy` — the debounce path must be deterministic, never sleep-based. Commit `feat: auth state machine and session-replace player viewmodel`
+- [x] Test list mirrors iOS Task 5 (debounced triple-zap → 1 create; replace deletes old; stop; auth-error once/twice) PLUS: 404 on create → Failed with channel-list-refresh signal (expose `channelsStale: StateFlow<Boolean>` or equivalent event). Test harness requirements (binding): `Dispatchers.setMain(StandardTestDispatcher())` in @Before, tests in `runTest`, ViewModels take the injected test scope, debounce advanced via `advanceTimeBy` — the debounce path must be deterministic, never sleep-based. Commit `feat: auth state machine and session-replace player viewmodel`
 
 ### Task 6: :app UI — Theme, Connect, Login, ChannelList, Settings
 
@@ -207,7 +207,7 @@ class PlayerViewModel(private val client: BowtieClient, private val caps: Client
 
 Same screen specs and copy as iOS Task 6, Material3-idiomatic (dark colorScheme from tokens; Roboto Condensed channel numbers ~28sp/700; progress capsule with amber track for now-playing). Guide/channel refresh: on every foreground (ON_START) AND every 5min while STARTED (repeatOnLifecycle); `channelsStale` from PlayerViewModel also triggers a refresh.
 
-- [ ] Build + existing tests green; app boots to Connect on emulator or `:app:assembleDebug` acceptance. Commit `feat: android connect, login, channel list, settings screens`
+- [x] Build + existing tests green; app boots to Connect on emulator or `:app:assembleDebug` acceptance. Commit `feat: android connect, login, channel list, settings screens`
 
 ### Task 7: :app — Player (Media3) + PiP + release signing + APK on releases
 

@@ -1,4 +1,4 @@
-.PHONY: build test lint dev build-web dev-server ios-gen ios-test
+.PHONY: build test lint dev build-web dev-server ios-gen ios-test android-test android-apk
 
 # CGO is always disabled for clean cross-compilation.
 export CGO_ENABLED=0
@@ -37,3 +37,11 @@ ios-test: ios-gen
 		-destination 'generic/platform=iOS Simulator' build
 	cd ios && xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV \
 		-destination 'generic/platform=tvOS Simulator' build
+
+# --- Android (JDK 17 + Android SDK required; uses android/gradlew) ---
+
+android-test:
+	cd android && ./gradlew :core:test :app:testDebugUnitTest
+
+android-apk:
+	cd android && ./gradlew :app:assembleDebug
