@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Local SDK path (machine-specific)
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.hprof
+
+# OS
+.DS_Store
+
+# Captures / signing
+*.jks
+*.keystore
+captures/
+output.json
+
+# Kotlin
+.kotlin/
