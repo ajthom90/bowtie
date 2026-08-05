@@ -197,6 +197,13 @@ cd web && npm ci && npm test && npm run build
 
 ---
 
+## Apps
+
+- [iOS / iPadOS / tvOS](ios/README.md) — build, schemes, sideload
+- [Android](android/README.md) — build, GitHub Releases APK sideload, first-run connect
+
+---
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
