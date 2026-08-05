@@ -197,6 +197,13 @@ cd web && npm ci && npm test && npm run build
 
 ---
 
+## Apps
+
+- **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
+- **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md).
+
+---
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
