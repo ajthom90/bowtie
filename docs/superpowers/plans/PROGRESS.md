@@ -743,3 +743,14 @@ BOWTIE_KEYSTORE_* env with debug fallback, release.yml android job (needs gorele
 signed versioned APK. README + sideload guide. Orchestrator review fix: workflow read
 secrets.ANDROID_KEYSTORE_ALIAS but the repo secret is ANDROID_KEY_ALIAS — corrected.
 Evidence: 54 :core + 27 :app tests, assembleDebug + assembleRelease (fallback) green.
+
+## Phase 2 iOS Tasks 7-9 (worktree track/ios)
+2026-08-05 — AVPlayerViewController player (PiP-safe teardown with deferred stop, audio session,
+quality menu with maxQuality filtering, AirPlay route picker, mono stats overlay, 403→auth-replace,
+stall backoff), tvOS channel rail + TVPlayer with customInfoViewControllers panel and
+focus-navigable shared views, README/sideload guide, CI ios job runs SharedTests via runtime
+simulator UDID. Note: Task 8's Grok process was killed post-verification pre-commit; work was
+independently re-verified and committed by the orchestrator. Evidence: 55 BowtieKit + 17
+SharedTests green, tvOS builds and launches to Connect (screenshot reviewed).
+
+**Phase 2 complete: all 9 iOS tasks + all 8 Android tasks done.**

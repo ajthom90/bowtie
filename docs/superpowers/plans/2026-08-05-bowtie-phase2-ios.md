@@ -286,7 +286,7 @@ Behavior:
 - Teardown: `.onDisappear` → `playerModel.stop()` ONLY when not transitioning to PiP (`AVPlayerViewController.isPictureInPictureActive` guard via delegate flag); app `willTerminate` notification → stop.
 - Error UX acceptance (spec-mandated, testable by inspection + SharedTests where logic-level): `.tunersBusy` renders "All tuners are in use" + who's-watching list from `sessions[]` + Try again; 422 path auto-falls-back to Auto (PlayerModel contract) and shows the device-can't-play copy only on second failure; `.stalled` drives a spinner overlay + player retry with backoff (1s,2s,4s ×3) before `.failed`; 404 → post channels-stale signal so ChannelListModel reloads.
 
-- [ ] **Step 1:** Implement; **Step 2:** builds + SharedTests green; **Step 3:** simulator boot: navigating to a channel with no server shows the failed-state copy (acceptance). **Step 4:** Commit `feat: ios player with pip-safe lifecycle, stats overlay, quality menu`
+- [x] **Step 1:** Implement; **Step 2:** builds + SharedTests green; **Step 3:** simulator boot: navigating to a channel with no server shows the failed-state copy (acceptance). **Step 4:** Commit `feat: ios player with pip-safe lifecycle, stats overlay, quality menu`
 
 ### Task 8: tvOS — channel rail home + TV player
 
@@ -298,14 +298,14 @@ Behavior:
 - TVPlayer: `AVPlayerViewController` full-screen (native transport); custom info panel tab for quality (tvOS `customInfoViewControllers` hosting the quality picker) + stats.
 - Connect/Login/Settings shared views must be focus-navigable (verify Button/TextField focus works; adjust with `.focusSection()` where needed).
 
-- [ ] **Step 1:** Implement. **Step 2:** `xcodebuild build -scheme BowtieTV -destination 'generic/platform=tvOS Simulator'` clean; boot Apple TV sim to Connect screen. **Step 3:** Commit `feat: tvos channel rail and player`
+- [x] **Step 1:** Implement. **Step 2:** `xcodebuild build -scheme BowtieTV -destination 'generic/platform=tvOS Simulator'` clean; boot Apple TV sim to Connect screen. **Step 3:** Commit `feat: tvos channel rail and player`
 
 ### Task 9: README + sideload docs + CI polish
 
 **Files:**
 - Create/Modify: `ios/README.md` (Xcode sideload steps: open, set team to personal, select device, run; 7-day free-provisioning caveat; TestFlight note for later), `.github/workflows/ci.yml` (ensure ios job runs BowtieKit tests + both builds + SharedTests on iPhone sim)
 
-- [ ] **Step 1:** Write docs; CI verified green on branch push. **Step 2:** Commit `docs: ios build and sideload guide`
+- [x] **Step 1:** Write docs; CI verified green on branch push. **Step 2:** Commit `docs: ios build and sideload guide`
 
 ## Verification summary (every task)
 ```bash
