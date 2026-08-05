@@ -79,6 +79,8 @@ class PlayerViewModel(
 
     private var replaceJob: Job? = null
     private var activeViewerId: String? = null
+    /** Last successfully created session — used to recover from [State.Stalled]. */
+    private var lastSession: CreatedSession? = null
     /** Generation token so cancelled replace tasks never clobber newer state. */
     private var generation: Long = 0
     /** Mid-play 403: one silent replace, then fail. */
@@ -113,6 +115,7 @@ class PlayerViewModel(
 
         val viewerId = activeViewerId
         activeViewerId = null
+        lastSession = null
         _currentChannel.value = null
         authFailureRetried = false
 
@@ -129,13 +132,41 @@ class PlayerViewModel(
      * [State.Failed].
      */
     fun onPlaybackAuthError() {
-        if (_state.value !is State.Playing) return
+        val current = _state.value
+        if (current !is State.Playing && current !is State.Stalled) return
         if (authFailureRetried) {
             _state.value = State.Failed(PLAYBACK_AUTH_FAILED_MESSAGE)
             return
         }
         authFailureRetried = true
         scheduleReplace()
+    }
+
+    /**
+     * Media3 behind-live / buffer stall: flip UI to [State.Stalled] while the
+     * session stays alive. Caller should seek/retry the player.
+     */
+    fun onPlaybackStalled() {
+        val current = _state.value
+        if (current is State.Playing || current is State.Stalled) {
+            _state.value = State.Stalled
+        }
+    }
+
+    /** After a stall recovery (seek + rebuffer), restore [State.Playing]. */
+    fun onPlaybackRecovered() {
+        val session = lastSession ?: return
+        if (_state.value is State.Stalled) {
+            _state.value = State.Playing(session)
+        }
+    }
+
+    /**
+     * Exhausted Media3 network retries: surface [State.Failed] without
+     * deleting the session so Retry can re-create via [play].
+     */
+    fun onPlaybackFailed(message: String) {
+        _state.value = State.Failed(message)
     }
 
     fun clearChannelsStale() {
@@ -189,6 +220,7 @@ class PlayerViewModel(
                 return
             }
             activeViewerId = session.viewerId
+            lastSession = session
             _channelsStale.value = false
             _state.value = State.Playing(session)
         } catch (e: CancellationException) {

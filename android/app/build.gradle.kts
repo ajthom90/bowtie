@@ -21,19 +21,20 @@ android {
 
     signingConfigs {
         // Release signing only when BOWTIE_KEYSTORE_* env vars are present.
-        // Debug keystore used otherwise (never commit a keystore).
-        val keystorePath = System.getenv("BOWTIE_KEYSTORE_PATH")
+        // Debug key fallback otherwise (never commit a keystore).
+        // Env names match release.yml: FILE / PASSWORD / ALIAS / KEY_PASSWORD.
+        val keystoreFile = System.getenv("BOWTIE_KEYSTORE_FILE")
         val keystorePassword = System.getenv("BOWTIE_KEYSTORE_PASSWORD")
-        val keyAlias = System.getenv("BOWTIE_KEY_ALIAS")
-        val keyPassword = System.getenv("BOWTIE_KEY_PASSWORD")
+        val keyAlias = System.getenv("BOWTIE_KEYSTORE_ALIAS")
+        val keyPassword = System.getenv("BOWTIE_KEYSTORE_KEY_PASSWORD")
         if (
-            !keystorePath.isNullOrBlank() &&
+            !keystoreFile.isNullOrBlank() &&
             !keystorePassword.isNullOrBlank() &&
             !keyAlias.isNullOrBlank() &&
             !keyPassword.isNullOrBlank()
         ) {
             create("release") {
-                storeFile = file(keystorePath)
+                storeFile = file(keystoreFile)
                 storePassword = keystorePassword
                 this.keyAlias = keyAlias
                 this.keyPassword = keyPassword
@@ -48,7 +49,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfigs.findByName("release")?.let { signingConfig = it }
+            // Prefer env-backed release keystore; fall back to debug for local assembleRelease.
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 

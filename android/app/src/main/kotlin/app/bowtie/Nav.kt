@@ -37,7 +37,7 @@ import okhttp3.HttpUrl
 private sealed class ReadyRoute {
     data object Channels : ReadyRoute()
     data object Settings : ReadyRoute()
-    data class Player(val channel: Channel) : ReadyRoute()
+    data class Player(val channel: Channel, val nowTitle: String?) : ReadyRoute()
 }
 
 /**
@@ -123,8 +123,14 @@ private fun ReadyShell(
                 channelListViewModel = channelListViewModel,
                 playerViewModel = playerViewModel,
                 onOpenChannel = { channel ->
+                    val nowTitle = when (val s = channelListViewModel.state.value) {
+                        is ChannelListViewModel.LoadState.Loaded ->
+                            s.rows.find { it.channel.id == channel.id }
+                                ?.nowNext?.now?.title
+                        else -> null
+                    }
                     playerViewModel.play(channel)
-                    route = ReadyRoute.Player(channel)
+                    route = ReadyRoute.Player(channel = channel, nowTitle = nowTitle)
                 },
                 onOpenSettings = { route = ReadyRoute.Settings },
                 modifier = modifier,
@@ -142,6 +148,9 @@ private fun ReadyShell(
             PlayerScreen(
                 channel = r.channel,
                 playerViewModel = playerViewModel,
+                server = client.server,
+                maxQuality = user.maxQuality,
+                nowTitle = r.nowTitle,
                 onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
             )
