@@ -1,0 +1,398 @@
+import XCTest
+import BowtieKit
+@testable import Bowtie
+
+@MainActor
+final class PlayerModelTests: XCTestCase {
+    private var store: InMemorySessionStore!
+    private var clock: ManualClock!
+
+    override func setUp() {
+        super.setUp()
+        StubURLProtocol.reset()
+        store = InMemorySessionStore()
+        clock = ManualClock()
+    }
+
+    override func tearDown() {
+        StubURLProtocol.reset()
+        super.tearDown()
+    }
+
+    private func makeClient() -> BowtieClient {
+        BowtieClient(
+            server: SharedFixtures.baseURL,
+            store: store,
+            urlSession: SharedFixtures.makeStubSession()
+        )
+    }
+
+    private func makeModel(
+        client: BowtieClient? = nil,
+        caps: ClientCaps = SharedFixtures.sampleCaps
+    ) -> PlayerModel {
+        PlayerModel(
+            client: client ?? makeClient(),
+            caps: caps,
+            debounce: .milliseconds(400),
+            clock: clock
+        )
+    }
+
+    /// Wait until ManualClock has a suspended sleeper, then advance past debounce.
+    /// Polls waiter registration so advance never races ahead of sleep.
+    private func advancePastDebounce() async {
+        for _ in 0..<1_000 {
+            if clock.pendingWaiterCount > 0 {
+                clock.advance(by: .milliseconds(400))
+                return
+            }
+            await Task.yield()
+        }
+        // Last-chance advance (avoids hard hang if waiter count is wrong).
+        clock.advance(by: .milliseconds(400))
+    }
+
+    /// Start `work`, wait for debounce sleep, advance, await completion.
+    private func runThroughDebounce(_ work: @escaping @MainActor () async -> Void) async {
+        let task = Task { await work() }
+        await advancePastDebounce()
+        await task.value
+    }
+
+    /// Run work that parks on the ManualClock, then advance past debounce.
+    private func playThroughDebounce(
+        _ model: PlayerModel,
+        channel: Channel = SharedFixtures.sampleChannel
+    ) async {
+        await runThroughDebounce { await model.play(channel: channel) }
+    }
+
+    // MARK: - Debounced triple-play → one create
+
+    func testRapidTriplePlayCreatesExactlyOneSession() async throws {
+        var createCount = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createCount += 1
+                return (
+                    200,
+                    SharedFixtures.createdSessionJSON(viewerId: "v-final"),
+                    [:]
+                )
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        let ch1 = Channel(id: 1, guideNumber: "1", name: "One", logoUrl: "")
+        let ch2 = Channel(id: 2, guideNumber: "2", name: "Two", logoUrl: "")
+        let ch3 = Channel(id: 3, guideNumber: "3", name: "Three", logoUrl: "")
+
+        let t1 = Task { await model.play(channel: ch1) }
+        let t2 = Task { await model.play(channel: ch2) }
+        let t3 = Task { await model.play(channel: ch3) }
+
+        // Wait until the latest play (ch3) owns the debounce sleeper, then fire it.
+        // Avoid advancing while an intermediate play is still parking — that can
+        // resume a soon-to-be-cancelled waiter and leave the final one hung.
+        for _ in 0..<2_000 {
+            if model.currentChannel?.id == 3, clock.pendingWaiterCount > 0 {
+                clock.advance(by: .milliseconds(400))
+                break
+            }
+            await Task.yield()
+        }
+
+        await t1.value
+        await t2.value
+        await t3.value
+
+        XCTAssertEqual(sessionCreateRequests().count, 1, "exactly one create after triple-play debounce")
+        XCTAssertEqual(createCount, 1)
+        XCTAssertEqual(model.currentChannel?.id, 3)
+
+        // The surviving create must target channel 3 (latest play wins).
+        let body = try jsonBody(of: sessionCreateRequests()[0])
+        let channelId = (body["channelId"] as? Int)
+            ?? (body["channelId"] as? Int64).map(Int.init)
+            ?? (body["channelId"] as? NSNumber)?.intValue
+        XCTAssertEqual(channelId, 3)
+
+        guard case .playing(let session) = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+        XCTAssertEqual(session.viewerId, "v-final")
+    }
+
+    // MARK: - Zap: delete old then create new
+
+    func testZapDeletesOldThenCreatesNew() async {
+        var createSeq = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createSeq += 1
+                return (
+                    200,
+                    SharedFixtures.createdSessionJSON(viewerId: "viewer-\(createSeq)"),
+                    [:]
+                )
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model, channel: SharedFixtures.sampleChannel)
+
+        guard case .playing(let first) = model.state else {
+            return XCTFail("expected playing after first play, got \(model.state)")
+        }
+        XCTAssertEqual(first.viewerId, "viewer-1")
+        XCTAssertEqual(sessionCreateRequests().count, 1)
+        XCTAssertEqual(sessionDeleteRequests().count, 0)
+
+        // Zap to channel 2.
+        await runThroughDebounce {
+            await model.play(channel: SharedFixtures.sampleChannel2)
+        }
+
+        guard case .playing(let second) = model.state else {
+            return XCTFail("expected playing after zap, got \(model.state)")
+        }
+        XCTAssertEqual(second.viewerId, "viewer-2")
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+
+        let deletes = sessionDeleteRequests()
+        XCTAssertEqual(deletes.count, 1)
+        XCTAssertTrue(
+            deletes[0].url?.path.hasSuffix("/viewer-1") == true,
+            "zap must DELETE the old viewer before creating the new one: \(deletes[0].url?.path ?? "?")"
+        )
+
+        // Ordering: delete of old before second create.
+        let recorded = StubURLProtocol.recorded
+        let deleteIdx = recorded.firstIndex {
+            $0.httpMethod == "DELETE" && ($0.url?.path.contains("viewer-1") ?? false)
+        }
+        let creates = recorded.indices.filter {
+            recorded[$0].httpMethod == "POST" && recorded[$0].url?.path == "/api/v1/sessions"
+        }
+        XCTAssertEqual(creates.count, 2)
+        if let deleteIdx, creates.count == 2 {
+            XCTAssertLessThan(deleteIdx, creates[1], "DELETE old before POST new")
+        }
+    }
+
+    // MARK: - setProfile sends effectiveCaps
+
+    func testSetProfileSendsEffectiveCapsInRequestBody() async throws {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+        XCTAssertEqual(sessionCreateRequests().count, 1)
+
+        await runThroughDebounce { await model.setProfile("medium") }
+
+        XCTAssertEqual(model.currentChannel?.id, SharedFixtures.sampleChannel.id)
+        XCTAssertEqual(model.selectedProfile, "medium")
+
+        let creates = sessionCreateRequests()
+        XCTAssertEqual(creates.count, 2)
+        let body = try jsonBody(of: creates[1])
+        XCTAssertEqual(body["channelId"] as? Int, Int(SharedFixtures.sampleChannel.id))
+        let caps = body["caps"] as? [String: Any]
+        XCTAssertEqual(caps?["profile"] as? String, "medium")
+        XCTAssertEqual(caps?["maxHeight"] as? Int, 1080)
+        XCTAssertEqual(caps?["videoCodecs"] as? [String], ["h264", "hevc"])
+        XCTAssertEqual(caps?["audioCodecs"] as? [String], ["aac", "ac3", "eac3"])
+    }
+
+    // MARK: - 422 fallback
+
+    func testNegotiation422RetriesOnceWithAutoProfile() async throws {
+        var createCount = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createCount += 1
+                if createCount == 1 {
+                    return (
+                        422,
+                        #"{"error":"profile not available"}"#.data(using: .utf8)!,
+                        [:]
+                    )
+                }
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "auto-ok"), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        model.selectedProfile = "high"
+
+        await playThroughDebounce(model)
+
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+        let first = try jsonBody(of: sessionCreateRequests()[0])
+        let second = try jsonBody(of: sessionCreateRequests()[1])
+        XCTAssertEqual((first["caps"] as? [String: Any])?["profile"] as? String, "high")
+        XCTAssertEqual((second["caps"] as? [String: Any])?["profile"] as? String, "")
+        XCTAssertEqual(model.selectedProfile, "")
+
+        guard case .playing(let session) = model.state else {
+            return XCTFail("expected playing after Auto retry, got \(model.state)")
+        }
+        XCTAssertEqual(session.viewerId, "auto-ok")
+    }
+
+    func testNegotiation422TwiceFailsWithDeviceCantPlay() async throws {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (
+                    422,
+                    #"{"error":"cannot negotiate"}"#.data(using: .utf8)!,
+                    [:]
+                )
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        model.selectedProfile = "original"
+
+        await playThroughDebounce(model)
+
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+        let first = try jsonBody(of: sessionCreateRequests()[0])
+        let second = try jsonBody(of: sessionCreateRequests()[1])
+        XCTAssertEqual((first["caps"] as? [String: Any])?["profile"] as? String, "original")
+        XCTAssertEqual((second["caps"] as? [String: Any])?["profile"] as? String, "")
+
+        guard case .failed(let message) = model.state else {
+            return XCTFail("expected failed, got \(model.state)")
+        }
+        XCTAssertEqual(message, PlayerModel.deviceCantPlayMessage)
+        XCTAssertEqual(model.selectedProfile, "")
+    }
+
+    // MARK: - stop
+
+    func testStopDeletesSessionAndReturnsToIdle() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "to-stop"), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+        guard case .playing = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+
+        await model.stop()
+
+        XCTAssertEqual(model.state, .idle)
+        XCTAssertNil(model.currentChannel)
+        let deletes = sessionDeleteRequests()
+        XCTAssertEqual(deletes.count, 1)
+        XCTAssertTrue(deletes[0].url?.path.hasSuffix("/to-stop") == true)
+    }
+
+    // MARK: - playbackAuthFailed
+
+    func testPlaybackAuthFailedOnceSilentlyReplaces() async {
+        var createCount = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createCount += 1
+                return (
+                    200,
+                    SharedFixtures.createdSessionJSON(viewerId: "auth-\(createCount)"),
+                    [:]
+                )
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+        guard case .playing(let first) = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+        XCTAssertEqual(first.viewerId, "auth-1")
+
+        await runThroughDebounce { await model.playbackAuthFailed() }
+
+        guard case .playing(let second) = model.state else {
+            return XCTFail("expected playing after silent replace, got \(model.state)")
+        }
+        XCTAssertEqual(second.viewerId, "auth-2")
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+        XCTAssertEqual(sessionDeleteRequests().count, 1)
+    }
+
+    func testPlaybackAuthFailedTwiceGoesToFailed() async {
+        var createCount = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createCount += 1
+                return (
+                    200,
+                    SharedFixtures.createdSessionJSON(viewerId: "auth-\(createCount)"),
+                    [:]
+                )
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+
+        // First 403 → silent replace.
+        await runThroughDebounce { await model.playbackAuthFailed() }
+        guard case .playing = model.state else {
+            return XCTFail("expected playing after first auth failure, got \(model.state)")
+        }
+
+        // Second 403 → failed (no further replace).
+        await model.playbackAuthFailed()
+
+        guard case .failed(let message) = model.state else {
+            return XCTFail("expected failed after second auth failure, got \(model.state)")
+        }
+        XCTAssertEqual(message, PlayerModel.playbackAuthFailedMessage)
+        // Only the initial play + one silent replace.
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+    }
+}

@@ -43,7 +43,8 @@ targets:
     dependencies:
       - package: BowtieKit
     scheme:
-      testTargets: []
+      testTargets:
+        - SharedTests
 
   BowtieTV:
     type: application
@@ -66,3 +67,20 @@ targets:
       - package: BowtieKit
     scheme:
       testTargets: []
+
+  SharedTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App/SharedTests
+    dependencies:
+      - target: Bowtie
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.bowtie.SharedTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Bowtie.app/Bowtie"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
