@@ -40,7 +40,25 @@ struct ChannelListView: View {
                 .toolbarBackground(Theme.bg, for: .navigationBar)
                 .toolbarColorScheme(.dark, for: .navigationBar)
                 .navigationDestination(item: $playingChannel) { channel in
-                    PlayerView(channel: channel, playerModel: playerModel)
+                    if let serverURL = appModel.serverURL {
+                        PlayerView(
+                            channel: channel,
+                            serverURL: serverURL,
+                            maxQuality: appModel.user?.maxQuality ?? "",
+                            nowTitle: nowTitle(for: channel),
+                            playerModel: playerModel
+                        )
+                    } else {
+                        // Ready phase always has a server; defensive failed copy.
+                        VStack(spacing: 16) {
+                            Text("Not connected to a server")
+                                .font(Theme.body())
+                                .foregroundStyle(Theme.alert)
+                            Button("Back") { playingChannel = nil }
+                                .foregroundStyle(Theme.amber)
+                        }
+                        .bowtieScreenBackground()
+                    }
                 }
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
@@ -88,6 +106,10 @@ struct ChannelListView: View {
             if phase == .active {
                 Task { await listModel?.refreshIfStale() }
             }
+        }
+        // Player create-session 404 → reload channel list (disabled/unknown channel).
+        .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
+            Task { await listModel?.load() }
         }
     }
 
@@ -206,6 +228,18 @@ struct ChannelListView: View {
         Task {
             await playerModel.play(channel: channel)
         }
+    }
+
+    /// Snapshot now-title at open time for the player chrome overlay.
+    private func nowTitle(for channel: Channel) -> String? {
+        guard case .loaded(let rows) = listModel?.state,
+              let row = rows.first(where: { $0.channel.id == channel.id }),
+              let title = row.nowNext.now?.title,
+              !title.isEmpty
+        else {
+            return nil
+        }
+        return title
     }
 
     private func accessibilityLabel(for row: ChannelListModel.Row) -> String {
