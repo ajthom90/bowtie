@@ -725,3 +725,12 @@ ManualClock-driven debounce tests, effectiveCaps profile contract, 422→Auto re
 iOS screens (Connect/Login/ChannelList/Settings + Player stub) with tvOS target building.
 Evidence: 55 BowtieKit tests + 17 SharedTests on simulator, TEST SUCCEEDED; tvOS build clean;
 simulator launch to Connect verified visually by orchestrator (screenshot sent to user).
+
+## Phase 2 Android Tasks 1-6 (worktree track/android)
+2026-08-05 — Scaffold (pinned AGP 8.13/Gradle 8.13/Kotlin 2.3/Compose BOM 2026.06,
+desugaring, cleartext config, INTERNET permission, CI android job), :core (models with
+ignoreUnknownKeys Json + full-wire 503 fixtures, ServerUrl, Mutex single-flight client with
+request-body assertions, TokenStore contract on InMemory, pure Caps.detect, GuideLogic),
+ViewModels (App/Player/ChannelList with injected scopes, virtual-time debounce tests,
+effectiveCaps contract, 404→channelsStale), Compose screens (Connect/Login/ChannelList/
+Settings + Player stub). Evidence: 54 :core + 27 :app tests green, assembleDebug builds.
