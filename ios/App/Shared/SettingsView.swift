@@ -79,10 +79,11 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.text)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(BowtiePlainButtonStyle())
             .accessibilityLabel("Change server")
             .accessibilityHint("Sign out and choose a different Bowtie server")
         }
+        .bowtieFocusSection()
     }
 
     // MARK: - Account
@@ -109,6 +110,7 @@ struct SettingsView: View {
                     .stroke(Theme.line, lineWidth: 1)
             )
 
+            // SecureField placeholders surface as full-screen keyboard prompts on tvOS.
             VStack(alignment: .leading, spacing: 12) {
                 Text("Change password")
                     .font(Theme.label())
@@ -160,11 +162,12 @@ struct SettingsView: View {
                     .foregroundStyle(canChangePassword ? Theme.text : Theme.dim)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BowtiePlainButtonStyle())
                 .disabled(!canChangePassword || isChangingPassword)
                 .accessibilityLabel("Change password")
                 .accessibilityHint("Update your account password")
             }
+            .bowtieFocusSection()
 
             Button {
                 Task { await signOut() }
@@ -187,12 +190,13 @@ struct SettingsView: View {
                         .stroke(Theme.line, lineWidth: 1)
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(BowtiePlainButtonStyle())
             .disabled(isSigningOut || isChangingPassword)
             .accessibilityLabel("Sign out")
             .accessibilityHint("Sign out and return to the login screen")
             .padding(.top, 8)
         }
+        .bowtieFocusSection()
     }
 
     private func sectionHeader(_ title: String) -> some View {

@@ -3,9 +3,9 @@ import AVKit
 import AVFoundation
 import BowtieKit
 
-/// Full-screen HLS player: AVPlayerViewController wrapper with auto-hiding chrome,
-/// quality menu, stats overlay, AirPlay route picker, and PiP-safe teardown.
-struct PlayerView: View {
+/// Full-screen tvOS player: native `AVPlayerViewController` transport with a
+/// quality + stats tab panel via `customInfoViewControllers`.
+struct TVPlayerView: View {
     let channel: Channel
     let serverURL: URL
     let maxQuality: String
@@ -14,71 +14,54 @@ struct PlayerView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var bridge = PlayerBridge()
-    @State private var showChrome = true
-    @State private var showStats = false
+    @State private var bridge = TVPlayerBridge()
     @State private var isStopping = false
-    @State private var hideChromeTask: Task<Void, Never>?
     @State private var stallRetryTask: Task<Void, Never>?
     @State private var stallAttempt = 0
     @State private var indicatedBitrate: Double?
     @State private var droppedFrames: Int?
     @State private var statsPollTask: Task<Void, Never>?
 
-    /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
         .seconds(1), .seconds(2), .seconds(4),
     ]
-
-    private static let chromeHideDelay: Duration = .seconds(3)
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            PlayerContainer(
+            TVPlayerContainer(
                 bridge: bridge,
-                onPictureInPictureActiveChange: { active in
-                    bridge.isPictureInPictureActive = active
+                maxQuality: maxQuality,
+                selectedProfile: playerModel.selectedProfile,
+                sessionMeta: sessionMetaOptional,
+                indicatedBitrate: indicatedBitrate,
+                droppedFrames: droppedFrames,
+                onSelectProfile: { profile in
+                    Task { await playerModel.setProfile(profile) }
                 }
             )
             .ignoresSafeArea()
-
-            // Tap anywhere to revive chrome (controls sit above the player).
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { bumpChrome() }
-                .allowsHitTesting(showChrome == false && !isBlockingError)
-
-            if showChrome || isBlockingError {
-                chromeLayer
-                    .transition(.opacity)
-            }
 
             if case .stalled = playerModel.state {
                 stalledSpinner
             } else if case .starting = playerModel.state {
                 stalledSpinner
             }
+
+            if isBlockingError {
+                errorPanel
+                    .padding(60)
+            }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
-        .statusBarHidden(true)
+        .navigationBarBackButtonHidden(isStopping)
         .onAppear {
-            configureAudioSession()
-            bumpChrome()
             startStatsPolling()
         }
         .onDisappear {
-            hideChromeTask?.cancel()
             statsPollTask?.cancel()
             stallRetryTask?.cancel()
-            // PiP-safe: keep session alive while picture-in-picture is active.
-            if !bridge.isPictureInPictureActive {
-                Task { await playerModel.stop() }
-            } else {
-                bridge.shouldStopWhenPiPEnds = true
-            }
+            Task { await playerModel.stop() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
             Task { await playerModel.stop() }
@@ -108,194 +91,27 @@ struct PlayerView: View {
                 }
             }
         }
-        .onChange(of: bridge.pipDidEndAndShouldStop) { _, shouldStop in
-            if shouldStop {
-                bridge.pipDidEndAndShouldStop = false
-                Task {
-                    await playerModel.stop()
-                    dismiss()
-                }
-            }
-        }
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
         }
     }
 
-    // MARK: - Chrome
-
-    private var chromeLayer: some View {
-        VStack(spacing: 0) {
-            topBar
-            Spacer()
-            if showStats, let metaOrNil = sessionMetaOptional {
-                HStack {
-                    StatsOverlay(
-                        meta: metaOrNil,
-                        indicatedBitrate: indicatedBitrate,
-                        droppedFrames: droppedFrames
-                    )
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            }
-            if isBlockingError {
-                errorPanel
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 24)
-            } else {
-                bottomBar
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: showChrome)
-    }
-
-    private var topBar: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(channel.guideNumber)
-                .font(Theme.channelNumber(36))
-                .foregroundStyle(Theme.amber)
-                .accessibilityLabel("Channel \(channel.guideNumber)")
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(channel.name)
-                    .font(Theme.label(16))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                if let title = nowTitle, !title.isEmpty {
-                    Text(title)
-                        .font(Theme.body(14))
-                        .foregroundStyle(Theme.dim)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            Button {
-                Task { await leave() }
-            } label: {
-                Text("Done")
-                    .font(Theme.label(16))
-                    .foregroundStyle(Theme.amber)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-            }
-            .buttonStyle(.plain)
-            .disabled(isStopping)
-            .accessibilityLabel("Done")
-            .accessibilityHint("Stop playback and return to the channel list")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .background(
-            LinearGradient(
-                colors: [Color.black.opacity(0.75), Color.black.opacity(0)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 18) {
-            qualityMenu
-
-            Button {
-                showStats.toggle()
-                bumpChrome()
-            } label: {
-                Image(systemName: showStats ? "info.circle.fill" : "info.circle")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(Theme.amber)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showStats ? "Hide stats" : "Show stats")
-
-            AirPlayRoutePicker()
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("AirPlay")
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(
-            LinearGradient(
-                colors: [Color.black.opacity(0), Color.black.opacity(0.8)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-    }
-
-    private var qualityMenu: some View {
-        Menu {
-            Button {
-                Task { await playerModel.setProfile("") }
-            } label: {
-                labelRow(title: "Auto", selected: playerModel.selectedProfile.isEmpty)
-            }
-            ForEach(GuideLogic.allowedProfiles(maxQuality: maxQuality), id: \.self) { profile in
-                Button {
-                    Task { await playerModel.setProfile(profile) }
-                } label: {
-                    labelRow(
-                        title: profile.capitalized,
-                        selected: playerModel.selectedProfile == profile
-                    )
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                Text(qualityLabel)
-                    .font(Theme.label(14))
-            }
-            .foregroundStyle(Theme.amber)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Theme.raised.opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        }
-        .accessibilityLabel("Quality")
-        .accessibilityValue(qualityLabel)
-    }
-
-    private func labelRow(title: String, selected: Bool) -> some View {
-        HStack {
-            Text(title)
-            if selected {
-                Image(systemName: "checkmark")
-            }
-        }
-    }
-
-    private var qualityLabel: String {
-        playerModel.selectedProfile.isEmpty
-            ? "Auto"
-            : playerModel.selectedProfile.capitalized
-    }
+    // MARK: - Overlay chrome
 
     private var stalledSpinner: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             ProgressView()
                 .tint(Theme.amber)
-                .scaleEffect(1.2)
+                .scaleEffect(1.4)
             Text(playerModel.state == .stalled ? "Reconnecting…" : "Starting…")
-                .font(Theme.body(14))
+                .font(Theme.body(22))
                 .foregroundStyle(Theme.dim)
         }
-        .padding(20)
-        .background(Theme.bg.opacity(0.7))
+        .padding(28)
+        .background(Theme.bg.opacity(0.75))
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : "Starting")
     }
-
-    // MARK: - Error panels
 
     private var isBlockingError: Bool {
         switch playerModel.state {
@@ -310,55 +126,57 @@ struct PlayerView: View {
     private var errorPanel: some View {
         switch playerModel.state {
         case .tunersBusy(let sessions):
-            VStack(spacing: 14) {
+            VStack(spacing: 20) {
                 Text("All tuners are in use")
-                    .font(Theme.title(18))
+                    .font(Theme.title(28))
                     .foregroundStyle(Theme.alert)
                     .multilineTextAlignment(.center)
 
                 if !sessions.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text("Who's watching")
-                            .font(Theme.label(13))
+                            .font(Theme.label(18))
                             .foregroundStyle(Theme.dim)
                         ForEach(Array(sessions.enumerated()), id: \.offset) { _, session in
                             let names = session.viewers.map(\.username).joined(separator: ", ")
                             Text("\(session.channelName)\(names.isEmpty ? "" : " — \(names)")")
-                                .font(Theme.body(14))
+                                .font(Theme.body(20))
                                 .foregroundStyle(Theme.text)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .frame(maxWidth: 640, alignment: .leading)
+                    .padding(16)
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
                 }
 
                 errorActions
             }
-            .padding(20)
-            .background(Theme.bg.opacity(0.92))
+            .padding(32)
+            .background(Theme.bg.opacity(0.94))
             .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
                     .stroke(Theme.line, lineWidth: 1)
             )
+            .focusSection()
 
         case .failed(let message):
-            VStack(spacing: 14) {
+            VStack(spacing: 20) {
                 Text(message)
-                    .font(Theme.body(16))
+                    .font(Theme.body(24))
                     .foregroundStyle(Theme.alert)
                     .multilineTextAlignment(.center)
                 errorActions
             }
-            .padding(20)
-            .background(Theme.bg.opacity(0.92))
+            .padding(32)
+            .background(Theme.bg.opacity(0.94))
             .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
                     .stroke(Theme.line, lineWidth: 1)
             )
+            .focusSection()
 
         default:
             EmptyView()
@@ -366,31 +184,21 @@ struct PlayerView: View {
     }
 
     private var errorActions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 24) {
             Button {
                 Task { await playerModel.retry() }
             } label: {
                 Text("Try again")
-                    .font(Theme.label(16))
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(Theme.raised)
-                    .foregroundStyle(Theme.text)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                    .font(Theme.label(22))
             }
-            .buttonStyle(.plain)
             .accessibilityLabel("Try again")
 
             Button {
                 Task { await leave() }
             } label: {
                 Text("Back")
-                    .font(Theme.label(16))
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .foregroundStyle(Theme.amber)
+                    .font(Theme.label(22))
             }
-            .buttonStyle(.plain)
             .accessibilityLabel("Back")
         }
     }
@@ -431,12 +239,8 @@ struct PlayerView: View {
         guard let session else {
             if case .idle = playerModel.state {
                 bridge.replacePlayer(nil)
-            } else if case .failed = playerModel.state {
-                // Keep last frame if any; no new load.
             } else if case .tunersBusy = playerModel.state {
                 bridge.replacePlayer(nil)
-            } else if case .starting = playerModel.state {
-                // Wait for create.
             }
             return
         }
@@ -451,15 +255,12 @@ struct PlayerView: View {
         case .playing:
             stallAttempt = 0
             stallRetryTask?.cancel()
-            bumpChrome()
         case .starting:
             stallRetryTask?.cancel()
-            showChrome = true
         case .stalled:
-            showChrome = true
+            break
         case .failed, .tunersBusy:
             stallRetryTask?.cancel()
-            showChrome = true
             bridge.replacePlayer(nil)
         case .idle:
             stallRetryTask?.cancel()
@@ -468,7 +269,6 @@ struct PlayerView: View {
     }
 
     private func beginStallRecovery() {
-        // Only recover while we still own a live session.
         guard playerModel.lastSession != nil || {
             if case .playing = playerModel.state { return true }
             return false
@@ -495,29 +295,10 @@ struct PlayerView: View {
                 }
                 guard !Task.isCancelled else { return }
                 guard case .stalled = playerModel.state else { return }
-                // Re-seek / re-load the same playlist URL.
                 if let session = playerModel.lastSession {
                     let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
                     bridge.load(url: url)
                 }
-            }
-        }
-    }
-
-    private func bumpChrome() {
-        showChrome = true
-        hideChromeTask?.cancel()
-        guard !isBlockingError else { return }
-        hideChromeTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: Self.chromeHideDelay)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            guard !isBlockingError else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
-                showChrome = false
             }
         }
     }
@@ -538,37 +319,22 @@ struct PlayerView: View {
         }
     }
 
-    private func configureAudioSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .moviePlayback, options: [])
-            try session.setActive(true)
-        } catch {
-            // Best-effort; playback may still work with the default session.
-        }
-    }
-
     @MainActor
     private func leave() async {
         guard !isStopping else { return }
         isStopping = true
         stallRetryTask?.cancel()
-        hideChromeTask?.cancel()
         await playerModel.stop()
         dismiss()
     }
 }
 
-// MARK: - Bridge (player ownership + PiP / error flags)
+// MARK: - Bridge (player ownership + error / stall flags)
 
 @MainActor
 @Observable
-final class PlayerBridge {
+final class TVPlayerBridge {
     var player: AVPlayer?
-    var isPictureInPictureActive = false
-    /// Set when the hosting view disappears into PiP; stop when PiP ends.
-    var shouldStopWhenPiPEnds = false
-    var pipDidEndAndShouldStop = false
     var playerErrorIsForbidden = false
     var playerDidStall = false
     var playerDidRecover = false
@@ -577,7 +343,6 @@ final class PlayerBridge {
     private var itemKeepUpObs: NSKeyValueObservation?
     private var itemEmptyObs: NSKeyValueObservation?
     private var timeControlObs: NSKeyValueObservation?
-    private var endObserver: NSObjectProtocol?
     private var failedObserver: NSObjectProtocol?
 
     func load(url: URL) {
@@ -586,8 +351,6 @@ final class PlayerBridge {
             player.replaceCurrentItem(with: item)
         } else {
             let p = AVPlayer(playerItem: item)
-            p.allowsExternalPlayback = true
-            p.usesExternalPlaybackWhileExternalScreenIsActive = true
             player = p
         }
         observe(item: item)
@@ -665,7 +428,6 @@ final class PlayerBridge {
 
     private func handleBufferState(_ item: AVPlayerItem) {
         if item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp {
-            // Live HLS underrun — surface as stall for bounded retry.
             if player?.timeControlStatus == .waitingToPlayAtSpecifiedRate {
                 playerDidStall = true
             }
@@ -676,7 +438,6 @@ final class PlayerBridge {
 
     private func handleTimeControl(_ player: AVPlayer) {
         if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
-            // WaitingReason may be toMinimizeStalls — treat prolonged wait as stall.
             if player.reasonForWaitingToPlay == .toMinimizeStalls {
                 playerDidStall = true
             }
@@ -689,19 +450,16 @@ final class PlayerBridge {
         if Self.isForbidden(error) {
             playerErrorIsForbidden = true
         } else {
-            // Network / other media errors → stall recovery path.
             playerDidStall = true
         }
     }
 
-    /// Walk the NSError chain for HTTP 403 / unauthorized media responses.
     static func isForbidden(_ error: Error?) -> Bool {
         var current: NSError? = error as NSError?
         while let err = current {
             if err.domain == NSURLErrorDomain && err.code == NSURLErrorUserAuthenticationRequired {
                 return true
             }
-            // AVFoundation / URL loading often surface HTTP status in userInfo.
             for key in ["HTTPStatusCode", "statusCode", "httpStatus"] {
                 if let status = err.userInfo[key] as? Int, status == 403 {
                     return true
@@ -710,7 +468,6 @@ final class PlayerBridge {
                     return true
                 }
             }
-            // String-match as a last resort for wrapped "403" messages.
             if err.localizedDescription.contains("403") {
                 return true
             }
@@ -728,10 +485,6 @@ final class PlayerBridge {
         itemKeepUpObs = nil
         itemEmptyObs = nil
         timeControlObs = nil
-        if let endObserver {
-            NotificationCenter.default.removeObserver(endObserver)
-            self.endObserver = nil
-        }
         if let failedObserver {
             NotificationCenter.default.removeObserver(failedObserver)
             self.failedObserver = nil
@@ -739,19 +492,22 @@ final class PlayerBridge {
     }
 }
 
-// MARK: - AVPlayerViewController representable
+// MARK: - AVPlayerViewController + custom info panels
 
-private struct PlayerContainer: UIViewControllerRepresentable {
-    var bridge: PlayerBridge
-    var onPictureInPictureActiveChange: (Bool) -> Void
+private struct TVPlayerContainer: UIViewControllerRepresentable {
+    var bridge: TVPlayerBridge
+    var maxQuality: String
+    var selectedProfile: String
+    var sessionMeta: SessionInfoMeta?
+    var indicatedBitrate: Double?
+    var droppedFrames: Int?
+    var onSelectProfile: (String) -> Void
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
-        vc.allowsPictureInPicturePlayback = true
-        vc.canStartPictureInPictureAutomaticallyFromInline = true
-        vc.showsPlaybackControls = false
-        vc.delegate = context.coordinator
+        vc.showsPlaybackControls = true
         vc.player = bridge.player
+        context.coordinator.installInfoPanels(on: vc)
         return vc
     }
 
@@ -759,83 +515,170 @@ private struct PlayerContainer: UIViewControllerRepresentable {
         if vc.player !== bridge.player {
             vc.player = bridge.player
         }
-        context.coordinator.onPictureInPictureActiveChange = onPictureInPictureActiveChange
-        context.coordinator.bridge = bridge
+        context.coordinator.maxQuality = maxQuality
+        context.coordinator.selectedProfile = selectedProfile
+        context.coordinator.onSelectProfile = onSelectProfile
+        context.coordinator.refreshQualityPanel()
+        context.coordinator.refreshStatsPanel(
+            meta: sessionMeta,
+            indicatedBitrate: indicatedBitrate,
+            droppedFrames: droppedFrames
+        )
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(bridge: bridge, onPictureInPictureActiveChange: onPictureInPictureActiveChange)
+        Coordinator(
+            maxQuality: maxQuality,
+            selectedProfile: selectedProfile,
+            onSelectProfile: onSelectProfile
+        )
     }
 
-    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
-        var bridge: PlayerBridge
-        var onPictureInPictureActiveChange: (Bool) -> Void
+    @MainActor
+    final class Coordinator {
+        var maxQuality: String
+        var selectedProfile: String
+        var onSelectProfile: (String) -> Void
 
-        init(bridge: PlayerBridge, onPictureInPictureActiveChange: @escaping (Bool) -> Void) {
-            self.bridge = bridge
-            self.onPictureInPictureActiveChange = onPictureInPictureActiveChange
+        private var qualityHost: UIHostingController<TVQualityPanel>?
+        private var statsHost: UIHostingController<TVStatsPanel>?
+
+        init(
+            maxQuality: String,
+            selectedProfile: String,
+            onSelectProfile: @escaping (String) -> Void
+        ) {
+            self.maxQuality = maxQuality
+            self.selectedProfile = selectedProfile
+            self.onSelectProfile = onSelectProfile
         }
 
-        func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
-            Task { @MainActor in
-                self.bridge.isPictureInPictureActive = true
-                self.onPictureInPictureActiveChange(true)
+        func installInfoPanels(on vc: AVPlayerViewController) {
+            let quality = UIHostingController(
+                rootView: TVQualityPanel(
+                    maxQuality: maxQuality,
+                    selectedProfile: selectedProfile,
+                    onSelect: { [weak self] profile in
+                        self?.onSelectProfile(profile)
+                    }
+                )
+            )
+            quality.title = "Quality"
+
+            let stats = UIHostingController(
+                rootView: TVStatsPanel(
+                    meta: nil,
+                    indicatedBitrate: nil,
+                    droppedFrames: nil
+                )
+            )
+            stats.title = "Stats"
+
+            qualityHost = quality
+            statsHost = stats
+            vc.customInfoViewControllers = [quality, stats]
+        }
+
+        func refreshQualityPanel() {
+            qualityHost?.rootView = TVQualityPanel(
+                maxQuality: maxQuality,
+                selectedProfile: selectedProfile,
+                onSelect: { [weak self] profile in
+                    self?.onSelectProfile(profile)
+                }
+            )
+        }
+
+        func refreshStatsPanel(
+            meta: SessionInfoMeta?,
+            indicatedBitrate: Double?,
+            droppedFrames: Int?
+        ) {
+            statsHost?.rootView = TVStatsPanel(
+                meta: meta,
+                indicatedBitrate: indicatedBitrate,
+                droppedFrames: droppedFrames
+            )
+        }
+    }
+}
+
+// MARK: - Info panel content
+
+/// Quality picker hosted inside `AVPlayerViewController.customInfoViewControllers`.
+private struct TVQualityPanel: View {
+    let maxQuality: String
+    let selectedProfile: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        List {
+            Button {
+                onSelect("")
+            } label: {
+                qualityRow(title: "Auto", selected: selectedProfile.isEmpty)
             }
-        }
 
-        func playerViewControllerDidStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
-            Task { @MainActor in
-                self.bridge.isPictureInPictureActive = true
-                self.onPictureInPictureActiveChange(true)
-            }
-        }
-
-        func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
-            Task { @MainActor in
-                self.bridge.isPictureInPictureActive = false
-                self.onPictureInPictureActiveChange(false)
-                if self.bridge.shouldStopWhenPiPEnds {
-                    self.bridge.shouldStopWhenPiPEnds = false
-                    self.bridge.pipDidEndAndShouldStop = true
+            ForEach(GuideLogic.allowedProfiles(maxQuality: maxQuality), id: \.self) { profile in
+                Button {
+                    onSelect(profile)
+                } label: {
+                    qualityRow(
+                        title: profile.capitalized,
+                        selected: selectedProfile == profile
+                    )
                 }
             }
         }
+        .listStyle(.grouped)
+        .focusSection()
+    }
 
-        func playerViewController(
-            _ playerViewController: AVPlayerViewController,
-            restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
-        ) {
-            // User returned from PiP into the app — keep the session; do not stop.
-            Task { @MainActor in
-                self.bridge.shouldStopWhenPiPEnds = false
-                self.bridge.isPictureInPictureActive = false
-                self.onPictureInPictureActiveChange(false)
-                completionHandler(true)
+    private func qualityRow(title: String, selected: Bool) -> some View {
+        HStack {
+            Text(title)
+                .font(Theme.label(28))
+                .foregroundStyle(Theme.text)
+            Spacer()
+            if selected {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Theme.amber)
             }
         }
     }
 }
 
-// MARK: - AirPlay route picker
+/// Stats-for-nerds hosted as an info tab (reuses `StatsOverlay` layout tokens).
+private struct TVStatsPanel: View {
+    let meta: SessionInfoMeta?
+    let indicatedBitrate: Double?
+    let droppedFrames: Int?
 
-private struct AirPlayRoutePicker: UIViewRepresentable {
-    func makeUIView(context: Context) -> AVRoutePickerView {
-        let view = AVRoutePickerView()
-        // Resolve design tokens through UIColor(Color:) (iOS 17+).
-        view.tintColor = UIColor(Theme.amber)
-        view.activeTintColor = UIColor(Theme.signal)
-        view.prioritizesVideoDevices = true
-        return view
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Playback stats")
+                .font(Theme.title(28))
+                .foregroundStyle(Theme.text)
+
+            StatsOverlay(
+                meta: meta,
+                indicatedBitrate: indicatedBitrate,
+                droppedFrames: droppedFrames
+            )
+            .scaleEffect(1.35, anchor: .topLeading)
+
+            Spacer(minLength: 0)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.bg)
+        .focusSection()
     }
-
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
-
-// MARK: - Preview
 
 #Preview {
     NavigationStack {
-        PlayerView(
+        TVPlayerView(
             channel: Channel(id: 1, guideNumber: "7.1", name: "Local News", logoUrl: ""),
             serverURL: URL(string: "http://127.0.0.1:8400")!,
             maxQuality: "high",
@@ -845,7 +688,7 @@ private struct AirPlayRoutePicker: UIViewRepresentable {
                     server: URL(string: "http://127.0.0.1:8400")!,
                     store: InMemorySessionStore()
                 ),
-                caps: Caps.make(maxHeight: 1080)
+                caps: Caps.make(maxHeight: 2160)
             )
         )
     }

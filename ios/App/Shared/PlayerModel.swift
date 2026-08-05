@@ -9,8 +9,11 @@ import BowtieKit
 ///   `profile = selectedProfile` (`""` = Auto).
 /// - On 422: reset `selectedProfile` to `""` and retry ONCE; a second 422
 ///   → `.failed` with the device-can't-play copy.
+/// - On 404: bump `channelsStaleGeneration` so the channel list reloads.
 /// - `stop` is for real leave only (dismissal, sign-out, change-server,
 ///   termination) — never background / PiP.
+/// - Stall UX: player UI calls `markStalled` → spinner; retries AVPlayer with
+///   backoff (1s, 2s, 4s ×3); `resumePlaying` on recovery or `stallFailed` after.
 @Observable
 @MainActor
 public final class PlayerModel {
@@ -48,10 +51,20 @@ public final class PlayerModel {
     public static let playbackAuthFailedMessage =
         "Playback authorization failed"
 
+    /// Surface after stall retries (1s, 2s, 4s) are exhausted.
+    public static let stallFailedMessage =
+        "Playback stalled"
+
     public private(set) var state: State = .idle
     public private(set) var currentChannel: Channel?
     /// `""` = Auto.
     public var selectedProfile: String = ""
+
+    /// Last successfully created session. Kept through `.stalled` for retry/stats.
+    public private(set) var lastSession: CreatedSession?
+
+    /// Monotonic token bumped on create-session 404 so ChannelList reloads.
+    public private(set) var channelsStaleGeneration: UInt64 = 0
 
     private let client: BowtieClient
     private let caps: ClientCaps
@@ -110,6 +123,7 @@ public final class PlayerModel {
         let viewerId = activeViewerId
         activeViewerId = nil
         currentChannel = nil
+        lastSession = nil
         authFailureRetried = false
 
         if let viewerId {
@@ -126,6 +140,37 @@ public final class PlayerModel {
             return
         }
         authFailureRetried = true
+        await scheduleReplace()
+    }
+
+    /// Player detected underrun / network stall while a session is live.
+    public func markStalled() {
+        switch state {
+        case .playing(let session):
+            lastSession = session
+            state = .stalled
+        case .stalled:
+            break
+        default:
+            break
+        }
+    }
+
+    /// AVPlayer recovered after a stall (or a successful bounded retry).
+    public func resumePlaying() {
+        guard case .stalled = state, let session = lastSession else { return }
+        state = .playing(session)
+    }
+
+    /// Stall retries exhausted → failed with retryable copy.
+    public func stallFailed(_ message: String? = nil) {
+        state = .failed(message ?? Self.stallFailedMessage)
+    }
+
+    /// Retry after tuners-busy or other recoverable failure (same channel).
+    public func retry() async {
+        guard currentChannel != nil else { return }
+        authFailureRetried = false
         await scheduleReplace()
     }
 
@@ -179,6 +224,7 @@ public final class PlayerModel {
                 return
             }
             activeViewerId = session.viewerId
+            lastSession = session
             state = .playing(session)
         } catch let error as BowtieError {
             guard isCurrent(gen) else { return }
@@ -214,6 +260,8 @@ public final class PlayerModel {
             state = .tunersBusy(sessions)
 
         case .notFound:
+            // 404: channel unknown/disabled — signal list reload.
+            channelsStaleGeneration &+= 1
             state = .failed("Channel not found")
 
         case .unauthorized:

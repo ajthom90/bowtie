@@ -124,3 +124,23 @@ jobs:
         run: |
           xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV \
             -destination 'generic/platform=tvOS Simulator' build
+
+      # Simulator tests must resolve a UDID at runtime — never hard-code a
+      # device name (runner images change default simulators).
+      - name: Test SharedTests (iOS Simulator)
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for _runtime, devices in data.get('devices', {}).items():
+              for device in devices:
+                  if device.get('isAvailable') and 'iPhone' in device.get('name', ''):
+                      print(device['udid'])
+                      sys.exit(0)
+          sys.exit('No available iPhone simulator found')
+          ")
+          echo "Using iPhone simulator UDID=$UDID"
+          xcodebuild -project Bowtie.xcodeproj -scheme Bowtie \
+            -destination "id=$UDID" \
+            -only-testing:SharedTests \
+            test

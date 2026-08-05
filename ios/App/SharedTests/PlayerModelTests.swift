@@ -323,6 +323,118 @@ final class PlayerModelTests: XCTestCase {
         XCTAssertTrue(deletes[0].url?.path.hasSuffix("/to-stop") == true)
     }
 
+    // MARK: - 404 channels-stale
+
+    func testNotFoundBumpsChannelsStaleGeneration() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (404, #"{"error":"channel not found"}"#.data(using: .utf8)!, [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        XCTAssertEqual(model.channelsStaleGeneration, 0)
+
+        await playThroughDebounce(model)
+
+        guard case .failed(let message) = model.state else {
+            return XCTFail("expected failed, got \(model.state)")
+        }
+        XCTAssertEqual(message, "Channel not found")
+        XCTAssertEqual(model.channelsStaleGeneration, 1)
+
+        // Second 404 increments again.
+        await playThroughDebounce(model)
+        XCTAssertEqual(model.channelsStaleGeneration, 2)
+    }
+
+    // MARK: - Stall hooks
+
+    func testMarkStalledResumeAndExhaustion() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "stall-1"), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+        guard case .playing(let session) = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+
+        model.markStalled()
+        XCTAssertEqual(model.state, .stalled)
+        XCTAssertEqual(model.lastSession?.viewerId, session.viewerId)
+
+        model.resumePlaying()
+        guard case .playing(let again) = model.state else {
+            return XCTFail("expected playing after resume, got \(model.state)")
+        }
+        XCTAssertEqual(again.viewerId, session.viewerId)
+
+        model.markStalled()
+        model.stallFailed()
+        guard case .failed(let message) = model.state else {
+            return XCTFail("expected failed after stall exhaustion, got \(model.state)")
+        }
+        XCTAssertEqual(message, PlayerModel.stallFailedMessage)
+    }
+
+    func testRetryAfterTunersBusyRecreatesSession() async {
+        var createCount = 0
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                createCount += 1
+                if createCount == 1 {
+                    let body = """
+                    {
+                      "error": "all tuners in use",
+                      "sessions": [
+                        {
+                          "channelName": "WABC",
+                          "viewers": [{"username": "bob"}]
+                        }
+                      ]
+                    }
+                    """.data(using: .utf8)!
+                    return (503, body, [:])
+                }
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "retry-ok"), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+
+        guard case .tunersBusy(let sessions) = model.state else {
+            return XCTFail("expected tunersBusy, got \(model.state)")
+        }
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].channelName, "WABC")
+        XCTAssertEqual(sessions[0].viewers.first?.username, "bob")
+
+        await runThroughDebounce { await model.retry() }
+
+        guard case .playing(let session) = model.state else {
+            return XCTFail("expected playing after retry, got \(model.state)")
+        }
+        XCTAssertEqual(session.viewerId, "retry-ok")
+        XCTAssertEqual(sessionCreateRequests().count, 2)
+    }
+
     // MARK: - playbackAuthFailed
 
     func testPlaybackAuthFailedOnceSilentlyReplaces() async {

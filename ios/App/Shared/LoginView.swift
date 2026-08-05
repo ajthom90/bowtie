@@ -25,6 +25,7 @@ struct LoginView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header
 
+                // Field labels double as keyboard prompts on tvOS full-screen keyboard.
                 VStack(alignment: .leading, spacing: 16) {
                     fieldBlock(title: "Username", field: .username) {
                         TextField("Username", text: $username)
@@ -55,6 +56,7 @@ struct LoginView: View {
                             .disabled(isSigningIn)
                     }
                 }
+                .bowtieFocusSection()
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -81,7 +83,7 @@ struct LoginView: View {
                     .foregroundStyle(canSignIn ? Theme.bg : Theme.dim)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BowtiePlainButtonStyle())
                 .disabled(!canSignIn || isSigningIn)
                 .accessibilityLabel("Sign in")
                 .accessibilityHint("Sign in with your Bowtie account")
@@ -93,7 +95,7 @@ struct LoginView: View {
                     }
                     .font(Theme.body(15))
                     .foregroundStyle(Theme.dim)
-                    .buttonStyle(.plain)
+                    .buttonStyle(BowtiePlainButtonStyle())
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
                     .accessibilityLabel("Change server")
@@ -104,6 +106,7 @@ struct LoginView: View {
             .padding(24)
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
+            .bowtieFocusSection()
         }
         .bowtieScreenBackground()
         .onAppear { focusedField = .username }

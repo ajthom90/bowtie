@@ -199,8 +199,8 @@ cd web && npm ci && npm test && npm run build
 
 ## Apps
 
-- [iOS / iPadOS / tvOS](ios/README.md) — build, schemes, sideload
-- [Android](android/README.md) — build, GitHub Releases APK sideload, first-run connect
+- **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
+- **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build, GitHub Releases APK sideload).
 
 ---
 
