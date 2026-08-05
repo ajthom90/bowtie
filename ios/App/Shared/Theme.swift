@@ -79,6 +79,42 @@ extension View {
         frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.bg.ignoresSafeArea())
     }
+
+    /// `focusSection()` is tvOS/macOS-only; no-op on iOS so shared auth views compile for both targets.
+    @ViewBuilder
+    func bowtieFocusSection() -> some View {
+        #if os(tvOS)
+        self.focusSection()
+        #else
+        self
+        #endif
+    }
+}
+
+// MARK: - Focus-friendly plain button (tvOS scale; iOS press fade)
+
+/// Replaces `.buttonStyle(.plain)` so custom chrome keeps a visible focus cue on tvOS
+/// without fighting the system focus engine (scale only — no custom focus rings).
+struct BowtiePlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BowtiePlainButtonBody(configuration: configuration)
+    }
+}
+
+private struct BowtiePlainButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        configuration.label
+            #if os(tvOS)
+            .scaleEffect(isFocused ? 1.06 : (configuration.isPressed ? 0.98 : 1.0))
+            .animation(.easeInOut(duration: 0.12), value: isFocused)
+            .animation(.easeInOut(duration: 0.08), value: configuration.isPressed)
+            #else
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            #endif
+    }
 }
 
 // MARK: - Color hex helper

@@ -29,6 +29,7 @@ struct ConnectView: View {
                         .foregroundStyle(Theme.dim)
                         .accessibilityHidden(true)
 
+                    // Placeholder doubles as the full-screen keyboard prompt on tvOS.
                     TextField(Self.placeholder, text: $urlText)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -44,6 +45,7 @@ struct ConnectView: View {
                         .accessibilityHint("Enter your Bowtie server URL")
                         .disabled(isValidating)
                 }
+                .bowtieFocusSection()
 
                 if let errorMessage {
                     Text(errorMessage)
@@ -70,7 +72,7 @@ struct ConnectView: View {
                     .foregroundStyle(canValidate ? Theme.bg : Theme.dim)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(BowtiePlainButtonStyle())
                 .disabled(!canValidate || isValidating)
                 .accessibilityLabel("Validate")
                 .accessibilityHint("Check that a Bowtie server is reachable at this address")
@@ -79,6 +81,7 @@ struct ConnectView: View {
             .padding(24)
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
+            .bowtieFocusSection()
         }
         .bowtieScreenBackground()
         .onAppear { urlFocused = true }
