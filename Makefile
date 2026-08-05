@@ -1,4 +1,4 @@
-.PHONY: build test lint dev build-web dev-server
+.PHONY: build test lint dev build-web dev-server android-test android-apk
 
 # CGO is always disabled for clean cross-compilation.
 export CGO_ENABLED=0
@@ -25,3 +25,11 @@ dev:
 
 dev-server:
 	cd server && go run ./cmd/bowtie --data-dir ../data
+
+# Android (JDK 17 + Android SDK required; uses android/gradlew)
+android-test:
+	cd android && ./gradlew :core:test :app:testDebugUnitTest
+
+android-apk:
+	cd android && ./gradlew :app:assembleDebug
+
