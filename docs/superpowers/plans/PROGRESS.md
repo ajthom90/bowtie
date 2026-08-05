@@ -734,3 +734,12 @@ request-body assertions, TokenStore contract on InMemory, pure Caps.detect, Guid
 ViewModels (App/Player/ChannelList with injected scopes, virtual-time debounce tests,
 effectiveCaps contract, 404→channelsStale), Compose screens (Connect/Login/ChannelList/
 Settings + Player stub). Evidence: 54 :core + 27 :app tests green, assembleDebug builds.
+
+## Phase 2 Android Tasks 7-8 (worktree track/android)
+2026-08-05 — Media3 player (HlsMediaSource via ServerUrl.resolve, default data source only —
+no auth interceptor; 403 → auth-replace; stall → bounded backoff), PiP with correct
+non-teardown, quality sheet with maxQuality filtering, stats overlay, release signing from
+BOWTIE_KEYSTORE_* env with debug fallback, release.yml android job (needs goreleaser) uploads
+signed versioned APK. README + sideload guide. Orchestrator review fix: workflow read
+secrets.ANDROID_KEYSTORE_ALIAS but the repo secret is ANDROID_KEY_ALIAS — corrected.
+Evidence: 54 :core + 27 :app tests, assembleDebug + assembleRelease (fallback) green.

@@ -220,13 +220,13 @@ Player behavior:
 - PiP: `enterPictureInPictureMode` on user-leave during playback (manifest `supportsPictureInPicture`, `configChanges`); entering PiP does NOT stop(); closing PiP window → stop(). Back from player → stop().
 - Signing: `signingConfigs.release` populated only when `System.getenv("BOWTIE_KEYSTORE_FILE") != null`; release.yml `android` job **`needs: [goreleaser]`** (GoReleaser creates the GitHub Release — uploading before it exists fails), decodes `ANDROID_KEYSTORE_B64` secret to a temp file, exports env (`BOWTIE_KEYSTORE_FILE/_PASSWORD/_ALIAS/_KEY_PASSWORD` from the four repo secrets), runs `:app:assembleRelease`, renames the output to `bowtie-${GITHUB_REF_NAME#v}.apk`, attaches via `gh release upload "$GITHUB_REF_NAME"`.
 
-- [ ] Tests: unit tests stay green; `assembleRelease` unsigned locally (no env) uses debug fallback — assert build succeeds both ways. Commit `feat: android media3 player with pip, stats, quality; signed apk on releases`
+- [x] Tests: unit tests stay green; `assembleRelease` unsigned locally (no env) uses debug fallback — assert build succeeds both ways. Commit `feat: android media3 player with pip, stats, quality; signed apk on releases`
 
 ### Task 8: README + docs
 
 **Files:** `android/README.md` (build, install-from-Releases sideload steps incl. "install unknown apps" note, switch-to-Play-Store path)
 
-- [ ] Commit `docs: android build and sideload guide`
+- [x] Commit `docs: android build and sideload guide`
 
 ## Verification summary (every task)
 ```bash

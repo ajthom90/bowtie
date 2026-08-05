@@ -178,7 +178,7 @@ jobs:
         env:
           BOWTIE_KEYSTORE_FILE: /tmp/bowtie.jks
           BOWTIE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          BOWTIE_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+          BOWTIE_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           BOWTIE_KEYSTORE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleRelease
