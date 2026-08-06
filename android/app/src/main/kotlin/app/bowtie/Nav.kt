@@ -26,6 +26,9 @@ import app.bowtie.core.ClientCaps
 import app.bowtie.core.EncryptedTokenStore
 import app.bowtie.core.TokenStore
 import app.bowtie.core.User
+import app.bowtie.core.vm.AppViewModel
+import app.bowtie.core.vm.ChannelListViewModel
+import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.ui.ChannelListScreen
 import app.bowtie.ui.ConnectScreen
 import app.bowtie.ui.LoginScreen

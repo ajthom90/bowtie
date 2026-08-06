@@ -1,4 +1,4 @@
-package app.bowtie
+package app.bowtie.core.vm
 
 import androidx.lifecycle.ViewModel
 import app.bowtie.core.BowtieClient

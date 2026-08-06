@@ -61,8 +61,8 @@ import app.bowtie.BowtieColors
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.PipHost
-import app.bowtie.PlayerViewModel
 import app.bowtie.core.Channel
+import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.CreatedSession
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.ServerUrl
