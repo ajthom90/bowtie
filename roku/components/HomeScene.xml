@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="HomeScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <!-- True when user opens Settings. -->
+        <field id="openSettings" type="boolean" alwaysNotify="true" value="false" />
+        <!-- Channel AA selected for play: {id, guideNumber, name}. -->
+        <field id="selectedChannel" type="assocarray" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="HomeScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+
+        <!-- Header -->
+        <Label
+            id="titleLabel"
+            translation="[80, 40]"
+            width="800"
+            height="56"
+            text="Channels"
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:LargeBoldSystemFont"
+        />
+        <Label
+            id="userLabel"
+            translation="[80, 96]"
+            width="800"
+            height="32"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+        <Button
+            id="settingsButton"
+            translation="[1560, 48]"
+            text="Settings"
+            minWidth="240"
+            height="56"
+        />
+
+        <!-- Loading -->
+        <Group id="loadingGroup" visible="false">
+            <BusySpinner
+                id="loadingSpinner"
+                translation="[920, 480]"
+                visible="true"
+                control="stop"
+            />
+            <Label
+                id="loadingLabel"
+                translation="[0, 560]"
+                width="1920"
+                height="40"
+                text="Loading channels…"
+                horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+
+        <!-- Empty -->
+        <Label
+            id="emptyLabel"
+            translation="[200, 460]"
+            width="1520"
+            height="80"
+            text="No channels yet. Ask your admin to enable some."
+            horizAlign="center"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:MediumSystemFont"
+            wrap="true"
+            visible="false"
+        />
+
+        <!-- Error -->
+        <Group id="errorGroup" visible="false">
+            <Label
+                id="errorLabel"
+                translation="[200, 420]"
+                width="1520"
+                height="80"
+                text=""
+                horizAlign="center"
+                color="0xE05050FF"
+                font="font:MediumSystemFont"
+                wrap="true"
+            />
+            <Button
+                id="retryButton"
+                translation="[760, 540]"
+                text="Try again"
+                minWidth="400"
+                height="56"
+            />
+        </Group>
+
+        <!-- Channel rail -->
+        <MarkupList
+            id="channelList"
+            translation="[80, 160]"
+            itemComponentName="ChannelRailItem"
+            itemSize="[1760, 120]"
+            itemSpacing="[0, 8]"
+            numRows="7"
+            drawFocusFeedback="true"
+            drawFocusFeedbackOnTop="true"
+            focusBitmapUri="pkg:/images/focus_amber.9.png"
+            visible="false"
+        />
+
+        <!-- 5-minute guide/channel refresh while home is visible -->
+        <Timer
+            id="refreshTimer"
+            duration="300"
+            repeat="true"
+        />
+    </children>
+</component>

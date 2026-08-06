@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ChannelRailItem" extends="Group">
+    <interface>
+        <field id="width" type="float" onChange="onSizeChanged" />
+        <field id="height" type="float" onChange="onSizeChanged" />
+        <field id="itemContent" type="node" onChange="onItemContent" />
+        <field id="focusPercent" type="float" onChange="onFocusPercent" />
+        <field id="listHasFocus" type="boolean" onChange="onFocusPercent" />
+        <field id="itemHasFocus" type="boolean" onChange="onFocusPercent" />
+    </interface>
+    <script type="text/brightscript" uri="ChannelRailItem.bs" />
+    <children>
+        <Rectangle
+            id="rowBg"
+            width="1680"
+            height="120"
+            color="0x00000000"
+        />
+        <Label
+            id="numberLabel"
+            translation="[24, 20]"
+            width="160"
+            height="80"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:LargeBoldSystemFont"
+        />
+        <Label
+            id="nameLabel"
+            translation="[200, 12]"
+            width="1400"
+            height="36"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:MediumBoldSystemFont"
+        />
+        <Label
+            id="nowLabel"
+            translation="[200, 48]"
+            width="1400"
+            height="28"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:SmallSystemFont"
+        />
+        <!-- Progress track + fill under now title -->
+        <Rectangle
+            id="progressTrack"
+            translation="[200, 80]"
+            width="600"
+            height="6"
+            color="0x2A3038FF"
+            visible="false"
+        />
+        <Rectangle
+            id="progressFill"
+            translation="[200, 80]"
+            width="0"
+            height="6"
+            color="0xF0A428FF"
+            visible="false"
+        />
+        <Label
+            id="nextLabel"
+            translation="[200, 90]"
+            width="1400"
+            height="24"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+    </children>
+</component>

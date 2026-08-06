@@ -2,6 +2,7 @@
 ' registry server? no → Connect. Server, no refresh → Login.
 ' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
 ' Refresh ok → Home. Refresh fail → Login (server kept).
+' Home → Settings / PlayerStub; Settings change-server → Connect; sign-out → Login.
 
 import "pkg:/source/lib/Registry.bs"
 
@@ -10,10 +11,11 @@ sub init()
     m.top.backgroundColor = "0x101418FF"
 
     m.checkingGroup = m.top.findNode("checkingGroup")
-    m.homeGroup = m.top.findNode("homeGroup")
-    m.homeUser = m.top.findNode("homeUser")
     m.connectScene = m.top.findNode("connectScene")
     m.loginScene = m.top.findNode("loginScene")
+    m.homeScene = m.top.findNode("homeScene")
+    m.settingsScene = m.top.findNode("settingsScene")
+    m.playerStubScene = m.top.findNode("playerStubScene")
     m.checkingSpinner = m.top.findNode("checkingSpinner")
 
     m.phase = "connect"
@@ -29,9 +31,17 @@ sub init()
 
     m.connectScene.apiTask = m.apiTask
     m.loginScene.apiTask = m.apiTask
+    m.homeScene.apiTask = m.apiTask
+    m.settingsScene.apiTask = m.apiTask
+
     m.connectScene.observeField("connected", "onConnected")
     m.loginScene.observeField("signedIn", "onSignedIn")
     m.loginScene.observeField("changeServer", "onChangeServer")
+    m.homeScene.observeField("openSettings", "onOpenSettings")
+    m.homeScene.observeField("selectedChannel", "onSelectedChannel")
+    m.settingsScene.observeField("closed", "onSettingsClosed")
+    m.settingsScene.observeField("changeServer", "onSettingsChangeServer")
+    m.playerStubScene.observeField("closed", "onPlayerStubClosed")
 
     ' Initial route from registry (UI only until ApiTask is ready).
     routeFromRegistry()
@@ -54,6 +64,7 @@ sub routeFromRegistry()
 
     m.serverUrl = server
     m.loginScene.serverUrl = server
+    m.settingsScene.serverUrl = server
 
     if rt = invalid or rt = ""
         setPhase("login")
@@ -85,7 +96,7 @@ sub onApiResponse()
     ' Only AppScene handles boot-refresh; scenes match their own ids.
     if resp.id = m.bootRefreshId
         if resp.ok = true
-            showHomeFromUser(resp.data)
+            showHome()
         else
             ' Refresh fail → Login (server kept).
             setPhase("login")
@@ -97,11 +108,12 @@ sub onAuthEvent()
     ev = m.apiTask.authEvent
     if ev = invalid then return
     if ev.type = "signOut"
-        ' Forced sign-out: keep server, show Login.
+        ' Forced sign-out / logout: keep server, show Login.
         server = bowtie.registry.loadServer()
         if server <> invalid and server <> ""
             m.serverUrl = server
             m.loginScene.serverUrl = server
+            m.settingsScene.serverUrl = server
             setPhase("login")
         else
             setPhase("connect")
@@ -115,13 +127,13 @@ sub onConnected()
     if server = invalid then server = ""
     m.serverUrl = server
     m.loginScene.serverUrl = server
+    m.settingsScene.serverUrl = server
     setPhase("login")
 end sub
 
 sub onSignedIn()
     if m.loginScene.signedIn <> true then return
-    user = m.apiTask.user
-    showHomeFromUser({ user: user })
+    showHome()
 end sub
 
 sub onChangeServer()
@@ -130,24 +142,48 @@ sub onChangeServer()
     setPhase("connect")
 end sub
 
-sub showHomeFromUser(data as object)
-    uname = ""
-    user = invalid
-    if data <> invalid
-        if data.user <> invalid
-            user = data.user
-        end if
-    end if
-    if user = invalid
-        user = m.apiTask.user
-    end if
-    if user <> invalid and user.username <> invalid
-        uname = user.username
-    end if
-    if uname <> ""
-        m.homeUser.text = uname
-    else
-        m.homeUser.text = ""
+sub onOpenSettings()
+    if m.homeScene.openSettings <> true then return
+    m.settingsScene.serverUrl = m.serverUrl
+    setPhase("settings")
+end sub
+
+sub onSelectedChannel()
+    ch = m.homeScene.selectedChannel
+    if ch = invalid then return
+    name = ""
+    gn = ""
+    cid = 0
+    if ch.name <> invalid then name = ch.name
+    if ch.guideNumber <> invalid then gn = ch.guideNumber
+    if ch.id <> invalid then cid = ch.id
+    m.playerStubScene.channelName = name
+    m.playerStubScene.guideNumber = gn
+    m.playerStubScene.channelId = cid
+    setPhase("playerStub")
+end sub
+
+sub onSettingsClosed()
+    if m.settingsScene.closed <> true then return
+    setPhase("home")
+end sub
+
+sub onSettingsChangeServer()
+    if m.settingsScene.changeServer <> true then return
+    m.serverUrl = ""
+    setPhase("connect")
+end sub
+
+sub onPlayerStubClosed()
+    if m.playerStubScene.closed <> true then return
+    setPhase("home")
+end sub
+
+sub showHome()
+    server = bowtie.registry.loadServer()
+    if server <> invalid and server <> ""
+        m.serverUrl = server
+        m.settingsScene.serverUrl = server
     end if
     setPhase("home")
 end sub
@@ -156,9 +192,11 @@ sub setPhase(phase as string)
     m.phase = phase
 
     m.checkingGroup.visible = false
-    m.homeGroup.visible = false
     m.connectScene.visible = false
     m.loginScene.visible = false
+    m.homeScene.visible = false
+    m.settingsScene.visible = false
+    m.playerStubScene.visible = false
 
     if m.checkingSpinner <> invalid
         m.checkingSpinner.control = "stop"
@@ -177,7 +215,14 @@ sub setPhase(phase as string)
             m.checkingSpinner.control = "start"
         end if
     else if phase = "home"
-        m.homeGroup.visible = true
-        m.homeGroup.setFocus(true)
+        m.homeScene.visible = true
+        m.homeScene.setFocus(true)
+    else if phase = "settings"
+        m.settingsScene.serverUrl = m.serverUrl
+        m.settingsScene.visible = true
+        m.settingsScene.setFocus(true)
+    else if phase = "playerStub"
+        m.playerStubScene.visible = true
+        m.playerStubScene.setFocus(true)
     end if
 end sub

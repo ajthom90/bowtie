@@ -39,41 +39,10 @@
             />
         </Group>
 
-        <!-- Home placeholder until Task 4 HomeScene. -->
-        <Group id="homeGroup" visible="false">
-            <Label
-                id="homeTitle"
-                width="1920"
-                height="80"
-                translation="[0, 440]"
-                text="Bowtie"
-                horizAlign="center"
-                color="0xF0A428FF"
-                font="font:LargeBoldSystemFont"
-            />
-            <Label
-                id="homeHint"
-                width="1920"
-                height="40"
-                translation="[0, 540]"
-                text="Home"
-                horizAlign="center"
-                color="0xF2EFE8FF"
-                font="font:MediumSystemFont"
-            />
-            <Label
-                id="homeUser"
-                width="1920"
-                height="40"
-                translation="[0, 600]"
-                text=""
-                horizAlign="center"
-                color="0x9BA5AEFF"
-                font="font:SmallSystemFont"
-            />
-        </Group>
-
         <ConnectScene id="connectScene" visible="false" />
         <LoginScene id="loginScene" visible="false" />
+        <HomeScene id="homeScene" visible="false" />
+        <SettingsScene id="settingsScene" visible="false" />
+        <PlayerStubScene id="playerStubScene" visible="false" />
     </children>
 </component>

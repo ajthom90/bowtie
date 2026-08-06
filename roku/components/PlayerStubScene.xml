@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Temporary stub until Task 5 PlayerScene. Shows channel identity + Back. -->
+<component name="PlayerStubScene" extends="Group">
+    <interface>
+        <field id="channelName" type="string" value="" />
+        <field id="guideNumber" type="string" value="" />
+        <field id="channelId" type="integer" value="0" />
+        <!-- True when user presses Back. -->
+        <field id="closed" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="PlayerStubScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+        <Label
+            id="numberLabel"
+            translation="[0, 360]"
+            width="1920"
+            height="80"
+            text=""
+            horizAlign="center"
+            color="0xF0A428FF"
+            font="font:LargeBoldSystemFont"
+        />
+        <Label
+            id="nameLabel"
+            translation="[0, 450]"
+            width="1920"
+            height="60"
+            text=""
+            horizAlign="center"
+            color="0xF2EFE8FF"
+            font="font:MediumBoldSystemFont"
+        />
+        <Label
+            id="hintLabel"
+            translation="[0, 540]"
+            width="1920"
+            height="40"
+            text="Player coming soon"
+            horizAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+        <Button
+            id="backButton"
+            translation="[760, 640]"
+            text="Back"
+            minWidth="400"
+            height="56"
+        />
+    </children>
+</component>

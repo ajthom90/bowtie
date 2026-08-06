@@ -1,0 +1,406 @@
+' Channel rail: MarkupList + ChannelRailItem; channels+guide via ApiTask;
+' join with bowtie.guide.nowNext; refresh on show + 5-min timer.
+
+import "pkg:/source/lib/GuideLogic.bs"
+
+const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
+const GUIDE_WINDOW_SECS = 4 * 3600
+
+sub init()
+    m.titleLabel = m.top.findNode("titleLabel")
+    m.userLabel = m.top.findNode("userLabel")
+    m.settingsButton = m.top.findNode("settingsButton")
+    m.loadingGroup = m.top.findNode("loadingGroup")
+    m.loadingSpinner = m.top.findNode("loadingSpinner")
+    m.emptyLabel = m.top.findNode("emptyLabel")
+    m.errorGroup = m.top.findNode("errorGroup")
+    m.errorLabel = m.top.findNode("errorLabel")
+    m.retryButton = m.top.findNode("retryButton")
+    m.channelList = m.top.findNode("channelList")
+    m.refreshTimer = m.top.findNode("refreshTimer")
+
+    m.observing = false
+    m.loadGen = 0
+    m.pendingChannelsId = ""
+    m.pendingGuideId = ""
+    m.channels = []
+    m.busy = false
+    m.lastLoadedAt = 0
+
+    m.settingsButton.observeField("buttonSelected", "onSettingsButton")
+    m.retryButton.observeField("buttonSelected", "onRetryButton")
+    m.channelList.observeField("itemSelected", "onItemSelected")
+    m.refreshTimer.observeField("fire", "onRefreshTimer")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("apiTask", "onApiTaskSet")
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeField("response", "onApiResponse")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveField("response")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.top.openSettings = false
+        m.top.selectedChannel = invalid
+        updateUserLabel()
+        observeApi()
+        startRefreshTimer()
+        ' Full refresh on every show (Task 4: refresh on show).
+        loadChannels()
+    else
+        stopRefreshTimer()
+        unobserveApi()
+        setLoading(false)
+    end if
+end sub
+
+sub updateUserLabel()
+    uname = ""
+    task = m.top.apiTask
+    if task <> invalid and task.user <> invalid and task.user.username <> invalid
+        uname = task.user.username
+    end if
+    m.userLabel.text = uname
+end sub
+
+sub startRefreshTimer()
+    m.refreshTimer.control = "stop"
+    m.refreshTimer.control = "start"
+end sub
+
+sub stopRefreshTimer()
+    m.refreshTimer.control = "stop"
+end sub
+
+sub onRefreshTimer()
+    if m.top.visible <> true then return
+    if m.busy = true then return
+    ' Stale if never loaded or ≥ 5 minutes since last success.
+    nowSecs = nowAsSeconds()
+    if m.lastLoadedAt = 0 or (nowSecs - m.lastLoadedAt) >= 300
+        loadChannels()
+    end if
+end sub
+
+sub onSettingsButton()
+    m.top.openSettings = true
+end sub
+
+sub onRetryButton()
+    loadChannels()
+end sub
+
+sub onItemSelected()
+    idx = m.channelList.itemSelected
+    if idx = invalid or idx < 0 then return
+    if m.channels = invalid or idx >= m.channels.count() then return
+    ch = m.channels[idx]
+    if ch = invalid then return
+    m.top.selectedChannel = {
+        id: ch.id
+        guideNumber: ch.guideNumber
+        name: ch.name
+    }
+end sub
+
+sub loadChannels()
+    task = m.top.apiTask
+    if task = invalid then return
+
+    m.loadGen = m.loadGen + 1
+    gen = m.loadGen
+    m.busy = true
+    m.pendingChannelsId = "home-channels-" + gen.toStr()
+    m.pendingGuideId = ""
+    showLoading()
+
+    task.request = {
+        id: m.pendingChannelsId
+        kind: "channels"
+        params: {}
+    }
+end sub
+
+sub loadGuide()
+    task = m.top.apiTask
+    if task = invalid then return
+
+    gen = m.loadGen
+    m.pendingGuideId = "home-guide-" + gen.toStr()
+    window = guideWindow()
+    task.request = {
+        id: m.pendingGuideId
+        kind: "guide"
+        params: {
+            start: window.start
+            stop: window.stop
+        }
+    }
+end sub
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    if m.top.visible <> true then return
+    resp = task.response
+    if resp = invalid then return
+
+    if resp.id = m.pendingChannelsId
+        handleChannelsResponse(resp)
+        return
+    end if
+    if resp.id = m.pendingGuideId and m.pendingGuideId <> ""
+        handleGuideResponse(resp)
+        return
+    end if
+end sub
+
+sub handleChannelsResponse(resp as object)
+    m.pendingChannelsId = ""
+    if resp.ok <> true
+        m.busy = false
+        showError(errorMessage(resp))
+        return
+    end if
+
+    data = resp.data
+    channels = []
+    if data <> invalid
+        ' API may return a bare array or {channels: [...]}.
+        if type(data) = "roArray"
+            channels = data
+        else if data.channels <> invalid
+            channels = data.channels
+        end if
+    end if
+
+    m.channels = normalizeChannels(channels)
+
+    if m.channels.count() = 0
+        m.busy = false
+        m.lastLoadedAt = nowAsSeconds()
+        showEmpty()
+        return
+    end if
+
+    ' Fetch guide for now/next join.
+    loadGuide()
+end sub
+
+sub handleGuideResponse(resp as object)
+    m.pendingGuideId = ""
+    m.busy = false
+    m.lastLoadedAt = nowAsSeconds()
+
+    guideById = {}
+    if resp.ok = true and resp.data <> invalid
+        guideById = indexGuide(resp.data)
+    end if
+
+    atIso = isoNow()
+    content = buildListContent(m.channels, guideById, atIso)
+    m.channelList.content = content
+    showList()
+end sub
+
+function normalizeChannels(raw as object) as object
+    out = []
+    if raw = invalid then return out
+    for each c in raw
+        if c <> invalid
+            id = c.id
+            if id = invalid then id = 0
+            gn = c.guideNumber
+            if gn = invalid
+                gn = ""
+            else if type(gn) <> "String" and type(gn) <> "roString"
+                gn = gn.toStr()
+            end if
+            name = c.name
+            if name = invalid then name = ""
+            out.push({
+                id: id
+                guideNumber: gn
+                name: name
+            })
+        end if
+    end for
+    return out
+end function
+
+function indexGuide(data as object) as object
+    byId = {}
+    list = data
+    if type(data) <> "roArray"
+        if data.channels <> invalid
+            list = data.channels
+        else
+            return byId
+        end if
+    end if
+    for each gc in list
+        if gc <> invalid and gc.channelId <> invalid
+            key = gc.channelId.toStr()
+            programs = gc.programs
+            if programs = invalid then programs = []
+            byId[key] = programs
+        end if
+    end for
+    return byId
+end function
+
+function buildListContent(channels as object, guideById as object, atIso as string) as object
+    root = CreateObject("roSGNode", "ContentNode")
+    for each ch in channels
+        key = ch.id.toStr()
+        programs = guideById[key]
+        if programs = invalid then programs = []
+        nn = bowtie.guide.nowNext(programs, atIso)
+        nowTitle = ""
+        nextTitle = ""
+        progress = 0.0
+        if nn.now <> invalid
+            if nn.now.title <> invalid then nowTitle = nn.now.title
+            progress = programProgress(nn.now, atIso)
+        end if
+        if nn.next <> invalid and nn.next.title <> invalid
+            nextTitle = nn.next.title
+        end if
+
+        item = root.createChild("ContentNode")
+        item.title = ch.name
+        item.addFields({
+            guideNumber: ch.guideNumber
+            channelId: ch.id
+            nowTitle: nowTitle
+            nextTitle: nextTitle
+            progress: progress
+            rowKind: "channel"
+        })
+    end for
+    return root
+end function
+
+function programProgress(program as object, atIso as string) as float
+    if program = invalid then return 0.0
+    if program.start = invalid or program.stop = invalid then return 0.0
+    startSecs = isoToSeconds(program.start)
+    stopSecs = isoToSeconds(program.stop)
+    atSecs = isoToSeconds(atIso)
+    total = stopSecs - startSecs
+    if total <= 0 then return 0.0
+    elapsed = atSecs - startSecs
+    p = elapsed / total
+    if p < 0 then p = 0
+    if p > 1 then p = 1
+    return p
+end function
+
+function guideWindow() as object
+    dt = CreateObject("roDateTime")
+    dt.MarkTime()
+    ' Force UTC for ISO strings.
+    dt.ToUTC()
+    startIso = dt.ToISOString()
+    secs = dt.AsSeconds() + GUIDE_WINDOW_SECS
+    dt.FromSeconds(secs)
+    stopIso = dt.ToISOString()
+    return { start: startIso, stop: stopIso }
+end function
+
+function isoNow() as string
+    dt = CreateObject("roDateTime")
+    dt.MarkTime()
+    dt.ToUTC()
+    return dt.ToISOString()
+end function
+
+function isoToSeconds(iso as string) as integer
+    if iso = invalid or iso = "" then return 0
+    dt = CreateObject("roDateTime")
+    dt.FromISO8601String(iso)
+    return dt.AsSeconds()
+end function
+
+function nowAsSeconds() as integer
+    dt = CreateObject("roDateTime")
+    dt.MarkTime()
+    return dt.AsSeconds()
+end function
+
+function errorMessage(resp as object) as string
+    if resp = invalid then return "Couldn't load channels."
+    if resp.error <> invalid
+        msg = resp.error.message
+        if msg <> invalid and msg <> "" then return msg
+    end if
+    return "Couldn't load channels."
+end function
+
+sub showLoading()
+    m.loadingGroup.visible = true
+    if m.loadingSpinner <> invalid
+        m.loadingSpinner.control = "start"
+    end if
+    m.emptyLabel.visible = false
+    m.errorGroup.visible = false
+    m.channelList.visible = false
+    m.settingsButton.setFocus(true)
+end sub
+
+sub showEmpty()
+    setLoading(false)
+    m.emptyLabel.text = EMPTY_COPY
+    m.emptyLabel.visible = true
+    m.errorGroup.visible = false
+    m.channelList.visible = false
+    m.settingsButton.setFocus(true)
+end sub
+
+sub showError(message as string)
+    setLoading(false)
+    m.emptyLabel.visible = false
+    m.errorGroup.visible = true
+    m.errorLabel.text = message
+    m.channelList.visible = false
+    m.retryButton.setFocus(true)
+end sub
+
+sub showList()
+    setLoading(false)
+    m.emptyLabel.visible = false
+    m.errorGroup.visible = false
+    m.channelList.visible = true
+    m.channelList.setFocus(true)
+end sub
+
+sub setLoading(on as boolean)
+    m.loadingGroup.visible = on
+    if m.loadingSpinner <> invalid
+        if on
+            m.loadingSpinner.control = "start"
+        else
+            m.loadingSpinner.control = "stop"
+        end if
+    end if
+end sub

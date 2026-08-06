@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="SettingsScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <field id="serverUrl" type="string" value="" />
+        <!-- Back to home. -->
+        <field id="closed" type="boolean" alwaysNotify="true" value="false" />
+        <!-- Confirm change-server: registry cleared by this scene. -->
+        <field id="changeServer" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="SettingsScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+        <LayoutGroup
+            id="layout"
+            translation="[360, 80]"
+            layoutDirection="vert"
+            horizAlignment="left"
+            itemSpacings="[12, 20, 8, 8, 16, 24, 8, 8, 16, 12, 20, 12, 16]"
+        >
+            <Button
+                id="backButton"
+                text="← Back"
+                minWidth="240"
+                height="52"
+            />
+            <Label
+                id="titleLabel"
+                width="1200"
+                height="56"
+                text="Settings"
+                horizAlign="left"
+                color="0xF2EFE8FF"
+                font="font:LargeBoldSystemFont"
+            />
+
+            <!-- Server -->
+            <Label
+                id="serverHeader"
+                width="1200"
+                height="32"
+                text="Server"
+                horizAlign="left"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="serverLabel"
+                width="1200"
+                height="40"
+                text=""
+                horizAlign="left"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+            <Button
+                id="changeServerButton"
+                text="Change server"
+                minWidth="400"
+                height="56"
+            />
+
+            <!-- Account -->
+            <Label
+                id="accountHeader"
+                width="1200"
+                height="32"
+                text="Account"
+                horizAlign="left"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="usernameLabel"
+                width="1200"
+                height="40"
+                text=""
+                horizAlign="left"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+            <Button
+                id="changePasswordButton"
+                text="Change password"
+                minWidth="400"
+                height="56"
+            />
+            <Label
+                id="passwordMessage"
+                width="1200"
+                height="40"
+                text=""
+                horizAlign="left"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Button
+                id="signOutButton"
+                text="Sign out"
+                minWidth="400"
+                height="56"
+            />
+        </LayoutGroup>
+    </children>
+</component>
