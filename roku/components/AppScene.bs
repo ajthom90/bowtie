@@ -1,4 +1,183 @@
+' App root: phase routing per A2.
+' registry server? no → Connect. Server, no refresh → Login.
+' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
+' Refresh ok → Home. Refresh fail → Login (server kept).
+
+import "pkg:/source/lib/Registry.bs"
+
 sub init()
     m.top.backgroundURI = ""
     m.top.backgroundColor = "0x101418FF"
+
+    m.checkingGroup = m.top.findNode("checkingGroup")
+    m.homeGroup = m.top.findNode("homeGroup")
+    m.homeUser = m.top.findNode("homeUser")
+    m.connectScene = m.top.findNode("connectScene")
+    m.loginScene = m.top.findNode("loginScene")
+    m.checkingSpinner = m.top.findNode("checkingSpinner")
+
+    m.phase = "connect"
+    m.bootRefreshId = "boot-refresh"
+    m.serverUrl = ""
+
+    ' Long-lived ApiTask — sole HTTP + token holder.
+    m.apiTask = CreateObject("roSGNode", "ApiTask")
+    m.apiTask.observeField("ready", "onApiReady")
+    m.apiTask.observeField("response", "onApiResponse")
+    m.apiTask.observeField("authEvent", "onAuthEvent")
+    m.apiTask.control = "RUN"
+
+    m.connectScene.apiTask = m.apiTask
+    m.loginScene.apiTask = m.apiTask
+    m.connectScene.observeField("connected", "onConnected")
+    m.loginScene.observeField("signedIn", "onSignedIn")
+    m.loginScene.observeField("changeServer", "onChangeServer")
+
+    ' Initial route from registry (UI only until ApiTask is ready).
+    routeFromRegistry()
+
+    ' If the task thread already flipped ready before we finished routing.
+    if m.phase = "checking" and m.apiTask.ready = true
+        enqueueBootRefresh()
+    end if
+end sub
+
+sub routeFromRegistry()
+    server = bowtie.registry.loadServer()
+    rt = bowtie.registry.loadRefreshToken()
+
+    if server = invalid or server = ""
+        m.serverUrl = ""
+        setPhase("connect")
+        return
+    end if
+
+    m.serverUrl = server
+    m.loginScene.serverUrl = server
+
+    if rt = invalid or rt = ""
+        setPhase("login")
+    else
+        ' A2: NEVER straight to Home — Checking + doRefresh.
+        setPhase("checking")
+    end if
+end sub
+
+sub onApiReady()
+    if m.apiTask.ready <> true then return
+    if m.phase = "checking"
+        enqueueBootRefresh()
+    end if
+end sub
+
+sub enqueueBootRefresh()
+    m.apiTask.request = {
+        id: m.bootRefreshId
+        kind: "refresh"
+        params: {}
+    }
+end sub
+
+sub onApiResponse()
+    resp = m.apiTask.response
+    if resp = invalid then return
+
+    ' Only AppScene handles boot-refresh; scenes match their own ids.
+    if resp.id = m.bootRefreshId
+        if resp.ok = true
+            showHomeFromUser(resp.data)
+        else
+            ' Refresh fail → Login (server kept).
+            setPhase("login")
+        end if
+    end if
+end sub
+
+sub onAuthEvent()
+    ev = m.apiTask.authEvent
+    if ev = invalid then return
+    if ev.type = "signOut"
+        ' Forced sign-out: keep server, show Login.
+        server = bowtie.registry.loadServer()
+        if server <> invalid and server <> ""
+            m.serverUrl = server
+            m.loginScene.serverUrl = server
+            setPhase("login")
+        else
+            setPhase("connect")
+        end if
+    end if
+end sub
+
+sub onConnected()
+    if m.connectScene.connected <> true then return
+    server = bowtie.registry.loadServer()
+    if server = invalid then server = ""
+    m.serverUrl = server
+    m.loginScene.serverUrl = server
+    setPhase("login")
+end sub
+
+sub onSignedIn()
+    if m.loginScene.signedIn <> true then return
+    user = m.apiTask.user
+    showHomeFromUser({ user: user })
+end sub
+
+sub onChangeServer()
+    if m.loginScene.changeServer <> true then return
+    m.serverUrl = ""
+    setPhase("connect")
+end sub
+
+sub showHomeFromUser(data as object)
+    uname = ""
+    user = invalid
+    if data <> invalid
+        if data.user <> invalid
+            user = data.user
+        end if
+    end if
+    if user = invalid
+        user = m.apiTask.user
+    end if
+    if user <> invalid and user.username <> invalid
+        uname = user.username
+    end if
+    if uname <> ""
+        m.homeUser.text = uname
+    else
+        m.homeUser.text = ""
+    end if
+    setPhase("home")
+end sub
+
+sub setPhase(phase as string)
+    m.phase = phase
+
+    m.checkingGroup.visible = false
+    m.homeGroup.visible = false
+    m.connectScene.visible = false
+    m.loginScene.visible = false
+
+    if m.checkingSpinner <> invalid
+        m.checkingSpinner.control = "stop"
+    end if
+
+    if phase = "connect"
+        m.connectScene.visible = true
+        m.connectScene.setFocus(true)
+    else if phase = "login"
+        m.loginScene.serverUrl = m.serverUrl
+        m.loginScene.visible = true
+        m.loginScene.setFocus(true)
+    else if phase = "checking"
+        m.checkingGroup.visible = true
+        if m.checkingSpinner <> invalid
+            m.checkingSpinner.control = "start"
+        end if
+    else if phase = "home"
+        m.homeGroup.visible = true
+        m.homeGroup.setFocus(true)
+    end if
 end sub

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="LoginScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <field id="serverUrl" type="string" value="" />
+        <!-- True when login succeeds (tokens held in ApiTask). -->
+        <field id="signedIn" type="boolean" alwaysNotify="true" value="false" />
+        <!-- True when user chooses change-server (registry cleared by this scene). -->
+        <field id="changeServer" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="LoginScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+        <LayoutGroup
+            id="layout"
+            translation="[460, 220]"
+            layoutDirection="vert"
+            horizAlignment="center"
+            itemSpacings="[12, 8, 28, 12, 12, 16, 20, 12]"
+        >
+            <Label
+                id="titleLabel"
+                width="1000"
+                height="60"
+                text="Sign in"
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:LargeBoldSystemFont"
+            />
+            <Label
+                id="serverLabel"
+                width="1000"
+                height="36"
+                text=""
+                horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="hintLabel"
+                width="1000"
+                height="36"
+                text="Use your Bowtie account"
+                horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="usernameDisplay"
+                width="1000"
+                height="40"
+                text="Username: (not set)"
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+            <Label
+                id="passwordDisplay"
+                width="1000"
+                height="40"
+                text="Password: (not set)"
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+            <Label
+                id="errorLabel"
+                width="1000"
+                height="60"
+                text=""
+                horizAlign="center"
+                color="0xE05050FF"
+                font="font:SmallSystemFont"
+                wrap="true"
+            />
+            <Button
+                id="usernameButton"
+                text="Username"
+                minWidth="400"
+                height="56"
+            />
+            <Button
+                id="passwordButton"
+                text="Password"
+                minWidth="400"
+                height="56"
+            />
+            <Button
+                id="signInButton"
+                text="Sign in"
+                minWidth="400"
+                height="56"
+            />
+            <Button
+                id="changeServerButton"
+                text="Change server"
+                minWidth="400"
+                height="56"
+            />
+        </LayoutGroup>
+    </children>
+</component>

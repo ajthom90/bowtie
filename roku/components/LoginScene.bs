@@ -1,0 +1,266 @@
+' Login: username + secure password via StandardKeyboardDialog; exact error copy.
+
+import "pkg:/source/lib/Registry.bs"
+
+' Spec-mandated auth failure copy (verbatim, Phase 2).
+const LOGIN_ERROR = "Wrong username or password."
+
+sub init()
+    m.errorLabel = m.top.findNode("errorLabel")
+    m.serverLabel = m.top.findNode("serverLabel")
+    m.usernameDisplay = m.top.findNode("usernameDisplay")
+    m.passwordDisplay = m.top.findNode("passwordDisplay")
+    m.usernameButton = m.top.findNode("usernameButton")
+    m.passwordButton = m.top.findNode("passwordButton")
+    m.signInButton = m.top.findNode("signInButton")
+    m.changeServerButton = m.top.findNode("changeServerButton")
+
+    m.username = ""
+    m.password = ""
+    m.busy = false
+    m.pendingId = ""
+    m.dialog = invalid
+    m.dialogMode = "" ' "username" | "password"
+    m.observing = false
+
+    m.usernameButton.observeField("buttonSelected", "onUsernameButton")
+    m.passwordButton.observeField("buttonSelected", "onPasswordButton")
+    m.signInButton.observeField("buttonSelected", "onSignInButton")
+    m.changeServerButton.observeField("buttonSelected", "onChangeServerButton")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("serverUrl", "onServerUrl")
+    m.top.observeField("apiTask", "onApiTaskSet")
+end sub
+
+sub onServerUrl()
+    url = m.top.serverUrl
+    if url = invalid then url = ""
+    m.serverLabel.text = url
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.errorLabel.text = ""
+        m.top.signedIn = false
+        m.top.changeServer = false
+        m.username = ""
+        m.password = ""
+        updateCredentialLabels()
+        onServerUrl()
+        m.usernameButton.setFocus(true)
+        ' Auto-open username keyboard for TV-friendly first focus.
+        timer = CreateObject("roSGNode", "Timer")
+        timer.duration = 0.05
+        timer.repeat = false
+        timer.observeField("fire", "onOpenUsernameTimer")
+        timer.control = "start"
+        m.openTimer = timer
+    else
+        closeDialog()
+        unobserveApi()
+    end if
+end sub
+
+sub onOpenUsernameTimer()
+    if m.top.visible = true and m.busy <> true
+        openUsernameKeyboard()
+    end if
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeField("response", "onApiResponse")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveField("response")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub updateCredentialLabels()
+    if m.username = ""
+        m.usernameDisplay.text = "Username: (not set)"
+    else
+        m.usernameDisplay.text = "Username: " + m.username
+    end if
+    if m.password = ""
+        m.passwordDisplay.text = "Password: (not set)"
+    else
+        m.passwordDisplay.text = "Password: ********"
+    end if
+end sub
+
+sub onUsernameButton()
+    if m.busy = true then return
+    openUsernameKeyboard()
+end sub
+
+sub onPasswordButton()
+    if m.busy = true then return
+    openPasswordKeyboard()
+end sub
+
+sub onSignInButton()
+    if m.busy = true then return
+    submitLogin()
+end sub
+
+sub onChangeServerButton()
+    if m.busy = true then return
+    closeDialog()
+    bowtie.registry.clearAll()
+    m.top.changeServer = true
+end sub
+
+sub openUsernameKeyboard()
+    closeDialog()
+    m.dialogMode = "username"
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Username"
+    dialog.message = ["Enter your Bowtie username"]
+    dialog.buttons = ["Next", "Cancel"]
+    dialog.keyboardDomain = "alphanumeric"
+    if m.username <> ""
+        dialog.text = m.username
+    end if
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onKeyboardClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub openPasswordKeyboard()
+    closeDialog()
+    m.dialogMode = "password"
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Password"
+    dialog.message = ["Enter your password"]
+    dialog.buttons = ["Sign in", "Cancel"]
+    dialog.keyboardDomain = "password"
+    ' Secure mode: asterisks (A7).
+    if dialog.textEditBox <> invalid
+        dialog.textEditBox.secureMode = true
+    end if
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onKeyboardClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub onKeyboardButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    text = m.dialog.text
+    if text = invalid then text = ""
+    mode = m.dialogMode
+    closeDialog()
+
+    if idx <> 0
+        ' Cancel
+        m.usernameButton.setFocus(true)
+        return
+    end if
+
+    if mode = "username"
+        m.username = text.Trim()
+        updateCredentialLabels()
+        m.errorLabel.text = ""
+        openPasswordKeyboard()
+    else if mode = "password"
+        m.password = text
+        updateCredentialLabels()
+        m.errorLabel.text = ""
+        submitLogin()
+    end if
+end sub
+
+sub onKeyboardClosed()
+    m.dialog = invalid
+    m.dialogMode = ""
+    if m.top.visible = true
+        m.usernameButton.setFocus(true)
+    end if
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    m.dialogMode = ""
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+sub submitLogin()
+    user = m.username.Trim()
+    if user = "" or m.password = ""
+        m.errorLabel.text = LOGIN_ERROR
+        m.usernameButton.setFocus(true)
+        return
+    end if
+
+    task = m.top.apiTask
+    if task = invalid
+        m.errorLabel.text = LOGIN_ERROR
+        return
+    end if
+
+    observeApi()
+    m.busy = true
+    m.errorLabel.text = ""
+    m.pendingId = "login"
+    task.request = {
+        id: m.pendingId
+        kind: "login"
+        params: {
+            username: user
+            password: m.password
+        }
+    }
+end sub
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    resp = task.response
+    if resp = invalid then return
+    if resp.id <> m.pendingId then return
+
+    m.busy = false
+    m.pendingId = ""
+
+    if resp.ok = true
+        m.password = ""
+        updateCredentialLabels()
+        m.top.signedIn = true
+    else
+        m.errorLabel.text = LOGIN_ERROR
+        m.password = ""
+        updateCredentialLabels()
+        m.passwordButton.setFocus(true)
+    end if
+end sub
