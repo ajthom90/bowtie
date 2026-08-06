@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import app.bowtie.core.vm.AppViewModel
 
 /**
  * Host for Activity-level PiP coordination used by [app.bowtie.ui.PlayerScreen].

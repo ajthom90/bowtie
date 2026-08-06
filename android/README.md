@@ -1,15 +1,16 @@
 # Bowtie Android
 
-Native Kotlin/Compose viewer for the Bowtie v0.1.0 API. Targets **Android 8.0+**
-(API 26 / Oreo and newer). Phone and tablet only in Phase 2; Fire TV reuses
-`:core` in a later phase.
+Native Kotlin/Compose viewer for the Bowtie v0.1.0 API. Phone/tablet (**Android
+8.0+** / API 26) and **Fire TV** (**API 25+**, Fire OS 6+) share `:core`
+(ViewModels, client, Media3 [PlayerEngine](core/src/main/kotlin/app/bowtie/core/player/PlayerEngine.kt)).
 
 ## Modules
 
 | Module | Type | minSdk | Role |
 |--------|------|--------|------|
-| `:core` | library | 25 | Client, models, token store, caps, guide logic (Fire-TV-ready) |
-| `:app` | application | 26 | Compose UI + Media3 playback |
+| `:core` | library | 25 | Client, models, token store, caps, guide logic, PlayerEngine |
+| `:app` | application | 26 | Phone Compose UI + Media3 PlayerView |
+| `:tv` | application | 25 | Fire TV (Compose for TV) + Media3 PlayerView |
 
 ## Requirements
 
@@ -26,30 +27,37 @@ No Android Studio required for CLI build/test; Studio is optional for UI work.
 From the repo root:
 
 ```bash
-make android-test   # :core:test + :app:testDebugUnitTest
-make android-apk    # :app:assembleDebug
+make android-test   # :core:test + :app + :tv unit tests
+make android-apk    # :app:assembleDebug + :tv:assembleDebug
 ```
 
 From `android/`:
 
 ```bash
-./gradlew :core:test :app:testDebugUnitTest
-./gradlew :app:assembleDebug
+./gradlew :core:test :app:testDebugUnitTest :tv:testDebugUnitTest
+./gradlew :app:assembleDebug :tv:assembleDebug
 ```
 
-Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
+Debug APKs:
 
-Release APK (local, uses debug key unless `BOWTIE_KEYSTORE_*` env vars are set):
+- Phone: `app/build/outputs/apk/debug/app-debug.apk`
+- Fire TV: `tv/build/outputs/apk/debug/tv-debug.apk`
+
+Release APKs (local, uses debug key unless `BOWTIE_KEYSTORE_*` env vars are set):
 
 ```bash
-./gradlew :app:assembleRelease
+./gradlew :app:assembleRelease :tv:assembleRelease
 # → app/build/outputs/apk/release/app-release.apk
+# → tv/build/outputs/apk/release/tv-release.apk
 ```
 
 ## Install from GitHub Releases (sideload)
 
-Each version tag (`v*`) runs the release workflow, which attaches a **signed**
-release APK to the GitHub Release (e.g. `bowtie-0.1.0.apk`).
+Each version tag (`v*`) runs the release workflow, which attaches **signed**
+release APKs to the GitHub Release:
+
+- Phone: `bowtie-<version>.apk`
+- Fire TV: `bowtie-tv-<version>.apk`
 
 1. On the phone: **Settings → Apps → Special app access → Install unknown apps**
    (wording varies by OEM) and allow your browser or Files app to install APKs.
@@ -63,6 +71,54 @@ release APK to the GitHub Release (e.g. `bowtie-0.1.0.apk`).
 
 Debug builds from `assembleDebug` use the debug keystore and **cannot** update
 over a release-signed install (and vice versa) without uninstalling first.
+
+## Fire TV
+
+Package id: `app.bowtie.tv` (separate from the phone app). minSdk **25** (Fire OS 6+).
+
+### Build
+
+```bash
+cd android
+./gradlew :tv:assembleDebug          # debug
+./gradlew :tv:assembleRelease        # release (debug key if no BOWTIE_KEYSTORE_*)
+```
+
+### adb sideload
+
+1. On the Fire TV stick: **Settings → My Fire TV → Developer options** — enable
+   **ADB debugging** and **Apps from Unknown Sources**.
+2. Note the device IP (**Settings → My Fire TV → About → Network**).
+3. From a machine with `adb`:
+
+```bash
+adb connect <fire-tv-ip>:5555
+adb install -r tv/build/outputs/apk/debug/tv-debug.apk
+# or a release asset:
+# adb install -r bowtie-tv-0.1.0.apk
+```
+
+4. Launch from the Fire TV home row (Leanback launcher) — look for **Bowtie**.
+
+### Downloader app (no computer)
+
+1. Install **Downloader** from the Amazon Appstore on the Fire TV.
+2. Open a release URL that serves `bowtie-tv-<version>.apk` (GitHub Releases
+   asset link, or a LAN HTTP path you control).
+3. Download → install when prompted (Unknown Sources must be on).
+
+### Remote key map (player)
+
+| Key | Action |
+|-----|--------|
+| **Select / DPAD Center** short-press | Play / pause |
+| **Select / DPAD Center** long-press (≥700 ms) | Open transport / quality drawer |
+| **Menu** | Open transport / quality drawer |
+| **DPAD Up / Down** | Channel zap (session-replace, debounced) |
+| **Back** | Close drawer if open; otherwise stop playback and return to the rail |
+
+Stats toggle lives inside the quality drawer. Media3 `PlayerView` never owns DPAD
+focus — Compose handles keys so zap and drawer keep working while video plays.
 
 ## First run — connect to your server
 
@@ -100,11 +156,9 @@ When you are ready for Play:
 ```
 android/
 ├── gradle/libs.versions.toml   # pinned AGP / Kotlin / Compose / Media3
-├── core/                       # library: client, models, store, caps, guide
-└── app/                        # application: Compose UI + Media3
-    └── src/main/kotlin/app/bowtie/
-        ├── ui/                 # Connect, Login, ChannelList, Player, Settings
-        └── …ViewModel.kt
+├── core/                       # library: client, VMs, PlayerEngine, caps, guide
+├── app/                        # phone application: Compose UI + PlayerView
+└── tv/                         # Fire TV application: Compose for TV + PlayerView
 ```
 
 ## Version pins

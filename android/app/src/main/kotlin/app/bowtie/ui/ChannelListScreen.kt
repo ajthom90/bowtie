@@ -39,8 +39,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import app.bowtie.BowtieColors
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
-import app.bowtie.ChannelListViewModel
-import app.bowtie.PlayerViewModel
+import app.bowtie.core.vm.ChannelListViewModel
+import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.Channel
 import app.bowtie.core.User
 import kotlinx.coroutines.delay

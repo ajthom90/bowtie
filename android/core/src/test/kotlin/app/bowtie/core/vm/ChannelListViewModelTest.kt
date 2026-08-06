@@ -1,4 +1,4 @@
-package app.bowtie
+package app.bowtie.core.vm
 
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.InMemoryTokenStore

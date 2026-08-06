@@ -4,11 +4,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 /**
- * Pure [Caps.detect] tests. [Caps.current] is an untested platform wrapper
- * (Robolectric MediaCodecList shadows are weak — inject inputs instead).
+ * Pure [Caps.detect] tests plus [Caps.current] seam wiring via an injected probe.
+ * [Caps.audioPassthroughProbe] itself is an untested platform wrapper
+ * (honest framing: Robolectric MediaCodecList / AudioManager shadows are weak).
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class CapsTest {
 
     @Test
@@ -99,5 +106,27 @@ class CapsTest {
             displayHeight = 1080,
         )
         assertEquals("", caps.profile)
+    }
+
+    // ── current() seam: probe wiring (platform probe untested) ──────────────
+
+    @Test
+    fun current_probeTrue_includesAc3AndEac3() {
+        val context = RuntimeEnvironment.getApplication()
+        val caps = Caps.current(context) { true }
+        assertTrue(caps.audioCodecs.contains("aac"))
+        assertTrue(caps.audioCodecs.contains("ac3"))
+        assertTrue(caps.audioCodecs.contains("eac3"))
+    }
+
+    @Test
+    fun current_probeFalse_aacOnlyWhenNoHardwareAc3() {
+        val context = RuntimeEnvironment.getApplication()
+        // Injected probe=false; Robolectric typically reports no AC-3 hardware decoder,
+        // so detect receives ac3Passthrough=false and yields aac-only (existing behavior).
+        val caps = Caps.current(context) { false }
+        assertEquals(listOf("aac"), caps.audioCodecs)
+        assertFalse(caps.audioCodecs.contains("ac3"))
+        assertFalse(caps.audioCodecs.contains("eac3"))
     }
 }

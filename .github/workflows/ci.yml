@@ -77,7 +77,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: test + assemble debug
-        run: ./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug
+        run: ./gradlew :core:test :app:testDebugUnitTest :tv:testDebugUnitTest :app:assembleDebug :tv:assembleDebug
 
   # Build the multi-stage image on PRs and main (no push). amd64 only for
   # speed; multi-arch publish happens in the release workflow (Task 21).

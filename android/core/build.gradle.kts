@@ -39,12 +39,18 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.datastore.preferences)
+
+    // Playback engine (PlayerView stays per-app in media3-ui). api so ExoPlayer is
+    // on the compile classpath for :app / :tv when attaching a PlayerView.
+    api(libs.media3.exoplayer)
+    api(libs.media3.exoplayer.hls)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

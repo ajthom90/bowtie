@@ -29,8 +29,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import app.bowtie.AppViewModel
 import app.bowtie.BowtieColors
+import app.bowtie.core.vm.AppViewModel
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.BowtieError

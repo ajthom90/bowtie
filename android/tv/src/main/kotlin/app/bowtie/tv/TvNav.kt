@@ -1,10 +1,9 @@
-package app.bowtie
+package app.bowtie.tv
 
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,6 +18,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.tv.material3.Text
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.Caps
 import app.bowtie.core.Channel
@@ -29,11 +29,11 @@ import app.bowtie.core.User
 import app.bowtie.core.vm.AppViewModel
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
-import app.bowtie.ui.ChannelListScreen
-import app.bowtie.ui.ConnectScreen
-import app.bowtie.ui.LoginScreen
-import app.bowtie.ui.PlayerScreen
-import app.bowtie.ui.SettingsScreen
+import app.bowtie.tv.ui.ChannelRailScreen
+import app.bowtie.tv.ui.ConnectScreen
+import app.bowtie.tv.ui.LoginScreen
+import app.bowtie.tv.ui.SettingsScreen
+import app.bowtie.tv.ui.TvPlayerScreen
 import okhttp3.HttpUrl
 
 /** In-app routes once [AppViewModel.Phase.Ready]. */
@@ -45,10 +45,10 @@ private sealed class ReadyRoute {
 
 /**
  * Root navigation driven by [AppViewModel.phase].
- * No Navigation-Compose dependency (global allowlist).
+ * Mirrors phone [app.bowtie.BowtieRoot]; factories stay in this module.
  */
 @Composable
-fun BowtieRoot(
+fun TvRoot(
     appViewModel: AppViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -66,7 +66,11 @@ fun BowtieRoot(
                     .background(BowtieColors.bg),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(color = BowtieColors.amber)
+                Text(
+                    text = "Loading…",
+                    style = BowtieType.body,
+                    color = BowtieColors.dim,
+                )
             }
         }
         is AppViewModel.Phase.Login -> {
@@ -118,10 +122,15 @@ private fun ReadyShell(
     )
 
     var route by remember(client.server) { mutableStateOf<ReadyRoute>(ReadyRoute.Channels) }
+    val listState by channelListViewModel.state.collectAsStateWithLifecycle()
+    val channelList = when (val s = listState) {
+        is ChannelListViewModel.LoadState.Loaded -> s.rows.map { it.channel }
+        else -> emptyList()
+    }
 
     when (val r = route) {
         is ReadyRoute.Channels -> {
-            ChannelListScreen(
+            ChannelRailScreen(
                 user = user,
                 channelListViewModel = channelListViewModel,
                 playerViewModel = playerViewModel,
@@ -148,12 +157,17 @@ private fun ReadyShell(
             )
         }
         is ReadyRoute.Player -> {
-            PlayerScreen(
+            val zapList = channelList.ifEmpty { listOf(r.channel) }
+            TvPlayerScreen(
                 channel = r.channel,
+                channels = zapList,
                 playerViewModel = playerViewModel,
                 server = client.server,
                 maxQuality = user.maxQuality,
                 nowTitle = r.nowTitle,
+                onChannelChanged = { channel, nowTitle ->
+                    route = ReadyRoute.Player(channel = channel, nowTitle = nowTitle)
+                },
                 onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
             )
@@ -163,6 +177,7 @@ private fun ReadyShell(
 
 /**
  * Builds [AppViewModel] with [EncryptedTokenStore] and a real [BowtieClient] factory.
+ * TV-module own copy — mirrors phone Nav.kt factory pattern.
  */
 class AppViewModelFactory(
     private val application: Application,
