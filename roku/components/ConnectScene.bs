@@ -1,0 +1,202 @@
+' Connect: StandardKeyboardDialog URL entry, /healthz validate (2s), exact error copy.
+
+import "pkg:/source/lib/Registry.bs"
+
+' Spec-mandated failure copy (verbatim, Phase 2).
+const CONNECT_ERROR = "Couldn't reach a Bowtie server there. Check the address and try again."
+const URL_PLACEHOLDER = "https://tv.example.com or http://192.168.1.50:8400"
+
+sub init()
+    m.errorLabel = m.top.findNode("errorLabel")
+    m.urlLabel = m.top.findNode("urlLabel")
+    m.enterButton = m.top.findNode("enterButton")
+    m.busy = false
+    m.pendingId = ""
+    m.urlText = ""
+    m.dialog = invalid
+
+    m.enterButton.observeField("buttonSelected", "onEnterButton")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("apiTask", "onApiTaskSet")
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.errorLabel.text = ""
+        m.top.connected = false
+        ' Focus button; open keyboard shortly so the scene is fully attached.
+        m.enterButton.setFocus(true)
+        timer = CreateObject("roSGNode", "Timer")
+        timer.duration = 0.05
+        timer.repeat = false
+        timer.observeField("fire", "onOpenKeyboardTimer")
+        timer.control = "start"
+        m.openTimer = timer
+    else
+        closeDialog()
+        unobserveApi()
+    end if
+end sub
+
+sub onOpenKeyboardTimer()
+    if m.top.visible = true and m.busy <> true
+        openUrlKeyboard()
+    end if
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeField("response", "onApiResponse")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveField("response")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub onEnterButton()
+    if m.busy = true then return
+    openUrlKeyboard()
+end sub
+
+sub openUrlKeyboard()
+    closeDialog()
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Server address"
+    dialog.message = [URL_PLACEHOLDER]
+    dialog.buttons = ["Validate", "Cancel"]
+    dialog.keyboardDomain = "alphanumeric"
+    if m.urlText <> ""
+        dialog.text = m.urlText
+    end if
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onKeyboardClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub onKeyboardButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    text = m.dialog.text
+    if text = invalid then text = ""
+    m.urlText = text
+    m.urlLabel.text = text
+    closeDialog()
+
+    if idx = 0
+        ' Validate
+        submitUrl(text)
+    end if
+    ' Cancel (idx=1) — stay on connect with button focused.
+    m.enterButton.setFocus(true)
+end sub
+
+sub onKeyboardClosed()
+    m.dialog = invalid
+    if m.top.visible = true
+        m.enterButton.setFocus(true)
+    end if
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+sub submitUrl(raw as string)
+    if m.busy = true then return
+    normalized = normalizeServerUrl(raw)
+    if normalized = invalid
+        m.errorLabel.text = CONNECT_ERROR
+        return
+    end if
+
+    task = m.top.apiTask
+    if task = invalid
+        m.errorLabel.text = CONNECT_ERROR
+        return
+    end if
+
+    observeApi()
+    m.busy = true
+    m.errorLabel.text = ""
+    m.pendingBase = normalized
+    m.pendingId = "connect-healthz"
+    task.request = {
+        id: m.pendingId
+        kind: "healthz"
+        params: { baseUrl: normalized }
+    }
+end sub
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    resp = task.response
+    if resp = invalid then return
+    if resp.id <> m.pendingId then return
+
+    m.busy = false
+    m.pendingId = ""
+
+    if resp.ok = true
+        ' Persist server (clears any stale refresh) and signal AppScene.
+        bowtie.registry.save(m.pendingBase, invalid)
+        m.top.connected = true
+    else
+        m.errorLabel.text = CONNECT_ERROR
+        m.enterButton.setFocus(true)
+    end if
+end sub
+
+' Normalize user-entered server string: trim, default http://, strip trailing /.
+function normalizeServerUrl(raw as string) as dynamic
+    if raw = invalid then return invalid
+    trimmed = raw.Trim()
+    if trimmed = "" then return invalid
+
+    if Instr(1, trimmed, "://") = 0
+        trimmed = "http://" + trimmed
+    end if
+
+    while Len(trimmed) > 0 and Right(trimmed, 1) = "/"
+        trimmed = Left(trimmed, Len(trimmed) - 1)
+    end while
+
+    lower = LCase(trimmed)
+    if Left(lower, 7) = "http://"
+        rest = Mid(trimmed, 8)
+    else if Left(lower, 8) = "https://"
+        rest = Mid(trimmed, 9)
+    else
+        return invalid
+    end if
+
+    if rest = invalid or rest = "" then return invalid
+    return trimmed
+end function

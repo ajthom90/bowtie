@@ -1,0 +1,65 @@
+import "pkg:/source/lib/AuthState.bs"
+import "pkg:/source/lib/GuideLogic.bs"
+import "pkg:/source/lib/Caps.bs"
+import "pkg:/source/lib/Registry.bs"
+import "pkg:/source/lib/BowtieClient.bs"
+import "pkg:/source/tests/AuthStateFixtures.bs"
+import "pkg:/source/tests/GuideLogicFixtures.bs"
+import "pkg:/source/tests/ClientFixtures.bs"
+
+sub init()
+    m.top.backgroundURI = ""
+    m.top.backgroundColor = "0x101418FF"
+    m.resultLabel = m.top.findNode("resultLabel")
+    m.detailLabel = m.top.findNode("detailLabel")
+    runSelfTests()
+end sub
+
+sub runSelfTests()
+    suites = []
+    suites.push(bowtie.fixtures.auth.runAll())
+    suites.push(bowtie.fixtures.guide.runAll())
+    suites.push(bowtie.fixtures.client.runAll())
+
+    total = 0
+    passed = 0
+    failures = []
+    detailLines = []
+
+    for each suite in suites
+        total = total + suite.total
+        passed = passed + suite.passed
+        line = suite.suite + ": " + suite.passed.toStr() + "/" + suite.total.toStr()
+        detailLines.push(line)
+        for each r in suite.results
+            if r.ok <> true
+                failures.push(r)
+                msg = "  FAIL " + r.name
+                if r.detail <> invalid and r.detail <> ""
+                    msg = msg + " — " + r.detail
+                end if
+                detailLines.push(msg)
+            end if
+        end for
+    end for
+
+    if passed = total
+        m.resultLabel.text = "PASS " + passed.toStr() + "/" + total.toStr()
+        m.resultLabel.color = "0xF0A428FF"
+    else
+        m.resultLabel.text = "FAIL " + passed.toStr() + "/" + total.toStr()
+        m.resultLabel.color = "0xE05050FF"
+    end if
+
+    detail = ""
+    for i = 0 to detailLines.count() - 1
+        if i > 0 then detail = detail + Chr(10)
+        detail = detail + detailLines[i]
+    end for
+    m.detailLabel.text = detail
+
+    print "[SelfTest] " + m.resultLabel.text
+    for each f in failures
+        print "[SelfTest] FAIL " + f.name + " " + f.detail
+    end for
+end sub

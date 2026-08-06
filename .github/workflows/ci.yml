@@ -144,3 +144,45 @@ jobs:
             -destination "id=$UDID" \
             -only-testing:SharedTests \
             test
+
+  roku:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: roku
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: roku/package-lock.json
+
+      - name: install
+        run: npm ci
+
+      - name: compile
+        run: npx bsc
+
+      - name: lint
+        run: npx bslint --severity error
+
+      - name: package
+        run: npm run package
+
+      - name: assert zip contents
+        run: |
+          set -euo pipefail
+          unzip -l out/bowtie-roku.zip | grep -E "manifest$"
+          if unzip -l out/bowtie-roku.zip | grep -E "\.bs$|node_modules"; then
+            echo "zip must not contain .bs sources or node_modules" >&2
+            exit 1
+          fi
+          echo ZIP_OK
+
+      - name: upload channel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: bowtie-roku
+          path: roku/out/bowtie-roku.zip

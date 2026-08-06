@@ -1,0 +1,353 @@
+' Pure request builders / response parsers for the Bowtie viewer API.
+' Transport (roUrlTransfer) lives in ApiTask — this module has no I/O.
+'
+' buildRequest kinds: healthz, login, refresh, logout, me, changePassword,
+'   channels, guide, createSession, deleteSession
+' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
+'   login/refresh surface user with maxQuality (A1).
+
+namespace bowtie.client
+
+    function buildRequest(kind as string, params as object, accessToken as string, baseUrl as string) as object
+        if params = invalid then params = {}
+        base = bowtie.client.normalizeBase(baseUrl)
+        headers = { "Content-Type": "application/json" }
+        method = "GET"
+        url = base
+        body = ""
+        timeoutMs = 10000
+
+        if kind = "healthz"
+            url = base + "/healthz"
+            method = "GET"
+            headers = {}
+            timeoutMs = 2000
+
+        else if kind = "login"
+            url = base + "/api/v1/auth/login"
+            method = "POST"
+            body = FormatJson({
+                username: params.username
+                password: params.password
+            })
+
+        else if kind = "refresh"
+            url = base + "/api/v1/auth/refresh"
+            method = "POST"
+            body = FormatJson({
+                refreshToken: params.refreshToken
+            })
+
+        else if kind = "logout"
+            url = base + "/api/v1/auth/logout"
+            method = "POST"
+            rt = params.refreshToken
+            if rt = invalid then rt = ""
+            body = FormatJson({ refreshToken: rt })
+
+        else if kind = "me"
+            url = base + "/api/v1/me"
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "changePassword"
+            url = base + "/api/v1/me/password"
+            method = "POST"
+            headers = bowtie.client.authHeaders(accessToken)
+            headers["Content-Type"] = "application/json"
+            body = FormatJson({
+                currentPassword: params.currentPassword
+                newPassword: params.newPassword
+            })
+
+        else if kind = "channels"
+            url = base + "/api/v1/channels"
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "guide"
+            startIso = params.start
+            stopIso = params.stop
+            url = base + "/api/v1/guide?start=" + startIso + "&stop=" + stopIso
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "createSession"
+            url = base + "/api/v1/sessions"
+            method = "POST"
+            headers = bowtie.client.authHeaders(accessToken)
+            headers["Content-Type"] = "application/json"
+            caps = params.caps
+            if caps = invalid then caps = {}
+            body = FormatJson({
+                channelId: params.channelId
+                caps: {
+                    videoCodecs: caps.videoCodecs
+                    audioCodecs: caps.audioCodecs
+                    maxHeight: caps.maxHeight
+                    profile: caps.profile
+                }
+            })
+
+        else if kind = "deleteSession"
+            viewerId = params.viewerId
+            if viewerId = invalid then viewerId = ""
+            url = base + "/api/v1/sessions/" + viewerId
+            method = "DELETE"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else
+            return {
+                url: ""
+                method: "GET"
+                headers: {}
+                body: ""
+                timeoutMs: timeoutMs
+                error: "unknown kind: " + kind
+            }
+        end if
+
+        return {
+            url: url
+            method: method
+            headers: headers
+            body: body
+            timeoutMs: timeoutMs
+        }
+    end function
+
+    ' parseResponse(kind, httpCode, body, baseUrl?)
+    ' baseUrl is required for createSession absolute playlistUrl (A4).
+    function parseResponse(kind as string, httpCode as integer, body as string, baseUrl = "" as string) as object
+        if body = invalid then body = ""
+
+        if kind = "healthz"
+            if httpCode = 200
+                return { ok: true, data: true }
+            end if
+            return { ok: false, error: { code: httpCode, message: "healthz failed" } }
+        end if
+
+        if kind = "logout" or kind = "changePassword" or kind = "deleteSession"
+            ' Best-effort: 2xx and empty bodies are success; delete swallows errors at ApiTask.
+            if httpCode >= 200 and httpCode < 300
+                return { ok: true, data: true }
+            end if
+            if kind = "deleteSession"
+                return { ok: true, data: true } ' swallow
+            end if
+            return {
+                ok: false
+                error: bowtie.client.mapError(httpCode, body)
+            }
+        end if
+
+        if httpCode = 401
+            return {
+                ok: false
+                error: { code: 401, kind: "unauthorized", message: bowtie.client.extractError(body) }
+            }
+        end if
+
+        if kind = "createSession" and httpCode = 503
+            return bowtie.client.parseTunersBusy(body)
+        end if
+
+        if kind = "createSession" and httpCode = 422
+            msg = bowtie.client.extractError(body)
+            if msg = "" then msg = "negotiation failed"
+            return {
+                ok: false
+                error: { code: 422, kind: "negotiation", message: msg }
+            }
+        end if
+
+        if httpCode = 404
+            return {
+                ok: false
+                error: { code: 404, kind: "notFound", message: bowtie.client.extractError(body) }
+            }
+        end if
+
+        if httpCode < 200 or httpCode >= 300
+            return {
+                ok: false
+                error: bowtie.client.mapError(httpCode, body)
+            }
+        end if
+
+        ' Success path
+        if kind = "login" or kind = "refresh"
+            return bowtie.client.parseTokenResponse(body)
+        end if
+
+        if kind = "me"
+            return bowtie.client.parseUser(body)
+        end if
+
+        if kind = "channels" or kind = "guide"
+            parsed = ParseJson(body)
+            if parsed = invalid
+                return { ok: false, error: { code: httpCode, message: "invalid json" } }
+            end if
+            return { ok: true, data: parsed }
+        end if
+
+        if kind = "createSession"
+            return bowtie.client.parseCreatedSession(body, baseUrl)
+        end if
+
+        parsed = ParseJson(body)
+        if parsed = invalid and body <> ""
+            return { ok: false, error: { code: httpCode, message: "invalid json" } }
+        end if
+        return { ok: true, data: parsed }
+    end function
+
+    function parseTokenResponse(body as string) as object
+        parsed = ParseJson(body)
+        if parsed = invalid
+            return { ok: false, error: { code: 200, message: "invalid token response" } }
+        end if
+        user = parsed.user
+        if user = invalid
+            return { ok: false, error: { code: 200, message: "token response missing user" } }
+        end if
+        ' Surface maxQuality on user (A1).
+        maxQ = user.maxQuality
+        if maxQ = invalid then maxQ = ""
+        data = {
+            accessToken: parsed.accessToken
+            refreshToken: parsed.refreshToken
+            user: {
+                id: user.id
+                username: user.username
+                role: user.role
+                maxQuality: maxQ
+            }
+        }
+        return { ok: true, data: data }
+    end function
+
+    function parseUser(body as string) as object
+        parsed = ParseJson(body)
+        if parsed = invalid
+            return { ok: false, error: { code: 200, message: "invalid user response" } }
+        end if
+        maxQ = parsed.maxQuality
+        if maxQ = invalid then maxQ = ""
+        return {
+            ok: true
+            data: {
+                id: parsed.id
+                username: parsed.username
+                role: parsed.role
+                maxQuality: maxQ
+            }
+        }
+    end function
+
+    function parseCreatedSession(body as string, baseUrl as string) as object
+        parsed = ParseJson(body)
+        if parsed = invalid
+            return { ok: false, error: { code: 200, message: "invalid session response" } }
+        end if
+        playlistUrl = parsed.playlistUrl
+        if playlistUrl = invalid then playlistUrl = ""
+        absoluteUrl = bowtie.client.resolveUrl(playlistUrl, baseUrl)
+        data = {
+            viewerId: parsed.viewerId
+            playlistUrl: absoluteUrl
+        }
+        if parsed.session <> invalid
+            data.session = parsed.session
+        end if
+        return { ok: true, data: data }
+    end function
+
+    function parseTunersBusy(body as string) as object
+        parsed = ParseJson(body)
+        sessions = []
+        message = "all tuners in use"
+        if parsed <> invalid
+            if parsed.error <> invalid then message = parsed.error
+            if parsed.sessions <> invalid
+                for each s in parsed.sessions
+                    channelName = ""
+                    if s.channelName <> invalid then channelName = s.channelName
+                    viewers = []
+                    if s.viewers <> invalid
+                        for each v in s.viewers
+                            uname = ""
+                            if v.username <> invalid then uname = v.username
+                            viewers.push({ username: uname })
+                        end for
+                    end if
+                    sessions.push({
+                        channelName: channelName
+                        viewers: viewers
+                    })
+                end for
+            end if
+        end if
+        return {
+            ok: false
+            error: {
+                code: 503
+                kind: "tunersBusy"
+                message: message
+                sessions: sessions
+            }
+        }
+    end function
+
+    function mapError(httpCode as integer, body as string) as object
+        return {
+            code: httpCode
+            kind: "server"
+            message: bowtie.client.extractError(body)
+        }
+    end function
+
+    function extractError(body as string) as string
+        if body = invalid or body = "" then return ""
+        parsed = ParseJson(body)
+        if parsed <> invalid and parsed.error <> invalid
+            return parsed.error
+        end if
+        return body
+    end function
+
+    function authHeaders(accessToken as string) as object
+        headers = {}
+        if accessToken <> invalid and accessToken <> ""
+            headers["Authorization"] = "Bearer " + accessToken
+        end if
+        return headers
+    end function
+
+    ' Strip trailing slash from base URL.
+    function normalizeBase(baseUrl as string) as string
+        if baseUrl = invalid then return ""
+        b = baseUrl
+        while Len(b) > 0 and Right(b, 1) = "/"
+            b = Left(b, Len(b) - 1)
+        end while
+        return b
+    end function
+
+    ' Resolve relative path (preserving query) against base. Absolute URLs pass through.
+    function resolveUrl(pathOrUrl as string, baseUrl as string) as string
+        if pathOrUrl = invalid or pathOrUrl = "" then return ""
+        ' Already absolute
+        if Left(pathOrUrl, 7) = "http://" or Left(pathOrUrl, 8) = "https://"
+            return pathOrUrl
+        end if
+        base = bowtie.client.normalizeBase(baseUrl)
+        if Left(pathOrUrl, 1) = "/"
+            return base + pathOrUrl
+        end if
+        return base + "/" + pathOrUrl
+    end function
+
+end namespace

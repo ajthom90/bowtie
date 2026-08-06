@@ -48,13 +48,15 @@ docker run --rm -p 8400:8400 -v bowtie-data:/data bowtie:dev
 
 ### Release binaries
 
-Each GitHub Release attaches pre-built `bowtie` binaries (web UI embedded, `CGO_ENABLED=0`):
+Each GitHub Release attaches pre-built `bowtie` binaries (web UI embedded, `CGO_ENABLED=0`) plus client sideload packages when present:
 
-| Platform | Archive |
-|----------|---------|
-| macOS Apple Silicon | `bowtie_*_darwin_arm64.tar.gz` |
-| Linux x86_64 | `bowtie_*_linux_amd64.tar.gz` |
-| Linux arm64 | `bowtie_*_linux_arm64.tar.gz` |
+| Asset | Notes |
+|-------|--------|
+| `bowtie_*_darwin_arm64.tar.gz` | macOS Apple Silicon server binary |
+| `bowtie_*_linux_amd64.tar.gz` | Linux x86_64 server binary |
+| `bowtie_*_linux_arm64.tar.gz` | Linux arm64 server binary |
+| `bowtie-<version>.apk` | Android phone/tablet release APK |
+| `bowtie-roku-<version>.zip` | Roku channel sideload zip |
 
 ```bash
 # Example: latest Linux amd64
@@ -201,6 +203,7 @@ cd web && npm ci && npm test && npm run build
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build, GitHub Releases APK sideload).
+- **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 
 ---
 

@@ -1,0 +1,330 @@
+' Settings: server info, change server (confirm → clear registry),
+' change password via ApiTask, sign out via ApiTask logout (A3: no viewers yet).
+
+import "pkg:/source/lib/Registry.bs"
+
+const PASSWORD_CHANGED = "Password changed."
+const PASSWORD_FAILED = "Couldn't change password."
+
+sub init()
+    m.backButton = m.top.findNode("backButton")
+    m.serverLabel = m.top.findNode("serverLabel")
+    m.changeServerButton = m.top.findNode("changeServerButton")
+    m.usernameLabel = m.top.findNode("usernameLabel")
+    m.changePasswordButton = m.top.findNode("changePasswordButton")
+    m.passwordMessage = m.top.findNode("passwordMessage")
+    m.signOutButton = m.top.findNode("signOutButton")
+
+    m.busy = false
+    m.pendingId = ""
+    m.dialog = invalid
+    m.dialogMode = ""
+    m.currentPassword = ""
+    m.newPassword = ""
+    m.observing = false
+
+    m.backButton.observeField("buttonSelected", "onBackButton")
+    m.changeServerButton.observeField("buttonSelected", "onChangeServerButton")
+    m.changePasswordButton.observeField("buttonSelected", "onChangePasswordButton")
+    m.signOutButton.observeField("buttonSelected", "onSignOutButton")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("serverUrl", "onServerUrl")
+    m.top.observeField("apiTask", "onApiTaskSet")
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeField("response", "onApiResponse")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveField("response")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub onServerUrl()
+    url = m.top.serverUrl
+    if url = invalid or url = ""
+        m.serverLabel.text = "—"
+    else
+        m.serverLabel.text = url
+    end if
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.top.closed = false
+        m.top.changeServer = false
+        m.busy = false
+        m.pendingId = ""
+        m.currentPassword = ""
+        m.newPassword = ""
+        m.passwordMessage.text = ""
+        m.passwordMessage.color = "0x9BA5AEFF"
+        onServerUrl()
+        updateUsername()
+        observeApi()
+        m.backButton.setFocus(true)
+    else
+        closeDialog()
+        unobserveApi()
+    end if
+end sub
+
+sub updateUsername()
+    uname = "—"
+    task = m.top.apiTask
+    if task <> invalid and task.user <> invalid and task.user.username <> invalid
+        uname = task.user.username
+    end if
+    m.usernameLabel.text = uname
+end sub
+
+sub onBackButton()
+    if m.busy = true then return
+    closeDialog()
+    m.top.closed = true
+end sub
+
+sub onChangeServerButton()
+    if m.busy = true then return
+    openChangeServerConfirm()
+end sub
+
+sub onChangePasswordButton()
+    if m.busy = true then return
+    m.passwordMessage.text = ""
+    openCurrentPasswordKeyboard()
+end sub
+
+sub onSignOutButton()
+    if m.busy = true then return
+    submitLogout()
+end sub
+
+' ── Change server confirm ────────────────────────────────────────────────────
+
+sub openChangeServerConfirm()
+    closeDialog()
+    m.dialogMode = "changeServer"
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = "Change server?"
+    dialog.message = ["You'll need to reconnect and sign in again."]
+    dialog.buttons = ["Change server", "Cancel"]
+    dialog.observeField("buttonSelected", "onMessageButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub onMessageButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    mode = m.dialogMode
+    closeDialog()
+
+    if mode = "changeServer" and idx = 0
+        ' Confirm → clear registry → Connect (AppScene).
+        bowtie.registry.clearAll()
+        m.top.changeServer = true
+        return
+    end if
+    m.changeServerButton.setFocus(true)
+end sub
+
+' ── Change password keyboards ────────────────────────────────────────────────
+
+sub openCurrentPasswordKeyboard()
+    closeDialog()
+    m.dialogMode = "currentPassword"
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Current password"
+    dialog.message = ["Enter your current password"]
+    dialog.buttons = ["Next", "Cancel"]
+    dialog.keyboardDomain = "password"
+    if dialog.textEditBox <> invalid
+        dialog.textEditBox.secureMode = true
+    end if
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub openNewPasswordKeyboard()
+    closeDialog()
+    m.dialogMode = "newPassword"
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "New password"
+    dialog.message = ["Enter a new password"]
+    dialog.buttons = ["Change password", "Cancel"]
+    dialog.keyboardDomain = "password"
+    if dialog.textEditBox <> invalid
+        dialog.textEditBox.secureMode = true
+    end if
+    dialog.observeField("buttonSelected", "onKeyboardButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub onKeyboardButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    text = m.dialog.text
+    if text = invalid then text = ""
+    mode = m.dialogMode
+    closeDialog()
+
+    if idx <> 0
+        m.changePasswordButton.setFocus(true)
+        return
+    end if
+
+    if mode = "currentPassword"
+        m.currentPassword = text
+        if m.currentPassword = ""
+            showPasswordError("Enter your current password.")
+            m.changePasswordButton.setFocus(true)
+            return
+        end if
+        openNewPasswordKeyboard()
+    else if mode = "newPassword"
+        m.newPassword = text
+        if m.newPassword = ""
+            showPasswordError("Enter a new password.")
+            m.changePasswordButton.setFocus(true)
+            return
+        end if
+        submitChangePassword()
+    end if
+end sub
+
+sub onDialogClosed()
+    m.dialog = invalid
+    m.dialogMode = ""
+    if m.top.visible = true and m.busy <> true
+        m.backButton.setFocus(true)
+    end if
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    m.dialogMode = ""
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+' ── ApiTask: change password + logout ────────────────────────────────────────
+
+sub submitChangePassword()
+    task = m.top.apiTask
+    if task = invalid
+        showPasswordError(PASSWORD_FAILED)
+        return
+    end if
+
+    observeApi()
+    m.busy = true
+    m.passwordMessage.text = ""
+    m.pendingId = "settings-changePassword"
+    task.request = {
+        id: m.pendingId
+        kind: "changePassword"
+        params: {
+            currentPassword: m.currentPassword
+            newPassword: m.newPassword
+        }
+    }
+end sub
+
+sub submitLogout()
+    task = m.top.apiTask
+    if task = invalid then return
+
+    observeApi()
+    m.busy = true
+    m.pendingId = "settings-logout"
+    ' Player is not visible from Settings; AppScene authEvent path tears down
+    ' any stray viewer if phase were still player (A3).
+    task.request = {
+        id: m.pendingId
+        kind: "logout"
+        params: {}
+    }
+end sub
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    resp = task.response
+    if resp = invalid then return
+    if resp.id <> m.pendingId then return
+
+    pending = m.pendingId
+    m.pendingId = ""
+    m.busy = false
+
+    if pending = "settings-changePassword"
+        m.currentPassword = ""
+        m.newPassword = ""
+        if resp.ok = true
+            m.passwordMessage.color = "0xF0A428FF"
+            m.passwordMessage.text = PASSWORD_CHANGED
+        else
+            msg = PASSWORD_FAILED
+            if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> ""
+                ' Wrong current password often surfaces as 401/unauthorized.
+                if resp.error.code = 401
+                    msg = "Wrong username or password."
+                else
+                    msg = resp.error.message
+                end if
+            end if
+            showPasswordError(msg)
+        end if
+        m.changePasswordButton.setFocus(true)
+        return
+    end if
+
+    if pending = "settings-logout"
+        ' ApiTask clearAndSignOut already fired authEvent; AppScene routes to Login.
+        ' Nothing else to do here if ok; on failure still force local sign-out path
+        ' via authEvent (logout always clears).
+        return
+    end if
+end sub
+
+sub showPasswordError(msg as string)
+    m.passwordMessage.color = "0xE05050FF"
+    m.passwordMessage.text = msg
+end sub

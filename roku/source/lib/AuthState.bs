@@ -1,0 +1,165 @@
+' Pure auth state machine: state AA + event → {state, actions[]}
+' No I/O. ApiTask interprets actions (doRefresh, persistRefreshToken, etc.).
+'
+' state: {
+'   phase: "login" | "checking" | "ready" | "refreshing" | "signedOut"
+'   accessToken: string|invalid
+'   refreshToken: string|invalid
+'   user: object|invalid   ' {id, username, role, maxQuality}
+'   pendingRetry: object|invalid  ' request AA that got 401 while we refresh
+' }
+' event: {type: string, ...payload}
+' actions: string[] from
+'   "doRefresh" | "persistRefreshToken" | "retryPending" | "clearAndSignOut" | "none"
+
+namespace bowtie.auth
+
+    function initialState() as object
+        return {
+            phase: "login"
+            accessToken: invalid
+            refreshToken: invalid
+            user: invalid
+            pendingRetry: invalid
+        }
+    end function
+
+    function reduce(state as object, event as object) as object
+        if state = invalid then state = bowtie.auth.initialState()
+        eventType = ""
+        if event <> invalid and event.type <> invalid then eventType = event.type
+
+        if eventType = "boot"
+            return bowtie.auth.handleBoot(state, event)
+        else if eventType = "loginOk"
+            return bowtie.auth.handleLoginOk(state, event)
+        else if eventType = "response401"
+            return bowtie.auth.handleResponse401(state, event)
+        else if eventType = "refreshOk"
+            return bowtie.auth.handleRefreshOk(state, event)
+        else if eventType = "refreshFail"
+            return bowtie.auth.handleRefreshFail(state, event)
+        else if eventType = "signOut"
+            return bowtie.auth.handleSignOut(state, event)
+        end if
+
+        return { state: state, actions: ["none"] }
+    end function
+
+    function handleBoot(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+        ' Prefer event.refreshToken if provided; else existing state.
+        rt = nextState.refreshToken
+        if event.refreshToken <> invalid then rt = event.refreshToken
+        nextState.refreshToken = rt
+
+        if bowtie.auth.nonEmpty(rt)
+            nextState.phase = "checking"
+            nextState.pendingRetry = invalid
+            return { state: nextState, actions: ["doRefresh"] }
+        end if
+
+        nextState.phase = "login"
+        nextState.accessToken = invalid
+        nextState.user = invalid
+        nextState.pendingRetry = invalid
+        return { state: nextState, actions: ["none"] }
+    end function
+
+    function handleLoginOk(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+        nextState.accessToken = event.accessToken
+        nextState.refreshToken = event.refreshToken
+        nextState.user = event.user
+        nextState.phase = "ready"
+        nextState.pendingRetry = invalid
+        return { state: nextState, actions: ["persistRefreshToken"] }
+    end function
+
+    function handleResponse401(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+
+        ' Already refreshing: queue/keep pending; never sign out (single-flight).
+        if nextState.phase = "refreshing"
+            if event.request <> invalid
+                ' Keep first pending if already set; otherwise record this one.
+                if nextState.pendingRetry = invalid
+                    nextState.pendingRetry = event.request
+                end if
+            end if
+            return { state: nextState, actions: ["none"] }
+        end if
+
+        if bowtie.auth.nonEmpty(nextState.refreshToken)
+            nextState.phase = "refreshing"
+            if event.request <> invalid
+                nextState.pendingRetry = event.request
+            end if
+            return { state: nextState, actions: ["doRefresh"] }
+        end if
+
+        ' No refresh token → forced sign-out (server URL kept by ApiTask/registry).
+        nextState.phase = "login"
+        nextState.accessToken = invalid
+        nextState.refreshToken = invalid
+        nextState.user = invalid
+        nextState.pendingRetry = invalid
+        return { state: nextState, actions: ["clearAndSignOut"] }
+    end function
+
+    function handleRefreshOk(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+        nextState.accessToken = event.accessToken
+        nextState.refreshToken = event.refreshToken
+        nextState.user = event.user
+        nextState.phase = "ready"
+
+        actions = ["persistRefreshToken"]
+        if nextState.pendingRetry <> invalid
+            actions.push("retryPending")
+        end if
+        ' pendingRetry stays until ApiTask performs retry and clears it;
+        ' reduce leaves it for the actor to consume.
+        return { state: nextState, actions: actions }
+    end function
+
+    function handleRefreshFail(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+        ' clearAndSignOut-preserving-server: wipe tokens/user; keep server via registry.
+        nextState.phase = "login"
+        nextState.accessToken = invalid
+        nextState.refreshToken = invalid
+        nextState.user = invalid
+        nextState.pendingRetry = invalid
+        return { state: nextState, actions: ["clearAndSignOut"] }
+    end function
+
+    function handleSignOut(state as object, event as object) as object
+        nextState = bowtie.auth.cloneState(state)
+        nextState.phase = "signedOut"
+        nextState.accessToken = invalid
+        nextState.refreshToken = invalid
+        nextState.user = invalid
+        nextState.pendingRetry = invalid
+        return { state: nextState, actions: ["clearAndSignOut"] }
+    end function
+
+    function cloneState(state as object) as object
+        return {
+            phase: state.phase
+            accessToken: state.accessToken
+            refreshToken: state.refreshToken
+            user: state.user
+            pendingRetry: state.pendingRetry
+        }
+    end function
+
+    function nonEmpty(value as dynamic) as boolean
+        if value = invalid then return false
+        if type(value) = "String" or type(value) = "roString"
+            return value <> ""
+        end if
+        return true
+    end function
+
+end namespace

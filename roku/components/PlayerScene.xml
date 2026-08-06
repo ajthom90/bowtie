@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Live player: Video node + session-replace (A3) + error matrix (A5). -->
+<component name="PlayerScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <field id="channelId" type="integer" value="0" />
+        <field id="channelName" type="string" value="" />
+        <field id="guideNumber" type="string" value="" />
+        <!-- Array of {id, guideNumber, name} for up/down zap. -->
+        <field id="channels" type="array" />
+        <field id="channelIndex" type="integer" value="0" />
+        <!-- True when user presses Back (session DELETE already enqueued). -->
+        <field id="closed" type="boolean" alwaysNotify="true" value="false" />
+        <!-- True after createSession 404 — Home should refresh channel list. -->
+        <field id="channelsStale" type="boolean" alwaysNotify="true" value="false" />
+        <!-- Dev flag: show Video state / errorCode / errorMsg overlay (token-kill capture). -->
+        <field id="showDebug" type="boolean" value="true" />
+    </interface>
+    <script type="text/brightscript" uri="PlayerScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+
+        <Video
+            id="video"
+            width="1920"
+            height="1080"
+            translation="[0, 0]"
+            enableUI="false"
+        />
+
+        <!-- Chrome: channel identity (auto-hides during play) -->
+        <Group id="chromeGroup" visible="true">
+            <Rectangle
+                id="chromeBg"
+                width="1920"
+                height="140"
+                color="0x000000AA"
+            />
+            <Label
+                id="numberLabel"
+                translation="[80, 36]"
+                width="200"
+                height="56"
+                text=""
+                horizAlign="left"
+                color="0xF0A428FF"
+                font="font:LargeBoldSystemFont"
+            />
+            <Label
+                id="nameLabel"
+                translation="[300, 44]"
+                width="1000"
+                height="48"
+                text=""
+                horizAlign="left"
+                color="0xF2EFE8FF"
+                font="font:MediumBoldSystemFont"
+            />
+            <Label
+                id="qualityHint"
+                translation="[1400, 52]"
+                width="440"
+                height="40"
+                text="OK play/pause · * quality"
+                horizAlign="right"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+        </Group>
+
+        <!-- Starting / buffering spinner -->
+        <Group id="loadingGroup" visible="false">
+            <BusySpinner
+                id="loadingSpinner"
+                translation="[920, 500]"
+                visible="true"
+            />
+            <Label
+                id="loadingLabel"
+                translation="[0, 580]"
+                width="1920"
+                height="40"
+                text="Starting…"
+                horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+
+        <!-- Generic error + retry -->
+        <Group id="errorGroup" visible="false">
+            <Rectangle
+                id="errorBg"
+                width="1920"
+                height="1080"
+                color="0x101418EE"
+            />
+            <Label
+                id="errorTitle"
+                translation="[160, 360]"
+                width="1600"
+                height="48"
+                text=""
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumBoldSystemFont"
+            />
+            <Label
+                id="errorDetail"
+                translation="[260, 430]"
+                width="1400"
+                height="120"
+                text=""
+                horizAlign="center"
+                wrap="true"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Button
+                id="retryButton"
+                translation="[760, 580]"
+                text="Try again"
+                minWidth="400"
+                height="56"
+            />
+        </Group>
+
+        <!-- Tuners busy (503) -->
+        <Group id="tunersGroup" visible="false">
+            <Rectangle
+                id="tunersBg"
+                width="1920"
+                height="1080"
+                color="0x101418EE"
+            />
+            <Label
+                id="tunersTitle"
+                translation="[160, 280]"
+                width="1600"
+                height="48"
+                text="All tuners are in use — someone else is watching. Try again in a few minutes."
+                horizAlign="center"
+                wrap="true"
+                color="0xF2EFE8FF"
+                font="font:MediumBoldSystemFont"
+            />
+            <Label
+                id="tunersList"
+                translation="[360, 400]"
+                width="1200"
+                height="200"
+                text=""
+                horizAlign="center"
+                wrap="true"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Button
+                id="tunersRetryButton"
+                translation="[760, 640]"
+                text="Try again"
+                minWidth="400"
+                height="56"
+            />
+        </Group>
+
+        <!-- Debug overlay: Video state / errorCode / errorMsg (A5 token-kill capture) -->
+        <Group id="debugGroup" visible="false">
+            <Rectangle
+                id="debugBg"
+                translation="[40, 900]"
+                width="1840"
+                height="140"
+                color="0x000000CC"
+            />
+            <Label
+                id="debugLabel"
+                translation="[60, 920]"
+                width="1800"
+                height="100"
+                text=""
+                horizAlign="left"
+                wrap="true"
+                color="0xF0A428FF"
+                font="font:SmallSystemFont"
+            />
+        </Group>
+
+        <!-- 400ms zap/quality debounce (A3) -->
+        <Timer id="debounceTimer" duration="0.4" repeat="false" />
+        <!-- Mid-play bounded retry delays: 1s / 2s / 4s -->
+        <Timer id="retryTimer" duration="1" repeat="false" />
+        <!-- Chrome auto-hide -->
+        <Timer id="chromeTimer" duration="4" repeat="false" />
+    </children>
+</component>

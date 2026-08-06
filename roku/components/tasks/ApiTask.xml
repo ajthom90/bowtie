@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ApiTask" extends="Task">
+    <interface>
+        <!-- Scenes write ONE request AA per call: {id, kind, params}. alwaysNotify so re-posts fire. -->
+        <field id="request" type="assocarray" alwaysNotify="true" />
+        <!-- Response: {id, ok, data|error}. Scenes match on their own id. -->
+        <field id="response" type="assocarray" alwaysNotify="true" />
+        <!-- Forced sign-out signal: {type: "signOut"}. -->
+        <field id="authEvent" type="assocarray" alwaysNotify="true" />
+        <!-- True once the task message loop is running and accepting requests. -->
+        <field id="ready" type="boolean" alwaysNotify="true" value="false" />
+        <!-- Last known user AA (id, username, role, maxQuality); sole holder with tokens. -->
+        <field id="user" type="assocarray" />
+    </interface>
+    <script type="text/brightscript" uri="ApiTask.bs" />
+</component>

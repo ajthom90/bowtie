@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="ConnectScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <!-- Set true when /healthz validates and server is persisted. -->
+        <field id="connected" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="ConnectScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+        <LayoutGroup
+            id="layout"
+            translation="[460, 280]"
+            layoutDirection="vert"
+            horizAlignment="center"
+            itemSpacings="[16, 12, 32, 16, 24]"
+        >
+            <Label
+                id="titleLabel"
+                width="1000"
+                height="80"
+                text="Bowtie"
+                horizAlign="center"
+                color="0xF0A428FF"
+                font="font:LargeBoldSystemFont"
+            />
+            <Label
+                id="subtitleLabel"
+                width="1000"
+                height="40"
+                text="Connect to your server"
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumBoldSystemFont"
+            />
+            <Label
+                id="hintLabel"
+                width="1000"
+                height="40"
+                text="Enter the address of the Bowtie server on your network."
+                horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="urlLabel"
+                width="1000"
+                height="40"
+                text=""
+                horizAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+            <Label
+                id="errorLabel"
+                width="1000"
+                height="80"
+                text=""
+                horizAlign="center"
+                color="0xE05050FF"
+                font="font:SmallSystemFont"
+                wrap="true"
+            />
+            <Button
+                id="enterButton"
+                text="Enter server address"
+                minWidth="400"
+                height="60"
+            />
+        </LayoutGroup>
+    </children>
+</component>

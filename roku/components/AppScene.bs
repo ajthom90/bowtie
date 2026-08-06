@@ -1,0 +1,249 @@
+' App root: phase routing per A2.
+' registry server? no → Connect. Server, no refresh → Login.
+' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
+' Refresh ok → Home. Refresh fail → Login (server kept).
+' Home → Settings / Player; Settings change-server → Connect; sign-out → Login.
+' A3: phase changes never orphan a live viewer (PlayerScene teardown on hide).
+
+import "pkg:/source/lib/Registry.bs"
+
+sub init()
+    m.top.backgroundURI = ""
+    m.top.backgroundColor = "0x101418FF"
+
+    m.checkingGroup = m.top.findNode("checkingGroup")
+    m.connectScene = m.top.findNode("connectScene")
+    m.loginScene = m.top.findNode("loginScene")
+    m.homeScene = m.top.findNode("homeScene")
+    m.settingsScene = m.top.findNode("settingsScene")
+    m.playerScene = m.top.findNode("playerScene")
+    m.checkingSpinner = m.top.findNode("checkingSpinner")
+
+    m.phase = "connect"
+    m.bootRefreshId = "boot-refresh"
+    m.serverUrl = ""
+
+    ' Long-lived ApiTask — sole HTTP + token holder.
+    m.apiTask = CreateObject("roSGNode", "ApiTask")
+    m.apiTask.observeField("ready", "onApiReady")
+    m.apiTask.observeField("response", "onApiResponse")
+    m.apiTask.observeField("authEvent", "onAuthEvent")
+    m.apiTask.control = "RUN"
+
+    m.connectScene.apiTask = m.apiTask
+    m.loginScene.apiTask = m.apiTask
+    m.homeScene.apiTask = m.apiTask
+    m.settingsScene.apiTask = m.apiTask
+    m.playerScene.apiTask = m.apiTask
+
+    m.connectScene.observeField("connected", "onConnected")
+    m.loginScene.observeField("signedIn", "onSignedIn")
+    m.loginScene.observeField("changeServer", "onChangeServer")
+    m.homeScene.observeField("openSettings", "onOpenSettings")
+    m.homeScene.observeField("selectedChannel", "onSelectedChannel")
+    m.settingsScene.observeField("closed", "onSettingsClosed")
+    m.settingsScene.observeField("changeServer", "onSettingsChangeServer")
+    m.playerScene.observeField("closed", "onPlayerClosed")
+    m.playerScene.observeField("channelsStale", "onPlayerChannelsStale")
+
+    ' Initial route from registry (UI only until ApiTask is ready).
+    routeFromRegistry()
+
+    ' If the task thread already flipped ready before we finished routing.
+    if m.phase = "checking" and m.apiTask.ready = true
+        enqueueBootRefresh()
+    end if
+end sub
+
+sub routeFromRegistry()
+    server = bowtie.registry.loadServer()
+    rt = bowtie.registry.loadRefreshToken()
+
+    if server = invalid or server = ""
+        m.serverUrl = ""
+        setPhase("connect")
+        return
+    end if
+
+    m.serverUrl = server
+    m.loginScene.serverUrl = server
+    m.settingsScene.serverUrl = server
+
+    if rt = invalid or rt = ""
+        setPhase("login")
+    else
+        ' A2: NEVER straight to Home — Checking + doRefresh.
+        setPhase("checking")
+    end if
+end sub
+
+sub onApiReady()
+    if m.apiTask.ready <> true then return
+    if m.phase = "checking"
+        enqueueBootRefresh()
+    end if
+end sub
+
+sub enqueueBootRefresh()
+    m.apiTask.request = {
+        id: m.bootRefreshId
+        kind: "refresh"
+        params: {}
+    }
+end sub
+
+sub onApiResponse()
+    resp = m.apiTask.response
+    if resp = invalid then return
+
+    ' Only AppScene handles boot-refresh; scenes match their own ids.
+    if resp.id = m.bootRefreshId
+        if resp.ok = true
+            showHome()
+        else
+            ' Refresh fail → Login (server kept).
+            setPhase("login")
+        end if
+    end if
+end sub
+
+sub onAuthEvent()
+    ev = m.apiTask.authEvent
+    if ev = invalid then return
+    if ev.type = "signOut"
+        ' A3: hide player first so onVisible teardown DELETEs any live viewer.
+        if m.phase = "player"
+            m.playerScene.visible = false
+        end if
+        ' Forced sign-out / logout: keep server, show Login.
+        server = bowtie.registry.loadServer()
+        if server <> invalid and server <> ""
+            m.serverUrl = server
+            m.loginScene.serverUrl = server
+            m.settingsScene.serverUrl = server
+            setPhase("login")
+        else
+            setPhase("connect")
+        end if
+    end if
+end sub
+
+sub onConnected()
+    if m.connectScene.connected <> true then return
+    server = bowtie.registry.loadServer()
+    if server = invalid then server = ""
+    m.serverUrl = server
+    m.loginScene.serverUrl = server
+    m.settingsScene.serverUrl = server
+    setPhase("login")
+end sub
+
+sub onSignedIn()
+    if m.loginScene.signedIn <> true then return
+    showHome()
+end sub
+
+sub onChangeServer()
+    if m.loginScene.changeServer <> true then return
+    m.serverUrl = ""
+    setPhase("connect")
+end sub
+
+sub onOpenSettings()
+    if m.homeScene.openSettings <> true then return
+    m.settingsScene.serverUrl = m.serverUrl
+    setPhase("settings")
+end sub
+
+sub onSelectedChannel()
+    ch = m.homeScene.selectedChannel
+    if ch = invalid then return
+    name = ""
+    gn = ""
+    cid = 0
+    idx = 0
+    channels = []
+    if ch.name <> invalid then name = ch.name
+    if ch.guideNumber <> invalid then gn = ch.guideNumber
+    if ch.id <> invalid then cid = ch.id
+    if ch.index <> invalid then idx = ch.index
+    if ch.channels <> invalid then channels = ch.channels
+    m.playerScene.channelName = name
+    m.playerScene.guideNumber = gn
+    m.playerScene.channelId = cid
+    m.playerScene.channelIndex = idx
+    m.playerScene.channels = channels
+    setPhase("player")
+end sub
+
+sub onSettingsClosed()
+    if m.settingsScene.closed <> true then return
+    setPhase("home")
+end sub
+
+sub onSettingsChangeServer()
+    if m.settingsScene.changeServer <> true then return
+    m.serverUrl = ""
+    setPhase("connect")
+end sub
+
+sub onPlayerClosed()
+    if m.playerScene.closed <> true then return
+    setPhase("home")
+end sub
+
+sub onPlayerChannelsStale()
+    ' Home reloads on every show; flag is informational for future selective refresh.
+    if m.playerScene.channelsStale <> true then return
+end sub
+
+sub showHome()
+    server = bowtie.registry.loadServer()
+    if server <> invalid and server <> ""
+        m.serverUrl = server
+        m.settingsScene.serverUrl = server
+    end if
+    setPhase("home")
+end sub
+
+sub setPhase(phase as string)
+    m.phase = phase
+
+    m.checkingGroup.visible = false
+    m.connectScene.visible = false
+    m.loginScene.visible = false
+    m.homeScene.visible = false
+    m.settingsScene.visible = false
+    ' Hide player when leaving so its onVisible teardown DELETEs (A3).
+    if phase <> "player"
+        m.playerScene.visible = false
+    end if
+
+    if m.checkingSpinner <> invalid
+        m.checkingSpinner.control = "stop"
+    end if
+
+    if phase = "connect"
+        m.connectScene.visible = true
+        m.connectScene.setFocus(true)
+    else if phase = "login"
+        m.loginScene.serverUrl = m.serverUrl
+        m.loginScene.visible = true
+        m.loginScene.setFocus(true)
+    else if phase = "checking"
+        m.checkingGroup.visible = true
+        if m.checkingSpinner <> invalid
+            m.checkingSpinner.control = "start"
+        end if
+    else if phase = "home"
+        m.homeScene.visible = true
+        m.homeScene.setFocus(true)
+    else if phase = "settings"
+        m.settingsScene.serverUrl = m.serverUrl
+        m.settingsScene.visible = true
+        m.settingsScene.setFocus(true)
+    else if phase = "player"
+        m.playerScene.visible = true
+        m.playerScene.setFocus(true)
+    end if
+end sub

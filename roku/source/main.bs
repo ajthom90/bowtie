@@ -1,0 +1,35 @@
+sub Main(args as object)
+    screen = CreateObject("roSGScreen")
+    m.port = CreateObject("roMessagePort")
+    screen.setMessagePort(m.port)
+
+    ' Launch SelfTestScene when ExternalControl passes selftest=1:
+    '   curl "http://<roku-ip>:8060/launch/dev?selftest=1"
+    sceneName = "AppScene"
+    if args <> invalid
+        selftest = args.selftest
+        if selftest = invalid and args.DoesExist("selftest")
+            selftest = args["selftest"]
+        end if
+        if selftest <> invalid
+            s = selftest
+            if type(s) <> "String" and type(s) <> "roString"
+                s = s.toStr()
+            end if
+            if s = "1" or LCase(s) = "true"
+                sceneName = "SelfTestScene"
+            end if
+        end if
+    end if
+
+    scene = screen.CreateScene(sceneName)
+    screen.show()
+
+    while true
+        msg = wait(0, m.port)
+        msgType = type(msg)
+        if msgType = "roSGScreenEvent"
+            if msg.isScreenClosed() then return
+        end if
+    end while
+end sub

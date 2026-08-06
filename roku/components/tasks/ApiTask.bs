@@ -1,0 +1,427 @@
+' THE auth actor: sole HTTP + token holder.
+' Port-form observeField on request; internal FIFO; reduce-driven refresh.
+' Action order on refreshOk: persistRefreshToken STRICTLY before retryPending.
+
+import "pkg:/source/lib/AuthState.bs"
+import "pkg:/source/lib/BowtieClient.bs"
+import "pkg:/source/lib/Registry.bs"
+
+sub init()
+    m.top.functionName = "taskRun"
+end sub
+
+sub taskRun()
+    m.port = CreateObject("roMessagePort")
+    m.queue = []
+    m.authState = bowtie.auth.initialState()
+    m.baseUrl = ""
+
+    ' Hydrate from registry (server + refresh token).
+    server = bowtie.registry.loadServer()
+    if server <> invalid and server <> ""
+        m.baseUrl = server
+    end if
+    rt = bowtie.registry.loadRefreshToken()
+    if rt <> invalid and rt <> ""
+        m.authState.refreshToken = rt
+    end if
+
+    ' Port-form observe — never render-thread callbacks (A1).
+    m.top.observeField("request", m.port)
+    m.top.ready = true
+
+    while true
+        msg = wait(0, m.port)
+        if type(msg) = "roSGNodeEvent"
+            field = msg.getField()
+            if field = "request"
+                req = m.top.request
+                if req <> invalid
+                    m.queue.push(req)
+                end if
+            end if
+        end if
+        drainQueue()
+    end while
+end sub
+
+sub drainQueue()
+    while m.queue.count() > 0
+        item = m.queue[0]
+        m.queue.Delete(0)
+        handleRequest(item)
+    end while
+end sub
+
+sub handleRequest(item as object)
+    if item = invalid then return
+    kind = ""
+    if item.kind <> invalid then kind = item.kind
+    id = ""
+    if item.id <> invalid then id = item.id
+    params = item.params
+    if params = invalid then params = {}
+
+    if kind = "logout"
+        handleLogout(id, params)
+        return
+    end if
+
+    accessToken = m.authState.accessToken
+    if accessToken = invalid then accessToken = ""
+
+    baseUrl = m.baseUrl
+    if kind = "healthz" and params.baseUrl <> invalid and params.baseUrl <> ""
+        baseUrl = params.baseUrl
+    end if
+
+    ' Refresh uses held refresh token unless caller supplied one.
+    if kind = "refresh"
+        rt = m.authState.refreshToken
+        if params.refreshToken <> invalid and params.refreshToken <> ""
+            rt = params.refreshToken
+        end if
+        if rt = invalid then rt = ""
+        params = { refreshToken: rt }
+    end if
+
+    built = bowtie.client.buildRequest(kind, params, accessToken, baseUrl)
+    if built.error <> invalid
+        emitResponse(id, {
+            ok: false
+            error: { code: 0, kind: "build", message: built.error }
+        })
+        return
+    end if
+
+    result = doHttp(built)
+    parsed = bowtie.client.parseResponse(kind, result.httpCode, result.body, baseUrl)
+
+    ' Login success → hold tokens+user, persist refresh.
+    if kind = "login" and parsed.ok = true
+        applyLoginOk(parsed.data)
+        emitResponse(id, parsed)
+        return
+    end if
+
+    ' Explicit refresh (boot-rotate or manual).
+    if kind = "refresh"
+        if parsed.ok = true
+            applyRefreshOk(parsed.data)
+            emitResponse(id, parsed)
+        else
+            applyRefreshFail()
+            emitResponse(id, parsed)
+            drainQueueUnauthorized()
+        end if
+        return
+    end if
+
+    ' healthz success adopts baseUrl (connect path before registry write).
+    if kind = "healthz" and parsed.ok = true
+        m.baseUrl = baseUrl
+    end if
+
+    ' 401 on authed kinds → reduce-driven single-flight refresh + ordered actions.
+    if isUnauthorized(parsed) and kind <> "login" and kind <> "healthz"
+        handle401(item, baseUrl)
+        return
+    end if
+
+    emitResponse(id, parsed)
+end sub
+
+function isUnauthorized(parsed as object) as boolean
+    if parsed = invalid or parsed.ok = true then return false
+    if parsed.error = invalid then return false
+    code = parsed.error.code
+    if code = invalid then return false
+    return code = 401
+end function
+
+sub handle401(item as object, baseUrl as string)
+    reduced = bowtie.auth.reduce(m.authState, {
+        type: "response401"
+        request: item
+    })
+    m.authState = reduced.state
+
+    for each action in reduced.actions
+        if action = "doRefresh"
+            doRefreshThenRetry(item, baseUrl)
+        else if action = "clearAndSignOut"
+            clearAndSignOut()
+            emitResponse(item.id, {
+                ok: false
+                error: { code: 401, kind: "unauthorized", message: "signed out" }
+            })
+            drainQueueUnauthorized()
+        else if action = "none"
+            ' Already refreshing (single-flight): original pending is held;
+            ' this request waits until the in-flight refresh path retries.
+            ' With a sequential FIFO we shouldn't hit this for a second request
+            ' mid-HTTP, but honor the action by not signing out.
+        end if
+    end for
+end sub
+
+' Perform refresh HTTP; on ok run actions in order: persistRefreshToken then retryPending.
+sub doRefreshThenRetry(pendingItem as object, baseUrl as string)
+    rt = m.authState.refreshToken
+    if rt = invalid or rt = ""
+        applyRefreshFail()
+        emitResponse(pendingItem.id, {
+            ok: false
+            error: { code: 401, kind: "unauthorized", message: "session expired" }
+        })
+        drainQueueUnauthorized()
+        return
+    end if
+
+    built = bowtie.client.buildRequest("refresh", { refreshToken: rt }, "", baseUrl)
+    result = doHttp(built)
+    parsed = bowtie.client.parseResponse("refresh", result.httpCode, result.body, baseUrl)
+
+    if parsed.ok <> true
+        applyRefreshFail()
+        emitResponse(pendingItem.id, {
+            ok: false
+            error: { code: 401, kind: "unauthorized", message: "session expired" }
+        })
+        drainQueueUnauthorized()
+        return
+    end if
+
+    reduced = bowtie.auth.reduce(m.authState, {
+        type: "refreshOk"
+        accessToken: parsed.data.accessToken
+        refreshToken: parsed.data.refreshToken
+        user: parsed.data.user
+    })
+    m.authState = reduced.state
+    publishUser()
+
+    ' BINDING: persistRefreshToken strictly before retryPending.
+    for each action in reduced.actions
+        if action = "persistRefreshToken"
+            bowtie.registry.save(invalid, m.authState.refreshToken)
+        else if action = "retryPending"
+            retryItem = m.authState.pendingRetry
+            if retryItem = invalid then retryItem = pendingItem
+            m.authState.pendingRetry = invalid
+            retryRequest(retryItem)
+        end if
+    end for
+end sub
+
+sub retryRequest(item as object)
+    kind = item.kind
+    params = item.params
+    if params = invalid then params = {}
+    accessToken = m.authState.accessToken
+    if accessToken = invalid then accessToken = ""
+    baseUrl = m.baseUrl
+
+    built = bowtie.client.buildRequest(kind, params, accessToken, baseUrl)
+    if built.error <> invalid
+        emitResponse(item.id, {
+            ok: false
+            error: { code: 0, kind: "build", message: built.error }
+        })
+        return
+    end if
+    result = doHttp(built)
+    parsed = bowtie.client.parseResponse(kind, result.httpCode, result.body, baseUrl)
+    emitResponse(item.id, parsed)
+end sub
+
+sub applyLoginOk(data as object)
+    if data = invalid then return
+    reduced = bowtie.auth.reduce(m.authState, {
+        type: "loginOk"
+        accessToken: data.accessToken
+        refreshToken: data.refreshToken
+        user: data.user
+    })
+    m.authState = reduced.state
+    publishUser()
+    for each action in reduced.actions
+        if action = "persistRefreshToken"
+            bowtie.registry.save(invalid, m.authState.refreshToken)
+        end if
+    end for
+end sub
+
+sub applyRefreshOk(data as object)
+    if data = invalid then return
+    reduced = bowtie.auth.reduce(m.authState, {
+        type: "refreshOk"
+        accessToken: data.accessToken
+        refreshToken: data.refreshToken
+        user: data.user
+    })
+    m.authState = reduced.state
+    publishUser()
+    for each action in reduced.actions
+        if action = "persistRefreshToken"
+            bowtie.registry.save(invalid, m.authState.refreshToken)
+        end if
+        ' No pendingRetry on explicit boot refresh.
+    end for
+end sub
+
+sub applyRefreshFail()
+    reduced = bowtie.auth.reduce(m.authState, { type: "refreshFail" })
+    m.authState = reduced.state
+    for each action in reduced.actions
+        if action = "clearAndSignOut"
+            clearAndSignOut()
+        end if
+    end for
+end sub
+
+' Best-effort logout POST, then clear tokens (server kept) + authEvent.
+sub handleLogout(id as string, params as object)
+    rt = m.authState.refreshToken
+    if rt = invalid then rt = ""
+    if params <> invalid and params.refreshToken <> invalid
+        rt = params.refreshToken
+    end if
+
+    if m.baseUrl <> "" and rt <> ""
+        built = bowtie.client.buildRequest("logout", { refreshToken: rt }, "", m.baseUrl)
+        ' Best-effort: ignore result.
+        doHttp(built)
+    end if
+
+    reduced = bowtie.auth.reduce(m.authState, { type: "signOut" })
+    m.authState = reduced.state
+    for each action in reduced.actions
+        if action = "clearAndSignOut"
+            clearAndSignOut()
+        end if
+    end for
+
+    emitResponse(id, { ok: true, data: true })
+end sub
+
+' Wipe tokens/user; keep server URL in registry. Sole authEvent fire path.
+sub clearAndSignOut()
+    bowtie.registry.clearRefreshToken()
+    m.authState.accessToken = invalid
+    m.authState.refreshToken = invalid
+    m.authState.user = invalid
+    m.authState.phase = "login"
+    m.authState.pendingRetry = invalid
+    m.top.user = invalid
+    m.top.authEvent = { type: "signOut" }
+end sub
+
+sub drainQueueUnauthorized()
+    while m.queue.count() > 0
+        item = m.queue[0]
+        m.queue.Delete(0)
+        rid = ""
+        if item <> invalid and item.id <> invalid then rid = item.id
+        emitResponse(rid, {
+            ok: false
+            error: { code: 401, kind: "unauthorized", message: "signed out" }
+        })
+    end while
+end sub
+
+sub publishUser()
+    if m.authState.user <> invalid
+        m.top.user = m.authState.user
+    else
+        m.top.user = invalid
+    end if
+end sub
+
+sub emitResponse(id as string, parsed as object)
+    resp = { id: id, ok: false }
+    if parsed <> invalid
+        if parsed.ok = true
+            resp.ok = true
+            resp.data = parsed.data
+        else
+            resp.ok = false
+            if parsed.error <> invalid
+                resp.error = parsed.error
+            else
+                resp.error = { message: "unknown error" }
+            end if
+        end if
+    end if
+    m.top.response = resp
+end sub
+
+' Synchronous HTTP via roUrlTransfer. Certs on every transfer. Per-request timeout
+' (healthz=2000ms from buildRequest; default 10000ms).
+function doHttp(built as object) as object
+    empty = { httpCode: 0, body: "" }
+    if built = invalid or built.url = invalid or built.url = ""
+        return empty
+    end if
+
+    xfer = CreateObject("roUrlTransfer")
+    if xfer = invalid then return empty
+
+    xfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    xfer.InitClientCertificates()
+    xfer.SetUrl(built.url)
+    xfer.RetainBodyOnError(true)
+    xfer.EnableEncodings(true)
+
+    httpPort = CreateObject("roMessagePort")
+    xfer.SetMessagePort(httpPort)
+
+    headers = built.headers
+    if headers <> invalid
+        for each key in headers
+            xfer.AddHeader(key, headers[key])
+        end for
+    end if
+
+    timeoutMs = 10000
+    if built.timeoutMs <> invalid then timeoutMs = built.timeoutMs
+
+    method = "GET"
+    if built.method <> invalid then method = UCase(built.method)
+    body = ""
+    if built.body <> invalid then body = built.body
+
+    sent = false
+    if method = "GET"
+        sent = xfer.AsyncGetToString()
+    else if method = "POST"
+        sent = xfer.AsyncPostFromString(body)
+    else if method = "DELETE"
+        xfer.SetRequest("DELETE")
+        sent = xfer.AsyncGetToString()
+    else if method = "PUT"
+        xfer.SetRequest("PUT")
+        sent = xfer.AsyncPostFromString(body)
+    else
+        xfer.SetRequest(method)
+        sent = xfer.AsyncGetToString()
+    end if
+
+    if sent <> true then return empty
+
+    msg = wait(timeoutMs, httpPort)
+    if msg = invalid
+        ' Timed out — cancel best-effort.
+        xfer.AsyncCancel()
+        return { httpCode: 0, body: "", timedOut: true }
+    end if
+
+    if type(msg) <> "roUrlEvent"
+        return empty
+    end if
+
+    return {
+        httpCode: msg.GetResponseCode()
+        body: msg.GetString()
+    }
+end function

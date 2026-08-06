@@ -1,0 +1,99 @@
+' MarkupList item: big bold channel number, name, now+progress, next dim.
+
+sub init()
+    m.rowBg = m.top.findNode("rowBg")
+    m.numberLabel = m.top.findNode("numberLabel")
+    m.nameLabel = m.top.findNode("nameLabel")
+    m.nowLabel = m.top.findNode("nowLabel")
+    m.nextLabel = m.top.findNode("nextLabel")
+    m.progressTrack = m.top.findNode("progressTrack")
+    m.progressFill = m.top.findNode("progressFill")
+end sub
+
+sub onItemContent()
+    content = m.top.itemContent
+    if content = invalid then return
+
+    number = content.guideNumber
+    if number = invalid then number = ""
+    name = content.title
+    if name = invalid then name = ""
+    nowTitle = content.nowTitle
+    if nowTitle = invalid then nowTitle = ""
+    nextTitle = content.nextTitle
+    if nextTitle = invalid then nextTitle = ""
+    progress = content.progress
+    if progress = invalid then progress = 0.0
+
+    m.numberLabel.text = number
+    m.nameLabel.text = name
+
+    if nowTitle <> ""
+        m.nowLabel.text = nowTitle
+        m.progressTrack.visible = true
+        m.progressFill.visible = true
+        updateProgress(progress)
+    else
+        m.nowLabel.text = "No guide data"
+        m.progressTrack.visible = false
+        m.progressFill.visible = false
+        m.progressFill.width = 0
+    end if
+
+    if nextTitle <> ""
+        m.nextLabel.text = "Next: " + nextTitle
+    else
+        m.nextLabel.text = ""
+    end if
+end sub
+
+sub onSizeChanged()
+    w = m.top.width
+    h = m.top.height
+    if w = invalid or w <= 0 then w = 1680
+    if h = invalid or h <= 0 then h = 120
+
+    m.rowBg.width = w
+    m.rowBg.height = h
+
+    textW = w - 220
+    if textW < 200 then textW = 200
+    m.nameLabel.width = textW
+    m.nowLabel.width = textW
+    m.nextLabel.width = textW
+
+    trackW = 600
+    if trackW > textW then trackW = textW
+    m.progressTrack.width = trackW
+    ' Re-apply progress width against new track width.
+    content = m.top.itemContent
+    if content <> invalid and content.progress <> invalid
+        updateProgress(content.progress)
+    end if
+end sub
+
+sub onFocusPercent()
+    ' Focus ring comes from MarkupList focusBitmapUri; keep text readable.
+    focused = false
+    if m.top.listHasFocus = true and m.top.focusPercent <> invalid and m.top.focusPercent > 0.5
+        focused = true
+    end if
+    if m.top.itemHasFocus = true
+        focused = true
+    end if
+
+    if focused
+        m.numberLabel.color = "0xF0A428FF"
+    else
+        m.numberLabel.color = "0xF2EFE8FF"
+    end if
+end sub
+
+sub updateProgress(progress as float)
+    trackW = m.progressTrack.width
+    if trackW = invalid or trackW <= 0 then trackW = 600
+    p = progress
+    if p < 0 then p = 0
+    if p > 1 then p = 1
+    m.progressFill.width = trackW * p
+end sub
