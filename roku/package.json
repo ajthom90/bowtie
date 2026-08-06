@@ -1,0 +1,18 @@
+{
+  "name": "bowtie-roku",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bowtie Roku channel (BrighterScript)",
+  "scripts": {
+    "build": "bsc",
+    "lint": "bslint --severity error",
+    "package": "bsc && rm -f out/bowtie-roku.zip && cd out/staging && zip -r ../bowtie-roku.zip ."
+  },
+  "devDependencies": {
+    "@rokucommunity/bslint": "0.8.44",
+    "brighterscript": "0.73.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

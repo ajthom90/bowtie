@@ -1,0 +1,4 @@
+sub init()
+    m.top.backgroundURI = ""
+    m.top.backgroundColor = "0x101418FF"
+end sub

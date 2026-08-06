@@ -1,4 +1,4 @@
-.PHONY: build test lint dev build-web dev-server ios-gen ios-test android-test android-apk
+.PHONY: build test lint dev build-web dev-server ios-gen ios-test android-test android-apk roku-package
 
 # CGO is always disabled for clean cross-compilation.
 export CGO_ENABLED=0
@@ -45,3 +45,8 @@ android-test:
 
 android-apk:
 	cd android && ./gradlew :app:assembleDebug
+
+# --- Roku (Node 22; BrighterScript toolchain in roku/) ---
+
+roku-package:
+	cd roku && npm ci && npm run package

@@ -13,6 +13,9 @@ server/internal/web/dist/**
 !server/internal/web/dist/index.html
 web/node_modules/
 web/dist/
+roku/node_modules/
+roku/out/
+
 # Top-level binary output only (not server/internal/web/dist)
 /dist/
 /bowtie

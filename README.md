@@ -201,6 +201,7 @@ cd web && npm ci && npm test && npm run build
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build, GitHub Releases APK sideload).
+- **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip).
 
 ---
 
