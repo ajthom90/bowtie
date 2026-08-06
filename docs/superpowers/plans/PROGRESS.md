@@ -754,3 +754,24 @@ independently re-verified and committed by the orchestrator. Evidence: 55 Bowtie
 SharedTests green, tvOS builds and launches to Connect (screenshot reviewed).
 
 **Phase 2 complete: all 9 iOS tasks + all 8 Android tasks done.**
+
+## Phase 3 Fire TV Tasks 1-4 (worktree track/firetv)
+2026-08-06 — VM relocation to :core (81 tests conserved, mechanical), :tv Compose-for-TV module
+(minSdk 25, leanback manifest, signing/network config mirrored), Caps AC-3 passthrough probe for
+API 25-30 (amended ladder incl. isDirectPlaybackSupported), TV screens + rail, PlayerEngine
+extracted to :core (phone refactored onto it, parity green), TvPlayerScreen with onPreviewKeyEvent +
+stateful long-press handler (tested) + FocusRequester re-request, both APKs in release workflow.
+90 tests green; TV emulator visual pass done (screenshot sent to user).
+
+## Phase 3 Roku Tasks 1-5 (worktree track/roku)
+2026-08-06 — BrighterScript scaffold with pinned toolchain + staging/zip packaging (CI-asserted),
+pure libs (AuthState reduce machine with boot-rotate table, GuideLogic, Caps with corrected
+CanDecodeVideo/GetVideoMode, Registry, BowtieClient with absolute playlistUrl resolution) +
+on-device SelfTestScene fixtures, ApiTask auth actor (alwaysNotify fields, internal FIFO, id
+routing, TLS certs, healthz 2s, persist-before-retry action ordering), MarkupList rail + Settings,
+PlayerScene with A3 session-replace (gen counters + orphan DELETE), empty-seeded Video error
+allowlist + debug overlay, release zip job (needs goreleaser), 10-step validation gate in
+docs/deploy/roku-testing.md. NO runtime tests possible — line-reviewed per task; user's on-device
+gate pending.
+
+**Phase 3 complete: all 4 Fire TV + all 5 Roku tasks done. All platforms in the plan are built.**

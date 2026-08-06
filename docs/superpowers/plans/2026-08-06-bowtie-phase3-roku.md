@@ -1,6 +1,6 @@
 # Bowtie Phase 3 — Roku Channel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. **This session: Grok implements on branch `track/roku`; Claude reviews each task. NO DEVICE is available — compile/lint are the only automated gates; the user validates on-device at the end.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax. **This session: Grok implements on branch `track/roku`; Claude reviews each task. NO DEVICE is available — compile/lint are the only automated gates; the user validates on-device at the end.**
 
 **Goal:** A BrighterScript SceneGraph channel implementing the Bowtie viewer (connect → login → rail → play) with an auth-actor ApiTask, pure-logic libraries testable on-device via SelfTestScene, and a sideloadable zip on GitHub releases.
 
@@ -28,8 +28,8 @@
 - Create: `roku/package.json` (+lockfile; brighterscript + @rokucommunity/bslint pinned), `roku/bsconfig.json` (strict, `stagingDir: "out/staging"`... use bsc's `stagingDir`/`retainStagingDir` options — verify exact option names against bsc docs and pin behavior with an npm script `npm run package` that produces `out/bowtie-roku.zip` with contents at root), `roku/manifest` (title=Bowtie, ui_resolutions=fhd, mm_icon_focus_hd + splash pointing at images/), `roku/images/*` (generated PNGs: solid #101418 with amber "Bowtie" — a python3/Pillow or plain-PNG script; commit the PNGs, not the script), `roku/source/main.bs` (boots AppScene), `roku/components/AppScene.(xml|bs)` (renders "Bowtie" on token background), `roku/README.md` (dev-mode + sideload basics; expanded in Task 5)
 - Modify: `.github/workflows/ci.yml` (+ `roku` job: node 22, `npm ci`, `npx bsc`, `npx bslint --severity error`, `npm run package`, upload `out/bowtie-roku.zip` artifact), root `README.md` Apps line, `Makefile` (`roku-package` target)
 
-- [ ] **Step 1:** Scaffold; `npm run package` produces a zip whose root listing shows `manifest`, `source/`, `components/`, `images/` and NO `.bs`/`node_modules`/config files (assert with `unzip -l`).
-- [ ] **Step 2:** CI-equivalent commands green locally. **Step 3:** Commit `feat: roku channel scaffold with brighterscript toolchain and packaging`
+- [x] **Step 1:** Scaffold; `npm run package` produces a zip whose root listing shows `manifest`, `source/`, `components/`, `images/` and NO `.bs`/`node_modules`/config files (assert with `unzip -l`).
+- [x] **Step 2:** CI-equivalent commands green locally. **Step 3:** Commit `feat: roku channel scaffold with brighterscript toolchain and packaging`
 
 ### Task 2: Pure libraries + SelfTestScene
 
@@ -66,8 +66,8 @@ end namespace
 
 SelfTestScene: runs fixture suites against `reduce`/`nowNext`/`allowedProfiles`/`buildRequest`/`parseResponse` (fixtures literal-translated from the iOS/Android test cases, incl. the full-wire 503 body and the single-flight sequence: 401 → doRefresh → persistRefreshToken BEFORE retryPending; queued-behind-refresh request never signs out), renders `PASS n/n` or failing case names. Launched when `main.bs` sees launch arg `selftest=1` (`ExternalControl` launch params — document `curl "http://<roku-ip>:8060/launch/dev?selftest=1"` in README).
 
-- [ ] **Step 1:** Write fixtures FIRST (they're the tests), then implement libs until a manual trace of each fixture passes; bsc strict + bslint green.
-- [ ] **Step 2:** Commit `feat: roku pure libraries with on-device self-test scene`
+- [x] **Step 1:** Write fixtures FIRST (they're the tests), then implement libs until a manual trace of each fixture passes; bsc strict + bslint green.
+- [x] **Step 2:** Commit `feat: roku pure libraries with on-device self-test scene`
 
 ### Task 3: ApiTask auth actor + Connect/Login scenes
 
@@ -78,7 +78,7 @@ SelfTestScene: runs fixture suites against `reduce`/`nowNext`/`allowedProfiles`/
 ApiTask: interface fields `request` (AA queue append), `response` (AA), `authEvent` (signOut notifications). Internal loop: pop queue → bowtie.client.buildRequest → roUrlTransfer (certs per Global Constraints; 10s timeout) → on 401 run bowtie.auth.reduce-driven refresh (persist via bowtie.registry BEFORE retry) → respond. Scenes observe `response`.
 Connect: keyboard dialog for URL, /healthz validate (2s), error copy exact. Login: username/password keyboard dialogs, error copy exact; on success ApiTask holds tokens, AppScene → HomeScene.
 
-- [ ] **Step 1:** Implement; bsc+bslint+package green. **Step 2:** Commit `feat: roku api task auth actor, connect and login scenes`
+- [x] **Step 1:** Implement; bsc+bslint+package green. **Step 2:** Commit `feat: roku api task auth actor, connect and login scenes`
 
 ### Task 4: HomeScene rail + SettingsScene
 
@@ -87,7 +87,7 @@ Connect: keyboard dialog for URL, /healthz validate (2s), error copy exact. Logi
 
 HomeScene: MarkupList/RowList of channels — big bold number, name, now-title + progress, next dim (data: channels + guide via ApiTask; join with bowtie.guide.nowNext; refresh on show + 5-min timer). Select → PlayerScene (Task 5 target; this task navigates to a stub scene showing channel name + back). Settings entry row. SettingsScene: server info, change server (confirm → clear registry → ConnectScene), change password (ApiTask), sign out.
 
-- [ ] **Step 1:** Implement; verification green. **Step 2:** Commit `feat: roku channel rail and settings`
+- [x] **Step 1:** Implement; verification green. **Step 2:** Commit `feat: roku channel rail and settings`
 
 ### Task 5: PlayerScene + release wiring + validation docs
 
@@ -97,7 +97,7 @@ HomeScene: MarkupList/RowList of channels — big bold number, name, now-title +
 
 PlayerScene: Video node (content: absolute playlistUrl WITH token; streamFormat hls), session create/delete via ApiTask (caps from bowtie.caps.current(), profile from quality selection filtered by maxQuality), OK play/pause, back stop+return, up/down zap with 400ms debounce (timer-based, cancel in-flight via request generation counters), quality dialog, debug overlay (dev flag) showing Video state/errorCode/errorStr for the token-kill capture step, recovery per Global Constraints (allowlist-only recreate; bounded retry otherwise).
 
-- [ ] **Step 1:** Implement; full verification + zip contents assert. **Step 2:** Commit `feat: roku player with session lifecycle; release zip and validation gate docs`
+- [x] **Step 1:** Implement; full verification + zip contents assert. **Step 2:** Commit `feat: roku player with session lifecycle; release zip and validation gate docs`
 
 ## Post-plan notes
 - Sequential 1→2→3→4→5. Claude line-reviews EVERY task (no runtime net — review is the gate).

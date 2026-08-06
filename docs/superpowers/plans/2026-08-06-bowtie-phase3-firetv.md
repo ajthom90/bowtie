@@ -1,6 +1,6 @@
 # Bowtie Phase 3 — Fire TV App Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. **This session: Grok implements on branch `track/firetv`; Claude reviews each task.**
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax. **This session: Grok implements on branch `track/firetv`; Claude reviews each task.**
 
 **Goal:** A Compose-for-TV Fire TV app (`:tv`, minSdk 25) reusing `:core` and the relocated ViewModels, with correct AC-3 passthrough detection and a release APK on GitHub releases.
 
@@ -30,9 +30,9 @@
 **Interfaces:**
 - Produces: same public VM APIs, now under `app.bowtie.core.vm`. NOTHING else changes — no behavior edits permitted in this task.
 
-- [ ] **Step 1:** Move files, update package/imports mechanically.
-- [ ] **Step 2:** Full suite green: `./gradlew -q :core:test :app:testDebugUnitTest :app:assembleDebug` — same test counts as before the move (54+27 minus the 27 that moved into :core's count; assert totals in commit body).
-- [ ] **Step 3:** Commit `refactor: relocate viewmodels to core for tv reuse`
+- [x] **Step 1:** Move files, update package/imports mechanically.
+- [x] **Step 2:** Full suite green: `./gradlew -q :core:test :app:testDebugUnitTest :app:assembleDebug` — same test counts as before the move (54+27 minus the 27 that moved into :core's count; assert totals in commit body).
+- [x] **Step 3:** Commit `refactor: relocate viewmodels to core for tv reuse`
 
 ### Task 2: `:tv` module scaffold + TV audio-caps probe
 
@@ -55,9 +55,9 @@ object Caps {
 }
 ```
 
-- [ ] **Step 1: Failing tests** — Caps tests with injected probe result: probe=true → caps include ac3+eac3; probe=false → aac only (existing behavior). (The probe function itself is a thin platform wrapper — document per-API-level strategy in KDoc; unit tests cover detect() wiring only.)
-- [ ] **Step 2:** Implement probe + wire into `current`. Scaffold `:tv` (manifest per Global Constraints; hello screen).
-- [ ] **Step 3:** Full verification incl. `:tv:assembleDebug`. **Step 4:** Commit `feat: tv module scaffold; ac3 passthrough detection for api 25-30`
+- [x] **Step 1: Failing tests** — Caps tests with injected probe result: probe=true → caps include ac3+eac3; probe=false → aac only (existing behavior). (The probe function itself is a thin platform wrapper — document per-API-level strategy in KDoc; unit tests cover detect() wiring only.)
+- [x] **Step 2:** Implement probe + wire into `current`. Scaffold `:tv` (manifest per Global Constraints; hello screen).
+- [x] **Step 3:** Full verification incl. `:tv:assembleDebug`. **Step 4:** Commit `feat: tv module scaffold; ac3 passthrough detection for api 25-30`
 
 ### Task 3: `:tv` screens — Connect, Login, Rail, Settings
 
@@ -69,9 +69,9 @@ object Caps {
 
 Details: rail rows — condensed number ~40sp bold, name, now-title + progress bar (amber), next dim; focused row scales (tv-material default); select → Player route (stub composable this task: black + name + back → stop()); Settings/Connect/Login mirror phone copy, TV-keyboard-friendly single-column layouts, focus-visible everywhere.
 
-- [ ] **Step 1:** Implement with the same ChannelListViewModel wiring as phone (ON_START + 5-min refresh + channelsStale).
-- [ ] **Step 2:** Verification suite green; boot on an Android TV emulator if present, else `:tv:assembleDebug` acceptance (orchestrator does emulator screenshots at review).
-- [ ] **Step 3:** Commit `feat: fire tv connect, login, channel rail, settings`
+- [x] **Step 1:** Implement with the same ChannelListViewModel wiring as phone (ON_START + 5-min refresh + channelsStale).
+- [x] **Step 2:** Verification suite green; boot on an Android TV emulator if present, else `:tv:assembleDebug` acceptance (orchestrator does emulator screenshots at review).
+- [x] **Step 3:** Commit `feat: fire tv connect, login, channel rail, settings`
 
 ### Task 4: `:tv` player + release APK + docs
 
@@ -81,9 +81,9 @@ Details: rail rows — condensed number ~40sp bold, name, now-title + progress b
 
 Player details (mirror phone PlayerScreen but TV-idiomatic): Media3 PlayerView via AndroidView with `isFocusable=false` + `FOCUS_BLOCK_DESCENDANTS`; a focused Compose Box owns onKeyEvent — key map (definitive): DPAD_CENTER short-press = play/pause; DPAD_CENTER long-press (≥700ms) OR KEYCODE_MENU = open transport/quality drawer; DPAD_UP/DPAD_DOWN = zap (debounced via PlayerViewModel); BACK = stop + pop. Stats toggle lives inside the drawer. Key map documented in README; auth-error/stall handling identical to phone via shared VM.
 
-- [ ] **Step 1:** Implement; unit-test any key-mapping helper (pure function KeyEvent→PlayerAction with tests).
-- [ ] **Step 2:** Full verification; `:tv:assembleRelease` (debug-fallback) builds; release.yml YAML validates.
-- [ ] **Step 3:** Commit `feat: fire tv player with focus-safe dpad controls; tv apk on releases`
+- [x] **Step 1:** Implement; unit-test any key-mapping helper (pure function KeyEvent→PlayerAction with tests).
+- [x] **Step 2:** Full verification; `:tv:assembleRelease` (debug-fallback) builds; release.yml YAML validates.
+- [x] **Step 3:** Commit `feat: fire tv player with focus-safe dpad controls; tv apk on releases`
 
 ## Post-plan notes
 - Sequential 1→2→3→4. Orchestrator does Android-TV-emulator visual review after Tasks 3 and 4.
