@@ -39,13 +39,18 @@ curl -F "mysubmit=Install" -F "archive=@out/bowtie-roku.zip" \
   "http://rokudev:<password>@<roku-ip>/plugin_install"
 ```
 
-## Self-test (later)
+## Self-test (on-device pure-logic suite)
 
-When SelfTestScene lands (Task 2), launch with:
+SelfTestScene runs AuthState, GuideLogic, and BowtieClient fixture suites
+(mirroring iOS/Android test cases) and renders `PASS n/n` or failing case names.
+
+After sideloading the package, launch with ExternalControl:
 
 ```bash
 curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 ```
+
+(`supports_input_launch=1` is set in the channel manifest so query args reach `Main`.)
 
 ## Design tokens
 

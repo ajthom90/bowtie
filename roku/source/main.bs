@@ -3,8 +3,26 @@ sub Main(args as object)
     m.port = CreateObject("roMessagePort")
     screen.setMessagePort(m.port)
 
-    ' Task 2 will route selftest=1 → SelfTestScene; scaffold boots AppScene.
-    scene = screen.CreateScene("AppScene")
+    ' Launch SelfTestScene when ExternalControl passes selftest=1:
+    '   curl "http://<roku-ip>:8060/launch/dev?selftest=1"
+    sceneName = "AppScene"
+    if args <> invalid
+        selftest = args.selftest
+        if selftest = invalid and args.DoesExist("selftest")
+            selftest = args["selftest"]
+        end if
+        if selftest <> invalid
+            s = selftest
+            if type(s) <> "String" and type(s) <> "roString"
+                s = s.toStr()
+            end if
+            if s = "1" or LCase(s) = "true"
+                sceneName = "SelfTestScene"
+            end if
+        end if
+    end if
+
+    scene = screen.CreateScene(sceneName)
     screen.show()
 
     while true

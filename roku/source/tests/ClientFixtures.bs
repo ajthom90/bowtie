@@ -1,0 +1,372 @@
+' BowtieClient buildRequest / parseResponse fixtures.
+' Translated from Android BowtieClientTest wire shapes + A4 absolute playlistUrl.
+
+namespace bowtie.fixtures.client
+
+    function userJson() as string
+        return "{" + Chr(34) + "id" + Chr(34) + ":1," + Chr(34) + "username" + Chr(34) + ":" + Chr(34) + "alice" + Chr(34) + "," + Chr(34) + "role" + Chr(34) + ":" + Chr(34) + "viewer" + Chr(34) + "," + Chr(34) + "maxQuality" + Chr(34) + ":" + Chr(34) + "high" + Chr(34) + "}"
+    end function
+
+    function tokenPairJson(access = "access-1" as string, refresh = "refresh-1" as string) as string
+        return "{" + Chr(34) + "accessToken" + Chr(34) + ":" + Chr(34) + access + Chr(34) + "," + Chr(34) + "refreshToken" + Chr(34) + ":" + Chr(34) + refresh + Chr(34) + "," + Chr(34) + "user" + Chr(34) + ":" + bowtie.fixtures.client.userJson() + "}"
+    end function
+
+    function full503Body() as string
+        ' Full wire-shape 503 from BowtieClientTest.tunersBusyDecoded
+        return "{" + Chr(34) + "error" + Chr(34) + ":" + Chr(34) + "all tuners in use" + Chr(34) + "," + Chr(34) + "sessions" + Chr(34) + ":[{" + Chr(34) + "id" + Chr(34) + ":" + Chr(34) + "sess-abc" + Chr(34) + "," + Chr(34) + "channelId" + Chr(34) + ":7," + Chr(34) + "channelName" + Chr(34) + ":" + Chr(34) + "WABC" + Chr(34) + "," + Chr(34) + "key" + Chr(34) + ":" + Chr(34) + "7|h264|high" + Chr(34) + "," + Chr(34) + "videoCodec" + Chr(34) + ":" + Chr(34) + "h264" + Chr(34) + "," + Chr(34) + "profile" + Chr(34) + ":" + Chr(34) + "high" + Chr(34) + "," + Chr(34) + "backend" + Chr(34) + ":" + Chr(34) + "videotoolbox" + Chr(34) + "," + Chr(34) + "startedAt" + Chr(34) + ":" + Chr(34) + "2026-08-05T12:00:00Z" + Chr(34) + "," + Chr(34) + "viewers" + Chr(34) + ":[{" + Chr(34) + "id" + Chr(34) + ":" + Chr(34) + "viewer-1" + Chr(34) + "," + Chr(34) + "username" + Chr(34) + ":" + Chr(34) + "alice" + Chr(34) + "," + Chr(34) + "lastSeen" + Chr(34) + ":" + Chr(34) + "2026-08-05T12:05:00Z" + Chr(34) + "},{" + Chr(34) + "id" + Chr(34) + ":" + Chr(34) + "viewer-2" + Chr(34) + "," + Chr(34) + "username" + Chr(34) + ":" + Chr(34) + "bob" + Chr(34) + "," + Chr(34) + "lastSeen" + Chr(34) + ":" + Chr(34) + "2026-08-05T12:06:00Z" + Chr(34) + "}]}]}"
+    end function
+
+    function allCases() as object
+        cases = []
+        base = "http://192.168.1.50:8400"
+
+        ' ── buildRequest: login body shape ─────────────────────────────────
+        cases.push({
+            name: "build_login_body_username_password"
+            kind: "build"
+            reqKind: "login"
+            params: { username: "alice", password: "secret" }
+            accessToken: ""
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/auth/login"
+            expectBody: "{" + Chr(34) + "password" + Chr(34) + ":" + Chr(34) + "secret" + Chr(34) + "," + Chr(34) + "username" + Chr(34) + ":" + Chr(34) + "alice" + Chr(34) + "}"
+            expectNoAuth: true
+        })
+
+        cases.push({
+            name: "build_refresh_body_refreshToken"
+            kind: "build"
+            reqKind: "refresh"
+            params: { refreshToken: "rt-old" }
+            accessToken: ""
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/auth/refresh"
+            expectBody: "{" + Chr(34) + "refreshToken" + Chr(34) + ":" + Chr(34) + "rt-old" + Chr(34) + "}"
+            expectNoAuth: true
+        })
+
+        cases.push({
+            name: "build_logout_body_refreshToken"
+            kind: "build"
+            reqKind: "logout"
+            params: { refreshToken: "rt-new" }
+            accessToken: ""
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/auth/logout"
+            expectBody: "{" + Chr(34) + "refreshToken" + Chr(34) + ":" + Chr(34) + "rt-new" + Chr(34) + "}"
+            expectNoAuth: true
+        })
+
+        cases.push({
+            name: "build_password_body_current_and_new"
+            kind: "build"
+            reqKind: "changePassword"
+            params: { currentPassword: "secret", newPassword: "newer" }
+            accessToken: "access-1"
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/me/password"
+            expectBodyContains: "currentPassword"
+            expectBodyContains2: "newPassword"
+            expectAuth: "Bearer access-1"
+        })
+
+        cases.push({
+            name: "build_createSession_body_shape"
+            kind: "build"
+            reqKind: "createSession"
+            params: {
+                channelId: 7
+                caps: {
+                    videoCodecs: ["h264"]
+                    audioCodecs: ["aac"]
+                    maxHeight: 1080
+                    profile: "high"
+                }
+            }
+            accessToken: "access-1"
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/sessions"
+            expectBodyContains: "channelId"
+            expectBodyContains2: "videoCodecs"
+            expectAuth: "Bearer access-1"
+        })
+
+        cases.push({
+            name: "build_me_bearer_attached"
+            kind: "build"
+            reqKind: "me"
+            params: {}
+            accessToken: "access-1"
+            baseUrl: base
+            expectMethod: "GET"
+            expectUrlContains: "/api/v1/me"
+            expectAuth: "Bearer access-1"
+        })
+
+        cases.push({
+            name: "build_healthz_2s_timeout"
+            kind: "build"
+            reqKind: "healthz"
+            params: {}
+            accessToken: ""
+            baseUrl: base
+            expectMethod: "GET"
+            expectUrlContains: "/healthz"
+            expectTimeoutMs: 2000
+            expectNoAuth: true
+        })
+
+        ' ── parseResponse: login/refresh user + maxQuality (A1) ────────────
+        cases.push({
+            name: "parse_login_surfaces_user_maxQuality"
+            kind: "parse"
+            reqKind: "login"
+            httpCode: 200
+            body: bowtie.fixtures.client.tokenPairJson()
+            baseUrl: base
+            expectOk: true
+            expectAccess: "access-1"
+            expectRefresh: "refresh-1"
+            expectUser: "alice"
+            expectMaxQ: "high"
+        })
+
+        cases.push({
+            name: "parse_refresh_surfaces_user_maxQuality"
+            kind: "parse"
+            reqKind: "refresh"
+            httpCode: 200
+            body: bowtie.fixtures.client.tokenPairJson("access-new", "rt-new")
+            baseUrl: base
+            expectOk: true
+            expectAccess: "access-new"
+            expectRefresh: "rt-new"
+            expectUser: "alice"
+            expectMaxQ: "high"
+        })
+
+        ' ── parseResponse: 503 full-wire sessions[] ─────────────────────────
+        cases.push({
+            name: "parse_createSession_503_sessions"
+            kind: "parse"
+            reqKind: "createSession"
+            httpCode: 503
+            body: bowtie.fixtures.client.full503Body()
+            baseUrl: base
+            expectOk: false
+            expectErrorKind: "tunersBusy"
+            expectSessionChannel: "WABC"
+            expectViewer0: "alice"
+            expectViewer1: "bob"
+        })
+
+        ' ── parseResponse: 422 message ─────────────────────────────────────
+        cases.push({
+            name: "parse_createSession_422_message"
+            kind: "parse"
+            reqKind: "createSession"
+            httpCode: 422
+            body: "{" + Chr(34) + "error" + Chr(34) + ":" + Chr(34) + "no compatible codec/profile" + Chr(34) + "}"
+            baseUrl: base
+            expectOk: false
+            expectErrorKind: "negotiation"
+            expectErrorMessage: "no compatible codec/profile"
+        })
+
+        ' ── A4: absolute playlistUrl with ?token= ──────────────────────────
+        cases.push({
+            name: "parse_createSession_absolute_playlistUrl"
+            kind: "parse"
+            reqKind: "createSession"
+            httpCode: 200
+            body: "{" + Chr(34) + "viewerId" + Chr(34) + ":" + Chr(34) + "v1" + Chr(34) + "," + Chr(34) + "playlistUrl" + Chr(34) + ":" + Chr(34) + "/api/v1/stream/v1/index.m3u8?token=t" + Chr(34) + "}"
+            baseUrl: base
+            expectOk: true
+            expectViewerId: "v1"
+            expectPlaylistAbsolute: true
+            expectPlaylistContainsToken: true
+            expectPlaylistPrefix: base
+        })
+
+        return cases
+    end function
+
+    function runCase(c as object) as object
+        if c.kind = "build"
+            return bowtie.fixtures.client.runBuild(c)
+        end if
+        if c.kind = "parse"
+            return bowtie.fixtures.client.runParse(c)
+        end if
+        return { ok: false, name: c.name, detail: "unknown kind" }
+    end function
+
+    function runBuild(c as object) as object
+        req = bowtie.client.buildRequest(c.reqKind, c.params, c.accessToken, c.baseUrl)
+
+        if c.DoesExist("expectMethod") and req.method <> c.expectMethod
+            return { ok: false, name: c.name, detail: "method want=" + c.expectMethod + " got=" + req.method }
+        end if
+
+        if c.DoesExist("expectUrlContains")
+            if Instr(1, req.url, c.expectUrlContains) = 0
+                return { ok: false, name: c.name, detail: "url missing " + c.expectUrlContains + " got=" + req.url }
+            end if
+        end if
+
+        if c.DoesExist("expectBody")
+            if not bowtie.fixtures.client.jsonBodiesEqual(req.body, c.expectBody)
+                return { ok: false, name: c.name, detail: "body mismatch got=" + req.body }
+            end if
+        end if
+
+        if c.DoesExist("expectBodyContains")
+            if Instr(1, req.body, c.expectBodyContains) = 0
+                return { ok: false, name: c.name, detail: "body missing " + c.expectBodyContains }
+            end if
+        end if
+
+        if c.DoesExist("expectBodyContains2")
+            if Instr(1, req.body, c.expectBodyContains2) = 0
+                return { ok: false, name: c.name, detail: "body missing " + c.expectBodyContains2 }
+            end if
+        end if
+
+        if c.DoesExist("expectAuth")
+            auth = req.headers["Authorization"]
+            if auth = invalid or auth <> c.expectAuth
+                got = "<nil>"
+                if auth <> invalid then got = auth
+                return { ok: false, name: c.name, detail: "auth want=" + c.expectAuth + " got=" + got }
+            end if
+        end if
+
+        if c.DoesExist("expectNoAuth") and c.expectNoAuth = true
+            auth = req.headers["Authorization"]
+            if auth <> invalid and auth <> ""
+                return { ok: false, name: c.name, detail: "expected no Authorization header" }
+            end if
+        end if
+
+        if c.DoesExist("expectTimeoutMs")
+            if req.timeoutMs <> c.expectTimeoutMs
+                return { ok: false, name: c.name, detail: "timeoutMs mismatch" }
+            end if
+        end if
+
+        return { ok: true, name: c.name }
+    end function
+
+    function runParse(c as object) as object
+        result = bowtie.client.parseResponse(c.reqKind, c.httpCode, c.body, c.baseUrl)
+
+        if c.expectOk = true
+            if result.ok <> true
+                return { ok: false, name: c.name, detail: "expected ok" }
+            end if
+            data = result.data
+            if c.DoesExist("expectAccess") and data.accessToken <> c.expectAccess
+                return { ok: false, name: c.name, detail: "accessToken mismatch" }
+            end if
+            if c.DoesExist("expectRefresh") and data.refreshToken <> c.expectRefresh
+                return { ok: false, name: c.name, detail: "refreshToken mismatch" }
+            end if
+            if c.DoesExist("expectUser")
+                if data.user = invalid or data.user.username <> c.expectUser
+                    return { ok: false, name: c.name, detail: "user.username mismatch" }
+                end if
+            end if
+            if c.DoesExist("expectMaxQ")
+                if data.user = invalid or data.user.maxQuality <> c.expectMaxQ
+                    return { ok: false, name: c.name, detail: "user.maxQuality mismatch" }
+                end if
+            end if
+            if c.DoesExist("expectViewerId") and data.viewerId <> c.expectViewerId
+                return { ok: false, name: c.name, detail: "viewerId mismatch" }
+            end if
+            if c.DoesExist("expectPlaylistAbsolute") and c.expectPlaylistAbsolute = true
+                url = data.playlistUrl
+                if url = invalid or (Left(url, 7) <> "http://" and Left(url, 8) <> "https://")
+                    got = "<nil>"
+                    if url <> invalid then got = url
+                    return { ok: false, name: c.name, detail: "playlistUrl not absolute: " + got }
+                end if
+            end if
+            if c.DoesExist("expectPlaylistContainsToken") and c.expectPlaylistContainsToken = true
+                if Instr(1, data.playlistUrl, "?token=") = 0
+                    return { ok: false, name: c.name, detail: "playlistUrl missing ?token=" }
+                end if
+            end if
+            if c.DoesExist("expectPlaylistPrefix")
+                if Left(data.playlistUrl, Len(c.expectPlaylistPrefix)) <> c.expectPlaylistPrefix
+                    return { ok: false, name: c.name, detail: "playlistUrl prefix mismatch: " + data.playlistUrl }
+                end if
+            end if
+            return { ok: true, name: c.name }
+        end if
+
+        ' expectOk = false
+        if result.ok = true
+            return { ok: false, name: c.name, detail: "expected error" }
+        end if
+        err = result.error
+        if c.DoesExist("expectErrorKind") and err.kind <> c.expectErrorKind
+            return { ok: false, name: c.name, detail: "error.kind want=" + c.expectErrorKind + " got=" + err.kind }
+        end if
+        if c.DoesExist("expectErrorMessage") and err.message <> c.expectErrorMessage
+            return { ok: false, name: c.name, detail: "error.message mismatch" }
+        end if
+        if c.DoesExist("expectSessionChannel")
+            if err.sessions = invalid or err.sessions.count() < 1
+                return { ok: false, name: c.name, detail: "missing sessions" }
+            end if
+            if err.sessions[0].channelName <> c.expectSessionChannel
+                return { ok: false, name: c.name, detail: "channelName mismatch" }
+            end if
+            viewers = err.sessions[0].viewers
+            if c.DoesExist("expectViewer0")
+                if viewers = invalid or viewers.count() < 1 or viewers[0].username <> c.expectViewer0
+                    return { ok: false, name: c.name, detail: "viewer0 mismatch" }
+                end if
+            end if
+            if c.DoesExist("expectViewer1")
+                if viewers = invalid or viewers.count() < 2 or viewers[1].username <> c.expectViewer1
+                    return { ok: false, name: c.name, detail: "viewer1 mismatch" }
+                end if
+            end if
+        end if
+        return { ok: true, name: c.name }
+    end function
+
+    ' Compare JSON objects regardless of key order (FormatJson may reorder).
+    function jsonBodiesEqual(a as string, b as string) as boolean
+        if a = b then return true
+        pa = ParseJson(a)
+        pb = ParseJson(b)
+        if pa = invalid or pb = invalid then return false
+        return FormatJson(pa) = FormatJson(pb)
+    end function
+
+    function runAll() as object
+        cases = bowtie.fixtures.client.allCases()
+        results = []
+        passCount = 0
+        for each c in cases
+            r = bowtie.fixtures.client.runCase(c)
+            results.push(r)
+            if r.ok then passCount = passCount + 1
+        end for
+        return {
+            suite: "Client"
+            total: cases.count()
+            passed: passCount
+            results: results
+        }
+    end function
+
+end namespace

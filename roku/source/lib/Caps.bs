@@ -1,0 +1,66 @@
+' Client capability reporting for session negotiation.
+' detect() is pure; current() wraps roDeviceInfo probes.
+
+namespace bowtie.caps
+
+    ' Pure construction.
+    ' canHevc: roDeviceInfo.CanDecodeVideo({Codec:"hevc"}).Result
+    ' uhd: GetVideoMode indicates 2160/4K
+    ' canAc3: roDeviceInfo.CanDecodeAudio({Codec:"ac3"}).Result (passthrough/decode)
+    function detect(canHevc as boolean, uhd as boolean, canAc3 = false as boolean) as object
+        videoCodecs = ["h264"]
+        if canHevc = true
+            videoCodecs.push("hevc")
+        end if
+
+        audioCodecs = ["aac"]
+        if canAc3 = true
+            audioCodecs.push("ac3")
+            audioCodecs.push("eac3")
+        end if
+
+        maxHeight = 1080
+        if uhd = true
+            maxHeight = 2160
+        end if
+
+        return {
+            videoCodecs: videoCodecs
+            audioCodecs: audioCodecs
+            maxHeight: maxHeight
+            profile: ""
+        }
+    end function
+
+    ' Platform wrapper: CanDecodeVideo hevc + GetVideoMode + CanDecodeAudio ac3.
+    function current() as object
+        di = CreateObject("roDeviceInfo")
+        canHevc = false
+        canAc3 = false
+        uhd = false
+
+        if di <> invalid
+            hevcResult = di.CanDecodeVideo({ Codec: "hevc" })
+            if hevcResult <> invalid and hevcResult.Result = true
+                canHevc = true
+            end if
+
+            ac3Result = di.CanDecodeAudio({ Codec: "ac3" })
+            if ac3Result <> invalid and ac3Result.Result = true
+                canAc3 = true
+            end if
+
+            mode = di.GetVideoMode()
+            if mode <> invalid
+                modeStr = mode
+                ' GetVideoMode returns strings like "1080p60", "2160p30", "720p60"
+                if Instr(1, LCase(modeStr), "2160") > 0 or Instr(1, LCase(modeStr), "4k") > 0
+                    uhd = true
+                end if
+            end if
+        end if
+
+        return bowtie.caps.detect(canHevc, uhd, canAc3)
+    end function
+
+end namespace

@@ -1,0 +1,315 @@
+' AuthState transition-table fixtures (A2 boot table + single-flight + sign-out).
+' Each case: {name, state, event, expectPhase, expectActions, expectAccess?, expectRefresh?, expectUserMaxQ?}
+
+namespace bowtie.fixtures.auth
+
+    function allCases() as object
+        cases = []
+
+        ' ── A2 boot table ──────────────────────────────────────────────────
+        cases.push({
+            name: "boot_no_refresh_goes_login"
+            state: {
+                phase: "login"
+                accessToken: invalid
+                refreshToken: invalid
+                user: invalid
+                pendingRetry: invalid
+            }
+            event: { type: "boot" }
+            expectPhase: "login"
+            expectActions: ["none"]
+        })
+
+        cases.push({
+            name: "boot_with_refresh_doRefresh"
+            state: {
+                phase: "login"
+                accessToken: invalid
+                refreshToken: "rt-stored"
+                user: invalid
+                pendingRetry: invalid
+            }
+            event: { type: "boot", refreshToken: "rt-stored" }
+            expectPhase: "checking"
+            expectActions: ["doRefresh"]
+            expectRefresh: "rt-stored"
+        })
+
+        cases.push({
+            name: "refreshOk_persist_and_ready"
+            state: {
+                phase: "checking"
+                accessToken: invalid
+                refreshToken: "rt-old"
+                user: invalid
+                pendingRetry: invalid
+            }
+            event: {
+                type: "refreshOk"
+                accessToken: "access-new"
+                refreshToken: "rt-new"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+            }
+            expectPhase: "ready"
+            expectActions: ["persistRefreshToken"]
+            expectAccess: "access-new"
+            expectRefresh: "rt-new"
+            expectUserMaxQ: "high"
+        })
+
+        cases.push({
+            name: "refreshFail_login_preserving_server"
+            state: {
+                phase: "checking"
+                accessToken: invalid
+                refreshToken: "rt-dead"
+                user: invalid
+                pendingRetry: invalid
+            }
+            event: { type: "refreshFail" }
+            expectPhase: "login"
+            expectActions: ["clearAndSignOut"]
+            expectAccess: invalid
+            expectRefresh: invalid
+        })
+
+        cases.push({
+            name: "response401_no_refresh_clearAndSignOut"
+            state: {
+                phase: "ready"
+                accessToken: "access-1"
+                refreshToken: invalid
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: invalid
+            }
+            event: { type: "response401", request: { id: "r1", kind: "me" } }
+            expectPhase: "login"
+            expectActions: ["clearAndSignOut"]
+        })
+
+        ' ── loginOk ────────────────────────────────────────────────────────
+        cases.push({
+            name: "loginOk_persist_access_refresh_user"
+            state: {
+                phase: "login"
+                accessToken: invalid
+                refreshToken: invalid
+                user: invalid
+                pendingRetry: invalid
+            }
+            event: {
+                type: "loginOk"
+                accessToken: "access-1"
+                refreshToken: "refresh-1"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+            }
+            expectPhase: "ready"
+            expectActions: ["persistRefreshToken"]
+            expectAccess: "access-1"
+            expectRefresh: "refresh-1"
+            expectUserMaxQ: "high"
+        })
+
+        ' ── single-flight: 401 → doRefresh → persist BEFORE retryPending ───
+        cases.push({
+            name: "response401_with_refresh_doRefresh"
+            state: {
+                phase: "ready"
+                accessToken: "access-old"
+                refreshToken: "rt-old"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: invalid
+            }
+            event: { type: "response401", request: { id: "me-1", kind: "me" } }
+            expectPhase: "refreshing"
+            expectActions: ["doRefresh"]
+        })
+
+        cases.push({
+            name: "refreshOk_after_401_persist_then_retryPending"
+            state: {
+                phase: "refreshing"
+                accessToken: "access-old"
+                refreshToken: "rt-old"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: { id: "me-1", kind: "me" }
+            }
+            event: {
+                type: "refreshOk"
+                accessToken: "access-new"
+                refreshToken: "rt-new"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+            }
+            expectPhase: "ready"
+            expectActions: ["persistRefreshToken", "retryPending"]
+            expectAccess: "access-new"
+            expectRefresh: "rt-new"
+            expectUserMaxQ: "high"
+        })
+
+        ' ── queued-behind-refresh never signs out ──────────────────────────
+        cases.push({
+            name: "queued_behind_refresh_no_signout"
+            state: {
+                phase: "refreshing"
+                accessToken: "access-old"
+                refreshToken: "rt-old"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: { id: "me-1", kind: "me" }
+            }
+            event: { type: "response401", request: { id: "me-2", kind: "me" } }
+            expectPhase: "refreshing"
+            expectActions: ["none"]
+            expectRefresh: "rt-old"
+        })
+
+        ' ── refreshFail mid-flight signs out ───────────────────────────────
+        cases.push({
+            name: "refreshFail_mid_request_clearAndSignOut"
+            state: {
+                phase: "refreshing"
+                accessToken: "access-old"
+                refreshToken: "rt-old"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: { id: "me-1", kind: "me" }
+            }
+            event: { type: "refreshFail" }
+            expectPhase: "login"
+            expectActions: ["clearAndSignOut"]
+            expectAccess: invalid
+            expectRefresh: invalid
+        })
+
+        ' ── signOut ────────────────────────────────────────────────────────
+        cases.push({
+            name: "signOut_clearAndSignOut"
+            state: {
+                phase: "ready"
+                accessToken: "access-1"
+                refreshToken: "rt-1"
+                user: { id: 1, username: "alice", role: "viewer", maxQuality: "high" }
+                pendingRetry: invalid
+            }
+            event: { type: "signOut" }
+            expectPhase: "signedOut"
+            expectActions: ["clearAndSignOut"]
+            expectAccess: invalid
+            expectRefresh: invalid
+        })
+
+        return cases
+    end function
+
+    function runCase(c as object) as object
+        result = bowtie.auth.reduce(c.state, c.event)
+        state = result.state
+        actions = result.actions
+
+        if state.phase <> c.expectPhase
+            return {
+                ok: false
+                name: c.name
+                detail: "phase want=" + c.expectPhase + " got=" + state.phase
+            }
+        end if
+
+        if not bowtie.fixtures.auth.actionsEqual(actions, c.expectActions)
+            return {
+                ok: false
+                name: c.name
+                detail: "actions want=" + bowtie.fixtures.auth.actionsJoin(c.expectActions) + " got=" + bowtie.fixtures.auth.actionsJoin(actions)
+            }
+        end if
+
+        ' persistRefreshToken must appear BEFORE retryPending when both present
+        if bowtie.fixtures.auth.actionsHas(actions, "persistRefreshToken") and bowtie.fixtures.auth.actionsHas(actions, "retryPending")
+            pi = bowtie.fixtures.auth.actionsIndex(actions, "persistRefreshToken")
+            ri = bowtie.fixtures.auth.actionsIndex(actions, "retryPending")
+            if pi < 0 or ri < 0 or pi >= ri
+                return {
+                    ok: false
+                    name: c.name
+                    detail: "persistRefreshToken must precede retryPending"
+                }
+            end if
+        end if
+
+        if c.DoesExist("expectAccess")
+            if c.expectAccess = invalid
+                if state.accessToken <> invalid and state.accessToken <> ""
+                    return { ok: false, name: c.name, detail: "accessToken should be cleared" }
+                end if
+            else if state.accessToken <> c.expectAccess
+                return { ok: false, name: c.name, detail: "accessToken mismatch" }
+            end if
+        end if
+
+        if c.DoesExist("expectRefresh")
+            if c.expectRefresh = invalid
+                if state.refreshToken <> invalid and state.refreshToken <> ""
+                    return { ok: false, name: c.name, detail: "refreshToken should be cleared" }
+                end if
+            else if state.refreshToken <> c.expectRefresh
+                return { ok: false, name: c.name, detail: "refreshToken mismatch" }
+            end if
+        end if
+
+        if c.DoesExist("expectUserMaxQ")
+            if state.user = invalid or state.user.maxQuality <> c.expectUserMaxQ
+                return { ok: false, name: c.name, detail: "user.maxQuality mismatch" }
+            end if
+        end if
+
+        return { ok: true, name: c.name }
+    end function
+
+    function runAll() as object
+        cases = bowtie.fixtures.auth.allCases()
+        results = []
+        passCount = 0
+        for each c in cases
+            r = bowtie.fixtures.auth.runCase(c)
+            results.push(r)
+            if r.ok then passCount = passCount + 1
+        end for
+        return {
+            suite: "AuthState"
+            total: cases.count()
+            passed: passCount
+            results: results
+        }
+    end function
+
+    function actionsEqual(got as object, want as object) as boolean
+        if got = invalid or want = invalid then return false
+        if got.count() <> want.count() then return false
+        for i = 0 to want.count() - 1
+            if got[i] <> want[i] then return false
+        end for
+        return true
+    end function
+
+    function actionsJoin(actions as object) as string
+        if actions = invalid then return ""
+        s = ""
+        for i = 0 to actions.count() - 1
+            if i > 0 then s = s + ","
+            s = s + actions[i]
+        end for
+        return s
+    end function
+
+    function actionsHas(actions as object, name as string) as boolean
+        return bowtie.fixtures.auth.actionsIndex(actions, name) >= 0
+    end function
+
+    function actionsIndex(actions as object, name as string) as integer
+        if actions = invalid then return -1
+        for i = 0 to actions.count() - 1
+            if actions[i] = name then return i
+        end for
+        return -1
+    end function
+
+end namespace

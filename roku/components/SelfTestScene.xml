@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="SelfTestScene" extends="Scene">
+    <script type="text/brightscript" uri="SelfTestScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+        <Label
+            id="titleLabel"
+            translation="[0, 80]"
+            width="1920"
+            height="80"
+            text="Bowtie SelfTest"
+            horizAlign="center"
+            vertAlign="center"
+            color="0xF0A428FF"
+            font="font:LargeBoldSystemFont"
+        />
+        <Label
+            id="resultLabel"
+            translation="[80, 200]"
+            width="1760"
+            height="120"
+            text="Running…"
+            horizAlign="center"
+            vertAlign="top"
+            color="0xF2EFE8FF"
+            font="font:LargeBoldSystemFont"
+            wrap="true"
+        />
+        <Label
+            id="detailLabel"
+            translation="[80, 340]"
+            width="1760"
+            height="680"
+            text=""
+            horizAlign="left"
+            vertAlign="top"
+            color="0x9BA5AEFF"
+            font="font:MediumSystemFont"
+            wrap="true"
+            lineSpacing="8"
+        />
+    </children>
+</component>

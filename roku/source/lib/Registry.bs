@@ -1,0 +1,73 @@
+' Persistence for server URL + refresh token via roRegistrySection "bowtie".
+' Thin I/O wrappers — not pure; AuthState never calls these.
+
+namespace bowtie.registry
+
+    function section() as object
+        return CreateObject("roRegistrySection", "bowtie")
+    end function
+
+    function loadServer() as dynamic
+        sec = bowtie.registry.section()
+        if sec = invalid then return invalid
+        if sec.Exists("server")
+            value = sec.Read("server")
+            if value = invalid or value = "" then return invalid
+            return value
+        end if
+        return invalid
+    end function
+
+    function loadRefreshToken() as dynamic
+        sec = bowtie.registry.section()
+        if sec = invalid then return invalid
+        if sec.Exists("refreshToken")
+            value = sec.Read("refreshToken")
+            if value = invalid or value = "" then return invalid
+            return value
+        end if
+        return invalid
+    end function
+
+    ' Save server and/or refreshToken. Pass invalid to clear that key.
+    ' server=invalid keeps existing server; refreshToken=invalid clears the token.
+    ' When both need updating, pass concrete values.
+    function save(server as dynamic, refreshToken as dynamic) as void
+        sec = bowtie.registry.section()
+        if sec = invalid then return
+
+        if server <> invalid
+            sec.Write("server", server)
+        end if
+
+        if refreshToken = invalid
+            if sec.Exists("refreshToken")
+                sec.Delete("refreshToken")
+            end if
+        else
+            sec.Write("refreshToken", refreshToken)
+        end if
+
+        sec.Flush()
+    end function
+
+    ' Clear tokens only; keep server (sign-out / refresh-fail path).
+    function clearRefreshToken() as void
+        sec = bowtie.registry.section()
+        if sec = invalid then return
+        if sec.Exists("refreshToken")
+            sec.Delete("refreshToken")
+        end if
+        sec.Flush()
+    end function
+
+    ' Wipe both server and refresh (change-server path).
+    function clearAll() as void
+        sec = bowtie.registry.section()
+        if sec = invalid then return
+        if sec.Exists("server") then sec.Delete("server")
+        if sec.Exists("refreshToken") then sec.Delete("refreshToken")
+        sec.Flush()
+    end function
+
+end namespace

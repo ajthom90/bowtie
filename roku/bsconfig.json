@@ -9,6 +9,6 @@
   "stagingDir": "out/staging",
   "retainStagingDir": true,
   "createPackage": false,
-  "sourceMap": true,
+  "sourceMap": false,
   "diagnosticFilters": []
 }

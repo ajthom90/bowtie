@@ -1,0 +1,236 @@
+' GuideLogic fixtures — translated cases from iOS GuideLogicTests / Android GuideLogicTest.
+
+namespace bowtie.fixtures.guide
+
+    function prog(startIso as string, stopIso as string, title as string) as object
+        return {
+            start: startIso
+            stop: stopIso
+            title: title
+            subtitle: ""
+            description: ""
+            category: ""
+        }
+    end function
+
+    function allCases() as object
+        cases = []
+
+        ' Fixed timeline (iOS): A 20:00–21:00, B 21:00–22:00, C 22:30–23:00
+        a = bowtie.fixtures.guide.prog("2024-06-15T20:00:00Z", "2024-06-15T21:00:00Z", "A")
+        b = bowtie.fixtures.guide.prog("2024-06-15T21:00:00Z", "2024-06-15T22:00:00Z", "B")
+        c = bowtie.fixtures.guide.prog("2024-06-15T22:30:00Z", "2024-06-15T23:00:00Z", "C")
+        programs = [a, b, c]
+
+        cases.push({
+            name: "nowNext_midProgram"
+            kind: "nowNext"
+            programs: programs
+            at: "2024-06-15T20:30:00Z"
+            expectNow: "A"
+            expectNext: "B"
+        })
+
+        cases.push({
+            name: "nowNext_exactStartIsInclusive"
+            kind: "nowNext"
+            programs: programs
+            at: "2024-06-15T21:00:00Z"
+            expectNow: "B"
+            expectNext: "C"
+        })
+
+        cases.push({
+            name: "nowNext_exactStopIsExclusive_withB"
+            kind: "nowNext"
+            programs: [a, b]
+            at: "2024-06-15T21:00:00Z"
+            expectNow: "B"
+            expectNext: invalid
+        })
+
+        cases.push({
+            name: "nowNext_exactStop_onlyA_nil"
+            kind: "nowNext"
+            programs: [a]
+            at: "2024-06-15T21:00:00Z"
+            expectNow: invalid
+            expectNext: invalid
+        })
+
+        cases.push({
+            name: "nowNext_gap_noCurrent_nextOnly"
+            kind: "nowNext"
+            programs: programs
+            at: "2024-06-15T22:15:00Z"
+            expectNow: invalid
+            expectNext: "C"
+        })
+
+        cases.push({
+            name: "nowNext_empty"
+            kind: "nowNext"
+            programs: []
+            at: "2024-06-15T20:30:00Z"
+            expectNow: invalid
+            expectNext: invalid
+        })
+
+        cases.push({
+            name: "nowNext_beforeAll"
+            kind: "nowNext"
+            programs: programs
+            at: "2024-06-15T19:00:00Z"
+            expectNow: invalid
+            expectNext: "A"
+        })
+
+        cases.push({
+            name: "nowNext_afterAll"
+            kind: "nowNext"
+            programs: programs
+            at: "2024-06-15T23:30:00Z"
+            expectNow: invalid
+            expectNext: invalid
+        })
+
+        ' Android-style only-now-no-next
+        solo = bowtie.fixtures.guide.prog("2026-08-05T18:00:00Z", "2026-08-05T19:00:00Z", "Solo")
+        cases.push({
+            name: "nowNext_onlyNowNoNext"
+            kind: "nowNext"
+            programs: [solo]
+            at: "2026-08-05T18:15:00Z"
+            expectNow: "Solo"
+            expectNext: invalid
+        })
+
+        cases.push({
+            name: "nowNext_startBoundaryInclusive"
+            kind: "nowNext"
+            programs: [solo]
+            at: "2026-08-05T18:00:00Z"
+            expectNow: "Solo"
+            expectNext: invalid
+        })
+
+        ' allowedProfiles
+        cases.push({
+            name: "allowedProfiles_emptyIsAll"
+            kind: "allowedProfiles"
+            maxQuality: ""
+            expect: ["original", "high", "medium", "low"]
+        })
+
+        cases.push({
+            name: "allowedProfiles_mediumIsSuffix"
+            kind: "allowedProfiles"
+            maxQuality: "medium"
+            expect: ["medium", "low"]
+        })
+
+        cases.push({
+            name: "allowedProfiles_originalIsAll"
+            kind: "allowedProfiles"
+            maxQuality: "original"
+            expect: ["original", "high", "medium", "low"]
+        })
+
+        cases.push({
+            name: "allowedProfiles_high"
+            kind: "allowedProfiles"
+            maxQuality: "high"
+            expect: ["high", "medium", "low"]
+        })
+
+        cases.push({
+            name: "allowedProfiles_low"
+            kind: "allowedProfiles"
+            maxQuality: "low"
+            expect: ["low"]
+        })
+
+        cases.push({
+            name: "allowedProfiles_unknownIsAll"
+            kind: "allowedProfiles"
+            maxQuality: "ultra"
+            expect: ["original", "high", "medium", "low"]
+        })
+
+        return cases
+    end function
+
+    function titleOrInvalid(prog as dynamic) as dynamic
+        if prog = invalid then return invalid
+        return prog.title
+    end function
+
+    function stringArraysEqual(a as object, b as object) as boolean
+        if a = invalid or b = invalid then return false
+        if a.count() <> b.count() then return false
+        for i = 0 to a.count() - 1
+            if a[i] <> b[i] then return false
+        end for
+        return true
+    end function
+
+    function runCase(c as object) as object
+        if c.kind = "nowNext"
+            nn = bowtie.guide.nowNext(c.programs, c.at)
+            nowTitle = bowtie.fixtures.guide.titleOrInvalid(nn.now)
+            nextTitle = bowtie.fixtures.guide.titleOrInvalid(nn.next)
+            if nowTitle <> c.expectNow
+                return {
+                    ok: false
+                    name: c.name
+                    detail: "now want=" + bowtie.fixtures.guide.str(c.expectNow) + " got=" + bowtie.fixtures.guide.str(nowTitle)
+                }
+            end if
+            if nextTitle <> c.expectNext
+                return {
+                    ok: false
+                    name: c.name
+                    detail: "next want=" + bowtie.fixtures.guide.str(c.expectNext) + " got=" + bowtie.fixtures.guide.str(nextTitle)
+                }
+            end if
+            return { ok: true, name: c.name }
+        end if
+
+        if c.kind = "allowedProfiles"
+            got = bowtie.guide.allowedProfiles(c.maxQuality)
+            if not bowtie.fixtures.guide.stringArraysEqual(got, c.expect)
+                return {
+                    ok: false
+                    name: c.name
+                    detail: "profiles mismatch"
+                }
+            end if
+            return { ok: true, name: c.name }
+        end if
+
+        return { ok: false, name: c.name, detail: "unknown kind" }
+    end function
+
+    function str(v as dynamic) as string
+        if v = invalid then return "<nil>"
+        return v
+    end function
+
+    function runAll() as object
+        cases = bowtie.fixtures.guide.allCases()
+        results = []
+        passCount = 0
+        for each c in cases
+            r = bowtie.fixtures.guide.runCase(c)
+            results.push(r)
+            if r.ok then passCount = passCount + 1
+        end for
+        return {
+            suite: "GuideLogic"
+            total: cases.count()
+            passed: passCount
+            results: results
+        }
+    end function
+
+end namespace

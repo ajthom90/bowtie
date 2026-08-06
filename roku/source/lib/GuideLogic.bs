@@ -1,0 +1,82 @@
+' Pure guide helpers: now/next derivation and maxQuality → profile ladder.
+' Mirrors iOS GuideLogic / Android GuideLogic semantics.
+'
+' now: first program with start <= at < stop (stop exclusive)
+' next: earliest start >= now.stop when now present; else earliest start > at
+
+namespace bowtie.guide
+
+    function qualityLadder() as object
+        return ["original", "high", "medium", "low"]
+    end function
+
+    ' programs: array of {start, stop, title, ...} with ISO-8601 Z strings
+    ' atIso: ISO-8601 Z instant string
+    ' returns {now: program|invalid, next: program|invalid}
+    function nowNext(programs as object, atIso as string) as object
+        if programs = invalid then programs = []
+        nowProg = invalid
+        for each p in programs
+            if p <> invalid and p.start <> invalid and p.stop <> invalid
+                if p.start <= atIso and atIso < p.stop
+                    nowProg = p
+                    exit for
+                end if
+            end if
+        end for
+
+        nextProg = invalid
+        if nowProg <> invalid
+            bestStart = invalid
+            for each p in programs
+                if p <> invalid and p.start <> invalid
+                    if p.start >= nowProg.stop
+                        if bestStart = invalid or p.start < bestStart
+                            bestStart = p.start
+                            nextProg = p
+                        end if
+                    end if
+                end if
+            end for
+        else
+            bestStart = invalid
+            for each p in programs
+                if p <> invalid and p.start <> invalid
+                    if p.start > atIso
+                        if bestStart = invalid or p.start < bestStart
+                            bestStart = p.start
+                            nextProg = p
+                        end if
+                    end if
+                end if
+            end for
+        end if
+
+        return { now: nowProg, next: nextProg }
+    end function
+
+    ' maxQuality: "" / unknown → full ladder; known rung → that rung and below
+    function allowedProfiles(maxQuality as string) as object
+        ladder = bowtie.guide.qualityLadder()
+        if maxQuality = invalid or maxQuality = ""
+            return ladder
+        end if
+
+        idx = -1
+        for i = 0 to ladder.count() - 1
+            if ladder[i] = maxQuality
+                idx = i
+                exit for
+            end if
+        end for
+
+        if idx < 0 then return ladder
+
+        result = []
+        for i = idx to ladder.count() - 1
+            result.push(ladder[i])
+        end for
+        return result
+    end function
+
+end namespace
