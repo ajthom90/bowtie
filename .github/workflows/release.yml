@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # Manual fallback for when GitHub drops tag push events (observed 2026-08-06):
+  # dispatch on the tag ref itself, e.g. `gh workflow run Release --ref v0.3.0`.
+  workflow_dispatch:
 
 permissions:
   contents: write
