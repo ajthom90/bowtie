@@ -32,8 +32,8 @@ import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.tv.ui.ChannelRailScreen
 import app.bowtie.tv.ui.ConnectScreen
 import app.bowtie.tv.ui.LoginScreen
-import app.bowtie.tv.ui.PlayerStubScreen
 import app.bowtie.tv.ui.SettingsScreen
+import app.bowtie.tv.ui.TvPlayerScreen
 import okhttp3.HttpUrl
 
 /** In-app routes once [AppViewModel.Phase.Ready]. */
@@ -122,6 +122,11 @@ private fun ReadyShell(
     )
 
     var route by remember(client.server) { mutableStateOf<ReadyRoute>(ReadyRoute.Channels) }
+    val listState by channelListViewModel.state.collectAsStateWithLifecycle()
+    val channelList = when (val s = listState) {
+        is ChannelListViewModel.LoadState.Loaded -> s.rows.map { it.channel }
+        else -> emptyList()
+    }
 
     when (val r = route) {
         is ReadyRoute.Channels -> {
@@ -152,9 +157,17 @@ private fun ReadyShell(
             )
         }
         is ReadyRoute.Player -> {
-            PlayerStubScreen(
+            val zapList = channelList.ifEmpty { listOf(r.channel) }
+            TvPlayerScreen(
                 channel = r.channel,
+                channels = zapList,
                 playerViewModel = playerViewModel,
+                server = client.server,
+                maxQuality = user.maxQuality,
+                nowTitle = r.nowTitle,
+                onChannelChanged = { channel, nowTitle ->
+                    route = ReadyRoute.Player(channel = channel, nowTitle = nowTitle)
+                },
                 onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
             )

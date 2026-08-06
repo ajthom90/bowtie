@@ -46,43 +46,29 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.HttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.ui.PlayerView
 import app.bowtie.BowtieColors
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.PipHost
 import app.bowtie.core.Channel
-import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.CreatedSession
 import app.bowtie.core.GuideLogic
-import app.bowtie.core.ServerUrl
 import app.bowtie.core.SessionInfoMeta
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import app.bowtie.core.player.PlayerEngine
+import app.bowtie.core.vm.PlayerViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 
 private const val OVERLAY_HIDE_MS = 3_000L
-private val NETWORK_BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L)
-private const val PLAYBACK_FAILED_COPY =
-    "Playback failed. Try again or pick a lower quality."
 
 /**
- * Media3 HLS player: default (unauthenticated) data source, overlay controls,
- * quality sheet, stats, keep-screen-on. PiP is coordinated via [PipHost].
+ * Media3 HLS player: shared [PlayerEngine], overlay controls, quality sheet,
+ * stats, keep-screen-on. PiP is coordinated via [PipHost].
  *
- * Global constraint: NEVER share the Bearer OkHttp client with HlsMediaSource.
+ * Global constraint: NEVER share the Bearer OkHttp client with HlsMediaSource
+ * (enforced inside [PlayerEngine]).
  */
 @OptIn(ExperimentalMaterial3Api::class, UnstableApi::class)
 @Composable
@@ -110,28 +96,46 @@ fun PlayerScreen(
 
     val onBackLatest = rememberUpdatedState(onBack)
     val viewModelLatest = rememberUpdatedState(playerViewModel)
+    val setBitrate = rememberUpdatedState { bps: Int? -> bitrateBps = bps }
+    val setDropped = rememberUpdatedState { total: Long -> droppedFrames = total }
 
-    // Default HttpDataSource — no auth interceptor (stream auth is ?token=).
-    val player = remember {
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("BowtieAndroid/0.1")
-            .setAllowCrossProtocolRedirects(true)
-        val hlsFactory = HlsMediaSource.Factory(httpFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(hlsFactory)
-            .build()
-            .apply {
-                playWhenReady = true
-                // Live edge by default for HLS.
-                setHandleAudioBecomingNoisy(true)
-            }
+    val engine = remember {
+        PlayerEngine(
+            context = context,
+            scope = scope,
+            listener = object : PlayerEngine.Listener {
+                override fun onAuthError() {
+                    viewModelLatest.value.onPlaybackAuthError()
+                }
+
+                override fun onStalled() {
+                    viewModelLatest.value.onPlaybackStalled()
+                }
+
+                override fun onRecovered() {
+                    viewModelLatest.value.onPlaybackRecovered()
+                }
+
+                override fun onFailed(message: String) {
+                    viewModelLatest.value.onPlaybackFailed(message)
+                }
+
+                override fun onReady() {
+                    // Phone: no focus restore requirement.
+                }
+
+                override fun onBitrate(bps: Int?) {
+                    setBitrate.value.invoke(bps)
+                }
+
+                override fun onDroppedFrames(total: Long) {
+                    setDropped.value.invoke(total)
+                }
+            },
+        )
     }
 
-    var networkRetryJob by remember { mutableStateOf<Job?>(null) }
-    var networkAttempt by remember { mutableStateOf(0) }
-
     fun leave() {
-        networkRetryJob?.cancel()
         playerViewModel.stop()
         onBack()
     }
@@ -164,63 +168,9 @@ fun PlayerScreen(
         }
     }
 
-    // Wire Media3 listener once.
-    DisposableEffect(player) {
-        val analytics = object : AnalyticsListener {
-            override fun onDroppedVideoFrames(
-                eventTime: AnalyticsListener.EventTime,
-                droppedFramesCount: Int,
-                elapsedMs: Long,
-            ) {
-                droppedFrames += droppedFramesCount.toLong()
-            }
-
-            override fun onVideoSizeChanged(
-                eventTime: AnalyticsListener.EventTime,
-                videoSize: androidx.media3.common.VideoSize,
-            ) {
-                bitrateBps = player.videoFormat?.bitrate?.takeIf { it > 0 }
-            }
-        }
-        val listener = object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) {
-                handlePlayerError(
-                    error = error,
-                    player = player,
-                    viewModel = playerViewModel,
-                    networkAttempt = networkAttempt,
-                    onNetworkAttempt = { networkAttempt = it },
-                    networkRetryJob = networkRetryJob,
-                    onNetworkRetryJob = { networkRetryJob = it },
-                    scope = scope,
-                )
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    networkAttempt = 0
-                    networkRetryJob?.cancel()
-                    networkRetryJob = null
-                    bitrateBps = player.videoFormat?.bitrate?.takeIf { it > 0 }
-                    if (viewModelLatest.value.state.value is PlayerViewModel.State.Stalled) {
-                        viewModelLatest.value.onPlaybackRecovered()
-                    }
-                } else if (playbackState == Player.STATE_BUFFERING) {
-                    // Prolonged rebuffer is handled via onPlayerError / live-window.
-                }
-            }
-
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                bitrateBps = player.videoFormat?.bitrate?.takeIf { it > 0 }
-            }
-        }
-        player.addListener(listener)
-        player.addAnalyticsListener(analytics)
+    DisposableEffect(engine) {
         onDispose {
-            player.removeListener(listener)
-            player.removeAnalyticsListener(analytics)
-            networkRetryJob?.cancel()
-            player.release()
+            engine.release()
         }
     }
 
@@ -233,9 +183,7 @@ fun PlayerScreen(
                     activeViewerId = session.viewerId
                     sessionMeta = session.session
                     droppedFrames = 0L
-                    networkAttempt = 0
-                    networkRetryJob?.cancel()
-                    loadSession(player, server, session)
+                    loadSession(engine, server, session)
                 } else {
                     sessionMeta = session.session
                 }
@@ -245,17 +193,16 @@ fun PlayerScreen(
             }
             is PlayerViewModel.State.Idle -> {
                 activeViewerId = null
-                player.stop()
-                player.clearMediaItems()
+                engine.stopAndClear()
             }
             is PlayerViewModel.State.Failed,
             is PlayerViewModel.State.TunersBusy,
             -> {
                 // Stop decoder but keep state for UI; session may still exist until retry/stop.
-                player.stop()
+                engine.stopDecoder()
             }
             is PlayerViewModel.State.Stalled -> {
-                // Player layer handles seek retry.
+                // Engine handles seek retry.
             }
         }
     }
@@ -289,11 +236,11 @@ fun PlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
-                    this.player = player
+                    this.player = engine.player
                 }
             },
             update = { view ->
-                view.player = player
+                view.player = engine.player
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -426,93 +373,12 @@ fun PlayerScreen(
 
 @UnstableApi
 private fun loadSession(
-    player: ExoPlayer,
+    engine: PlayerEngine,
     server: HttpUrl,
     session: CreatedSession,
 ) {
-    val resolved = ServerUrl.resolve(session.playlistUrl, server)
-    // MediaItem + HlsMediaSource via the player's DefaultMediaSourceFactory
-    // which we configured with plain DefaultHttpDataSource (no Bearer).
-    val item = MediaItem.fromUri(resolved.toString())
-    player.setMediaItem(item)
-    player.prepare()
-    player.playWhenReady = true
+    engine.loadPlaylist(session.playlistUrl, server)
 }
-
-@UnstableApi
-private fun handlePlayerError(
-    error: PlaybackException,
-    player: ExoPlayer,
-    viewModel: PlayerViewModel,
-    networkAttempt: Int,
-    onNetworkAttempt: (Int) -> Unit,
-    networkRetryJob: Job?,
-    onNetworkRetryJob: (Job?) -> Unit,
-    scope: CoroutineScope,
-) {
-    val cause = error.cause
-    val responseCode =
-        (cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
-
-    if (responseCode == 403) {
-        viewModel.onPlaybackAuthError()
-        return
-    }
-
-    val behindLive = cause is BehindLiveWindowException ||
-        error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
-
-    if (behindLive) {
-        viewModel.onPlaybackStalled()
-        try {
-            player.seekToDefaultPosition()
-            player.prepare()
-        } catch (_: Exception) {
-            // Fall through to network retry path below if seek fails.
-        }
-        return
-    }
-
-    val isNetwork = error.errorCode in NETWORK_ERROR_CODES ||
-        cause is HttpDataSource.HttpDataSourceException ||
-        cause is java.io.IOException
-
-    if (isNetwork) {
-        viewModel.onPlaybackStalled()
-        networkRetryJob?.cancel()
-        val attempt = networkAttempt
-        if (attempt >= NETWORK_BACKOFF_MS.size) {
-            onNetworkAttempt(0)
-            viewModel.onPlaybackFailed(PLAYBACK_FAILED_COPY)
-            return
-        }
-        val delayMs = NETWORK_BACKOFF_MS[attempt]
-        onNetworkAttempt(attempt + 1)
-        val job = scope.launch {
-            delay(delayMs)
-            try {
-                player.seekToDefaultPosition()
-                player.prepare()
-                player.playWhenReady = true
-            } catch (_: Exception) {
-                viewModel.onPlaybackFailed(PLAYBACK_FAILED_COPY)
-            }
-        }
-        onNetworkRetryJob(job)
-        return
-    }
-
-    // Other hard errors → fail after optional single prepare retry is not required.
-    viewModel.onPlaybackFailed(error.message ?: PLAYBACK_FAILED_COPY)
-}
-
-@UnstableApi
-private val NETWORK_ERROR_CODES = intArrayOf(
-    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
-    PlaybackException.ERROR_CODE_TIMEOUT,
-)
 
 @Composable
 private fun PlayerOverlay(
