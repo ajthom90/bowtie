@@ -43,6 +43,6 @@
         <LoginScene id="loginScene" visible="false" />
         <HomeScene id="homeScene" visible="false" />
         <SettingsScene id="settingsScene" visible="false" />
-        <PlayerStubScene id="playerStubScene" visible="false" />
+        <PlayerScene id="playerScene" visible="false" />
     </children>
 </component>

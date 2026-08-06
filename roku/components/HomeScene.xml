@@ -4,7 +4,7 @@
         <field id="apiTask" type="node" />
         <!-- True when user opens Settings. -->
         <field id="openSettings" type="boolean" alwaysNotify="true" value="false" />
-        <!-- Channel AA selected for play: {id, guideNumber, name}. -->
+        <!-- Channel AA selected for play: {id, guideNumber, name, index, channels}. -->
         <field id="selectedChannel" type="assocarray" alwaysNotify="true" />
     </interface>
     <script type="text/brightscript" uri="HomeScene.bs" />

@@ -2,7 +2,8 @@
 ' registry server? no → Connect. Server, no refresh → Login.
 ' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
 ' Refresh ok → Home. Refresh fail → Login (server kept).
-' Home → Settings / PlayerStub; Settings change-server → Connect; sign-out → Login.
+' Home → Settings / Player; Settings change-server → Connect; sign-out → Login.
+' A3: phase changes never orphan a live viewer (PlayerScene teardown on hide).
 
 import "pkg:/source/lib/Registry.bs"
 
@@ -15,7 +16,7 @@ sub init()
     m.loginScene = m.top.findNode("loginScene")
     m.homeScene = m.top.findNode("homeScene")
     m.settingsScene = m.top.findNode("settingsScene")
-    m.playerStubScene = m.top.findNode("playerStubScene")
+    m.playerScene = m.top.findNode("playerScene")
     m.checkingSpinner = m.top.findNode("checkingSpinner")
 
     m.phase = "connect"
@@ -33,6 +34,7 @@ sub init()
     m.loginScene.apiTask = m.apiTask
     m.homeScene.apiTask = m.apiTask
     m.settingsScene.apiTask = m.apiTask
+    m.playerScene.apiTask = m.apiTask
 
     m.connectScene.observeField("connected", "onConnected")
     m.loginScene.observeField("signedIn", "onSignedIn")
@@ -41,7 +43,8 @@ sub init()
     m.homeScene.observeField("selectedChannel", "onSelectedChannel")
     m.settingsScene.observeField("closed", "onSettingsClosed")
     m.settingsScene.observeField("changeServer", "onSettingsChangeServer")
-    m.playerStubScene.observeField("closed", "onPlayerStubClosed")
+    m.playerScene.observeField("closed", "onPlayerClosed")
+    m.playerScene.observeField("channelsStale", "onPlayerChannelsStale")
 
     ' Initial route from registry (UI only until ApiTask is ready).
     routeFromRegistry()
@@ -108,6 +111,10 @@ sub onAuthEvent()
     ev = m.apiTask.authEvent
     if ev = invalid then return
     if ev.type = "signOut"
+        ' A3: hide player first so onVisible teardown DELETEs any live viewer.
+        if m.phase = "player"
+            m.playerScene.visible = false
+        end if
         ' Forced sign-out / logout: keep server, show Login.
         server = bowtie.registry.loadServer()
         if server <> invalid and server <> ""
@@ -154,13 +161,19 @@ sub onSelectedChannel()
     name = ""
     gn = ""
     cid = 0
+    idx = 0
+    channels = []
     if ch.name <> invalid then name = ch.name
     if ch.guideNumber <> invalid then gn = ch.guideNumber
     if ch.id <> invalid then cid = ch.id
-    m.playerStubScene.channelName = name
-    m.playerStubScene.guideNumber = gn
-    m.playerStubScene.channelId = cid
-    setPhase("playerStub")
+    if ch.index <> invalid then idx = ch.index
+    if ch.channels <> invalid then channels = ch.channels
+    m.playerScene.channelName = name
+    m.playerScene.guideNumber = gn
+    m.playerScene.channelId = cid
+    m.playerScene.channelIndex = idx
+    m.playerScene.channels = channels
+    setPhase("player")
 end sub
 
 sub onSettingsClosed()
@@ -174,9 +187,14 @@ sub onSettingsChangeServer()
     setPhase("connect")
 end sub
 
-sub onPlayerStubClosed()
-    if m.playerStubScene.closed <> true then return
+sub onPlayerClosed()
+    if m.playerScene.closed <> true then return
     setPhase("home")
+end sub
+
+sub onPlayerChannelsStale()
+    ' Home reloads on every show; flag is informational for future selective refresh.
+    if m.playerScene.channelsStale <> true then return
 end sub
 
 sub showHome()
@@ -196,7 +214,10 @@ sub setPhase(phase as string)
     m.loginScene.visible = false
     m.homeScene.visible = false
     m.settingsScene.visible = false
-    m.playerStubScene.visible = false
+    ' Hide player when leaving so its onVisible teardown DELETEs (A3).
+    if phase <> "player"
+        m.playerScene.visible = false
+    end if
 
     if m.checkingSpinner <> invalid
         m.checkingSpinner.control = "stop"
@@ -221,8 +242,8 @@ sub setPhase(phase as string)
         m.settingsScene.serverUrl = m.serverUrl
         m.settingsScene.visible = true
         m.settingsScene.setFocus(true)
-    else if phase = "playerStub"
-        m.playerStubScene.visible = true
-        m.playerStubScene.setFocus(true)
+    else if phase = "player"
+        m.playerScene.visible = true
+        m.playerScene.setFocus(true)
     end if
 end sub

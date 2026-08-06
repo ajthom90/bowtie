@@ -1,0 +1,824 @@
+' Live player: Video + session-replace (A3) + absolute HLS (A4) + error matrix (A5).
+'
+' A3 on zap/quality: gen++; DELETE current; debounce 400ms; POST create;
+'   stale-gen create success → orphan DELETE before discard.
+' A4 ContentNode: url=absolute playlistUrl, streamFormat="hls", Live=true.
+' A5: 503 tuners-busy copy+list+retry; 422 Auto-retry once then device-can't-play;
+'   404 channelsStale + inform; mid-play allowlist EMPTY (keyed on Video
+'   errorCode/errorMsg) → else bounded retry 1s/2s/4s ×3 without new sessions.
+
+import "pkg:/source/lib/Caps.bs"
+import "pkg:/source/lib/GuideLogic.bs"
+
+' Mid-play auth allowlist: seeded EMPTY (A5). Token-kill capture populates real
+' Video errorCode/errorMsg entries: { code as integer|invalid, msgContains as string }.
+' Until then, mid-play failures take the bounded-retry path (no new sessions).
+
+const TUNERS_BUSY_COPY = "All tuners are in use — someone else is watching. Try again in a few minutes."
+const DEVICE_CANT_PLAY = "This device can't play this channel at that quality"
+const CHANNEL_NOT_FOUND = "Channel not found"
+const PLAYBACK_AUTH_FAILED = "Playback authorization failed"
+const PLAYBACK_FAILED = "Playback failed. Try again or pick a lower quality."
+
+function authErrorPatterns() as object
+    ' EMPTY allowlist — extend after on-device token-kill capture.
+    return []
+end function
+
+sub init()
+    m.video = m.top.findNode("video")
+    m.chromeGroup = m.top.findNode("chromeGroup")
+    m.numberLabel = m.top.findNode("numberLabel")
+    m.nameLabel = m.top.findNode("nameLabel")
+    m.qualityHint = m.top.findNode("qualityHint")
+    m.loadingGroup = m.top.findNode("loadingGroup")
+    m.loadingSpinner = m.top.findNode("loadingSpinner")
+    m.loadingLabel = m.top.findNode("loadingLabel")
+    m.errorGroup = m.top.findNode("errorGroup")
+    m.errorTitle = m.top.findNode("errorTitle")
+    m.errorDetail = m.top.findNode("errorDetail")
+    m.retryButton = m.top.findNode("retryButton")
+    m.tunersGroup = m.top.findNode("tunersGroup")
+    m.tunersTitle = m.top.findNode("tunersTitle")
+    m.tunersList = m.top.findNode("tunersList")
+    m.tunersRetryButton = m.top.findNode("tunersRetryButton")
+    m.debugGroup = m.top.findNode("debugGroup")
+    m.debugLabel = m.top.findNode("debugLabel")
+    m.debounceTimer = m.top.findNode("debounceTimer")
+    m.retryTimer = m.top.findNode("retryTimer")
+    m.chromeTimer = m.top.findNode("chromeTimer")
+
+    m.observing = false
+    m.gen = 0
+    m.debounceGen = 0
+    m.activeViewerId = ""
+    m.playlistUrl = ""
+    m.selectedProfile = "" ' "" = Auto
+    m.pendingCreateId = ""
+    m.pendingDeletePrefix = "player-delete-"
+    m.is422Retry = false
+    m.authRetried = false
+    m.retryAttempt = 0
+    m.uiPhase = "idle" ' idle|starting|playing|failed|tunersBusy
+    m.dialog = invalid
+    m.dialogMode = ""
+    m.reqSeq = 0
+    m.lastErrorCode = 0
+    m.lastErrorMsg = ""
+    m.lastVideoState = ""
+
+    m.retryButton.observeField("buttonSelected", "onRetryButton")
+    m.tunersRetryButton.observeField("buttonSelected", "onRetryButton")
+    m.debounceTimer.observeField("fire", "onDebounceFire")
+    m.retryTimer.observeField("fire", "onRetryTimerFire")
+    m.chromeTimer.observeField("fire", "onChromeTimerFire")
+    m.video.observeField("state", "onVideoState")
+    m.video.observeField("errorCode", "onVideoErrorFields")
+    m.video.observeField("errorMsg", "onVideoErrorFields")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("apiTask", "onApiTaskSet")
+    m.top.observeField("showDebug", "onShowDebug")
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeField("response", "onApiResponse")
+        task.observeField("authEvent", "onAuthEvent")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveField("response")
+            task.unobserveField("authEvent")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub onShowDebug()
+    updateDebugOverlay()
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.top.closed = false
+        m.top.channelsStale = false
+        m.selectedProfile = ""
+        m.is422Retry = false
+        m.authRetried = false
+        m.retryAttempt = 0
+        m.activeViewerId = ""
+        m.playlistUrl = ""
+        m.pendingCreateId = ""
+        m.uiPhase = "idle"
+        observeApi()
+        updateChromeLabels()
+        updateDebugOverlay()
+        m.top.setFocus(true)
+        ' Enter → session create for the selected channel.
+        if m.top.channelId <> invalid and m.top.channelId <> 0
+            scheduleReplace()
+        end if
+    else
+        ' Leaving: A3 back/stop — DELETE then leave (closed already set by back path).
+        teardownSession(false)
+        closeDialog()
+        unobserveApi()
+        stopVideo()
+        hideAllOverlays()
+    end if
+end sub
+
+' Forced sign-out while player alive: teardown DELETE before ApiTask has drained (A3).
+sub onAuthEvent()
+    ev = invalid
+    task = m.top.apiTask
+    if task <> invalid then ev = task.authEvent
+    if ev = invalid then return
+    if ev.type = "signOut"
+        teardownSession(false)
+        stopVideo()
+    end if
+end sub
+
+sub updateChromeLabels()
+    gn = m.top.guideNumber
+    if gn = invalid then gn = ""
+    name = m.top.channelName
+    if name = invalid then name = ""
+    m.numberLabel.text = gn
+    m.nameLabel.text = name
+    m.qualityHint.text = qualityHintText()
+end sub
+
+function qualityHintText() as string
+    label = "Auto"
+    if m.selectedProfile <> invalid and m.selectedProfile <> ""
+        label = m.selectedProfile
+    end if
+    return "Quality: " + label + " · OK play/pause · * quality"
+end function
+
+' ── Session-replace machine (A3) ─────────────────────────────────────────────
+
+sub scheduleReplace()
+    m.gen = m.gen + 1
+    gen = m.gen
+    m.is422Retry = false
+    m.retryAttempt = 0
+    m.retryTimer.control = "stop"
+
+    ' (2) DELETE current viewer immediately.
+    if m.activeViewerId <> invalid and m.activeViewerId <> ""
+        enqueueDelete(m.activeViewerId)
+        m.activeViewerId = ""
+    end if
+    m.playlistUrl = ""
+    stopVideo()
+
+    m.uiPhase = "starting"
+    showStarting("Starting…")
+    updateChromeLabels()
+    showChrome()
+
+    ' (3) debounce 400ms
+    m.debounceGen = gen
+    m.debounceTimer.control = "stop"
+    m.debounceTimer.control = "start"
+end sub
+
+sub onDebounceFire()
+    if m.top.visible <> true then return
+    if m.debounceGen <> m.gen then return
+    ' (4) enqueue create
+    enqueueCreate(m.gen, false)
+end sub
+
+sub enqueueCreate(gen as integer, is422Retry as boolean)
+    task = m.top.apiTask
+    if task = invalid then return
+
+    m.is422Retry = is422Retry
+    m.reqSeq = m.reqSeq + 1
+    rid = "player-create-" + gen.toStr() + "-" + m.reqSeq.toStr()
+    m.pendingCreateId = rid
+
+    caps = bowtie.caps.current()
+    profile = m.selectedProfile
+    if profile = invalid then profile = ""
+    caps.profile = profile
+
+    task.request = {
+        id: rid
+        kind: "createSession"
+        params: {
+            channelId: m.top.channelId
+            caps: caps
+            gen: gen
+        }
+    }
+end sub
+
+sub enqueueDelete(viewerId as string)
+    if viewerId = invalid or viewerId = "" then return
+    task = m.top.apiTask
+    if task = invalid then return
+    m.reqSeq = m.reqSeq + 1
+    rid = m.pendingDeletePrefix + viewerId + "-" + m.reqSeq.toStr()
+    task.request = {
+        id: rid
+        kind: "deleteSession"
+        params: { viewerId: viewerId }
+    }
+end sub
+
+' Stop + DELETE without closing (used on hide / auth). When markClosed, set closed.
+sub teardownSession(markClosed as boolean)
+    m.gen = m.gen + 1
+    m.debounceTimer.control = "stop"
+    m.retryTimer.control = "stop"
+    m.chromeTimer.control = "stop"
+    m.pendingCreateId = ""
+    if m.activeViewerId <> invalid and m.activeViewerId <> ""
+        enqueueDelete(m.activeViewerId)
+        m.activeViewerId = ""
+    end if
+    m.playlistUrl = ""
+    m.uiPhase = "idle"
+    if markClosed = true
+        m.top.closed = true
+    end if
+end sub
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    if m.top.visible <> true then return
+    resp = task.response
+    if resp = invalid then return
+    if resp.id = invalid then return
+
+    rid = resp.id
+    ' Ignore delete responses (fire-and-forget).
+    if Left(rid, Len(m.pendingDeletePrefix)) = m.pendingDeletePrefix
+        return
+    end if
+
+    if rid <> m.pendingCreateId then return
+    handleCreateResponse(resp)
+end sub
+
+sub handleCreateResponse(resp as object)
+    pendingId = m.pendingCreateId
+    m.pendingCreateId = ""
+
+    ' Extract gen from id "player-create-<gen>-<seq>"
+    gen = genFromCreateId(pendingId)
+
+    if resp.ok = true
+        data = resp.data
+        viewerId = ""
+        playlistUrl = ""
+        if data <> invalid
+            if data.viewerId <> invalid then viewerId = data.viewerId
+            if data.playlistUrl <> invalid then playlistUrl = data.playlistUrl
+        end if
+
+        ' (5) stale-gen orphan DELETE before discard.
+        if gen <> m.gen
+            if viewerId <> "" then enqueueDelete(viewerId)
+            return
+        end if
+
+        m.activeViewerId = viewerId
+        m.playlistUrl = playlistUrl
+        m.authRetried = false
+        m.retryAttempt = 0
+        m.is422Retry = false
+        startPlayback(playlistUrl)
+        return
+    end if
+
+    if gen <> m.gen then return
+    handleCreateError(resp)
+end sub
+
+function genFromCreateId(rid as string) as integer
+    if rid = invalid or rid = "" then return -1
+    ' player-create-<gen>-<seq>
+    parts = rid.Tokenize("-")
+    if parts = invalid or parts.count() < 4 then return -1
+    ' ["player", "create", gen, seq]
+    g = parts[2]
+    if g = invalid then return -1
+    return Val(g)
+end function
+
+sub handleCreateError(resp as object)
+    err = resp.error
+    code = 0
+    if err <> invalid and err.code <> invalid then code = err.code
+
+    if code = 503
+        sessions = []
+        if err <> invalid and err.sessions <> invalid then sessions = err.sessions
+        showTunersBusy(sessions)
+        return
+    end if
+
+    if code = 422
+        ' Reset quality to Auto and retry ONCE; second 422 → device-can't-play.
+        m.selectedProfile = ""
+        updateChromeLabels()
+        if m.is422Retry <> true
+            enqueueCreate(m.gen, true)
+        else
+            showFailed(DEVICE_CANT_PLAY, "")
+        end if
+        return
+    end if
+
+    if code = 404
+        m.top.channelsStale = true
+        showFailed(CHANNEL_NOT_FOUND, "This channel may have been disabled. Going back will refresh the list.")
+        return
+    end if
+
+    msg = PLAYBACK_FAILED
+    if err <> invalid and err.message <> invalid and err.message <> ""
+        msg = err.message
+    end if
+    if code = 401
+        msg = "Signed out"
+    end if
+    showFailed(msg, "")
+end sub
+
+' ── Video playback ───────────────────────────────────────────────────────────
+
+sub startPlayback(playlistUrl as string)
+    if playlistUrl = invalid or playlistUrl = ""
+        showFailed(PLAYBACK_FAILED, "Missing playlist URL")
+        return
+    end if
+
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = playlistUrl
+    content.streamFormat = "hls"
+    content.Live = true
+    content.title = m.top.channelName
+
+    m.video.content = content
+    m.video.control = "play"
+    m.uiPhase = "playing"
+    hideErrorOverlays()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    showChrome()
+    updateDebugOverlay()
+    m.top.setFocus(true)
+end sub
+
+sub stopVideo()
+    if m.video <> invalid
+        m.video.control = "stop"
+        m.video.content = invalid
+    end if
+end sub
+
+sub onVideoState()
+    if m.video = invalid then return
+    st = m.video.state
+    if st = invalid then st = ""
+    m.lastVideoState = st
+    updateDebugOverlay()
+
+    if m.uiPhase <> "playing" and m.uiPhase <> "starting" then return
+
+    if st = "error"
+        handleVideoError()
+    else if st = "playing" or st = "buffering"
+        if m.uiPhase = "starting"
+            m.uiPhase = "playing"
+            hideErrorOverlays()
+            m.loadingGroup.visible = false
+            if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+        end if
+        ' Successful frame → reset mid-play retry counter.
+        if st = "playing"
+            m.retryAttempt = 0
+        end if
+    end if
+end sub
+
+sub onVideoErrorFields()
+    if m.video = invalid then return
+    if m.video.errorCode <> invalid then m.lastErrorCode = m.video.errorCode
+    if m.video.errorMsg <> invalid then m.lastErrorMsg = m.video.errorMsg
+    updateDebugOverlay()
+end sub
+
+sub handleVideoError()
+    code = 0
+    msg = ""
+    if m.video <> invalid
+        if m.video.errorCode <> invalid then code = m.video.errorCode
+        if m.video.errorMsg <> invalid then msg = m.video.errorMsg
+    end if
+    m.lastErrorCode = code
+    m.lastErrorMsg = msg
+    updateDebugOverlay()
+
+    if m.uiPhase <> "playing" and m.uiPhase <> "starting" then return
+    if m.activeViewerId = invalid or m.activeViewerId = "" then return
+
+    ' Auth allowlist → one silent session recreate; else bounded retry, no new session.
+    if matchesAuthAllowlist(code, msg)
+        if m.authRetried = true
+            showFailed(PLAYBACK_AUTH_FAILED, "errorCode=" + code.toStr() + " errorMsg=" + msg)
+            return
+        end if
+        m.authRetried = true
+        scheduleReplace()
+        return
+    end if
+
+    startBoundedRetry()
+end sub
+
+function matchesAuthAllowlist(code as integer, msg as string) as boolean
+    patterns = authErrorPatterns()
+    if patterns = invalid or patterns.count() = 0 then return false
+    msgLower = LCase(msg)
+    for each p in patterns
+        if p <> invalid
+            codeOk = true
+            if p.code <> invalid
+                codeOk = (p.code = code)
+            end if
+            msgOk = true
+            if p.msgContains <> invalid and p.msgContains <> ""
+                msgOk = (Instr(1, msgLower, LCase(p.msgContains)) > 0)
+            end if
+            if codeOk = true and msgOk = true then return true
+        end if
+    end for
+    return false
+end function
+
+' Bounded retry 1s / 2s / 4s ×3 WITHOUT new sessions (same playlist URL).
+sub startBoundedRetry()
+    if m.retryAttempt >= 3
+        showFailed(PLAYBACK_FAILED, "errorCode=" + m.lastErrorCode.toStr() + " errorMsg=" + m.lastErrorMsg)
+        return
+    end if
+
+    delays = [1, 2, 4]
+    delaySec = delays[m.retryAttempt]
+    m.retryAttempt = m.retryAttempt + 1
+    m.uiPhase = "starting"
+    showStarting("Reconnecting… (" + m.retryAttempt.toStr() + "/3)")
+    m.retryTimer.duration = delaySec
+    m.retryTimer.control = "stop"
+    m.retryTimer.control = "start"
+end sub
+
+sub onRetryTimerFire()
+    if m.top.visible <> true then return
+    if m.uiPhase <> "starting" then return
+    if m.playlistUrl = invalid or m.playlistUrl = ""
+        showFailed(PLAYBACK_FAILED, "")
+        return
+    end if
+    ' Re-bind same content — no new session.
+    startPlayback(m.playlistUrl)
+end sub
+
+' ── UI phases ────────────────────────────────────────────────────────────────
+
+sub showStarting(message as string)
+    hideErrorOverlays()
+    m.loadingGroup.visible = true
+    if m.loadingLabel <> invalid then m.loadingLabel.text = message
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "start"
+    m.top.setFocus(true)
+end sub
+
+sub showFailed(title as string, detail as string)
+    m.uiPhase = "failed"
+    stopVideo()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    m.tunersGroup.visible = false
+    m.errorGroup.visible = true
+    m.errorTitle.text = title
+    m.errorDetail.text = detail
+    m.retryButton.setFocus(true)
+    updateDebugOverlay()
+end sub
+
+sub showTunersBusy(sessions as object)
+    m.uiPhase = "tunersBusy"
+    stopVideo()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    m.errorGroup.visible = false
+    m.tunersGroup.visible = true
+    m.tunersTitle.text = TUNERS_BUSY_COPY
+    m.tunersList.text = formatSessionsList(sessions)
+    m.tunersRetryButton.setFocus(true)
+    updateDebugOverlay()
+end sub
+
+function formatSessionsList(sessions as object) as string
+    if sessions = invalid or sessions.count() = 0 then return ""
+    lines = []
+    for each s in sessions
+        if s <> invalid
+            ch = ""
+            if s.channelName <> invalid then ch = s.channelName
+            names = []
+            if s.viewers <> invalid
+                for each v in s.viewers
+                    if v <> invalid and v.username <> invalid and v.username <> ""
+                        names.push(v.username)
+                    end if
+                end for
+            end if
+            who = joinStrings(names, ", ")
+            if ch <> "" and who <> ""
+                lines.push(ch + ": " + who)
+            else if ch <> ""
+                lines.push(ch)
+            else if who <> ""
+                lines.push(who)
+            end if
+        end if
+    end for
+    return joinStrings(lines, Chr(10))
+end function
+
+function joinStrings(items as object, sep as string) as string
+    if items = invalid or items.count() = 0 then return ""
+    out = ""
+    for i = 0 to items.count() - 1
+        if i > 0 then out = out + sep
+        part = items[i]
+        if part = invalid then part = ""
+        out = out + part
+    end for
+    return out
+end function
+
+sub hideErrorOverlays()
+    m.errorGroup.visible = false
+    m.tunersGroup.visible = false
+end sub
+
+sub hideAllOverlays()
+    hideErrorOverlays()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    m.chromeGroup.visible = false
+end sub
+
+sub onRetryButton()
+    if m.top.channelId = invalid or m.top.channelId = 0 then return
+    m.authRetried = false
+    m.retryAttempt = 0
+    scheduleReplace()
+end sub
+
+' ── Chrome / debug ───────────────────────────────────────────────────────────
+
+sub showChrome()
+    m.chromeGroup.visible = true
+    m.chromeTimer.control = "stop"
+    m.chromeTimer.control = "start"
+end sub
+
+sub onChromeTimerFire()
+    if m.uiPhase = "playing"
+        m.chromeGroup.visible = false
+    end if
+end sub
+
+sub updateDebugOverlay()
+    show = m.top.showDebug
+    if show <> true
+        m.debugGroup.visible = false
+        return
+    end if
+    m.debugGroup.visible = true
+    st = m.lastVideoState
+    if st = invalid then st = ""
+    if m.video <> invalid and m.video.state <> invalid
+        st = m.video.state
+        m.lastVideoState = st
+    end if
+    code = m.lastErrorCode
+    msg = m.lastErrorMsg
+    if m.video <> invalid
+        if m.video.errorCode <> invalid then code = m.video.errorCode
+        if m.video.errorMsg <> invalid then msg = m.video.errorMsg
+    end if
+    vid = m.activeViewerId
+    if vid = invalid then vid = ""
+    m.debugLabel.text = "Video state=" + st.toStr() + " errorCode=" + code.toStr() + " errorMsg=" + msg.toStr() + Chr(10) + "viewerId=" + vid + " gen=" + m.gen.toStr() + " phase=" + m.uiPhase
+end sub
+
+' ── Quality dialog ───────────────────────────────────────────────────────────
+
+sub openQualityDialog()
+    closeDialog()
+    maxQ = ""
+    task = m.top.apiTask
+    if task <> invalid and task.user <> invalid and task.user.maxQuality <> invalid
+        maxQ = task.user.maxQuality
+    end if
+    allowed = bowtie.guide.allowedProfiles(maxQ)
+
+    buttons = ["Auto"]
+    for each p in allowed
+        if p <> invalid and p <> ""
+            buttons.push(p)
+        end if
+    end for
+
+    m.dialogMode = "quality"
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = "Quality"
+    dialog.message = ["Current: " + profileDisplay(m.selectedProfile)]
+    dialog.buttons = buttons
+    dialog.observeField("buttonSelected", "onQualityButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+function profileDisplay(profile as string) as string
+    if profile = invalid or profile = "" then return "Auto"
+    return profile
+end function
+
+sub onQualityButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    maxQ = ""
+    task = m.top.apiTask
+    if task <> invalid and task.user <> invalid and task.user.maxQuality <> invalid
+        maxQ = task.user.maxQuality
+    end if
+    allowed = bowtie.guide.allowedProfiles(maxQ)
+    options = ["Auto"]
+    for each p in allowed
+        if p <> invalid and p <> "" then options.push(p)
+    end for
+    closeDialog()
+
+    if idx = invalid or idx < 0 or idx >= options.count()
+        m.top.setFocus(true)
+        return
+    end if
+
+    chosen = options[idx]
+    if chosen = "Auto"
+        m.selectedProfile = ""
+    else
+        m.selectedProfile = chosen
+    end if
+    updateChromeLabels()
+    m.authRetried = false
+    scheduleReplace()
+    m.top.setFocus(true)
+end sub
+
+sub onDialogClosed()
+    m.dialog = invalid
+    m.dialogMode = ""
+    if m.top.visible = true
+        m.top.setFocus(true)
+    end if
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    m.dialogMode = ""
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+' ── Zap ──────────────────────────────────────────────────────────────────────
+
+sub zap(delta as integer)
+    channels = m.top.channels
+    if channels = invalid or channels.count() = 0 then return
+    idx = m.top.channelIndex
+    if idx = invalid then idx = 0
+    n = channels.count()
+    nextIdx = idx + delta
+    if nextIdx < 0 then nextIdx = n - 1
+    if nextIdx >= n then nextIdx = 0
+    if nextIdx = idx and n = 1 then return
+
+    ch = channels[nextIdx]
+    if ch = invalid then return
+    m.top.channelIndex = nextIdx
+    if ch.id <> invalid then m.top.channelId = ch.id
+    if ch.guideNumber <> invalid then m.top.guideNumber = ch.guideNumber
+    if ch.name <> invalid then m.top.channelName = ch.name
+    m.authRetried = false
+    m.is422Retry = false
+    updateChromeLabels()
+    scheduleReplace()
+end sub
+
+' ── Keys ─────────────────────────────────────────────────────────────────────
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press <> true then return false
+
+    ' While error UI focused, only back + buttons.
+    if m.uiPhase = "failed" or m.uiPhase = "tunersBusy"
+        if key = "back"
+            leavePlayer()
+            return true
+        end if
+        return false
+    end if
+
+    if key = "back"
+        leavePlayer()
+        return true
+    end if
+
+    if key = "OK" or key = "play" or key = "pause" or key = "playonly"
+        togglePlayPause()
+        showChrome()
+        return true
+    end if
+
+    if key = "up"
+        zap(-1)
+        return true
+    end if
+
+    if key = "down"
+        zap(1)
+        return true
+    end if
+
+    ' Options / * opens quality (Roku remote * is often "options").
+    if key = "options" or key = "replay"
+        openQualityDialog()
+        return true
+    end if
+
+    if key = "info" or key = "display"
+        ' Toggle debug overlay
+        m.top.showDebug = (m.top.showDebug <> true)
+        updateDebugOverlay()
+        return true
+    end if
+
+    return false
+end function
+
+sub togglePlayPause()
+    if m.video = invalid then return
+    st = m.video.state
+    if st = "playing"
+        m.video.control = "pause"
+    else if st = "paused"
+        m.video.control = "resume"
+    else if m.playlistUrl <> invalid and m.playlistUrl <> ""
+        m.video.control = "play"
+    end if
+    updateDebugOverlay()
+end sub
+
+sub leavePlayer()
+    closeDialog()
+    teardownSession(true)
+    stopVideo()
+end sub

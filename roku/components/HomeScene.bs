@@ -116,10 +116,13 @@ sub onItemSelected()
     if m.channels = invalid or idx >= m.channels.count() then return
     ch = m.channels[idx]
     if ch = invalid then return
+    ' Player needs full rail for up/down zap + index for wrap.
     m.top.selectedChannel = {
         id: ch.id
         guideNumber: ch.guideNumber
         name: ch.name
+        index: idx
+        channels: m.channels
     }
 end sub
 

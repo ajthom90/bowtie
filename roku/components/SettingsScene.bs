@@ -274,7 +274,8 @@ sub submitLogout()
     observeApi()
     m.busy = true
     m.pendingId = "settings-logout"
-    ' A3: no live viewer until Task 5; logout is sufficient.
+    ' Player is not visible from Settings; AppScene authEvent path tears down
+    ' any stray viewer if phase were still player (A3).
     task.request = {
         id: m.pendingId
         kind: "logout"
