@@ -41,7 +41,7 @@ ios-test: ios-gen
 # --- Android (JDK 17 + Android SDK required; uses android/gradlew) ---
 
 android-test:
-	cd android && ./gradlew :core:test :app:testDebugUnitTest
+	cd android && ./gradlew :core:test :app:testDebugUnitTest :tv:testDebugUnitTest
 
 android-apk:
-	cd android && ./gradlew :app:assembleDebug
+	cd android && ./gradlew :app:assembleDebug :tv:assembleDebug

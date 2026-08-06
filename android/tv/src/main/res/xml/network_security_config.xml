@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android's network security config cannot scope cleartext to private IP ranges,
+  so cleartext is permitted globally — the documented LAN-first trade-off
+  (mirrors iOS NSAllowsLocalNetworking; remote access remains HTTPS via BYO
+  proxy; revisit if Play Store review demands tightening).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

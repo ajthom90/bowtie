@@ -18,3 +18,4 @@ rootProject.name = "bowtie"
 
 include(":core")
 include(":app")
+include(":tv")
