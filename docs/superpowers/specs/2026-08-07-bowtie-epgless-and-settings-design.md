@@ -87,12 +87,12 @@ editing container config instead of the admin UI.
      username/password absent; 401 `{"error":"schedules direct rejected the
      credentials"}` on auth failure; 502 `{"error":"schedules direct is
      unreachable"}` on network/5xx (never echoing secrets).
-5. **Web Admin:** EPG tab grows source configuration (XMLTV url+interval; SD
-   username/password/lineup with a "Load lineups" picker) above the existing
-   status cards; new Transcode section (encoder dropdown from `available`, HEVC
-   toggle) lives on the same Settings surface as tuners today — final layout:
-   admin nav gains a **Settings** tab holding EPG sources + Transcode; the EPG
-   tab keeps status/refresh. Copy in sentence case; saving shows "Saved."
+5. **Web Admin (final layout, one answer):** admin nav gains a **Settings**
+   tab containing BOTH the EPG source configuration (XMLTV url+interval; SD
+   username/password/lineup with "Load lineups" picker) AND the Transcode
+   section (encoder dropdown from `available`, HEVC toggle). The existing EPG
+   tab keeps ONLY status cards + Refresh now. Copy sentence case; saving shows
+   "Saved."
 6. **Docs:** TrueNAS + compose docs trim the env explanation to: data dir mount,
    device IP seed, everything else in Admin → Settings.
 
