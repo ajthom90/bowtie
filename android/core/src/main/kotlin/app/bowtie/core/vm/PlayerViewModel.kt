@@ -29,12 +29,21 @@ import kotlinx.coroutines.launch
  * - Mid-play 403 via [onPlaybackAuthError]: one silent replace, then fail.
  * - [stop] is for real leave only (dismissal, sign-out, change-server) — never PiP.
  * - Zap / quality: cancel in-flight → DELETE old → debounce → POST new.
+ * - Heartbeats (spec C / A6): 15s while session is open (Playing OR Stalled);
+ *   stream-token auth; stop only on real leave.
  */
 class PlayerViewModel(
     private val client: BowtieClient,
     private val caps: ClientCaps,
     private val debounceMs: Long = 400,
     private val scope: CoroutineScope? = null,
+    private val heartbeatIntervalMs: Long = HEARTBEAT_INTERVAL_MS,
+    /**
+     * Suspends for the heartbeat interval. Production: [delay].
+     * Tests that need virtual-time beats inject `delay`; other tests inject a
+     * sleeper that never schedules so `advanceUntilIdle` stays finite.
+     */
+    private val heartbeatSleeper: suspend (Long) -> Unit = { ms -> delay(ms) },
 ) : ViewModel() {
 
     sealed class State {
@@ -56,6 +65,36 @@ class PlayerViewModel(
             "Playback authorization failed"
 
         const val CHANNEL_NOT_FOUND_MESSAGE = "Channel not found"
+
+        /** Out-of-window clamp notice (spec B) — exact copy. */
+        const val OUT_OF_WINDOW_NOTICE =
+            "Jumped to live — paused longer than the buffer"
+
+        /** Client heartbeat interval (spec C). */
+        const val HEARTBEAT_INTERVAL_MS = 15_000L
+
+        /** Extract `token` query from a playlist path/URL. */
+        fun streamTokenFromPlaylist(playlistUrl: String): String? {
+            val q = playlistUrl.indexOf('?')
+            if (q < 0) return null
+            return playlistUrl.substring(q + 1)
+                .split('&')
+                .map { part ->
+                    val eq = part.indexOf('=')
+                    if (eq < 0) part to ""
+                    else part.substring(0, eq) to part.substring(eq + 1)
+                }
+                .firstOrNull { it.first == "token" }
+                ?.second
+                ?.let {
+                    try {
+                        java.net.URLDecoder.decode(it, Charsets.UTF_8.name())
+                    } catch (_: Exception) {
+                        it
+                    }
+                }
+                ?.takeIf { it.isNotEmpty() }
+        }
     }
 
     private val workScope: CoroutineScope = scope ?: viewModelScope
@@ -78,6 +117,7 @@ class PlayerViewModel(
     var selectedProfile: String = ""
 
     private var replaceJob: Job? = null
+    private var heartbeatJob: Job? = null
     private var activeViewerId: String? = null
     /** Last successfully created session — used to recover from [State.Stalled]. */
     private var lastSession: CreatedSession? = null
@@ -111,6 +151,7 @@ class PlayerViewModel(
     fun stop() {
         replaceJob?.cancel()
         replaceJob = null
+        stopHeartbeat()
         generation++
 
         val viewerId = activeViewerId
@@ -189,6 +230,7 @@ class PlayerViewModel(
 
         val oldViewerId = activeViewerId
         activeViewerId = null
+        stopHeartbeat()
         _state.value = State.Starting
 
         if (oldViewerId != null) {
@@ -223,6 +265,7 @@ class PlayerViewModel(
             lastSession = session
             _channelsStale.value = false
             _state.value = State.Playing(session)
+            startHeartbeat(viewerId = session.viewerId, playlistUrl = session.playlistUrl)
         } catch (e: CancellationException) {
             throw e
         } catch (e: BowtieError) {
@@ -232,6 +275,41 @@ class PlayerViewModel(
             if (!isCurrent(gen)) return
             _state.value = State.Failed(e.message ?: e.toString())
         }
+    }
+
+    // ── Heartbeats (A6: session-open, continues through Stalled) ────────────
+
+    private fun startHeartbeat(viewerId: String, playlistUrl: String) {
+        stopHeartbeat()
+        val token = streamTokenFromPlaylist(playlistUrl) ?: return
+        // Detach from parent Job so kotlinx `runTest` / `advanceUntilIdle` are not
+        // kept alive by the open-ended beat loop; still uses workScope's dispatcher.
+        // Cancelled via stopHeartbeat / onCleared / stop().
+        val job = Job()
+        heartbeatJob = job
+        CoroutineScope(workScope.coroutineContext.minusKey(Job) + job).launch {
+            while (true) {
+                heartbeatSleeper(heartbeatIntervalMs)
+                // A6: continue while this viewer is still active (Playing or Stalled).
+                if (activeViewerId != viewerId) return@launch
+                try {
+                    client.heartbeat(viewerId, token)
+                } catch (_: Exception) {
+                    // best-effort
+                }
+            }
+        }
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+    }
+
+    override fun onCleared() {
+        stopHeartbeat()
+        replaceJob?.cancel()
+        super.onCleared()
     }
 
     private suspend fun handleCreateError(

@@ -1299,3 +1299,38 @@ $ cd ../server && CGO_ENABLED=0 go test ./internal/web/ && echo EMBED_OK
 ok  	github.com/ajthom90/bowtie/server/internal/web
 EMBED_OK
 ```
+
+## v0.5.0 Task 7
+
+**Date:** 2026-08-07
+
+### Built
+
+- **BowtieKit / Android `:core`:** `heartbeat(viewerId, token)` — POST `/api/v1/sessions/{id}/heartbeat?token=` with **no** Authorization (stream-token only); request-shape tests
+- **PlayerModel / PlayerViewModel:** 15s heartbeat loop keyed on session open (A6 — continues through `.stalled`/`Stalled`); stops on `stop()`/replace teardown; ManualClock + virtual-time cadence tests including through-stall
+- **iOS/tvOS:** native scrubber (`showsPlaybackControls`, `requiresLinearPlayback = false`); `seekableTimeRanges` + periodic observer → clamp to live edge + exact notice copy via overlay
+- **Android phone:** Media3 controller seek/rewind/FF enabled; BehindLiveWindow → seek-to-default + notice (not stall spinner)
+- **Fire TV:** `PlayerKeyHandler` DPAD_LEFT/RIGHT → SeekBack30/SeekForward30 (±30s); key-handler tests; notice overlay
+- Notice copy exact: `Jumped to live — paused longer than the buffer`
+
+### Notes
+
+- No push / no gh from this worker.
+- Heartbeat test harness isolates cadence tests so ManualClock/virtual-time debounce suites stay finite (iOS interval `.zero` default in unit tests; Android `awaitCancellation` sleeper when heartbeats not under test).
+
+### Verification (evidence)
+
+```
+$ cd android && ./gradlew -q :core:test :app:testDebugUnitTest :tv:testDebugUnitTest :app:assembleDebug :tv:assembleDebug && echo ANDROID_OK
+ANDROID_OK
+
+$ cd ../ios && xcodegen generate && swift test --package-path BowtieKit 2>&1 | grep -E "Executed [0-9]+ tests"
+ Executed 57 tests, with 0 failures (0 unexpected) in 0.093 (0.097) seconds
+
+$ UDID=$(…iPhone…)
+$ xcodebuild -project Bowtie.xcodeproj -scheme Bowtie -destination "id=$UDID" test 2>&1 | grep -E "TEST SUCCEEDED|TEST FAILED"
+** TEST SUCCEEDED **
+
+$ xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV -destination 'generic/platform=tvOS Simulator' build -quiet && echo TVOS_OK
+TVOS_OK
+```

@@ -103,6 +103,32 @@ class PlayerKeyHandlerTest {
     }
 
     @Test
+    fun dpadLeft_seekBack30() {
+        val h = handler()
+        val r = h.onKey(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.ACTION_DOWN)
+        assertTrue(r.handled)
+        assertEquals(PlayerKeyHandler.Action.SeekBack30, r.action)
+    }
+
+    @Test
+    fun dpadRight_seekForward30() {
+        val h = handler()
+        val r = h.onKey(KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.ACTION_DOWN)
+        assertTrue(r.handled)
+        assertEquals(PlayerKeyHandler.Action.SeekForward30, r.action)
+    }
+
+    @Test
+    fun dpadLeftRight_ignoreRepeats() {
+        val h = handler()
+        val first = h.onKey(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.ACTION_DOWN, repeatCount = 0)
+        assertEquals(PlayerKeyHandler.Action.SeekBack30, first.action)
+        val repeat = h.onKey(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.ACTION_DOWN, repeatCount = 1)
+        assertTrue(repeat.handled)
+        assertNull(repeat.action)
+    }
+
+    @Test
     fun back_backAction() {
         val h = handler()
         val r = h.onKey(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN)

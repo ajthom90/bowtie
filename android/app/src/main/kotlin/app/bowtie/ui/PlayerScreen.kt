@@ -93,11 +93,15 @@ fun PlayerScreen(
     var droppedFrames by remember { mutableLongStateOf(0L) }
     var sessionMeta by remember { mutableStateOf<SessionInfoMeta?>(null) }
     var activeViewerId by remember { mutableStateOf<String?>(null) }
+    var outOfWindowNotice by remember { mutableStateOf<String?>(null) }
 
     val onBackLatest = rememberUpdatedState(onBack)
     val viewModelLatest = rememberUpdatedState(playerViewModel)
     val setBitrate = rememberUpdatedState { bps: Int? -> bitrateBps = bps }
     val setDropped = rememberUpdatedState { total: Long -> droppedFrames = total }
+    val setJumpedToLive = rememberUpdatedState {
+        outOfWindowNotice = PlayerViewModel.OUT_OF_WINDOW_NOTICE
+    }
 
     val engine = remember {
         PlayerEngine(
@@ -131,8 +135,19 @@ fun PlayerScreen(
                 override fun onDroppedFrames(total: Long) {
                     setDropped.value.invoke(total)
                 }
+
+                override fun onJumpedToLive() {
+                    setJumpedToLive.value.invoke()
+                }
             },
         )
+    }
+
+    // Auto-dismiss out-of-window notice.
+    LaunchedEffect(outOfWindowNotice) {
+        if (outOfWindowNotice == null) return@LaunchedEffect
+        delay(4_000L)
+        outOfWindowNotice = null
     }
 
     fun leave() {
@@ -215,7 +230,8 @@ fun PlayerScreen(
         overlayVisible = false
     }
 
-    // Hide Media3 chrome; we draw our own overlay.
+    // Media3 controller exposes live-window seek / rewind (spec D); custom overlay
+    // keeps channel chrome + quality/stats.
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -230,7 +246,13 @@ fun PlayerScreen(
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    useController = false
+                    useController = true
+                    controllerShowTimeoutMs = OVERLAY_HIDE_MS.toInt()
+                    setShowFastForwardButton(true)
+                    setShowRewindButton(true)
+                    setShowNextButton(false)
+                    setShowPreviousButton(false)
+                    setShowSubtitleButton(false)
                     keepScreenOn = true
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -244,6 +266,19 @@ fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        if (outOfWindowNotice != null) {
+            Text(
+                text = outOfWindowNotice!!,
+                style = BowtieType.body,
+                color = BowtieColors.text,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 88.dp, start = 16.dp, end = 16.dp)
+                    .background(BowtieColors.bg.copy(alpha = 0.88f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        }
 
         // Starting / stalled spinner
         when (state) {

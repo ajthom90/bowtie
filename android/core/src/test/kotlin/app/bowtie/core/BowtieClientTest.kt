@@ -400,6 +400,43 @@ class BowtieClientTest {
     }
 
     @Test
+    fun heartbeatRequestShape_tokenQueryNoAuthorization() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        val c = client()
+        c.login("alice", "secret")
+        c.heartbeat("viewer-abc", "stream-tok-xyz")
+
+        take("/api/v1/auth/login")
+        val beat = take("/api/v1/sessions/viewer-abc/heartbeat")
+        assertEquals("POST", beat.method)
+        assertTrue(
+            "path must include token query: ${beat.path}",
+            beat.path!!.contains("token=stream-tok-xyz"),
+        )
+        assertNull(
+            "heartbeat must not send Bearer — stream token alone authorizes",
+            beat.getHeader("Authorization"),
+        )
+        Unit
+    }
+
+    @Test
+    fun heartbeatSwallowsErrors() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"boom"}"""))
+
+        val c = client()
+        c.login("alice", "secret")
+        // Must not throw.
+        c.heartbeat("vid", "tok")
+        take("/api/v1/auth/login")
+        take("heartbeat")
+        Unit
+    }
+
+    @Test
     fun logoutClearsEvenWhenNetworkFails() = runBlocking {
         server.enqueue(MockResponse().setBody(tokenPairJson()))
         // logout endpoint fails

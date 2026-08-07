@@ -21,10 +21,13 @@ struct TVPlayerView: View {
     @State private var indicatedBitrate: Double?
     @State private var droppedFrames: Int?
     @State private var statsPollTask: Task<Void, Never>?
+    @State private var outOfWindowNotice: String?
+    @State private var noticeHideTask: Task<Void, Never>?
 
     private static let stallBackoffs: [Duration] = [
         .seconds(1), .seconds(2), .seconds(4),
     ]
+    private static let noticeHideDelay: Duration = .seconds(4)
 
     var body: some View {
         ZStack {
@@ -47,6 +50,21 @@ struct TVPlayerView: View {
                 stalledSpinner
             } else if case .starting = playerModel.state {
                 stalledSpinner
+            }
+
+            if let notice = outOfWindowNotice {
+                Text(notice)
+                    .font(Theme.body(22))
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 18)
+                    .background(Theme.bg.opacity(0.88))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                    .padding(.bottom, 120)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.opacity)
+                    .accessibilityLabel(notice)
             }
 
             if isBlockingError {
@@ -91,8 +109,30 @@ struct TVPlayerView: View {
                 }
             }
         }
+        .onChange(of: bridge.playerDidJumpToLive) { _, jumped in
+            if jumped {
+                bridge.playerDidJumpToLive = false
+                showOutOfWindowNotice()
+            }
+        }
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
+        }
+    }
+
+    private func showOutOfWindowNotice() {
+        outOfWindowNotice = PlayerModel.outOfWindowNotice
+        noticeHideTask?.cancel()
+        noticeHideTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: Self.noticeHideDelay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                outOfWindowNotice = nil
+            }
         }
     }
 
@@ -338,12 +378,16 @@ final class TVPlayerBridge {
     var playerErrorIsForbidden = false
     var playerDidStall = false
     var playerDidRecover = false
+    /// Out-of-window clamp: position fell before seekable start → jumped to live edge.
+    var playerDidJumpToLive = false
 
     private var itemStatusObs: NSKeyValueObservation?
     private var itemKeepUpObs: NSKeyValueObservation?
     private var itemEmptyObs: NSKeyValueObservation?
+    private var seekableObs: NSKeyValueObservation?
     private var timeControlObs: NSKeyValueObservation?
     private var failedObserver: NSObjectProtocol?
+    private var periodicTimeObserver: Any?
 
     func load(url: URL) {
         let item = AVPlayerItem(url: url)
@@ -393,10 +437,24 @@ final class TVPlayerBridge {
                 self?.handleBufferState(item)
             }
         }
+        seekableObs = item.observe(\.seekableTimeRanges, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in
+                self?.clampIfBehindSeekableWindow()
+            }
+        }
         if let player {
             timeControlObs = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
                     self?.handleTimeControl(player)
+                }
+            }
+            let interval = CMTime(seconds: 2, preferredTimescale: 600)
+            periodicTimeObserver = player.addPeriodicTimeObserver(
+                forInterval: interval,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.clampIfBehindSeekableWindow()
                 }
             }
         }
@@ -410,6 +468,24 @@ final class TVPlayerBridge {
                 let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
                 self?.handleFailure(error)
             }
+        }
+    }
+
+    /// When playback position is before the first seekable range start, seek to
+    /// the live edge (range end) and flag the out-of-window notice.
+    func clampIfBehindSeekableWindow() {
+        guard let player, let item = player.currentItem else { return }
+        let ranges = item.seekableTimeRanges
+        guard let value = ranges.first else { return }
+        let range = value.timeRangeValue
+        guard range.duration.isNumeric, range.duration.seconds > 0 else { return }
+        let current = player.currentTime()
+        guard current.isNumeric else { return }
+        let start = range.start
+        if CMTimeCompare(current, start) < 0 {
+            let liveEdge = CMTimeRangeGetEnd(range)
+            player.seek(to: liveEdge, toleranceBefore: .zero, toleranceAfter: .zero)
+            playerDidJumpToLive = true
         }
     }
 
@@ -480,7 +556,13 @@ final class TVPlayerBridge {
         itemStatusObs?.invalidate()
         itemKeepUpObs?.invalidate()
         itemEmptyObs?.invalidate()
+        seekableObs?.invalidate()
         timeControlObs?.invalidate()
+        if let player, let periodicTimeObserver {
+            player.removeTimeObserver(periodicTimeObserver)
+        }
+        periodicTimeObserver = nil
+        seekableObs = nil
         itemStatusObs = nil
         itemKeepUpObs = nil
         itemEmptyObs = nil
@@ -505,7 +587,9 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
+        // Spec D: native live-DVR scrubber (do not force linear-only playback).
         vc.showsPlaybackControls = true
+        vc.requiresLinearPlayback = false
         vc.player = bridge.player
         context.coordinator.installInfoPanels(on: vc)
         return vc

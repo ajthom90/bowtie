@@ -128,6 +128,26 @@ class BowtieClient(
         }
     }
 
+    /**
+     * Session liveness beat (spec C). Auth is the stream token query param only —
+     * never Bearer (avoids racing access-token refresh mid-session). Best-effort.
+     */
+    suspend fun heartbeat(viewerId: String, token: String): Unit = withContext(Dispatchers.IO) {
+        try {
+            val path = "/api/v1/sessions/$viewerId/heartbeat?token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
+            val request = Request.Builder()
+                .url(apiUrl(path))
+                .post("".toRequestBody(null))
+                .build()
+            okHttp.newCall(request).execute().use { response ->
+                // 204 success; all other statuses swallowed (best-effort).
+                response.body?.close()
+            }
+        } catch (_: Exception) {
+            // swallow
+        }
+    }
+
     suspend fun me(): User = withContext(Dispatchers.IO) {
         val body = authed("GET", "/api/v1/me")
         val user = BowtieJson.decodeFromString<User>(body)

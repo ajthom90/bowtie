@@ -6,11 +6,14 @@ import app.bowtie.core.ClientCaps
 import app.bowtie.core.InMemoryTokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okhttp3.OkHttpClient
@@ -102,6 +105,9 @@ class PlayerViewModelTest {
                     }
                     return MockResponse().setBody(body)
                 }
+                if (method == "POST" && path.contains("/heartbeat")) {
+                    return MockResponse().setResponseCode(204)
+                }
                 if (method == "DELETE" && path.startsWith("/api/v1/sessions/")) {
                     return MockResponse().setResponseCode(204)
                 }
@@ -156,39 +162,62 @@ class PlayerViewModelTest {
             it.method == "DELETE" && it.path.orEmpty().startsWith("/api/v1/sessions/")
         }
 
+    private fun heartbeats(): List<BodyRequest> =
+        allRecorded().filter {
+            it.method == "POST" && it.path.orEmpty().contains("/heartbeat")
+        }
+
     private fun makeVm(
         client: BowtieClient,
         scope: kotlinx.coroutines.CoroutineScope,
         debounceMs: Long = 400,
+        heartbeatIntervalMs: Long = PlayerViewModel.HEARTBEAT_INTERVAL_MS,
+        /** When true, heartbeats use virtual [delay] so cadence tests can advance time. */
+        enableHeartbeat: Boolean = false,
     ): PlayerViewModel = PlayerViewModel(
         client = client,
         caps = sampleCaps,
         debounceMs = debounceMs,
         scope = scope,
+        heartbeatIntervalMs = heartbeatIntervalMs,
+        // Default: park forever without scheduling so advanceUntilIdle stays finite.
+        heartbeatSleeper = if (enableHeartbeat) {
+            { ms -> delay(ms) }
+        } else {
+            { awaitCancellation() }
+        },
     )
 
     /**
      * Advance virtual debounce, then pump until [condition] (or timeout).
-     * Pumping is required because [BowtieClient] uses [Dispatchers.IO];
-     * [advanceUntilIdle] returns while real IO is still in flight.
+     * Pumping is required because [BowtieClient] uses [Dispatchers.IO].
+     *
+     * Uses stepped [advanceTimeBy] + [runCurrent] (not [advanceUntilIdle]) so an
+     * open-ended heartbeat delay cannot keep the scheduler busy forever.
+     * Stepping also covers the case where DELETE IO finishes *after* the first
+     * advance and only then schedules the debounce sleep.
      */
     private fun TestScope.advanceDebounceAndPump(
         debounceMs: Long = 400,
         timeoutMs: Long = 5_000,
         condition: () -> Boolean = { true },
     ) {
-        advanceTimeBy(debounceMs)
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        // At least one debounce step so a already-parked sleeper wakes.
+        advanceTimeBy(debounceMs)
+        runCurrent()
         while (!condition()) {
-            advanceUntilIdle()
-            if (condition()) break
             if (System.nanoTime() > deadline) {
                 error("timeout waiting for condition after debounce")
             }
             // Brief park so Dispatchers.IO / MockWebServer can finish (not debounce).
             Thread.sleep(2)
+            runCurrent()
+            if (condition()) break
+            // Newly-scheduled debounce after DELETE IO — step virtual time again.
+            advanceTimeBy(debounceMs)
+            runCurrent()
         }
-        advanceUntilIdle()
     }
 
     private fun TestScope.playThroughDebounce(
@@ -473,5 +502,90 @@ class PlayerViewModelTest {
         )
         assertTrue("channelsStale should be true after 404", vm.channelsStale.value)
         assertEquals(1, sessionCreates().count())
+    }
+
+    // ── Heartbeats (15s cadence + A6 through-stall) ─────────────────────────
+
+    @Test
+    fun heartbeatCadenceEvery15s() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        assertEquals("no immediate beat on start", 0, heartbeats().count())
+
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) {
+            heartbeats().count() >= 1
+        }
+        assertEquals(1, heartbeats().count())
+
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) {
+            heartbeats().count() >= 2
+        }
+        assertEquals(2, heartbeats().count())
+
+        val beat = heartbeats()[0]
+        assertTrue(
+            "path must include token: ${beat.path}",
+            beat.path!!.contains("token=t"),
+        )
+        vm.stop()
+        runCurrent()
+    }
+
+    @Test
+    fun heartbeatContinuesThroughStalled() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) {
+            heartbeats().count() >= 1
+        }
+        assertEquals(1, heartbeats().count())
+
+        // A6: stall mid-session; beats must continue.
+        vm.onPlaybackStalled()
+        assertTrue(vm.state.value is PlayerViewModel.State.Stalled)
+
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) {
+            heartbeats().count() >= 2
+        }
+        assertEquals("beats continue through Stalled", 2, heartbeats().count())
+
+        vm.stop()
+        runCurrent()
+        val afterStop = heartbeats().count()
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS * 2)
+        runCurrent()
+        Thread.sleep(20)
+        runCurrent()
+        assertEquals("beats stop on real leave", afterStop, heartbeats().count())
+    }
+
+    @Test
+    fun streamTokenFromPlaylist() {
+        assertEquals(
+            "abc",
+            PlayerViewModel.streamTokenFromPlaylist("/api/v1/stream/v1/index.m3u8?token=abc"),
+        )
+        assertEquals(
+            "xyz",
+            PlayerViewModel.streamTokenFromPlaylist(
+                "http://host/api/v1/stream/v1/index.m3u8?token=xyz&other=1",
+            ),
+        )
+        assertNull(PlayerViewModel.streamTokenFromPlaylist("/api/v1/stream/v1/index.m3u8"))
+        assertEquals(
+            "Jumped to live — paused longer than the buffer",
+            PlayerViewModel.OUT_OF_WINDOW_NOTICE,
+        )
     }
 }

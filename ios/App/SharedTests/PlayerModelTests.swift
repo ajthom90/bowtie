@@ -29,13 +29,16 @@ final class PlayerModelTests: XCTestCase {
 
     private func makeModel(
         client: BowtieClient? = nil,
-        caps: ClientCaps = SharedFixtures.sampleCaps
+        caps: ClientCaps = SharedFixtures.sampleCaps,
+        /// Default `.zero` disables beats so ManualClock debounce tests stay isolated.
+        heartbeatInterval: Duration = .zero
     ) -> PlayerModel {
         PlayerModel(
             client: client ?? makeClient(),
             caps: caps,
             debounce: .milliseconds(400),
-            clock: clock
+            clock: clock,
+            heartbeatInterval: heartbeatInterval
         )
     }
 
@@ -350,6 +353,128 @@ final class PlayerModelTests: XCTestCase {
         // Second 404 increments again.
         await playThroughDebounce(model)
         XCTAssertEqual(model.channelsStaleGeneration, 2)
+    }
+
+    // MARK: - Heartbeats (15s cadence + A6 through-stall)
+
+    private func heartbeatRequests() -> [URLRequest] {
+        StubURLProtocol.recorded.filter {
+            $0.httpMethod == "POST" && ($0.url?.path.contains("/heartbeat") ?? false)
+        }
+    }
+
+    /// Wait until ManualClock has a sleeper (heartbeat or debounce), then advance.
+    private func advanceClock(_ duration: Duration) async {
+        for _ in 0..<1_000 {
+            if clock.pendingWaiterCount > 0 {
+                clock.advance(by: duration)
+                // Yield so resumed tasks can re-park on the next sleep.
+                await Task.yield()
+                await Task.yield()
+                return
+            }
+            await Task.yield()
+        }
+        clock.advance(by: duration)
+        await Task.yield()
+    }
+
+    func testHeartbeatCadenceEvery15s() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "hb-1"), [:])
+            }
+            if request.httpMethod == "POST", request.url?.path.contains("/heartbeat") == true {
+                return (204, Data(), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel(heartbeatInterval: .seconds(15))
+        await playThroughDebounce(model)
+        guard case .playing = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+        XCTAssertEqual(heartbeatRequests().count, 0, "no immediate beat on start")
+
+        await advanceClock(.seconds(15))
+        // Drain the heartbeat network call.
+        for _ in 0..<50 where heartbeatRequests().count < 1 {
+            await Task.yield()
+        }
+        XCTAssertEqual(heartbeatRequests().count, 1)
+
+        await advanceClock(.seconds(15))
+        for _ in 0..<50 where heartbeatRequests().count < 2 {
+            await Task.yield()
+        }
+        XCTAssertEqual(heartbeatRequests().count, 2)
+
+        let beat = heartbeatRequests()[0]
+        let items = URLComponents(url: beat.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.first(where: { $0.name == "token" })?.value, "abc")
+        XCTAssertNil(beat.value(forHTTPHeaderField: "Authorization"))
+        await model.stop()
+    }
+
+    func testHeartbeatContinuesThroughStalled() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "hb-stall"), [:])
+            }
+            if request.httpMethod == "POST", request.url?.path.contains("/heartbeat") == true {
+                return (204, Data(), [:])
+            }
+            if request.httpMethod == "DELETE" {
+                return (204, Data(), [:])
+            }
+            return (500, Data(), [:])
+        }
+
+        let model = makeModel(heartbeatInterval: .seconds(15))
+        await playThroughDebounce(model)
+
+        await advanceClock(.seconds(15))
+        for _ in 0..<50 where heartbeatRequests().count < 1 {
+            await Task.yield()
+        }
+        XCTAssertEqual(heartbeatRequests().count, 1)
+
+        // A6: stall mid-interval; beats must continue.
+        model.markStalled()
+        XCTAssertEqual(model.state, .stalled)
+
+        await advanceClock(.seconds(15))
+        for _ in 0..<50 where heartbeatRequests().count < 2 {
+            await Task.yield()
+        }
+        XCTAssertEqual(heartbeatRequests().count, 2, "beats continue through .stalled")
+
+        await model.stop()
+        let afterStop = heartbeatRequests().count
+        await advanceClock(.seconds(15))
+        await advanceClock(.seconds(15))
+        XCTAssertEqual(
+            heartbeatRequests().count,
+            afterStop,
+            "beats stop on real leave"
+        )
+    }
+
+    func testStreamTokenFromPlaylist() {
+        XCTAssertEqual(
+            PlayerModel.streamToken(from: "/api/v1/stream/v1/index.m3u8?token=abc"),
+            "abc"
+        )
+        XCTAssertEqual(
+            PlayerModel.streamToken(from: "http://host/api/v1/stream/v1/index.m3u8?token=xyz&other=1"),
+            "xyz"
+        )
+        XCTAssertNil(PlayerModel.streamToken(from: "/api/v1/stream/v1/index.m3u8"))
+        XCTAssertEqual(PlayerModel.outOfWindowNotice, "Jumped to live — paused longer than the buffer")
     }
 
     // MARK: - Stall hooks

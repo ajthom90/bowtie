@@ -374,6 +374,41 @@ final class BowtieClientTests: XCTestCase {
         }
     }
 
+    // MARK: Heartbeat (stream-token auth, no Bearer)
+
+    func testHeartbeatRequestShapeTokenQueryNoAuthorization() async throws {
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        await client.setAccessTokenForTesting("access-should-not-appear")
+
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/sessions/viewer-abc/heartbeat")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(items.first(where: { $0.name == "token" })?.value, "stream-tok-xyz")
+            XCTAssertNil(
+                request.value(forHTTPHeaderField: "Authorization"),
+                "heartbeat must not send Bearer — stream token alone authorizes"
+            )
+            return (204, Data(), [:])
+        }
+
+        await client.heartbeat(viewerId: "viewer-abc", token: "stream-tok-xyz")
+        XCTAssertEqual(StubURLProtocol.recorded.count, 1)
+    }
+
+    func testHeartbeatSwallowsErrors() async throws {
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        await client.setAccessTokenForTesting("access-1")
+
+        StubURLProtocol.handler = { _ in
+            (500, #"{"error":"boom"}"#.data(using: .utf8)!, [:])
+        }
+
+        // Must not throw.
+        await client.heartbeat(viewerId: "vid", token: "tok")
+        XCTAssertEqual(StubURLProtocol.recorded.count, 1)
+    }
+
     // MARK: Best-effort teardown
 
     func testDeleteSwallowsErrors() async throws {

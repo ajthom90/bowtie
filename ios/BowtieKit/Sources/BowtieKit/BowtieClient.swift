@@ -176,6 +176,25 @@ public actor BowtieClient {
         )
     }
 
+    /// Session liveness beat (spec C). Auth is the stream token query param only —
+    /// never Bearer (avoids racing access-token refresh mid-session). Best-effort.
+    public func heartbeat(viewerId: String, token: String) async {
+        let encoded = viewerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? viewerId
+        var components = URLComponents(
+            url: ServerURL.resolve(path: "/api/v1/sessions/\(encoded)/heartbeat", against: server),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        guard let url = components.url else { return }
+        _ = try? await sendRawURL(
+            url: url,
+            method: "POST",
+            body: nil as EmptyBody?,
+            authorize: false,
+            retryOn401: false
+        )
+    }
+
     public func me() async throws -> User {
         let user: User = try await send(
             path: "/api/v1/me",

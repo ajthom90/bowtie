@@ -24,6 +24,8 @@ struct PlayerView: View {
     @State private var indicatedBitrate: Double?
     @State private var droppedFrames: Int?
     @State private var statsPollTask: Task<Void, Never>?
+    @State private var outOfWindowNotice: String?
+    @State private var noticeHideTask: Task<Void, Never>?
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -31,6 +33,7 @@ struct PlayerView: View {
     ]
 
     private static let chromeHideDelay: Duration = .seconds(3)
+    private static let noticeHideDelay: Duration = .seconds(4)
 
     var body: some View {
         ZStack {
@@ -59,6 +62,21 @@ struct PlayerView: View {
                 stalledSpinner
             } else if case .starting = playerModel.state {
                 stalledSpinner
+            }
+
+            if let notice = outOfWindowNotice {
+                Text(notice)
+                    .font(Theme.body(14))
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Theme.bg.opacity(0.88))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                    .padding(.bottom, 96)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.opacity)
+                    .accessibilityLabel(notice)
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -108,6 +126,12 @@ struct PlayerView: View {
                 }
             }
         }
+        .onChange(of: bridge.playerDidJumpToLive) { _, jumped in
+            if jumped {
+                bridge.playerDidJumpToLive = false
+                showOutOfWindowNotice()
+            }
+        }
         .onChange(of: bridge.pipDidEndAndShouldStop) { _, shouldStop in
             if shouldStop {
                 bridge.pipDidEndAndShouldStop = false
@@ -119,6 +143,22 @@ struct PlayerView: View {
         }
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
+        }
+    }
+
+    private func showOutOfWindowNotice() {
+        outOfWindowNotice = PlayerModel.outOfWindowNotice
+        noticeHideTask?.cancel()
+        noticeHideTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: Self.noticeHideDelay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                outOfWindowNotice = nil
+            }
         }
     }
 
@@ -572,13 +612,18 @@ final class PlayerBridge {
     var playerErrorIsForbidden = false
     var playerDidStall = false
     var playerDidRecover = false
+    /// Out-of-window clamp: position fell before seekable start → jumped to live edge.
+    var playerDidJumpToLive = false
 
     private var itemStatusObs: NSKeyValueObservation?
     private var itemKeepUpObs: NSKeyValueObservation?
     private var itemEmptyObs: NSKeyValueObservation?
+    private var seekableObs: NSKeyValueObservation?
     private var timeControlObs: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var failedObserver: NSObjectProtocol?
+    private var boundaryTimeObserver: Any?
+    private var periodicTimeObserver: Any?
 
     func load(url: URL) {
         let item = AVPlayerItem(url: url)
@@ -630,10 +675,27 @@ final class PlayerBridge {
                 self?.handleBufferState(item)
             }
         }
+        // Spec B / Task 7: when current position falls below seekable range start
+        // (paused longer than the DVR buffer), clamp to live edge + notice.
+        seekableObs = item.observe(\.seekableTimeRanges, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in
+                self?.clampIfBehindSeekableWindow()
+            }
+        }
         if let player {
             timeControlObs = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
                 Task { @MainActor in
                     self?.handleTimeControl(player)
+                }
+            }
+            // Periodic check so a paused head that slowly exits the window is caught.
+            let interval = CMTime(seconds: 2, preferredTimescale: 600)
+            periodicTimeObserver = player.addPeriodicTimeObserver(
+                forInterval: interval,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.clampIfBehindSeekableWindow()
                 }
             }
         }
@@ -647,6 +709,24 @@ final class PlayerBridge {
                 let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
                 self?.handleFailure(error)
             }
+        }
+    }
+
+    /// When playback position is before the first seekable range start, seek to
+    /// the live edge (range end) and flag the out-of-window notice.
+    func clampIfBehindSeekableWindow() {
+        guard let player, let item = player.currentItem else { return }
+        let ranges = item.seekableTimeRanges
+        guard let value = ranges.first else { return }
+        let range = value.timeRangeValue
+        guard range.duration.isNumeric, range.duration.seconds > 0 else { return }
+        let current = player.currentTime()
+        guard current.isNumeric else { return }
+        let start = range.start
+        if CMTimeCompare(current, start) < 0 {
+            let liveEdge = CMTimeRangeGetEnd(range)
+            player.seek(to: liveEdge, toleranceBefore: .zero, toleranceAfter: .zero)
+            playerDidJumpToLive = true
         }
     }
 
@@ -723,11 +803,18 @@ final class PlayerBridge {
         itemStatusObs?.invalidate()
         itemKeepUpObs?.invalidate()
         itemEmptyObs?.invalidate()
+        seekableObs?.invalidate()
         timeControlObs?.invalidate()
         itemStatusObs = nil
         itemKeepUpObs = nil
         itemEmptyObs = nil
+        seekableObs = nil
         timeControlObs = nil
+        if let player, let periodicTimeObserver {
+            player.removeTimeObserver(periodicTimeObserver)
+        }
+        periodicTimeObserver = nil
+        boundaryTimeObserver = nil
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
@@ -749,7 +836,9 @@ private struct PlayerContainer: UIViewControllerRepresentable {
         let vc = AVPlayerViewController()
         vc.allowsPictureInPicturePlayback = true
         vc.canStartPictureInPictureAutomaticallyFromInline = true
-        vc.showsPlaybackControls = false
+        // Spec D: native live-DVR scrubber (do not force linear-only playback).
+        vc.showsPlaybackControls = true
+        vc.requiresLinearPlayback = false
         vc.delegate = context.coordinator
         vc.player = bridge.player
         return vc

@@ -8,6 +8,7 @@ import android.view.KeyEvent
  * - DPAD_CENTER short-press (&lt; [longPressThresholdMs]): play/pause
  * - DPAD_CENTER long-press (≥ threshold) or KEYCODE_MENU: open transport/quality drawer
  * - DPAD_UP / DPAD_DOWN: channel zap
+ * - DPAD_LEFT / DPAD_RIGHT: seek ∓30s while controls (drawer) are hidden (spec D)
  * - BACK: leave player
  *
  * Long-press is a **state machine** (KeyDown timestamp → KeyUp duration), not a
@@ -25,6 +26,8 @@ class PlayerKeyHandler(
         data object OpenDrawer : Action()
         data object ZapUp : Action()
         data object ZapDown : Action()
+        data object SeekBack30 : Action()
+        data object SeekForward30 : Action()
         data object Back : Action()
     }
 
@@ -66,6 +69,20 @@ class PlayerKeyHandler(
             KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
                     return Result(handled = true, action = Action.ZapDown)
+                }
+                return Result(handled = true, action = null)
+            }
+
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
+                    return Result(handled = true, action = Action.SeekBack30)
+                }
+                return Result(handled = true, action = null)
+            }
+
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
+                    return Result(handled = true, action = Action.SeekForward30)
                 }
                 return Result(handled = true, action = null)
             }

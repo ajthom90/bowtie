@@ -14,6 +14,8 @@ import BowtieKit
 ///   termination) — never background / PiP.
 /// - Stall UX: player UI calls `markStalled` → spinner; retries AVPlayer with
 ///   backoff (1s, 2s, 4s ×3); `resumePlaying` on recovery or `stallFailed` after.
+/// - Heartbeats (spec C / A6): 15s while session is open (playing OR stalled);
+///   stream-token auth; stop only on real leave.
 @Observable
 @MainActor
 public final class PlayerModel {
@@ -55,6 +57,13 @@ public final class PlayerModel {
     public static let stallFailedMessage =
         "Playback stalled"
 
+    /// Out-of-window clamp notice (spec B) — exact copy.
+    public static let outOfWindowNotice =
+        "Jumped to live — paused longer than the buffer"
+
+    /// Client heartbeat interval (spec C).
+    nonisolated public static let heartbeatInterval: Duration = .seconds(15)
+
     public private(set) var state: State = .idle
     public private(set) var currentChannel: Channel?
     /// `""` = Auto.
@@ -70,8 +79,10 @@ public final class PlayerModel {
     private let caps: ClientCaps
     private let debounce: Duration
     private let clock: any Clock<Duration>
+    private let heartbeatInterval: Duration
 
     private var replaceTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
     private var activeViewerId: String?
     /// Generation token so cancelled replace tasks never clobber newer state.
     private var generation: UInt64 = 0
@@ -82,12 +93,14 @@ public final class PlayerModel {
         client: BowtieClient,
         caps: ClientCaps,
         debounce: Duration = .milliseconds(400),
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        heartbeatInterval: Duration = PlayerModel.heartbeatInterval
     ) {
         self.client = client
         self.caps = caps
         self.debounce = debounce
         self.clock = clock
+        self.heartbeatInterval = heartbeatInterval
     }
 
     /// Caps sent on every create: base device caps + current profile selection.
@@ -118,6 +131,7 @@ public final class PlayerModel {
     public func stop() async {
         replaceTask?.cancel()
         replaceTask = nil
+        stopHeartbeat()
         generation &+= 1
 
         let viewerId = activeViewerId
@@ -192,6 +206,7 @@ public final class PlayerModel {
 
         let oldViewerId = activeViewerId
         activeViewerId = nil
+        stopHeartbeat()
         state = .starting
 
         if let oldViewerId {
@@ -226,6 +241,7 @@ public final class PlayerModel {
             activeViewerId = session.viewerId
             lastSession = session
             state = .playing(session)
+            startHeartbeat(viewerId: session.viewerId, playlistUrl: session.playlistUrl)
         } catch let error as BowtieError {
             guard isCurrent(gen) else { return }
             await handleCreateError(
@@ -238,6 +254,48 @@ public final class PlayerModel {
             guard isCurrent(gen) else { return }
             state = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: - Heartbeats (A6: session-open, continues through stalled)
+
+    private func startHeartbeat(viewerId: String, playlistUrl: String) {
+        stopHeartbeat()
+        // Interval of zero disables beats (test harness default) so ManualClock
+        // debounce waiters are not confused with heartbeat sleeps.
+        guard heartbeatInterval > .zero else { return }
+        guard let token = Self.streamToken(from: playlistUrl) else { return }
+        let interval = heartbeatInterval
+        heartbeatTask = Task { @MainActor in
+            while !Task.isCancelled {
+                do {
+                    try await self.clock.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                // A6: keyed on session open — continue while this viewer is still active
+                // (playing or stalled). Stop only when replaced or stop() clears it.
+                guard self.activeViewerId == viewerId else { return }
+                await self.client.heartbeat(viewerId: viewerId, token: token)
+            }
+        }
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
+    /// Extract `token` query from a playlist path/URL (relative or absolute).
+    public static func streamToken(from playlistUrl: String) -> String? {
+        if let items = URLComponents(string: playlistUrl)?.queryItems {
+            return items.first(where: { $0.name == "token" })?.value
+        }
+        // Relative paths without a scheme: prefix a dummy base.
+        if let items = URLComponents(string: "http://d.invalid\(playlistUrl.hasPrefix("/") ? "" : "/")\(playlistUrl)")?.queryItems {
+            return items.first(where: { $0.name == "token" })?.value
+        }
+        return nil
     }
 
     private func handleCreateError(

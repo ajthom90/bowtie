@@ -118,8 +118,8 @@ Implementation per spec A verbatim: per-channel mutex single-flight; pump 64KB c
 - Modify: `ios/App/Shared/PlayerModel.swift` (+heartbeat: 15s task loop using ManualClock-compatible clock; starts on .playing, stops on stop(); uses client `heartbeat(viewerId:)` added to BowtieKit with stream-token URL derived from playlistUrl), `ios/BowtieKit/Sources/BowtieKit/BowtieClient.swift` (+`heartbeat(viewerId:token:)` — token param, no Bearer), `ios/App/iOS/PlayerView.swift` (verify no `requiresLinearPlayback`; AVPlayer scrubber is native; out-of-window contract: observe seekableTimeRanges — when current position falls below range start, seek to live edge and show the exact notice copy via the overlay), SharedTests + BowtieKit tests
 - Modify: `android/core/.../BowtieClient.kt` (+`heartbeat(viewerId, token)`), `android/core/.../vm/PlayerViewModel.kt` (+15s ticker in Playing state, virtual-time test), `android/app/.../PlayerScreen.kt` + `android/tv/.../TvPlayerScreen.kt` (enable controller seek/rewind affordances; out-of-window clamp: on BehindLiveWindowException seek to default position + notice copy), `android/tv/.../PlayerKeyHandler.kt`(+test: DPAD_LEFT/RIGHT → SeekBack30/SeekForward30 actions while controls hidden)
 
-- [ ] **Step 1: Failing tests** — BowtieKit heartbeat request shape (token query, no Authorization on that call); PlayerModel beat cadence via ManualClock; PlayerViewModel ticker via virtual time; key handler ±30s mapping.
-- [ ] **Step 2:** implement → all platform suites green (ios sim tests + android unit tests). **Step 3:** Commit `feat: native client heartbeats and live scrubbing`
+- [x] **Step 1: Failing tests** — BowtieKit heartbeat request shape (token query, no Authorization on that call); PlayerModel beat cadence via ManualClock; PlayerViewModel ticker via virtual time; key handler ±30s mapping.
+- [x] **Step 2:** implement → all platform suites green (ios sim tests + android unit tests). **Step 3:** Commit `feat: native client heartbeats and live scrubbing`
 
 ### Task 8: Roku heartbeat + docs + changelog
 

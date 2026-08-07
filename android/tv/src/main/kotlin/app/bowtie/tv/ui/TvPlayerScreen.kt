@@ -63,10 +63,11 @@ import okhttp3.HttpUrl
  * - Compose container owns keys via [onPreviewKeyEvent] + [FocusRequester]
  * - Focus re-requested on entry and when the engine reaches STATE_READY
  *
- * Key map (README + A1):
+ * Key map (README + A1 + spec D):
  * - DPAD_CENTER short = play/pause
  * - DPAD_CENTER long (≥700ms) or MENU = transport/quality drawer
  * - DPAD_UP / DPAD_DOWN = zap (debounced via [PlayerViewModel])
+ * - DPAD_LEFT / DPAD_RIGHT = seek ∓30s while drawer hidden
  * - BACK = stop + pop (or close drawer first)
  */
 @OptIn(UnstableApi::class)
@@ -95,12 +96,16 @@ fun TvPlayerScreen(
     var activeViewerId by remember { mutableStateOf<String?>(null) }
     var displayChannel by remember(channel.id) { mutableStateOf(channel) }
     var displayNowTitle by remember(channel.id) { mutableStateOf(nowTitle) }
+    var outOfWindowNotice by remember { mutableStateOf<String?>(null) }
 
     val viewModelLatest = rememberUpdatedState(playerViewModel)
     val onChannelChangedLatest = rememberUpdatedState(onChannelChanged)
     val channelsLatest = rememberUpdatedState(channels)
     val setBitrate = rememberUpdatedState { bps: Int? -> bitrateBps = bps }
     val setDropped = rememberUpdatedState { total: Long -> droppedFrames = total }
+    val setJumpedToLive = rememberUpdatedState {
+        outOfWindowNotice = PlayerViewModel.OUT_OF_WINDOW_NOTICE
+    }
 
     val focusRequester = remember { FocusRequester() }
     val drawerFocusRequester = remember { FocusRequester() }
@@ -143,8 +148,19 @@ fun TvPlayerScreen(
                 override fun onDroppedFrames(total: Long) {
                     setDropped.value.invoke(total)
                 }
+
+                override fun onJumpedToLive() {
+                    setJumpedToLive.value.invoke()
+                }
             },
         )
+    }
+
+    // Auto-dismiss out-of-window notice.
+    LaunchedEffect(outOfWindowNotice) {
+        if (outOfWindowNotice == null) return@LaunchedEffect
+        kotlinx.coroutines.delay(4_000L)
+        outOfWindowNotice = null
     }
 
     fun leave() {
@@ -175,6 +191,8 @@ fun TvPlayerScreen(
             }
             PlayerKeyHandler.Action.ZapUp -> zap(-1)
             PlayerKeyHandler.Action.ZapDown -> zap(+1)
+            PlayerKeyHandler.Action.SeekBack30 -> engine.seekBack30()
+            PlayerKeyHandler.Action.SeekForward30 -> engine.seekForward30()
             PlayerKeyHandler.Action.Back -> {
                 if (showDrawer) {
                     showDrawer = false
@@ -355,6 +373,19 @@ fun TvPlayerScreen(
                     .align(Alignment.TopEnd)
                     .padding(BowtieDimens.screenPadding)
                     .width(260.dp),
+            )
+        }
+
+        if (outOfWindowNotice != null) {
+            Text(
+                text = outOfWindowNotice!!,
+                style = BowtieType.body,
+                color = BowtieColors.text,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(BowtieDimens.screenPadding)
+                    .background(BowtieColors.bg.copy(alpha = 0.88f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
             )
         }
 

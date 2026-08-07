@@ -48,6 +48,11 @@ class PlayerEngine(
         fun onReady()
         fun onBitrate(bps: Int?)
         fun onDroppedFrames(total: Long)
+        /**
+         * Behind-live-window: player already sought to the live edge.
+         * Host should show the out-of-window notice (spec B).
+         */
+        fun onJumpedToLive() {}
     }
 
     val player: ExoPlayer
@@ -64,6 +69,8 @@ class PlayerEngine(
         val hlsFactory = HlsMediaSource.Factory(httpFactory)
         player = ExoPlayer.Builder(context)
             .setMediaSourceFactory(hlsFactory)
+            .setSeekBackIncrementMs(SEEK_INCREMENT_MS)
+            .setSeekForwardIncrementMs(SEEK_INCREMENT_MS)
             .build()
             .apply {
                 playWhenReady = true
@@ -147,6 +154,20 @@ class PlayerEngine(
         player.playWhenReady = !player.playWhenReady
     }
 
+    /** Seek relative to current position by [deltaMs] (clamped by ExoPlayer live window). */
+    fun seekBy(deltaMs: Long) {
+        val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
+        player.seekTo(target)
+    }
+
+    fun seekBack30() {
+        player.seekBack()
+    }
+
+    fun seekForward30() {
+        player.seekForward()
+    }
+
     fun release() {
         networkRetryJob?.cancel()
         networkRetryJob = null
@@ -171,13 +192,15 @@ class PlayerEngine(
             error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
 
         if (behindLive) {
-            listener.onStalled()
+            // Spec B: clamp to live edge + notice — not a stall reconnect loop.
             try {
                 player.seekToDefaultPosition()
                 player.prepare()
+                player.playWhenReady = true
             } catch (_: Exception) {
-                // Fall through to network retry if seek fails — treat as network path.
+                // Best-effort; still surface the notice.
             }
+            listener.onJumpedToLive()
             return
         }
 
@@ -216,6 +239,8 @@ class PlayerEngine(
         const val USER_AGENT = "BowtieAndroid/0.1"
         const val PLAYBACK_FAILED_COPY =
             "Playback failed. Try again or pick a lower quality."
+        /** Fire TV DPAD / controller seek step (spec D). */
+        const val SEEK_INCREMENT_MS = 30_000L
 
         val NETWORK_BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L)
 
