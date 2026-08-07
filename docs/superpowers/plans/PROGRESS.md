@@ -1160,3 +1160,55 @@ $ CGO_ENABLED=0 go test -tags ffmpeg -v ./internal/transcode/ -run TestCommand -
 PASS
 ok  	github.com/ajthom90/bowtie/server/internal/transcode	1.395s
 ```
+
+## v0.5.0 Task 4
+
+**Date:** 2026-08-07
+
+### Built
+
+- `server/internal/stream/ingest.go`: `IngestManager` / `IngestSub` per Lifecycle BINDING
+  - `NewIngestManager(dial, opts...)` + `WithIngestClock(now, after)` (A1)
+  - `Attach` single-flight per channel; `ErrTunersBusy` on dial 503 (`errors.Is`)
+  - Pump: 64 KB chunks; per-sub `chan` cap 64 + drain → `io.Pipe`; stall >2s force-Close that sub only
+  - Join buffer: last PAT + last PMT + packets since last PAT, cap 1 MB; prepended to new subs
+  - Refcount; last Close → 5s tail (re-Attach reuses, no redial); then body close
+  - Reconnect 1s..30s keeps subs; 503-on-reconnect closes subs; give-up 60s closes subs
+  - `ActiveChannels()`, `Shutdown()`, `AttachCalls()` (A3), `R io.ReadCloser` (A4)
+- `ingest_test.go`: synthetic TS builder (PAT+PMT once then media-only — A2 falsifier);
+  counting dial; manual clock/after (no wall sleeps ≥1s for timing under test)
+- Tests: `TestSingleFlightConcurrentAttach`, `TestFanoutDeliversIdenticalBytes`,
+  `TestJoinBufferGivesLateSubTables`, `TestStalledSubForceClosedOthersFlow`,
+  `TestLastCloseTailThenDialClosed`, `TestDial503ErrTunersBusy`, `TestReconnectKeepsSubs`,
+  `TestReconnect503ClosesSubs`, `TestGiveUpAfter60s`, plus A4 safety:
+  `TestDoubleCloseSafe`, `TestConcurrentCloseVsForceClose`, `TestShutdownVsConcurrentAttach`,
+  `TestActiveChannels`
+
+### Notes
+
+- Manager integration deferred to Task 5 (do not modify `manager.go` here).
+- No lifecycle ambiguities requiring PROGRESS questions.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && CGO_ENABLED=1 go test -race ./internal/stream/ && golangci-lint run && echo OK
+ok  github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  github.com/ajthom90/bowtie/server/internal/api
+ok  github.com/ajthom90/bowtie/server/internal/auth
+ok  github.com/ajthom90/bowtie/server/internal/config
+ok  github.com/ajthom90/bowtie/server/internal/epg
+ok  github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  github.com/ajthom90/bowtie/server/internal/hdhr
+ok  github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  github.com/ajthom90/bowtie/server/internal/settings
+ok  github.com/ajthom90/bowtie/server/internal/store
+ok  github.com/ajthom90/bowtie/server/internal/stream
+ok  github.com/ajthom90/bowtie/server/internal/transcode
+ok  github.com/ajthom90/bowtie/server/internal/tuner
+ok  github.com/ajthom90/bowtie/server/internal/web
+ok  github.com/ajthom90/bowtie/server/internal/stream  (race)
+0 issues.
+OK
+```

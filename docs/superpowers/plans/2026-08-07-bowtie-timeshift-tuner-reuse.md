@@ -87,8 +87,8 @@ func (im *IngestManager) Shutdown()                     // close all (server sto
 
 Implementation per spec A verbatim: per-channel mutex single-flight; pump 64KB chunks; per-sub chan(64) + drain goroutine → io.Pipe; stall>2s force-Close that sub; PAT/PMT join buffer (parse TS sync bytes 0x47, PID 0 = PAT, PMT PID from PAT; keep last tables + packets since last PAT, cap 1MB) served first to new subs; refcount; last-Close → 5s tail then close body; reconnect backoff on non-503 errors without closing subs, give up 60s.
 
-- [ ] **Step 1: Failing tests** (fake dial serving synthetic TS with proper PAT/PMT packets at intervals; fake clock where waits matter): `TestSingleFlightConcurrentAttach` (10 goroutines, 1 dial), `TestFanoutDeliversIdenticalBytes`, `TestJoinBufferGivesLateSubTables` (late sub's first bytes contain PAT+PMT), `TestStalledSubForceClosedOthersFlow`, `TestLastCloseTailThenDialClosed` (5s tail; re-Attach within tail reuses), `TestDial503ErrTunersBusy`, `TestReconnectKeepsSubs` (mid-stream EOF → redial → bytes continue), `TestReconnect503ClosesSubs`, `TestGiveUpAfter60s`.
-- [ ] **Step 2:** FAIL → implement → PASS + `go test -race ./internal/stream/`. **Step 3:** Commit `feat: per-channel ingest fan-out with single-flight dial and join buffer`
+- [x] **Step 1: Failing tests** (fake dial serving synthetic TS with proper PAT/PMT packets at intervals; fake clock where waits matter): `TestSingleFlightConcurrentAttach` (10 goroutines, 1 dial), `TestFanoutDeliversIdenticalBytes`, `TestJoinBufferGivesLateSubTables` (late sub's first bytes contain PAT+PMT), `TestStalledSubForceClosedOthersFlow`, `TestLastCloseTailThenDialClosed` (5s tail; re-Attach within tail reuses), `TestDial503ErrTunersBusy`, `TestReconnectKeepsSubs` (mid-stream EOF → redial → bytes continue), `TestReconnect503ClosesSubs`, `TestGiveUpAfter60s`.
+- [x] **Step 2:** FAIL → implement → PASS + `go test -race ./internal/stream/`. **Step 3:** Commit `feat: per-channel ingest fan-out with single-flight dial and join buffer`
 
 ### Task 5: Manager integration (tuner reuse live) + e2e bar
 
