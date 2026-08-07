@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,10 @@ type JobSpec struct {
 	// HLSListSize is the -hls_list_size value (DVR window in segments).
 	// Zero means the historical default of 30 (~2 min at 4s segments).
 	HLSListSize int
+	// Stdin, when non-nil, feeds MPEG-TS via pipe:0 instead of InputURL.
+	// BuildArgs emits -fflags +discardcorrupt -i pipe:0; Command wires cmd.Stdin.
+	// Used by the per-channel ingest fan-out so FFmpeg does not dial the device.
+	Stdin io.Reader
 }
 
 // DefaultHLSListSize is used when JobSpec.HLSListSize is 0 (legacy / unset).
@@ -29,7 +34,12 @@ func BuildArgs(s JobSpec) []string {
 	args := []string{"-hide_banner", "-loglevel", "warning", "-nostats"}
 
 	args = append(args, inputHWAccel(s.D.Backend)...)
-	args = append(args, "-i", s.InputURL)
+	if s.Stdin != nil {
+		// Pipe input from ingest fan-out; discardcorrupt hardens dirty ATSC TS.
+		args = append(args, "-fflags", "+discardcorrupt", "-i", "pipe:0")
+	} else {
+		args = append(args, "-i", s.InputURL)
+	}
 
 	h := s.D.Profile.Height
 	args = append(args, "-vf", videoFilter(s.D.Backend, h))
@@ -79,10 +89,14 @@ func BuildArgs(s JobSpec) []string {
 
 // Command builds an *exec.Cmd for the job with Stdout/Stderr logged under a
 // fixed "ffmpeg: " prefix. Separate writers avoid races if both streams write.
+// When s.Stdin is set, it is wired to cmd.Stdin for pipe:0 input.
 func Command(ctx context.Context, ffmpegPath string, s JobSpec) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, ffmpegPath, BuildArgs(s)...)
 	cmd.Stdout = &prefixLogWriter{prefix: "ffmpeg: "}
 	cmd.Stderr = &prefixLogWriter{prefix: "ffmpeg: "}
+	if s.Stdin != nil {
+		cmd.Stdin = s.Stdin
+	}
 	return cmd
 }
 

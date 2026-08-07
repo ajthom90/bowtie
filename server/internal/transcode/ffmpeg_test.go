@@ -2,12 +2,20 @@ package transcode_test
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 )
+
+// nonNilStdin is a non-nil io.Reader used only to flip BuildArgs into pipe:0 mode.
+// Content is irrelevant for argv goldens.
+func nonNilStdin() io.Reader {
+	return strings.NewReader("")
+}
 
 func TestBuildArgsSoftwareAAC(t *testing.T) {
 	out := "/tmp/out"
@@ -232,6 +240,194 @@ func TestCommandReturnsCmd(t *testing.T) {
 	}
 	if cmd.Stdout == nil || cmd.Stderr == nil {
 		t.Error("Command should wire Stdout and Stderr to a prefixed logger")
+	}
+	if cmd.Stdin != nil {
+		t.Error("Command should leave Stdin nil when JobSpec.Stdin is nil (URL mode)")
+	}
+}
+
+// TestCommandWiresStdin documents that non-nil JobSpec.Stdin is attached to the Cmd.
+func TestCommandWiresStdin(t *testing.T) {
+	r := nonNilStdin()
+	s := transcode.JobSpec{
+		InputURL: "http://example/in", // ignored when Stdin set
+		OutDir:   "/tmp/out",
+		Stdin:    r,
+		D: transcode.Decision{
+			VideoCodec:   "h264",
+			VideoEncoder: "libx264",
+			Profile:      transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+			Backend:      transcode.BackendSoftware,
+		},
+	}
+	cmd := transcode.Command(context.Background(), "/usr/bin/ffmpeg", s)
+	if cmd.Stdin != r {
+		t.Fatalf("Command Stdin = %v, want the JobSpec.Stdin reader", cmd.Stdin)
+	}
+	// Args must use pipe:0 mode (not the URL).
+	if !containsAdjacent(cmd.Args, "-i", "pipe:0") {
+		t.Fatalf("Command args should include -i pipe:0; got %v", cmd.Args)
+	}
+	if !containsAdjacent(cmd.Args, "-fflags", "+discardcorrupt") {
+		t.Fatalf("Command args should include -fflags +discardcorrupt; got %v", cmd.Args)
+	}
+	for _, a := range cmd.Args {
+		if a == "http://example/in" {
+			t.Fatalf("URL must not appear in args when Stdin is set; got %v", cmd.Args)
+		}
+	}
+}
+
+// TestBuildArgsStdinPipeAcrossBackends is Task 3: when Stdin is set, all five
+// backends emit -fflags +discardcorrupt -i pipe:0 (hw flags unchanged; URL absent).
+func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
+	out := "/tmp/out"
+	stdin := nonNilStdin()
+
+	type caseSpec struct {
+		name string
+		s    transcode.JobSpec
+		want []string
+	}
+	cases := []caseSpec{
+		{
+			name: "software",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, Stdin: stdin,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "libx264", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendSoftware,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-vf", "yadif=0:-1:0,scale=-2:480",
+				"-c:v", "libx264",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "veryfast", "-profile:v", "high",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "videotoolbox",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, Stdin: stdin,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_videotoolbox", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendVideoToolbox,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-vf", "yadif=0:-1:0,scale=-2:480",
+				"-c:v", "h264_videotoolbox",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-realtime", "1", "-profile:v", "high",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "qsv",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, Stdin: stdin,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_qsv", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendQSV,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
+				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-vf", "vpp_qsv=deinterlace=2:scale_mode=hq:w=-1:h=480",
+				"-c:v", "h264_qsv",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "veryfast",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "vaapi",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, Stdin: stdin,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_vaapi", AudioCopy: false,
+					Profile: transcode.Profile{Name: "medium", Height: 720, VideoKbps: 2500, AudioKbps: 128},
+					Backend: transcode.BackendVAAPI,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
+				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-vf", "deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720",
+				"-c:v", "h264_vaapi",
+				"-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "nvenc",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, Stdin: stdin,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_nvenc", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendNVENC,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-vf", "yadif_cuda=0:-1:0,scale_cuda=-2:480",
+				"-c:v", "h264_nvenc",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "p4",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertArgs(t, transcode.BuildArgs(tc.s), tc.want)
+		})
 	}
 }
 

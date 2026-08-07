@@ -63,7 +63,7 @@ docs (truenas/compose tmpfs 4g, roku-testing additions, CHANGELOG)
 **Files:**
 - Modify: `server/internal/transcode/ffmpeg.go` (+`JobSpec.Stdin io.Reader`; when set: input args `-fflags +discardcorrupt -i pipe:0` replacing the URL, hw flags unchanged; `Command` sets `cmd.Stdin`), `ffmpeg_test.go` (goldens for all five backends with Stdin set + one URL-mode golden preserved for fallback), `ffmpeg_e2e_test.go` (tagged: pipe-fed transcode from a generated TS via stdin)
 
-- [ ] **Step 1: Failing goldens.** **Step 2:** implement → PASS incl. tagged run locally. **Step 3:** Commit `feat: ffmpeg stdin pipe input with corrupt-packet discard`
+- [x] **Step 1: Failing goldens.** **Step 2:** implement → PASS incl. tagged run locally. **Step 3:** Commit `feat: ffmpeg stdin pipe input with corrupt-packet discard`
 
 ### Task 4: IngestManager (pure; the review's test bar applies)
 

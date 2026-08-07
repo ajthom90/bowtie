@@ -1116,3 +1116,47 @@ Test Files  5 passed (5)
 ✓ built in …
 OK
 ```
+
+## v0.5.0 Task 3
+
+**Date:** 2026-08-07
+
+### Built
+
+- `JobSpec.Stdin io.Reader` — when non-nil, `BuildArgs` emits `-fflags +discardcorrupt -i pipe:0` instead of `-i InputURL`; hw input flags unchanged (before input).
+- `Command` wires `cmd.Stdin = s.Stdin` when set; URL mode leaves Stdin nil.
+- Goldens: all five backends stdin/pipe mode (`TestBuildArgsStdinPipeAcrossBackends`); existing URL-mode goldens preserved (incl. HLSListSize 30/225 from Task 2).
+- `TestCommandWiresStdin` asserts pipe args + Stdin attachment; URL mode Stdin stays nil.
+- Tagged e2e: `TestCommandSoftwarePipeE2E` feeds generated MPEG-TS via stdin → live.m3u8 + h264/aac segs.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+
+$ CGO_ENABLED=0 go test -tags ffmpeg -v ./internal/transcode/ -run TestCommand -timeout 120s 2>&1 | grep -E "PASS|FAIL|ok"
+--- PASS: TestCommandSoftwareE2E (0.28s)
+--- PASS: TestCommandVideoToolboxE2E (0.74s)
+--- PASS: TestCommandSoftwarePipeE2E (0.26s)
+--- PASS: TestCommandReturnsCmd (0.00s)
+--- PASS: TestCommandWiresStdin (0.00s)
+PASS
+ok  	github.com/ajthom90/bowtie/server/internal/transcode	1.395s
+```

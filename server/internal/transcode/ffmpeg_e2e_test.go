@@ -37,7 +37,7 @@ func ffprobeBin() string {
 // TestCommandSoftwareE2E generates a short interlaced MPEG-TS fixture, runs
 // the software HLS pipeline, and asserts playlist/segments plus codecs.
 func TestCommandSoftwareE2E(t *testing.T) {
-	runCommandE2E(t, transcode.BackendSoftware, "libx264")
+	runCommandE2E(t, transcode.BackendSoftware, "libx264", false)
 }
 
 // TestCommandVideoToolboxE2E is darwin-only hardware path.
@@ -45,10 +45,16 @@ func TestCommandVideoToolboxE2E(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("videotoolbox only on darwin")
 	}
-	runCommandE2E(t, transcode.BackendVideoToolbox, "h264_videotoolbox")
+	runCommandE2E(t, transcode.BackendVideoToolbox, "h264_videotoolbox", false)
 }
 
-func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string) {
+// TestCommandSoftwarePipeE2E feeds generated MPEG-TS via JobSpec.Stdin (pipe:0)
+// instead of a file/URL — the ingest fan-out path used in production.
+func TestCommandSoftwarePipeE2E(t *testing.T) {
+	runCommandE2E(t, transcode.BackendSoftware, "libx264", true)
+}
+
+func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string, pipeInput bool) {
 	t.Helper()
 	ffmpeg := ffmpegBin()
 	ffprobe := ffprobeBin()
@@ -90,13 +96,34 @@ func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string) {
 			Backend:      backend,
 		},
 	}
+	if pipeInput {
+		f, err := os.Open(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		// Empty URL; BuildArgs must use pipe:0, not the path.
+		spec.InputURL = ""
+		spec.Stdin = f
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := transcode.Command(ctx, ffmpeg, spec)
+	if pipeInput {
+		if cmd.Stdin == nil {
+			t.Fatal("pipe mode: Command must wire Stdin")
+		}
+		// Sanity: argv must not reference a file URL when pipe-fed.
+		for _, a := range cmd.Args {
+			if a == input {
+				t.Fatalf("pipe mode must not pass input path in args: %v", cmd.Args)
+			}
+		}
+	}
 	if err := cmd.Run(); err != nil {
-		// File input should exit 0 when finished; surface failure clearly.
-		t.Fatalf("ffmpeg %s: %v", backend, err)
+		// File/pipe input should exit 0 when finished; surface failure clearly.
+		t.Fatalf("ffmpeg %s pipe=%v: %v", backend, pipeInput, err)
 	}
 
 	playlist := filepath.Join(outDir, "live.m3u8")
@@ -141,5 +168,5 @@ func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string) {
 	if !hasH264 || !hasAAC {
 		t.Fatalf("segment codecs = %q (lines %v), want h264 and aac", codecs, lines)
 	}
-	t.Logf("backend=%s encoder=%s segs=%d codecs=%v", backend, encoder, len(segs), lines)
+	t.Logf("backend=%s encoder=%s pipe=%v segs=%d codecs=%v", backend, encoder, pipeInput, len(segs), lines)
 }
