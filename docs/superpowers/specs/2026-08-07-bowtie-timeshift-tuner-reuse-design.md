@@ -10,7 +10,7 @@ how many transcode variants (quality/codec) are being watched.
 
 | Topic | Decision |
 |---|---|
-| DVR buffer | Settings-backed `stream.bufferMinutes`, default **15**, range 2–60; `hls_list_size = bufferMinutes*60/4` |
+| DVR buffer | Settings-backed `streaming.bufferMinutes`, default **15**, range 2–60; `hls_list_size = bufferMinutes*60/4` |
 | Tuner reuse | Per-channel **ingest fan-out**: one device HTTP stream per channel, teed to all sessions on that channel; FFmpeg reads `pipe:0` |
 | Viewer liveness | New explicit heartbeat endpoint every 15s from all clients while the player is open (paused included); playlist fetches still count |
 | Roku scope | Pause/resume only; seek-back pending user's on-device validation |
