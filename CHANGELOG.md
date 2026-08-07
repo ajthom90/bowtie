@@ -5,6 +5,42 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-08-07
+
+### Added
+
+- **Live pause / rewind (DVR buffer)** — settings-backed
+  `streaming.bufferMinutes` (default **15**, range 2–60). HLS list size follows
+  the buffer at session start. Web seek bar (LIVE badge, skip-back 30s,
+  jump-to-live); native scrubbers on iOS/tvOS and Android/Fire TV (DPAD ±30s).
+  Out-of-window positions clamp to live with notice:
+  *"Jumped to live — paused longer than the buffer"*. Roku: pause/resume only
+  this cycle (REW probe documented for a later seek UI).
+- **Tuner reuse** — one HDHomeRun tuner per channel regardless of concurrent
+  quality/profile variants. Per-channel ingest fan-out with single-flight dial,
+  join buffer (PAT/PMT), 5s empty tail, and reconnect. **Verified on real
+  hardware:** dual-profile sessions on one channel hold a single tuner.
+- **Session heartbeats** — `POST /api/v1/sessions/{viewerId}/heartbeat` every
+  15s from all clients while the player is open (playing or paused), authorized
+  with the **stream token** query param (or Bearer). Web also beats on
+  `visibilitychange` → hidden. Roku enqueues only when ApiTask `queueDepth` < 3.
+- **Viewer idle timeout** 30s → **90s** so throttled background tabs and brief
+  client hiccups survive between heartbeats. Session empty-grace remains 60s.
+- Admin settings: **Streaming buffer (minutes)** with tmpfs sizing hint.
+  Deploy docs: segment tmpfs guidance **2g → 4g** with buffer math
+  (~60 MB/min/session at top profile).
+
+### Changed
+
+- FFmpeg ingest path uses stdin (`pipe:0`) with `+discardcorrupt` when the
+  session is fed by the shared ingest (URL input retained as fallback).
+- Admin tuners payload includes `ingestChannels` (active ingest channel IDs).
+
+### Breaking
+
+None — API is additive (`streaming` settings section optional on PUT;
+heartbeat endpoint new; existing clients keep working).
+
 ## [0.4.0] — 2026-08-07
 
 ### Added

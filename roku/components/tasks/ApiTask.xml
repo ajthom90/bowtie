@@ -11,6 +11,8 @@
         <field id="ready" type="boolean" alwaysNotify="true" value="false" />
         <!-- Last known user AA (id, username, role, maxQuality); sole holder with tokens. -->
         <field id="user" type="assocarray" />
+        <!-- FIFO depth (task thread writes on push/pop; scenes read). A7. -->
+        <field id="queueDepth" type="integer" alwaysNotify="true" value="0" />
     </interface>
     <script type="text/brightscript" uri="ApiTask.bs" />
 </component>

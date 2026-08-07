@@ -11,9 +11,11 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 - Transcodes over-the-air channels to HLS with hardware acceleration when available
 - Serves a TV guide (XMLTV and/or Schedules Direct)
 - Lets an admin manage users, devices, channels, and active sessions
+- Live pause/rewind within a settings-backed buffer, with one tuner per channel
+  shared across quality variants
 
-**Project status:** v0.4.0 — server + web (EPG-less watching, Admin → Settings,
-mobile-friendly UI) plus iOS/tvOS, Android/Fire TV, and Roku clients.
+**Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
+Admin → Settings) plus iOS/tvOS, Android/Fire TV, and Roku clients.
 
 ---
 

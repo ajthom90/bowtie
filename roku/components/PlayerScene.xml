@@ -197,5 +197,7 @@
         <Timer id="retryTimer" duration="1" repeat="false" />
         <!-- Chrome auto-hide -->
         <Timer id="chromeTimer" duration="4" repeat="false" />
+        <!-- Spec C: 15s session heartbeat (stream token); gated on ApiTask.queueDepth < 3 -->
+        <Timer id="heartbeatTimer" duration="15" repeat="true" />
     </children>
 </component>

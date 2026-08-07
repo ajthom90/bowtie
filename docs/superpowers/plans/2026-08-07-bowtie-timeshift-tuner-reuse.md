@@ -128,7 +128,7 @@ Implementation per spec A verbatim: per-channel mutex single-flight; pump 64KB c
 - Modify: `docs/deploy/truenas.md` + `deploy/docker-compose.yml` (tmpfs 2g→4g with buffer math), `docs/deploy/roku-testing.md` (+pause-3min step, +buffer-clamp step with temporarily-lowered buffer, +REW-probe experimental step), `CHANGELOG.md` (0.5.0 entry), README feature list line
 - Verification adds: `cd roku && npm ci && npx bsc && npx bslint --severity error && npm run package`
 
-- [ ] **Step 1:** implement + fixture; all verifications green. **Step 2:** Commit `feat: roku heartbeats; dvr docs and changelog`
+- [x] **Step 1:** implement + fixture; all verifications green. **Step 2:** Commit `feat: roku heartbeats; dvr docs and changelog`
 - [ ] **Step 3 (ORCHESTRATOR):** tag v0.5.0 → release watch → assets check.
 
 ## Post-plan notes

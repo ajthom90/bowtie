@@ -22,11 +22,16 @@ services:
     volumes:
       # Persistent state: SQLite, config.yaml, JWT secrets, etc.
       - bowtie-data:/data
-    # HLS segments are short-lived (4s × 30-window) and high-churn. Keep them on
-    # tmpfs so they never hit the data volume, avoid SSD wear, and disappear on
-    # container restart (sessions recreate segments from the live tuner stream).
+    # HLS segments are short-lived and high-churn. Keep them on tmpfs so they
+    # never hit the data volume, avoid SSD wear, and disappear on container
+    # restart (sessions recreate segments from the live tuner stream).
+    # Buffer window (Admin → Settings → streaming.bufferMinutes, default 15):
+    #   hls_list_size = bufferMinutes × 60 / 4  (4s segments)
+    #   ≈ 60 MB/min/session at top profile → 15 min ≈ 900 MB/session;
+    #   2 concurrent ≈ 1.8 GB. size=4g leaves headroom for multi-session and
+    #   longer buffers (up to 60 min).
     tmpfs:
-      - /data/segments
+      - /data/segments:size=4g
     # Intel Quick Sync / VAAPI: expose the GPU render nodes so FFmpeg can use
     # h264_qsv / h264_vaapi. Harmless on machines without /dev/dri (drivers
     # simply are not selected by the encoder probe).

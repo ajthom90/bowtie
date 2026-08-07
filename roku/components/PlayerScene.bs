@@ -47,6 +47,7 @@ sub init()
     m.debounceTimer = m.top.findNode("debounceTimer")
     m.retryTimer = m.top.findNode("retryTimer")
     m.chromeTimer = m.top.findNode("chromeTimer")
+    m.heartbeatTimer = m.top.findNode("heartbeatTimer")
 
     m.observing = false
     m.gen = 0
@@ -56,6 +57,7 @@ sub init()
     m.selectedProfile = "" ' "" = Auto
     m.pendingCreateId = ""
     m.pendingDeletePrefix = "player-delete-"
+    m.pendingHeartbeatPrefix = "player-heartbeat-"
     m.is422Retry = false
     m.authRetried = false
     m.retryAttempt = 0
@@ -72,6 +74,7 @@ sub init()
     m.debounceTimer.observeField("fire", "onDebounceFire")
     m.retryTimer.observeField("fire", "onRetryTimerFire")
     m.chromeTimer.observeField("fire", "onChromeTimerFire")
+    m.heartbeatTimer.observeField("fire", "onHeartbeatFire")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("errorCode", "onVideoErrorFields")
     m.video.observeField("errorMsg", "onVideoErrorFields")
@@ -177,6 +180,7 @@ sub scheduleReplace()
     m.is422Retry = false
     m.retryAttempt = 0
     m.retryTimer.control = "stop"
+    stopHeartbeat()
 
     ' (2) DELETE current viewer immediately.
     if m.activeViewerId <> invalid and m.activeViewerId <> ""
@@ -248,6 +252,7 @@ sub teardownSession(markClosed as boolean)
     m.debounceTimer.control = "stop"
     m.retryTimer.control = "stop"
     m.chromeTimer.control = "stop"
+    stopHeartbeat()
     m.pendingCreateId = ""
     if m.activeViewerId <> invalid and m.activeViewerId <> ""
         enqueueDelete(m.activeViewerId)
@@ -269,8 +274,11 @@ sub onApiResponse()
     if resp.id = invalid then return
 
     rid = resp.id
-    ' Ignore delete responses (fire-and-forget).
+    ' Ignore delete / heartbeat responses (fire-and-forget).
     if Left(rid, Len(m.pendingDeletePrefix)) = m.pendingDeletePrefix
+        return
+    end if
+    if Left(rid, Len(m.pendingHeartbeatPrefix)) = m.pendingHeartbeatPrefix
         return
     end if
 
@@ -305,6 +313,7 @@ sub handleCreateResponse(resp as object)
         m.authRetried = false
         m.retryAttempt = 0
         m.is422Retry = false
+        startHeartbeat()
         startPlayback(playlistUrl)
         return
     end if
@@ -363,6 +372,58 @@ sub handleCreateError(resp as object)
     end if
     showFailed(msg, "")
 end sub
+
+' ── Heartbeat (spec C / A6 / A7) ─────────────────────────────────────────────
+' Keyed on session open (viewerId + playlist token). Continues through pause.
+' Enqueues ONLY when ApiTask.queueDepth < 3 so create/refresh bursts are not
+' starved; a skipped tick is covered by the next 15s fire.
+
+sub startHeartbeat()
+    if m.heartbeatTimer = invalid then return
+    m.heartbeatTimer.control = "stop"
+    m.heartbeatTimer.control = "start"
+end sub
+
+sub stopHeartbeat()
+    if m.heartbeatTimer = invalid then return
+    m.heartbeatTimer.control = "stop"
+end sub
+
+sub onHeartbeatFire()
+    if m.top.visible <> true then return
+    if m.activeViewerId = invalid or m.activeViewerId = "" then return
+    task = m.top.apiTask
+    if task = invalid then return
+
+    depth = task.queueDepth
+    if depth = invalid then depth = 0
+    if depth >= 3 then return
+
+    token = streamTokenFromPlaylist(m.playlistUrl)
+    if token = invalid or token = "" then return
+
+    m.reqSeq = m.reqSeq + 1
+    rid = m.pendingHeartbeatPrefix + m.reqSeq.toStr()
+    task.request = {
+        id: rid
+        kind: "heartbeat"
+        params: {
+            viewerId: m.activeViewerId
+            token: token
+        }
+    }
+end sub
+
+' Extract `token` query from playlist path/URL (relative or absolute).
+function streamTokenFromPlaylist(playlistUrl as string) as string
+    if playlistUrl = invalid or playlistUrl = "" then return ""
+    idx = Instr(1, playlistUrl, "token=")
+    if idx = 0 then return ""
+    rest = Mid(playlistUrl, idx + 6)
+    amp = Instr(1, rest, "&")
+    if amp > 0 then rest = Left(rest, amp - 1)
+    return rest
+end function
 
 ' ── Video playback ───────────────────────────────────────────────────────────
 

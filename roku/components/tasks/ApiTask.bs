@@ -13,6 +13,7 @@ end sub
 sub taskRun()
     m.port = CreateObject("roMessagePort")
     m.queue = []
+    m.top.queueDepth = 0
     m.authState = bowtie.auth.initialState()
     m.baseUrl = ""
 
@@ -38,6 +39,7 @@ sub taskRun()
                 req = m.top.request
                 if req <> invalid
                     m.queue.push(req)
+                    m.top.queueDepth = m.queue.count()
                 end if
             end if
         end if
@@ -49,6 +51,7 @@ sub drainQueue()
     while m.queue.count() > 0
         item = m.queue[0]
         m.queue.Delete(0)
+        m.top.queueDepth = m.queue.count()
         handleRequest(item)
     end while
 end sub
@@ -123,7 +126,8 @@ sub handleRequest(item as object)
     end if
 
     ' 401 on authed kinds → reduce-driven single-flight refresh + ordered actions.
-    if isUnauthorized(parsed) and kind <> "login" and kind <> "healthz"
+    ' heartbeat uses stream token (no Bearer) — do not refresh on 401.
+    if isUnauthorized(parsed) and kind <> "login" and kind <> "healthz" and kind <> "heartbeat"
         handle401(item, baseUrl)
         return
     end if
@@ -321,6 +325,7 @@ sub drainQueueUnauthorized()
     while m.queue.count() > 0
         item = m.queue[0]
         m.queue.Delete(0)
+        m.top.queueDepth = m.queue.count()
         rid = ""
         if item <> invalid and item.id <> invalid then rid = item.id
         emitResponse(rid, {

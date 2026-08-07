@@ -114,11 +114,35 @@ Each step lists **do**, **expect**, and **report if not**.
 | **Expect** | Lands on **Login** with the server URL remembered (not Connect). No active session left in admin for this device after leave/sign-out. |
 | **Report** | Boots straight to Home without credentials; server forgotten; orphaned admin session. |
 
+### 11. Pause → resume after 3 minutes (heartbeat + buffer)
+
+| | |
+|---|---|
+| **Do** | Play a channel. Press **OK** to pause. Wait **≥3 minutes** (covers multiple 15s heartbeats and proves the session survives the 90s viewer idle timeout). Press **OK** again to resume. |
+| **Expect** | Session remains in **Admin → Sessions** throughout the pause. Resume continues live (or near-live within the buffer window) without forced sign-out or “Starting…” hang. |
+| **Report** | Session reaped mid-pause; black screen / error UI on resume; kick to login. |
+
+### 12. Buffer-clamp (temporarily lowered buffer)
+
+| | |
+|---|---|
+| **Do** | In **Admin → Settings**, set **streaming buffer** (`streaming.bufferMinutes`) to **2** and Save. Start a **new** session on this Roku (zap or re-enter the player — buffer applies at session start). Pause for **≥3 minutes** (longer than the 2-minute window), then resume. Restore buffer to **15** when done. |
+| **Expect** | Resume lands at the live edge by nature of the sliding HLS window (Roku has no seek UI / out-of-window notice this cycle). No hard crash or stall loop. |
+| **Report** | Stuck buffering forever; crash; session gone with no recovery path. |
+
+### 13. EXPERIMENTAL — REW probe (record for a future cycle)
+
+| | |
+|---|---|
+| **Do** | While playing live, press the remote **REW** / rewind button (and optionally FF). Note Video state, chrome behavior, and whether position moves. **No product expectation this cycle** — Roku seek UI is out of scope pending validation. |
+| **Expect** | *Experimental only:* document what the device does (ignore key, brief scrub, error, etc.). Do not fail the gate on REW behavior. |
+| **Report** | Capture notes for a future seek-UI task: key name if logged, any seekable-range behavior, whether pause+REW differs from live REW. |
+
 ---
 
 ## Pass criteria
 
-All ten steps match **Expect**. Step 7’s captured `errorCode`/`errorMsg` values should be filed back for an allowlist follow-up even if the rest of the gate passes.
+Steps **1–12** match **Expect**. Step 13 is experimental (notes only). Step 7’s captured `errorCode`/`errorMsg` values should be filed back for an allowlist follow-up even if the rest of the gate passes.
 
 ---
 

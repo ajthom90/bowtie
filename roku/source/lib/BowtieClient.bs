@@ -2,9 +2,10 @@
 ' Transport (roUrlTransfer) lives in ApiTask — this module has no I/O.
 '
 ' buildRequest kinds: healthz, login, refresh, logout, me, changePassword,
-'   channels, guide, createSession, deleteSession
+'   channels, guide, createSession, deleteSession, heartbeat
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
+' heartbeat: stream-token query only (no Bearer); 204 success.
 
 namespace bowtie.client
 
@@ -96,6 +97,17 @@ namespace bowtie.client
             method = "DELETE"
             headers = bowtie.client.authHeaders(accessToken)
 
+        else if kind = "heartbeat"
+            ' Spec C: stream token query only — never Bearer (avoids refresh races).
+            viewerId = params.viewerId
+            if viewerId = invalid then viewerId = ""
+            token = params.token
+            if token = invalid then token = ""
+            url = base + "/api/v1/sessions/" + viewerId + "/heartbeat?token=" + token
+            method = "POST"
+            headers = { "Content-Type": "application/json" }
+            body = ""
+
         else
             return {
                 url: ""
@@ -128,7 +140,7 @@ namespace bowtie.client
             return { ok: false, error: { code: httpCode, message: "healthz failed" } }
         end if
 
-        if kind = "logout" or kind = "changePassword" or kind = "deleteSession"
+        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat"
             ' Best-effort: 2xx and empty bodies are success; delete swallows errors at ApiTask.
             if httpCode >= 200 and httpCode < 300
                 return { ok: true, data: true }

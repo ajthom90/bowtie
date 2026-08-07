@@ -1334,3 +1334,41 @@ $ xcodebuild -project Bowtie.xcodeproj -scheme Bowtie -destination "id=$UDID" te
 $ xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV -destination 'generic/platform=tvOS Simulator' build -quiet && echo TVOS_OK
 TVOS_OK
 ```
+
+## v0.5.0 Task 8
+
+**Date:** 2026-08-07
+
+### Built
+
+- **ApiTask `queueDepth` (A7):** new interface field; task thread maintains on
+  push/pop (request enqueue, drainQueue, drainQueueUnauthorized); scenes read
+- **BowtieClient `heartbeat` kind:** `POST …/sessions/{id}/heartbeat?token=` —
+  stream token only, **no** Authorization; parse 204 → ok
+- **PlayerScene:** 15s `heartbeatTimer`; enqueues only when `queueDepth < 3`;
+  starts on session open, stops on replace/teardown/leave; continues through
+  pause (A6)
+- **SelfTest fixtures:** `build_heartbeat_stream_token_no_bearer`,
+  `parse_heartbeat_204`
+- **Docs:** tmpfs 2g→4g with buffer math (`truenas.md`, `docker-compose.yml`);
+  roku-testing steps 11–13 (pause-3min, buffer-clamp, experimental REW probe)
+- **CHANGELOG [0.5.0]** + README feature line (pause/rewind buffer, one-tuner
+  reuse real-hardware-verified, heartbeats, 90s idle; breaking: none)
+
+### Notes
+
+- No push / no gh / no tags from this worker (orchestrator owns tag v0.5.0).
+- **v0.5.0 cycle complete** (implementer Tasks 1–8). Remaining orchestrator-only:
+  real-device dual-profile check (Task 5 Step 4), Playwright gate (Task 6 Step 4),
+  tag/release (Task 8 Step 3).
+
+### Verification (evidence)
+
+```
+$ cd roku && npm ci && npx bsc && npx bslint --severity error && npm run package && echo ROKU_OK
+ROKU_OK
+
+$ cd ../server && CGO_ENABLED=0 go test ./... >/dev/null && golangci-lint run && echo SERVER_OK
+0 issues.
+SERVER_OK
+```

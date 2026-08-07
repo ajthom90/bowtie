@@ -121,6 +121,19 @@ namespace bowtie.fixtures.client
             expectNoAuth: true
         })
 
+        ' Spec C / Task 8: heartbeat uses stream token query, never Bearer.
+        cases.push({
+            name: "build_heartbeat_stream_token_no_bearer"
+            kind: "build"
+            reqKind: "heartbeat"
+            params: { viewerId: "viewer-abc", token: "stream-tok-xyz" }
+            accessToken: "access-should-not-attach"
+            baseUrl: base
+            expectMethod: "POST"
+            expectUrlContains: "/api/v1/sessions/viewer-abc/heartbeat?token=stream-tok-xyz"
+            expectNoAuth: true
+        })
+
         ' ── parseResponse: login/refresh user + maxQuality (A1) ────────────
         cases.push({
             name: "parse_login_surfaces_user_maxQuality"
@@ -191,6 +204,17 @@ namespace bowtie.fixtures.client
             expectPlaylistAbsolute: true
             expectPlaylistContainsToken: true
             expectPlaylistPrefix: base
+        })
+
+        ' Heartbeat 204 empty body → ok (best-effort fire-and-forget).
+        cases.push({
+            name: "parse_heartbeat_204"
+            kind: "parse"
+            reqKind: "heartbeat"
+            httpCode: 204
+            body: ""
+            baseUrl: base
+            expectOk: true
         })
 
         return cases

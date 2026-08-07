@@ -18,7 +18,7 @@ Apps → Discover Apps → ⋮ (top-right) → **Install via YAML** → name it
 ```yaml
 services:
   bowtie:
-    image: ghcr.io/ajthom90/bowtie:0.4.0
+    image: ghcr.io/ajthom90/bowtie:0.5.0
     container_name: bowtie
     restart: unless-stopped
     ports:
@@ -37,9 +37,12 @@ services:
       - /mnt/tank/apps/bowtie:/data
     tmpfs:
       # High-churn HLS segments stay in RAM: no SSD wear, auto-clean on restart.
-      # ~4 MB/segment at the top profile × 30-segment window ≈ 128 MB/session;
-      # 2g comfortably covers several concurrent sessions.
-      - /data/segments:size=2g
+      # Buffer window (Admin → Settings → streaming.bufferMinutes, default 15):
+      #   hls_list_size = bufferMinutes × 60 / 4  (4s segments)
+      #   ≈ 60 MB/min/session at top profile
+      #   → 15 min ≈ 900 MB/session; 2 concurrent ≈ 1.8 GB
+      # size=4g leaves headroom for max buffer (60 min) and multi-session.
+      - /data/segments:size=4g
     devices:
       # Intel Quick Sync / VAAPI hardware transcoding.
       - /dev/dri:/dev/dri
@@ -94,8 +97,13 @@ Apps → bowtie → Workloads → the container's ⋮ → Logs — look for
 
 ## Upgrading
 
-Edit the app's YAML, bump the image tag (e.g. `:0.4.0`), save. State lives in
+Edit the app's YAML, bump the image tag (e.g. `:0.5.0`), save. State lives in
 your dataset; segments are disposable.
+
+**v0.5.0 note:** Bump tmpfs `size` to **4g** if you are still on `2g` (see
+buffer math in the compose snippet). Product settings remain Admin → Settings;
+`streaming.bufferMinutes` (default 15, range 2–60) is new and seeds on first
+presence.
 
 **v0.4.0 note:** On first boot after upgrade, EPG/transcode keys are
 presence-seeded from env/yaml into the DB (defaults: encoder `auto`,
