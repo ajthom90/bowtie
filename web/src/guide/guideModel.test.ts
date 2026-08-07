@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatGuideTime,
+  GUIDE_COPY,
   halfHourTicks,
   layoutRow,
   nowLinePct,
+  selectGuidePageState,
   type GuideProgram,
 } from './guideModel'
 
@@ -181,5 +183,80 @@ describe('formatGuideTime', () => {
     // Use a date whose local components we control via constructor
     const d = new Date(2026, 7, 4, 9, 5, 0) // Aug 4 2026 09:05 local
     expect(formatGuideTime(d)).toBe('09:05')
+  })
+})
+
+describe('selectGuidePageState', () => {
+  it('returns loading when channels are null and loading', () => {
+    expect(
+      selectGuidePageState({
+        channels: null,
+        loading: true,
+        error: null,
+        role: 'viewer',
+      }),
+    ).toEqual({ kind: 'loading' })
+  })
+
+  it('returns error when load failed (channels null)', () => {
+    expect(
+      selectGuidePageState({
+        channels: null,
+        loading: false,
+        error: 'Failed to load guide',
+        role: 'admin',
+      }),
+    ).toEqual({ kind: 'error', message: 'Failed to load guide' })
+  })
+
+  it('returns admin empty copy + admin link when channels is []', () => {
+    const state = selectGuidePageState({
+      channels: [],
+      loading: false,
+      error: null,
+      role: 'admin',
+    })
+    expect(state).toEqual({
+      kind: 'empty',
+      copy: GUIDE_COPY.noChannelsAdmin,
+      role: 'admin',
+      showAdminLink: true,
+    })
+    expect(state.kind === 'empty' && state.copy).toBe(
+      'No channels enabled yet. Add your HDHomeRun and enable channels in Admin → Channels.',
+    )
+  })
+
+  it('returns viewer empty copy without admin link when channels is []', () => {
+    const state = selectGuidePageState({
+      channels: [],
+      loading: false,
+      error: null,
+      role: 'viewer',
+    })
+    expect(state).toEqual({
+      kind: 'empty',
+      copy: GUIDE_COPY.noChannelsViewer,
+      role: 'viewer',
+      showAdminLink: false,
+    })
+    expect(state.kind === 'empty' && state.copy).toBe(
+      'No channels enabled yet. Ask your admin to enable some channels.',
+    )
+  })
+
+  it('returns ready when channels are non-empty (program-less is per-row)', () => {
+    expect(
+      selectGuidePageState({
+        channels: [{ channelId: 1 }],
+        loading: false,
+        error: null,
+        role: 'viewer',
+      }),
+    ).toEqual({ kind: 'ready' })
+  })
+
+  it('exposes program-less cell copy constant', () => {
+    expect(GUIDE_COPY.noGuideData).toBe('No guide data — press to watch')
   })
 })

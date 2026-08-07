@@ -446,3 +446,25 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Settings tab */
+.settingsCard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.settingsFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.65rem 0.75rem;
+  align-items: end;
+}
+
+.settingsFields .input,
+.settingsFields .select {
+  min-width: 0;
+  width: 100%;
+}

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError, type AdminChannel, type EPGChannel } from '../api/client'
+import type { WatchTarget } from '../guide/Guide'
 import { useAuth } from '../auth/AuthContext'
 import { filterAndSortChannels } from './adminModel'
 import styles from './Admin.module.css'
 
-export function Channels() {
+type Props = {
+  onPreview: (target: WatchTarget) => void
+}
+
+export function Channels({ onPreview }: Props) {
   const { client } = useAuth()
   const [channels, setChannels] = useState<AdminChannel[] | null>(null)
   const [epgChannels, setEpgChannels] = useState<EPGChannel[]>([])
@@ -103,6 +108,7 @@ export function Channels() {
                 <th scope="col">#</th>
                 <th scope="col">Name</th>
                 <th scope="col">EPG mapping</th>
+                <th scope="col">Preview</th>
                 <th scope="col">
                   <span className="visually-hidden">Status</span>
                 </th>
@@ -141,6 +147,22 @@ export function Channels() {
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={`${styles.btn} ${styles.btnSm}`}
+                      onClick={() =>
+                        onPreview({
+                          channelId: ch.id,
+                          guideNumber: ch.guideNumber,
+                          name: ch.name,
+                        })
+                      }
+                      aria-label={`Preview channel ${ch.guideNumber} ${ch.name}`}
+                    >
+                      ▶ Preview
+                    </button>
                   </td>
                   <td>
                     {savedId === ch.id ? <span className={styles.savedFlash}>Saved</span> : null}

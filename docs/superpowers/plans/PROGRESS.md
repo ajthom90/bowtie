@@ -940,3 +940,28 @@ ok  	github.com/ajthom90/bowtie/server/internal/web
 0 issues.
 OK
 ```
+
+## v0.4.0 Task 5
+
+**Date:** 2026-08-07
+
+### Built
+
+- `web/src/admin/settingsModel.ts` + tests: form ↔ section-merge PUT payloads; password omit/include; clear-SD via empty username; encoder options; lineup labels; client-side hints
+- `web/src/admin/Settings.tsx`: Settings tab — XMLTV (source, refreshHours), SD (username, password placeholder "unchanged", Load lineups, clear-username semantics), Transcode (encoder from available + auto, HEVC); per-section Save + "Saved."; API errors verbatim
+- `web/src/api/client.ts`: `getSettings` / `putSettings` / `getEPGLineups` + types
+- Admin nav + route for Settings; EPG tab still status+refresh only (empty copy points at Settings)
+- A5: `Admin.onPreview(WatchTarget)`; Channels ▶ Preview; Shell `setWatching`; Player Back → Guide (documented)
+- A7: `selectGuidePageState` + exact role-split zero-enabled-channels copy; program-less cell "No guide data — press to watch"
+
+### Verification (evidence)
+
+```
+$ cd web && npx tsc --noEmit && npx vitest run && npm run build && echo WEB_OK
+# vitest: 56 passed (settingsModel 14, guideModel 18, adminModel 13, caps 7, client 4)
+WEB_OK
+
+$ cd ../server && CGO_ENABLED=0 go test ./internal/web/ && echo EMBED_OK
+ok  	github.com/ajthom90/bowtie/server/internal/web
+EMBED_OK
+```

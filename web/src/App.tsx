@@ -30,8 +30,15 @@ function Shell() {
   }
 
   // Role guard: viewers never see admin route or nav entry.
+  // A5: Preview opens the player via setWatching; Player Back returns to Guide
+  // (accepted simplification — does not restore the Admin tab).
   if (view === 'admin' && user.role === 'admin') {
-    return <Admin onBack={() => setView('guide')} />
+    return (
+      <Admin
+        onBack={() => setView('guide')}
+        onPreview={(t) => setWatching(t)}
+      />
+    )
   }
 
   return (

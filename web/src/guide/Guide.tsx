@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError, type GuideChannel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import {
+  GUIDE_COPY,
   defaultWindow,
   formatGuideTime,
   formatTimeRange,
   halfHourTicks,
   layoutRow,
   nowLinePct,
+  selectGuidePageState,
   shiftWindow,
 } from './guideModel'
 import styles from './Guide.module.css'
@@ -64,6 +66,17 @@ export function Guide({ onWatch, onAdmin }: Props) {
   const ticks = useMemo(() => halfHourTicks(start, stop), [start, stop])
   const nowPct = useMemo(() => nowLinePct(now, start, stop), [now, start, stop])
 
+  const pageState = useMemo(
+    () =>
+      selectGuidePageState({
+        channels,
+        loading,
+        error,
+        role: user?.role === 'admin' ? 'admin' : 'viewer',
+      }),
+    [channels, loading, error, user?.role],
+  )
+
   const windowLabel = `${formatGuideTime(start)} – ${formatGuideTime(stop)}`
 
   function page(dir: -1 | 1) {
@@ -107,26 +120,33 @@ export function Guide({ onWatch, onAdmin }: Props) {
         </div>
       </header>
 
-      {loading && !channels ? (
+      {pageState.kind === 'loading' ? (
         <p className={styles.status}>Loading guide…</p>
       ) : null}
 
-      {error ? (
+      {pageState.kind === 'error' ? (
         <div className={styles.status}>
-          <p className={styles.statusError}>{error}</p>
+          <p className={styles.statusError}>{pageState.message}</p>
           <button type="button" className={styles.btn} onClick={() => void load()}>
             Try again
           </button>
         </div>
       ) : null}
 
-      {!loading && !error && channels && channels.length === 0 ? (
-        <p className={styles.emptyGuide}>
-          No guide data yet. Ask your admin to add an EPG source in Settings.
-        </p>
+      {pageState.kind === 'empty' ? (
+        <div className={styles.emptyGuide}>
+          <p style={{ margin: 0 }}>{pageState.copy}</p>
+          {pageState.showAdminLink && onAdmin ? (
+            <p style={{ margin: '0.75rem 0 0' }}>
+              <button type="button" className={styles.btn} onClick={onAdmin}>
+                Open Admin → Channels
+              </button>
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
-      {channels && channels.length > 0 ? (
+      {pageState.kind === 'ready' && channels ? (
         <div className={styles.scroll} tabIndex={0} role="region" aria-label="TV guide">
           <div className={styles.grid}>
             <div className={styles.corner} aria-hidden />
@@ -247,9 +267,9 @@ function ChannelRow({
             type="button"
             className={styles.cellEmpty}
             onClick={() => watch()}
-            aria-label={`Watch channel ${channel.guideNumber}, no guide data`}
+            aria-label={`Watch channel ${channel.guideNumber}, no guide data — press to watch`}
           >
-            No guide data
+            {GUIDE_COPY.noGuideData}
           </button>
         ) : (
           <div className={styles.cells}>

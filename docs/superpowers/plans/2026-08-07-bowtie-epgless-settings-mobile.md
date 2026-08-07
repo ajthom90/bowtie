@@ -125,9 +125,9 @@ Endpoints per spec EXACTLY (section-merge PUT with pointer sections; password ke
 
 settingsModel.ts (pure, tested): form state ↔ API payload mapping incl. section-merge payload construction (only the section being saved), password-field rules (empty → omit), lineup option mapping, validation mirrors (client-side hints only; server is authority).
 
-- [ ] **Step 1: Failing tests** — settingsModel: payload-per-section, password omit/include, clear-SD path (empty username sends section with empty strings). guideModel/Guide logic: empty-state selector (channels null vs [] vs programs-empty) returns the right variant + copy.
-- [ ] **Step 2:** Implement UI; typecheck/vitest/build green.
-- [ ] **Step 3:** Commit `feat: web settings tab, channel preview, epg-less guide affordances`
+- [x] **Step 1: Failing tests** — settingsModel: payload-per-section, password omit/include, clear-SD path (empty username sends section with empty strings). guideModel/Guide logic: empty-state selector (channels null vs [] vs programs-empty) returns the right variant + copy.
+- [x] **Step 2:** Implement UI; typecheck/vitest/build green.
+- [x] **Step 3:** Commit `feat: web settings tab, channel preview, epg-less guide affordances`
 
 ### Task 6: Web mobile pass (spec section C)
 

@@ -159,6 +159,47 @@ export interface PatchChannelRequest {
   epgChannelId?: string
 }
 
+// ── Admin settings (v0.4.0) ────────────────────────────────────────────────
+
+export interface SettingsXMLTV {
+  source: string
+  refreshHours: number
+}
+
+export interface SettingsSchedulesDirect {
+  username: string
+  passwordConfigured: boolean
+  lineupId: string
+}
+
+export interface SettingsTranscode {
+  encoder: string
+  allowHevc: boolean
+  available: string[]
+  hevcCapable: Record<string, boolean>
+}
+
+/** GET /api/v1/admin/settings */
+export interface Settings {
+  xmltv: SettingsXMLTV
+  schedulesDirect: SettingsSchedulesDirect
+  transcode: SettingsTranscode
+}
+
+/** PUT /api/v1/admin/settings — section merge; omit sections to leave untouched. */
+export interface PutSettingsRequest {
+  xmltv?: { source: string; refreshHours: number }
+  schedulesDirect?: { username: string; password?: string; lineupId: string }
+  transcode?: { encoder: string; allowHevc: boolean }
+}
+
+export interface SDLineupSummary {
+  lineupId: string
+  name: string
+  location: string
+  transport: string
+}
+
 export type TokenHooks = {
   /** Return the current refresh token (used for silent refresh on 401). */
   getRefreshToken: () => string | null
@@ -281,6 +322,18 @@ export class ApiClient {
 
   async getTranscodeStatus(): Promise<TranscodeStatus> {
     return this.request<TranscodeStatus>('GET', '/api/v1/admin/transcode')
+  }
+
+  async getSettings(): Promise<Settings> {
+    return this.request<Settings>('GET', '/api/v1/admin/settings')
+  }
+
+  async putSettings(body: PutSettingsRequest): Promise<Settings> {
+    return this.request<Settings>('PUT', '/api/v1/admin/settings', body)
+  }
+
+  async getEPGLineups(): Promise<SDLineupSummary[]> {
+    return this.request<SDLineupSummary[]>('GET', '/api/v1/admin/epg/lineups')
   }
 
   async getAdminUsers(): Promise<User[]> {

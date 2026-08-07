@@ -191,3 +191,64 @@ export function shiftWindow(
     stop: new Date(stop.getTime() + delta),
   }
 }
+
+// ── Guide empty-state selector (v0.4.0 Task 5 / A7) ───────────────────────
+
+/** Exact product copy for guide empty / EPG-less cells. */
+export const GUIDE_COPY = {
+  noChannelsAdmin:
+    'No channels enabled yet. Add your HDHomeRun and enable channels in Admin → Channels.',
+  noChannelsViewer: 'No channels enabled yet. Ask your admin to enable some channels.',
+  /** Full-width program-less cell (clickable). */
+  noGuideData: 'No guide data — press to watch',
+} as const
+
+export type GuidePageState =
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | {
+      kind: 'empty'
+      /** Exact copy for the zero-enabled-channels state. */
+      copy: string
+      role: 'admin' | 'viewer'
+      /** Admins may deep-link into Admin → Channels. */
+      showAdminLink: boolean
+    }
+  | { kind: 'ready' }
+
+/**
+ * Pure selector for the guide page shell (not per-row program-less cells).
+ *
+ * - channels null + loading → loading
+ * - error set (and not ready) → error
+ * - channels [] → empty (role-split copy)
+ * - channels non-empty → ready (program-less rows handled in the grid)
+ */
+export function selectGuidePageState(args: {
+  channels: { channelId: number }[] | null
+  loading: boolean
+  error: string | null
+  role: 'admin' | 'viewer'
+}): GuidePageState {
+  const { channels, loading, error, role } = args
+
+  if (loading && channels === null) {
+    return { kind: 'loading' }
+  }
+  if (error && channels === null) {
+    return { kind: 'error', message: error }
+  }
+  if (channels !== null && channels.length === 0) {
+    return {
+      kind: 'empty',
+      copy: role === 'admin' ? GUIDE_COPY.noChannelsAdmin : GUIDE_COPY.noChannelsViewer,
+      role,
+      showAdminLink: role === 'admin',
+    }
+  }
+  if (channels !== null && channels.length > 0) {
+    return { kind: 'ready' }
+  }
+  // channels null, not loading, no error — treat as loading shell
+  return { kind: 'loading' }
+}

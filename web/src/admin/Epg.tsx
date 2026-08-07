@@ -117,7 +117,7 @@ export function Epg() {
 
       {!loading && status && !status.xmltv.configured && !status.sd.configured ? (
         <p className={styles.empty} style={{ marginTop: '1rem' }}>
-          No EPG sources configured. Set XMLTV and/or Schedules Direct in server config, then refresh.
+          No EPG sources configured. Set XMLTV and/or Schedules Direct in Settings, then refresh.
         </p>
       ) : null}
     </div>

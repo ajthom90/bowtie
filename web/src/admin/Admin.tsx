@@ -1,27 +1,32 @@
 import { useState } from 'react'
+import type { WatchTarget } from '../guide/Guide'
 import { useAuth } from '../auth/AuthContext'
 import { Channels } from './Channels'
 import { Epg } from './Epg'
 import { Sessions } from './Sessions'
+import { Settings } from './Settings'
 import { Tuners } from './Tuners'
 import { Users } from './Users'
 import styles from './Admin.module.css'
 
-export type AdminTab = 'tuners' | 'channels' | 'epg' | 'users' | 'sessions'
+export type AdminTab = 'tuners' | 'channels' | 'epg' | 'settings' | 'users' | 'sessions'
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: 'tuners', label: 'Tuners' },
   { id: 'channels', label: 'Channels' },
   { id: 'epg', label: 'EPG' },
+  { id: 'settings', label: 'Settings' },
   { id: 'users', label: 'Users' },
   { id: 'sessions', label: 'Sessions' },
 ]
 
 type Props = {
   onBack: () => void
+  /** A5: open the player for a channel (admin preview from Channels). */
+  onPreview: (target: WatchTarget) => void
 }
 
-export function Admin({ onBack }: Props) {
+export function Admin({ onBack, onPreview }: Props) {
   const { user, logout } = useAuth()
   const [tab, setTab] = useState<AdminTab>('tuners')
 
@@ -73,8 +78,9 @@ export function Admin({ onBack }: Props) {
 
       <main className={styles.body}>
         {tab === 'tuners' ? <Tuners /> : null}
-        {tab === 'channels' ? <Channels /> : null}
+        {tab === 'channels' ? <Channels onPreview={onPreview} /> : null}
         {tab === 'epg' ? <Epg /> : null}
+        {tab === 'settings' ? <Settings /> : null}
         {tab === 'users' ? <Users /> : null}
         {tab === 'sessions' ? <Sessions /> : null}
       </main>
