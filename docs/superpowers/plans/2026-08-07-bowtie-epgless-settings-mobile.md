@@ -92,9 +92,9 @@ loop(source):
 
 `Status()` computes `Configured` from the provider LIVE (not boot state). `RefreshAll` reads the provider (already per-call after this change).
 
-- [ ] **Step 1: Failing tests** (injectable clock; provider over a temp store): `TestSupervisorStartsSourceEnabledAtRuntime` (boot unconfigured; advance past a poll tick; SetXMLTV(source) → next tick refreshes — assert via stub fetcher); `TestSupervisorStopsWhenCleared` (configured → refresh happens; clear → subsequent ticks fetch nothing, NO error status accumulation); `TestIntervalChangeApplies` (refreshHours 12→1 → next sleep is ~1h with jitter bounds).
-- [ ] **Step 2:** FAIL → implement → PASS (all existing epg tests updated to construct via provider).
-- [ ] **Step 3:** Commit `feat: epg supervisor honors runtime settings without restart`
+- [x] **Step 1: Failing tests** (injectable clock; provider over a temp store): `TestSupervisorStartsSourceEnabledAtRuntime` (boot unconfigured; advance past a poll tick; SetXMLTV(source) → next tick refreshes — assert via stub fetcher); `TestSupervisorStopsWhenCleared` (configured → refresh happens; clear → subsequent ticks fetch nothing, NO error status accumulation); `TestIntervalChangeApplies` (refreshHours 12→1 → next sleep is ~1h with jitter bounds).
+- [x] **Step 2:** FAIL → implement → PASS (all existing epg tests updated to construct via provider).
+- [x] **Step 3:** Commit `feat: epg supervisor honors runtime settings without restart`
 
 ### Task 3: Stream manager + transcode endpoint on the provider; admin preview + 503 filtering
 

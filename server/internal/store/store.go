@@ -25,6 +25,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// Single connection: SQLite does not like concurrent writers across a pool,
+	// and PRAGMA busy_timeout only applies to the connection that runs it.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	// Reasonable defaults for a single-process server.
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
 		_ = db.Close()

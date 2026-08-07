@@ -2,11 +2,16 @@ package epg
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -20,8 +25,312 @@ func testStore(t *testing.T) *store.Store {
 	return st
 }
 
+func testProvider(t *testing.T, st *store.Store) *settings.Provider {
+	t.Helper()
+	return settings.NewProvider(st)
+}
+
+// afterGate is a controllable time.After substitute for supervisor tests.
+// Each After(d) queues a channel; AdvanceAll releases every pending wait.
+// Callers must wait for PendingCount > 0 before AdvanceAll so wakes are not lost.
+type afterGate struct {
+	mu      sync.Mutex
+	pending []chan time.Time
+}
+
+func (g *afterGate) After(d time.Duration) <-chan time.Time {
+	_ = d
+	ch := make(chan time.Time, 1)
+	g.mu.Lock()
+	g.pending = append(g.pending, ch)
+	g.mu.Unlock()
+	return ch
+}
+
+func (g *afterGate) AdvanceAll() {
+	g.mu.Lock()
+	pending := g.pending
+	g.pending = nil
+	g.mu.Unlock()
+	for _, ch := range pending {
+		ch <- time.Time{}
+	}
+}
+
+func (g *afterGate) PendingCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.pending)
+}
+
+// waitUntil polls cond until true or timeout.
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v", timeout)
+}
+
+func fixtureXMLTVBody(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("xmltv", "testdata", "guide.xml"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return b
+}
+
+// xmltvStubServer serves the golden XMLTV fixture and counts hits.
+func xmltvStubServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	body := fixtureXMLTVBody(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func startSupervisor(t *testing.T, svc *Service, gate *afterGate) context.CancelFunc {
+	t.Helper()
+	svc.after = gate.After
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		svc.Run(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		// Unblock any sleepOrDone waits so Run can observe ctx cancel promptly.
+		gate.AdvanceAll()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not exit after cancel")
+		}
+	})
+	return cancel
+}
+
+// TestSupervisorStartsSourceEnabledAtRuntime: boot unconfigured; poll tick;
+// SetXMLTV → next tick refreshes via stub fetcher.
+func TestSupervisorStartsSourceEnabledAtRuntime(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	// Explicit empty source so HasSetting is true and configured is false.
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "", RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, hits := xmltvStubServer(t)
+	svc := NewService(st, prov)
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+
+	// Both supervisors enter unconfigured poll (60s).
+	waitUntil(t, 2*time.Second, func() bool {
+		return svc.lastWaitFor("xmltv") == unconfiguredPoll && gate.PendingCount() >= 1
+	})
+	if hits.Load() != 0 {
+		t.Fatalf("hits before enable = %d, want 0", hits.Load())
+	}
+
+	if err := prov.SetXMLTV(settings.XMLTV{Source: srv.URL, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Release the unconfigured poll → supervisor re-reads provider and refreshes.
+	waitUntil(t, 2*time.Second, func() bool { return gate.PendingCount() >= 2 })
+	gate.AdvanceAll()
+	// lastWait is recorded only after refresh completes (including LastSuccess write).
+	waitUntil(t, 2*time.Second, func() bool {
+		w := svc.lastWaitFor("xmltv")
+		return hits.Load() >= 1 && w > 0 && w != unconfiguredPoll
+	})
+
+	if hits.Load() < 1 {
+		t.Fatal("expected stub fetcher to be hit after enabling source at runtime")
+	}
+	status := svc.Status()
+	if !status.XMLTV.Configured {
+		t.Error("Status.Configured should be true after SetXMLTV")
+	}
+	if status.XMLTV.LastSuccess.IsZero() {
+		t.Error("LastSuccess should be set after runtime enable refresh")
+	}
+}
+
+// TestSupervisorStopsWhenCleared: configured → refresh; clear → no further
+// fetches and no error status accumulation.
+func TestSupervisorStopsWhenCleared(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	srv, hits := xmltvStubServer(t)
+	if err := prov.SetXMLTV(settings.XMLTV{Source: srv.URL, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(st, prov)
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+
+	// lastWait is recorded only after refresh finishes — do not poll Status during
+	// the write path (avoids SQLITE_BUSY noise with the open transaction).
+	waitUntil(t, 2*time.Second, func() bool {
+		w := svc.lastWaitFor("xmltv")
+		return hits.Load() >= 1 && w > 0 && w != unconfiguredPoll
+	})
+	afterFirst := hits.Load()
+	if afterFirst < 1 {
+		t.Fatal("expected at least one refresh while configured")
+	}
+	status := svc.Status()
+	if status.XMLTV.LastSuccess.IsZero() {
+		t.Fatal("LastSuccess should be set after configured refresh")
+	}
+	if status.XMLTV.LastError != "" {
+		t.Fatalf("unexpected LastError after success: %q", status.XMLTV.LastError)
+	}
+
+	// Clear source (UI disable).
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "", RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Advance post-refresh sleep → next tick sees empty source, polls 60s.
+	waitUntil(t, 2*time.Second, func() bool { return gate.PendingCount() >= 1 })
+	gate.AdvanceAll()
+	waitUntil(t, 2*time.Second, func() bool {
+		return svc.lastWaitFor("xmltv") == unconfiguredPoll && gate.PendingCount() >= 1
+	})
+
+	// Several more unconfigured polls must not fetch or accumulate errors.
+	for i := 0; i < 3; i++ {
+		gate.AdvanceAll()
+		waitUntil(t, 2*time.Second, func() bool {
+			return svc.lastWaitFor("xmltv") == unconfiguredPoll && gate.PendingCount() >= 1
+		})
+	}
+
+	if hits.Load() != afterFirst {
+		t.Fatalf("hits after clear = %d, want still %d (no further fetches)", hits.Load(), afterFirst)
+	}
+	status = svc.Status()
+	if status.XMLTV.Configured {
+		t.Error("Configured should be false after clear")
+	}
+	if status.XMLTV.LastError != "" {
+		t.Errorf("LastError after clear = %q, want empty (no error spam)", status.XMLTV.LastError)
+	}
+}
+
+// TestIntervalChangeApplies: refreshHours 12→1 → next sleep is ~1h (±10% jitter).
+func TestIntervalChangeApplies(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	srv, hits := xmltvStubServer(t)
+	if err := prov.SetXMLTV(settings.XMLTV{Source: srv.URL, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(st, prov)
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+
+	// First configured cycle: refresh then wait ~12h.
+	waitUntil(t, 2*time.Second, func() bool {
+		return hits.Load() >= 1 && inJitterBand(svc.lastWaitFor("xmltv"), 12*time.Hour)
+	})
+	w12 := svc.lastWaitFor("xmltv")
+	if !inJitterBand(w12, 12*time.Hour) {
+		t.Fatalf("first wait = %v, want 12h ±10%%", w12)
+	}
+
+	if err := prov.SetXMLTV(settings.XMLTV{Source: srv.URL, RefreshHours: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Complete the 12h sleep; next cycle re-reads hours=1 and waits ~1h.
+	waitUntil(t, 2*time.Second, func() bool { return gate.PendingCount() >= 1 })
+	gate.AdvanceAll()
+	waitUntil(t, 2*time.Second, func() bool {
+		return hits.Load() >= 2 && inJitterBand(svc.lastWaitFor("xmltv"), time.Hour)
+	})
+	w1 := svc.lastWaitFor("xmltv")
+	if !inJitterBand(w1, time.Hour) {
+		t.Fatalf("after hours change wait = %v, want 1h ±10%%", w1)
+	}
+}
+
+func inJitterBand(got, base time.Duration) bool {
+	if base <= 0 {
+		return got == base
+	}
+	lo := base - base/10
+	hi := base + base/10
+	return got >= lo && got <= hi
+}
+
+// TestRefreshAllReadsProviderLive: RefreshAll picks up a source set AFTER construction.
+func TestRefreshAllReadsProviderLive(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	// Construct with empty/unconfigured provider.
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "", RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, prov)
+
+	if err := svc.RefreshAll(context.Background()); err != nil {
+		t.Fatalf("RefreshAll unconfigured: %v", err)
+	}
+	if svc.Status().XMLTV.Configured {
+		t.Fatal("should not be configured before SetXMLTV")
+	}
+	epgs, err := st.ListEPGChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(epgs) != 0 {
+		t.Fatalf("epg channels before enable = %d, want 0", len(epgs))
+	}
+
+	fixture := filepath.Join("xmltv", "testdata", "guide.xml")
+	if err := prov.SetXMLTV(settings.XMLTV{Source: fixture, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same service instance — must hot-read the provider.
+	if err := svc.RefreshAll(context.Background()); err != nil {
+		t.Fatalf("RefreshAll after SetXMLTV: %v", err)
+	}
+	if !svc.Status().XMLTV.Configured {
+		t.Error("Configured should be true after SetXMLTV")
+	}
+	epgs, err = st.ListEPGChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(epgs) < 2 {
+		t.Fatalf("epg channels after live RefreshAll = %d, want >= 2", len(epgs))
+	}
+	if svc.Status().XMLTV.LastSuccess.IsZero() {
+		t.Error("LastSuccess should be set")
+	}
+}
+
 func TestRefreshAllImportsAndPrunes(t *testing.T) {
 	st := testStore(t)
+	prov := testProvider(t, st)
 
 	// Fixture programmes from guide.xml:
 	// ch1: 2026-08-04 19:00-20:00 -0500 → 00:00-01:00 UTC
@@ -45,14 +354,12 @@ func TestRefreshAllImportsAndPrunes(t *testing.T) {
 		t.Fatalf("seed old epg: %v", err)
 	}
 
-	// Resolve path to the shared golden XMLTV fixture.
 	fixture := filepath.Join("xmltv", "testdata", "guide.xml")
+	if err := prov.SetXMLTV(settings.XMLTV{Source: fixture, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
 
-	cfg := config.Config{}
-	cfg.XMLTV.Source = fixture
-	cfg.XMLTV.RefreshHours = 12
-
-	svc := NewService(st, cfg)
+	svc := NewService(st, prov)
 	svc.now = func() time.Time { return fixedNow }
 
 	if err := svc.RefreshAll(context.Background()); err != nil {
@@ -79,7 +386,6 @@ func TestRefreshAllImportsAndPrunes(t *testing.T) {
 	}
 
 	// Imported programmes present; pruned programme gone.
-	// Query a wide window covering both fixture programmes.
 	progs, err := st.ProgramsInRange(
 		[]string{"ch1.example", "ch2.example", "old-ch"},
 		time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC),
@@ -126,11 +432,12 @@ func TestRefreshAllImportsAndPrunes(t *testing.T) {
 
 func TestStatusStale(t *testing.T) {
 	st := testStore(t)
-	cfg := config.Config{}
-	cfg.XMLTV.Source = "/nonexistent/guide.xml"
-	cfg.XMLTV.RefreshHours = 12
+	prov := testProvider(t, st)
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "/nonexistent/guide.xml", RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
 
-	svc := NewService(st, cfg)
+	svc := NewService(st, prov)
 	fixedNow := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixedNow }
 
@@ -163,7 +470,6 @@ func TestStatusStale(t *testing.T) {
 	}
 
 	// Just inside the threshold (exactly 2×interval is not older → not stale).
-	// Stale when Sub > 2*interval, so equal is not stale.
 	edge := fixedNow.Add(-24 * time.Hour)
 	if err := st.SetSetting(settingXMLTVLastSuccess, edge.Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
@@ -173,10 +479,11 @@ func TestStatusStale(t *testing.T) {
 		t.Error("lastSuccess exactly 2×interval should not be stale (need older than)")
 	}
 
-	// Unconfigured source is never stale.
-	svc2 := NewService(st, config.Config{})
-	svc2.now = func() time.Time { return fixedNow }
-	st4 := svc2.Status()
+	// Unconfigured source is never stale (live provider read).
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "", RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+	st4 := svc.Status()
 	if st4.XMLTV.Configured || st4.XMLTV.Stale {
 		t.Errorf("unconfigured: %+v", st4.XMLTV)
 	}
@@ -184,6 +491,7 @@ func TestStatusStale(t *testing.T) {
 
 func TestGuideEnabledOnlyAndUnmappedEmpty(t *testing.T) {
 	st := testStore(t)
+	prov := testProvider(t, st)
 	// Two channels: one enabled+mapped, one enabled+unmapped, one disabled+mapped.
 	if err := st.UpsertDevice(store.Device{
 		DeviceID: "dev1", IP: "1.2.3.4", Model: "X", TunerCount: 1, StreamPort: 5004,
@@ -241,7 +549,7 @@ func TestGuideEnabledOnlyAndUnmappedEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := NewService(st, config.Config{})
+	svc := NewService(st, prov)
 	guide, err := svc.Guide(context.Background(), start, stop)
 	if err != nil {
 		t.Fatalf("Guide: %v", err)

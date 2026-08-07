@@ -815,3 +815,45 @@ ok  	github.com/ajthom90/bowtie/server/internal/web
 0 issues.
 OK
 ```
+
+## v0.4.0 Task 2
+
+**Date:** 2026-08-07
+
+### Built
+
+- `epg.NewService(st, *settings.Provider)` — cfg XMLTV/SD plumbing removed; sources/intervals read live from provider
+- `Run` redesigned as two always-on supervisor loops (xmltv + sd): unconfigured → 60s poll without error spam; configured → refresh then `withJitter(interval)`; interval re-read each cycle
+- A1 seams: injectable `after func(time.Duration) <-chan time.Time` (default `time.After`) + guarded `lastWait[source]`; `Run` WaitGroup-waits both loops on cancel
+- `Status().Configured` and `RefreshAll` re-read provider live (hot enable/disable without restart)
+- `cmd/bowtie/main.go`: single `settingsProv` shared for SeedFromConfig + NewService
+- `store.Open`: `SetMaxOpenConns(1)` so SQLite + busy_timeout apply to the only pool connection
+
+### Tests
+
+- `TestSupervisorStartsSourceEnabledAtRuntime`, `TestSupervisorStopsWhenCleared`, `TestIntervalChangeApplies` (after-gate, no real sleeps)
+- `TestRefreshAllReadsProviderLive` (source set after construction)
+- Existing epg + `api/guide_handlers` fixtures migrated to provider construction
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+```

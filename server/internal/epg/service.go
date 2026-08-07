@@ -11,11 +11,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg/sd"
 	"github.com/ajthom90/bowtie/server/internal/epg/xmltv"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -25,33 +26,46 @@ const (
 	settingSDLastSuccess    = "epg.sd.lastSuccess"
 	settingSDLastError      = "epg.sd.lastError"
 
+	// unconfiguredPoll is how long each supervisor waits between provider
+	// re-reads when its source is not configured (no error logging).
+	unconfiguredPoll = 60 * time.Second
+	// sdRefreshInterval is the Schedules Direct refresh period (no separate
+	// settings key yet; re-evaluated each cycle for consistency with XMLTV).
 	sdRefreshInterval = 12 * time.Hour
-	errorRetryAfter   = 15 * time.Minute
 	sdScheduleDays    = 14
+	defaultRefreshH   = 12
 )
 
 // Service refreshes EPG sources and serves guide data for enabled channels.
+// Settings are read live from the provider on every supervisor tick and
+// RefreshAll/Status call — no restart required for source changes.
 type Service struct {
 	store *store.Store
-	cfg   config.Config
+	prov  *settings.Provider
 	sd    *sd.Client
 	http  *http.Client
 	now   func() time.Time
+	// after is the sleep seam (default time.After). Tests inject a controllable
+	// channel factory so supervisor loops never real-sleep.
+	after func(time.Duration) <-chan time.Time
+
+	waitMu   sync.Mutex
+	lastWait map[string]time.Duration // source name → last computed wait
 }
 
-// NewService constructs an EPG service from store and config.
-func NewService(st *store.Store, cfg config.Config) *Service {
-	s := &Service{
-		store: st,
-		cfg:   cfg,
-		http:  http.DefaultClient,
-		now:   func() time.Time { return time.Now().UTC() },
-		sd: &sd.Client{
-			Username: cfg.SchedulesDirect.Username,
-			Password: cfg.SchedulesDirect.Password,
-		},
+// NewService constructs an EPG service backed by store and runtime settings.
+// Credentials and sources are read from prov on each refresh/tick; the sd
+// client is constructed empty and filled per-call.
+func NewService(st *store.Store, prov *settings.Provider) *Service {
+	return &Service{
+		store:    st,
+		prov:     prov,
+		http:     http.DefaultClient,
+		now:      func() time.Time { return time.Now().UTC() },
+		after:    time.After,
+		lastWait: make(map[string]time.Duration),
+		sd:       &sd.Client{},
 	}
-	return s
 }
 
 // SourceStatus is the admin-facing status of both EPG sources.
@@ -87,7 +101,7 @@ type GuideProgram struct {
 	Category    string    `json:"category"`
 }
 
-// RefreshAll refreshes configured EPG sources, then prunes old programmes.
+// RefreshAll refreshes configured EPG sources (provider re-read per call), then prunes.
 func (s *Service) RefreshAll(ctx context.Context) error {
 	var errs []string
 	if s.xmltvConfigured() {
@@ -110,63 +124,129 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 	return nil
 }
 
-// Run periodically refreshes configured sources until ctx is cancelled.
-// Each source uses its own interval with ±10% jitter; failures retry after 15m.
+// Run starts always-on supervisor loops for XMLTV and SD until ctx is cancelled,
+// then waits for both loops to exit (so shutdown does not race the store).
+// Each loop re-reads the provider every iteration: unconfigured sources poll
+// every 60s without error spam; configured sources refresh then sleep a
+// jittered interval re-read on the next cycle.
 func (s *Service) Run(ctx context.Context) {
-	if s.xmltvConfigured() {
-		go s.runLoop(ctx, "xmltv", s.xmltvInterval(), s.refreshXMLTV)
-	}
-	if s.sdConfigured() {
-		go s.runLoop(ctx, "sd", sdRefreshInterval, s.refreshSD)
-	}
-	// Also prune periodically with the longer of the two intervals (or 12h).
-	go s.runPruneLoop(ctx)
-	<-ctx.Done()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.superviseXMLTV(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		s.superviseSD(ctx)
+	}()
+	wg.Wait()
 }
 
-func (s *Service) runLoop(ctx context.Context, name string, interval time.Duration, refresh func(context.Context) error) {
-	// Immediate first attempt.
+func (s *Service) superviseXMLTV(ctx context.Context) {
 	for {
-		err := refresh(ctx)
-		if err != nil {
-			log.Printf("epg %s refresh: %v", name, err)
-		} else {
-			// Prune after a successful source refresh.
-			if perr := s.store.PrunePrograms(s.now().Add(-24 * time.Hour)); perr != nil {
-				log.Printf("epg prune: %v", perr)
-			}
-		}
-		wait := withJitter(interval)
-		if err != nil {
-			wait = errorRetryAfter
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if ctx.Err() != nil {
 			return
-		case <-timer.C:
+		}
+		x, err := s.prov.XMLTV()
+		if err != nil {
+			log.Printf("epg xmltv: read settings: %v", err)
+			if !s.sleepOrDone(ctx, "xmltv", unconfiguredPoll) {
+				return
+			}
+			continue
+		}
+		if strings.TrimSpace(x.Source) == "" {
+			if !s.sleepOrDone(ctx, "xmltv", unconfiguredPoll) {
+				return
+			}
+			continue
+		}
+
+		if err := s.refreshXMLTV(ctx); err != nil {
+			log.Printf("epg xmltv refresh: %v", err)
+		} else if perr := s.store.PrunePrograms(s.now().Add(-24 * time.Hour)); perr != nil {
+			log.Printf("epg prune: %v", perr)
+		}
+
+		hours := x.RefreshHours
+		if hours <= 0 {
+			hours = defaultRefreshH
+		}
+		wait := withJitter(time.Duration(hours) * time.Hour)
+		if !s.sleepOrDone(ctx, "xmltv", wait) {
+			return
 		}
 	}
 }
 
-func (s *Service) runPruneLoop(ctx context.Context) {
-	// Light-touch prune if no sources are configured (or between long gaps).
-	ticker := time.NewTicker(withJitter(sdRefreshInterval))
-	defer ticker.Stop()
+func (s *Service) superviseSD(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-ticker.C:
-			if err := s.store.PrunePrograms(s.now().Add(-24 * time.Hour)); err != nil {
-				log.Printf("epg prune: %v", err)
+		}
+		sdCfg, err := s.prov.SD()
+		if err != nil {
+			log.Printf("epg sd: read settings: %v", err)
+			if !s.sleepOrDone(ctx, "sd", unconfiguredPoll) {
+				return
 			}
+			continue
+		}
+		if !sdCredentialsConfigured(sdCfg) {
+			if !s.sleepOrDone(ctx, "sd", unconfiguredPoll) {
+				return
+			}
+			continue
+		}
+
+		if err := s.refreshSD(ctx); err != nil {
+			log.Printf("epg sd refresh: %v", err)
+		} else if perr := s.store.PrunePrograms(s.now().Add(-24 * time.Hour)); perr != nil {
+			log.Printf("epg prune: %v", perr)
+		}
+
+		wait := withJitter(sdRefreshInterval)
+		if !s.sleepOrDone(ctx, "sd", wait) {
+			return
 		}
 	}
 }
 
-// Status returns configured flag, last success/error, and stale for each source.
+// sleepOrDone records the wait for tests, then blocks until after(d) or ctx done.
+// Returns false when ctx is cancelled (checked again after a timer fire so a
+// concurrent cancel+advance does not start another refresh cycle).
+func (s *Service) sleepOrDone(ctx context.Context, source string, d time.Duration) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	s.recordWait(source, d)
+	after := s.after
+	if after == nil {
+		after = time.After
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-after(d):
+		return ctx.Err() == nil
+	}
+}
+
+func (s *Service) recordWait(source string, d time.Duration) {
+	s.waitMu.Lock()
+	s.lastWait[source] = d
+	s.waitMu.Unlock()
+}
+
+// lastWaitFor returns the most recently recorded wait for source (test helper).
+func (s *Service) lastWaitFor(source string) time.Duration {
+	s.waitMu.Lock()
+	defer s.waitMu.Unlock()
+	return s.lastWait[source]
+}
+
+// Status returns configured flag (live from provider), last success/error, and stale.
 func (s *Service) Status() SourceStatus {
 	return SourceStatus{
 		XMLTV: s.sourceState(s.xmltvConfigured(), s.xmltvInterval(), settingXMLTVLastSuccess, settingXMLTVLastError),
@@ -263,20 +343,35 @@ func (s *Service) Guide(ctx context.Context, start, stop time.Time) ([]GuideChan
 }
 
 func (s *Service) xmltvConfigured() bool {
-	return strings.TrimSpace(s.cfg.XMLTV.Source) != ""
+	x, err := s.prov.XMLTV()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(x.Source) != ""
 }
 
 func (s *Service) sdConfigured() bool {
-	sd := s.cfg.SchedulesDirect
-	return strings.TrimSpace(sd.Username) != "" &&
-		strings.TrimSpace(sd.Password) != "" &&
-		strings.TrimSpace(sd.LineupID) != ""
+	sdCfg, err := s.prov.SD()
+	if err != nil {
+		return false
+	}
+	return sdCredentialsConfigured(sdCfg)
+}
+
+func sdCredentialsConfigured(sdCfg settings.SD) bool {
+	return strings.TrimSpace(sdCfg.Username) != "" &&
+		strings.TrimSpace(sdCfg.Password) != "" &&
+		strings.TrimSpace(sdCfg.LineupID) != ""
 }
 
 func (s *Service) xmltvInterval() time.Duration {
-	h := s.cfg.XMLTV.RefreshHours
+	x, err := s.prov.XMLTV()
+	if err != nil {
+		return time.Duration(defaultRefreshH) * time.Hour
+	}
+	h := x.RefreshHours
 	if h <= 0 {
-		h = 12
+		h = defaultRefreshH
 	}
 	return time.Duration(h) * time.Hour
 }
@@ -288,7 +383,14 @@ func (s *Service) refreshXMLTV(ctx context.Context) error {
 }
 
 func (s *Service) doRefreshXMLTV(ctx context.Context) error {
-	src := strings.TrimSpace(s.cfg.XMLTV.Source)
+	x, err := s.prov.XMLTV()
+	if err != nil {
+		return err
+	}
+	src := strings.TrimSpace(x.Source)
+	if src == "" {
+		return fmt.Errorf("xmltv source not configured")
+	}
 	r, closer, err := s.openXMLTVSource(ctx, src)
 	if err != nil {
 		return err
@@ -346,14 +448,17 @@ func (s *Service) doRefreshSD(ctx context.Context) error {
 	if s.sd == nil {
 		return fmt.Errorf("sd client not configured")
 	}
-	// Ensure credentials are current (cfg may have been set at NewService).
-	s.sd.Username = s.cfg.SchedulesDirect.Username
-	s.sd.Password = s.cfg.SchedulesDirect.Password
+	sdCfg, err := s.prov.SD()
+	if err != nil {
+		return err
+	}
+	s.sd.Username = sdCfg.Username
+	s.sd.Password = sdCfg.Password
 
 	if err := s.sd.Token(ctx); err != nil {
 		return fmt.Errorf("token: %w", err)
 	}
-	lineupID := strings.TrimSpace(s.cfg.SchedulesDirect.LineupID)
+	lineupID := strings.TrimSpace(sdCfg.LineupID)
 	lineup, err := s.sd.Lineup(ctx, lineupID)
 	if err != nil {
 		return fmt.Errorf("lineup: %w", err)

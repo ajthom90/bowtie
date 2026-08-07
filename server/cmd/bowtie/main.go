@@ -85,7 +85,8 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 
 	// Presence-seed product settings from config/env (first boot only).
 	// After seed the DB is the sole source of truth for these keys.
-	if err := settings.NewProvider(st).SeedFromConfig(cfg); err != nil {
+	settingsProv := settings.NewProvider(st)
+	if err := settingsProv.SeedFromConfig(cfg); err != nil {
 		_ = st.Close()
 		return "", nil, fmt.Errorf("seed settings: %w", err)
 	}
@@ -115,7 +116,8 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	tuners := tuner.New(st, cfg)
 	go runTunerRefresh(rootCtx, tuners)
 
-	epgSvc := epg.NewService(st, cfg)
+	// EPG supervisor always-on; sources/intervals from settingsProv (live, no restart).
+	epgSvc := epg.NewService(st, settingsProv)
 	go epgSvc.Run(rootCtx)
 
 	// Probe encoders once at startup; cache for negotiation + admin endpoint.

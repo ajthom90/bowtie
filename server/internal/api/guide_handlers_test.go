@@ -12,6 +12,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -27,7 +28,11 @@ func testAPIWithEPG(t *testing.T, cfg config.Config) (http.Handler, *store.Store
 		Secret: []byte("0123456789abcdef0123456789abcdef"),
 		Store:  st,
 	}
-	svc := epg.NewService(st, cfg)
+	prov := settings.NewProvider(st)
+	if err := prov.SeedFromConfig(cfg); err != nil {
+		t.Fatalf("SeedFromConfig: %v", err)
+	}
+	svc := epg.NewService(st, prov)
 	h := api.New(api.Deps{
 		Cfg:   cfg,
 		Store: st,
