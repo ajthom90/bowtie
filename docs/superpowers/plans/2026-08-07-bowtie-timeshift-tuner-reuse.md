@@ -134,3 +134,38 @@ Implementation per spec A verbatim: per-channel mutex single-flight; pump 64KB c
 ## Post-plan notes
 - Sequential 1→8 on main. Tasks 4 and 5 are the risk core — line review is deep there; `-race` mandatory.
 - Real-device etiquette: check `status.json` for family usage BEFORE any live test; sessions <60s; always DELETE.
+
+---
+
+# REVIEW AMENDMENTS (BINDING — override task text above where they conflict)
+
+Incorporated from the Grok plan review, 2026-08-07.
+
+## A1. Ingest clock seam (Tasks 4-5)
+`NewIngestManager(dial DialFunc, opts ...IngestOption)` with `WithIngestClock(now func() time.Time, after func(time.Duration) <-chan time.Time)`. ALL timing tests use the fake clock/after — wall sleeps ≥1s in tests are a task failure. Task 5 injects the SAME fake clock into Manager and Ingest; `TestTunerFreeBudget` advances that shared clock.
+
+## A2. Join-buffer falsifiability (Task 4)
+The plan requires a small synthetic TS builder (test helper): emits valid 188-byte packets; PAT (PID 0) + PMT emitted ONCE at stream start, then MEDIA-ONLY packets thereafter. `TestJoinBufferGivesLateSubTables`: attach late (after ≥1 MB of media-only), assert the sub's first bytes contain the PAT and PMT packets (byte-compare against the builder's table packets) BEFORE any media — provable prepend, not table-cycle luck. A second variant with cycling tables may exist but is not the falsifier.
+
+## A3. Observability (Tasks 4-5)
+Test instrumentation is explicit: a counting dial wrapper exposing `DialCalls()`; ingest test hook `AttachCalls()` (test-only counter via option). `hdhrfake.ActiveStreams()` is used ONLY in e2e where dial is real HTTP to the fake; `hdhrfake.Fake` gains `TotalDials()` (cumulative) for the e2e dial assertions. Crash×2 asserts AttachCalls==3 AND TotalDials==1 (re-attach during tail must not redial).
+
+## A4. Manager integration precision (Task 5)
+- Test-suite DEFAULT is non-nil Ingest with the counting dial; nil-Ingest legacy mode is exercised by exactly ONE explicit test and exists only as fixture compatibility during this task — REMOVED at the end of Task 5 (production and tests both always have Ingest; session.inputURL is replaced by session.sub).
+- Ordered contract (spelled in code comments): on every process start: Close(old sub if any) → Attach → JobSpec.Stdin=sub.R → runner.Start. On proc-death: Close sub (tail absorbs quick restarts... note: restart backoff can exceed the 5s tail — that redial is CORRECT and expected; the tail exists for sub-5s churn, assert both behaviors). On abandon/waitPlaylist-failure/Terminate/teardown: Close.
+- 503 mapping via `errors.Is(err, stream.ErrTunersBusy)` in writeStartError (replace the string-contains check).
+- Admin UI for ingest channels: payload-only this cycle (`ingestChannels`); no web UI task.
+- IngestSub exposes `R io.ReadCloser` (not *io.PipeReader); Close only via IngestSub.Close. Add tests: double-Close safe; concurrent Close vs force-close safe; Shutdown vs concurrent Attach safe.
+
+## A5. Task 1 corrections
+Helper extracted as `authorizeViewerRequest`; heartbeat auth-failure is **401** (mirrors DELETE exactly); update test list and openapi accordingly.
+
+## A6. Heartbeat ownership (Tasks 6-7)
+Beats are keyed on SESSION OPEN (viewerId present and not torn down) — they continue through paused AND `.stalled`/`Stalled` states; they stop only on real leave (stop()/unmount/back). Web: the new visibilitychange listener sends ONE beat on hidden and NEVER tears down. Native tests: advance virtual time through a stall transition and assert beats continue.
+
+## A7. Roku queueDepth (Task 8)
+`queueDepth` is a NEW ApiTask interface field (xml + task-loop maintenance on push/pop; task thread writes, scenes read). Explicit contract change with fixture coverage, not an existing capability.
+
+## A8. Small precision items
+- Task 6 seekModel input is an adapter type `LiveWindow {start, end, liveEdge, current}` built in Player.tsx from hls.js `levelDetails` + `hls.liveSyncPosition` + `video.currentTime`; seekModel functions take LiveWindow (pure, testable) — not raw hls.js objects.
+- Task 2: goldens for BOTH default (30) and non-default (225) list sizes across backends; web settingsModel section union gains 'streaming' as a full peer.
