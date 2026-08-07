@@ -126,3 +126,41 @@ describe('ApiClient request 401 retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ApiClient.heartbeat', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('POSTs with stream token query and no Authorization header', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new ApiClient(
+      () => 'access-should-not-be-sent',
+      () => {},
+    )
+    await client.heartbeat('viewer-abc', 'stream-tok-xyz')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/v1/sessions/viewer-abc/heartbeat?token=stream-tok-xyz')
+    expect(init?.method).toBe('POST')
+    const headers = init?.headers as Record<string, string> | undefined
+    expect(headers?.Authorization).toBeUndefined()
+  })
+
+  it('throws ApiError on non-204', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new ApiClient(() => null, () => {})
+    await expect(client.heartbeat('gone', 'tok')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 404,
+    })
+  })
+})

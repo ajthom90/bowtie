@@ -294,6 +294,32 @@ export class ApiClient {
     await this.request<void>('DELETE', `/api/v1/sessions/${encodeURIComponent(viewerId)}`)
   }
 
+  /**
+   * POST /api/v1/sessions/{viewerId}/heartbeat with the stream token query param.
+   * Prefer token over Bearer so mid-session access-token refresh cannot race the beat.
+   * Best-effort: non-204 responses throw ApiError; callers may ignore.
+   */
+  async heartbeat(viewerId: string, streamToken: string): Promise<void> {
+    const q = new URLSearchParams({ token: streamToken })
+    const path = `/api/v1/sessions/${encodeURIComponent(viewerId)}/heartbeat?${q}`
+    // No Authorization header — stream token alone authorizes (spec C).
+    const res = await fetch(path, { method: 'POST' })
+    if (res.status === 204) {
+      return
+    }
+    let msg = res.statusText
+    try {
+      const text = await res.text()
+      if (text) {
+        const data = JSON.parse(text) as { error?: string }
+        if (data.error) msg = data.error
+      }
+    } catch {
+      // ignore parse errors
+    }
+    throw new ApiError(res.status, msg || 'heartbeat failed')
+  }
+
   // ── Admin endpoints ──────────────────────────────────────────────────────
 
   async getAdminTuners(): Promise<DeviceStatus[]> {

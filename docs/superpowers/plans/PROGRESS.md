@@ -1268,3 +1268,34 @@ ok  	github.com/ajthom90/bowtie/server/internal/api     (race)
 0 issues.
 OK
 ```
+
+## v0.5.0 Task 6
+
+**Date:** 2026-08-07
+
+### Built
+
+- `web/src/player/seekModel.ts` (+test): pure `LiveWindow {start,end,liveEdge,current}` (A8); `clampSeek` (out-of-window → live edge); `skipBack` (clamp to start); `formatBehind` (`-mm:ss`); `createHeartbeatController` (15s interval + visibility-hidden one-beat, never tear down — A6)
+- `web/src/player/SeekBar.tsx` (+css): seek range under video controls; LIVE badge amber-at-edge / dim `-mm:ss` when behind; skip-back 30s; jump-to-live; mobile 640px/44px touch targets
+- `web/src/player/Player.tsx`: builds LiveWindow from hls.js `levelDetails` + `liveSyncPosition` + `video.currentTime` (native HLS via `seekable` fallback); out-of-window poll → jump live + exact notice copy; heartbeats while session open (paused included); `visibilitychange` beat only (never tears down — pagehide/beforeunload still DELETE)
+- `web/src/api/client.ts`: `heartbeat(viewerId, streamToken)` — POST token query, **no** Bearer
+- Notice copy exact: `Jumped to live — paused longer than the buffer`
+
+### Notes
+
+- Step 4 Playwright + real-device gate left for orchestrator.
+- No push / no gh from this worker.
+
+### Verification (evidence)
+
+```
+$ cd web && npx tsc --noEmit && npx vitest run && npm run build && echo OK
+Test Files  6 passed (6)
+     Tests  78 passed (78)
+✓ built in …
+OK
+
+$ cd ../server && CGO_ENABLED=0 go test ./internal/web/ && echo EMBED_OK
+ok  	github.com/ajthom90/bowtie/server/internal/web
+EMBED_OK
+```

@@ -108,8 +108,8 @@ Implementation per spec A verbatim: per-channel mutex single-flight; pump 64KB c
 
 **Interfaces:** `seekModel.ts` pure: `windowFromHls(levelDetails) -> {start,end,live}`, `clampSeek(pos, window) -> {pos, clamped}`, `formatBehind(seconds) -> "-mm:ss"`.
 
-- [ ] **Step 1: Failing vitest** — seekModel math (window mapping, clamp true when pos<start, behind formatting), heartbeat scheduling logic if extracted (interval + visibility beat as a testable hook).
-- [ ] **Step 2:** implement UI → tsc/vitest/build green. **Step 3:** Commit `feat: web live seek bar, pause/rewind, session heartbeats`
+- [x] **Step 1: Failing vitest** — seekModel math (window mapping, clamp true when pos<start, behind formatting), heartbeat scheduling logic if extracted (interval + visibility beat as a testable hook).
+- [x] **Step 2:** implement UI → tsc/vitest/build green. **Step 3:** Commit `feat: web live seek bar, pause/rewind, session heartbeats`
 - [ ] **Step 4 (ORCHESTRATOR gate):** Playwright + real device (brief): play, pause 2 min, resume; rewind 5 min; skip-back; jump-to-live; screenshots to user.
 
 ### Task 7: iOS/tvOS + Android/Fire TV heartbeats & scrubbers

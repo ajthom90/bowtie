@@ -12,6 +12,14 @@ import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
 import { QualitySheet, useIsNarrow } from './QualitySheet'
+import { SeekBar } from './SeekBar'
+import {
+  OUT_OF_WINDOW_NOTICE,
+  clampSeek,
+  createHeartbeatController,
+  skipBack,
+  type LiveWindow,
+} from './seekModel'
 import styles from './Player.module.css'
 
 const PROFILES = ['original', 'high', 'medium', 'low'] as const
@@ -23,6 +31,8 @@ const QUALITY_OPTIONS = PROFILES.map((p) => ({
 }))
 
 const OVERLAY_HIDE_MS = 3000
+const LIVE_WINDOW_POLL_MS = 250
+const NOTICE_HIDE_MS = 4000
 
 type Props = {
   target: WatchTarget
@@ -60,6 +70,53 @@ function streamTokenFromPlaylist(playlistUrl: string): string | null {
   }
 }
 
+/**
+ * Build adapter LiveWindow from hls.js levelDetails + liveSyncPosition +
+ * video.currentTime (A8). Falls back to video.seekable for native HLS.
+ */
+function buildLiveWindow(hls: Hls | null, video: HTMLVideoElement): LiveWindow | null {
+  if (hls) {
+    const levelIdx = hls.currentLevel >= 0 ? hls.currentLevel : hls.levels.length - 1
+    const details = (levelIdx >= 0 ? hls.levels[levelIdx]?.details : null) ?? null
+    // Also try first loaded level if current is unset.
+    const d =
+      details ??
+      hls.levels.map((l) => l.details).find((x) => x != null && x.live) ??
+      hls.levels.map((l) => l.details).find((x) => x != null) ??
+      null
+    if (d) {
+      const start = d.fragmentStart
+      const end = d.edge
+      const liveEdge =
+        hls.liveSyncPosition != null && Number.isFinite(hls.liveSyncPosition)
+          ? hls.liveSyncPosition
+          : end
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        return {
+          start,
+          end,
+          liveEdge: Math.min(Math.max(liveEdge, start), end) || end,
+          current: video.currentTime,
+        }
+      }
+    }
+  }
+
+  if (video.seekable && video.seekable.length > 0) {
+    const start = video.seekable.start(0)
+    const end = video.seekable.end(video.seekable.length - 1)
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return {
+        start,
+        end,
+        liveEdge: end,
+        current: video.currentTime,
+      }
+    }
+  }
+  return null
+}
+
 /** Best-effort session stop when the page is unloading (DELETE cannot use sendBeacon). */
 function bestEffortDelete(viewerId: string, accessToken: string | null, streamToken: string | null) {
   let url = `/api/v1/sessions/${encodeURIComponent(viewerId)}`
@@ -95,6 +152,10 @@ export function Player({ target, onBack }: Props) {
   const viewerIdRef = useRef<string | null>(null)
   const playlistUrlRef = useRef<string | null>(null)
   const hideTimerRef = useRef<number | null>(null)
+  const noticeTimerRef = useRef<number | null>(null)
+  const heartbeatRef = useRef<ReturnType<typeof createHeartbeatController> | null>(null)
+  /** Suppress out-of-window auto-jump while the user is scrubbing. */
+  const scrubbingRef = useRef(false)
 
   const [profile, setProfile] = useState<Profile>('original')
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
@@ -105,6 +166,8 @@ export function Player({ target, onBack }: Props) {
   const [volume, setVolume] = useState(1)
   const [showStats, setShowStats] = useState(false)
   const [overlayVisible, setOverlayVisible] = useState(true)
+  const [liveWindow, setLiveWindow] = useState<LiveWindow | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [hlsStats, setHlsStats] = useState<HlsStats>({
     bandwidth: null,
     droppedFrames: null,
@@ -112,6 +175,17 @@ export function Player({ target, onBack }: Props) {
   })
   const [sessionEpoch, setSessionEpoch] = useState(0)
   const isNarrow = useIsNarrow(640)
+
+  const showNotice = useCallback((msg: string) => {
+    setNotice(msg)
+    if (noticeTimerRef.current != null) {
+      window.clearTimeout(noticeTimerRef.current)
+    }
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null)
+      noticeTimerRef.current = null
+    }, NOTICE_HIDE_MS)
+  }, [])
 
   const clearHideTimer = () => {
     if (hideTimerRef.current != null) {
@@ -142,9 +216,11 @@ export function Player({ target, onBack }: Props) {
   }
 
   const stopSession = useCallback(async () => {
+    heartbeatRef.current?.stop()
     const id = viewerIdRef.current
     viewerIdRef.current = null
     playlistUrlRef.current = null
+    setLiveWindow(null)
     destroyHls()
     if (!id) return
     try {
@@ -153,6 +229,55 @@ export function Player({ target, onBack }: Props) {
       // best-effort
     }
   }, [client])
+
+  const seekTo = useCallback(
+    (pos: number, opts?: { fromOutOfWindow?: boolean }) => {
+      const video = videoRef.current
+      if (!video) return
+      const w = buildLiveWindow(hlsRef.current, video)
+      if (!w) {
+        video.currentTime = pos
+        return
+      }
+      const { pos: clamped, clamped: wasClamped } = clampSeek(pos, w)
+      video.currentTime = clamped
+      setLiveWindow({ ...w, current: clamped })
+      if (wasClamped && (opts?.fromOutOfWindow || pos < w.start)) {
+        showNotice(OUT_OF_WINDOW_NOTICE)
+      }
+      bumpOverlay()
+    },
+    [bumpOverlay, showNotice],
+  )
+
+  const onSeekBarSeek = useCallback(
+    (pos: number) => {
+      scrubbingRef.current = true
+      seekTo(pos)
+      // Allow auto out-of-window check again after a short settle.
+      window.setTimeout(() => {
+        scrubbingRef.current = false
+      }, 500)
+    },
+    [seekTo],
+  )
+
+  const onSkipBack = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    const w = buildLiveWindow(hlsRef.current, video)
+    if (!w) return
+    const { pos } = skipBack(w, 30)
+    seekTo(pos)
+  }, [seekTo])
+
+  const onJumpToLive = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    const w = buildLiveWindow(hlsRef.current, video)
+    if (!w) return
+    seekTo(w.liveEdge)
+  }, [seekTo])
 
   const attachPlayback = useCallback((playlistUrl: string) => {
     const video = videoRef.current
@@ -254,6 +379,11 @@ export function Player({ target, onBack }: Props) {
   useEffect(() => {
     return () => {
       clearHideTimer()
+      if (noticeTimerRef.current != null) {
+        window.clearTimeout(noticeTimerRef.current)
+      }
+      heartbeatRef.current?.stop()
+      heartbeatRef.current = null
       const id = viewerIdRef.current
       const playlist = playlistUrlRef.current
       viewerIdRef.current = null
@@ -275,10 +405,11 @@ export function Player({ target, onBack }: Props) {
   }, [client])
 
   // beforeunload / pagehide best-effort stop (fetch keepalive; sendBeacon is POST-only).
-  // visibilitychange-hidden is intentionally not used: it fires on tab switch and would
-  // tear down a live session. pagehide covers mobile background-kill / unload.
+  // pagehide covers mobile background-kill / unload. visibilitychange is used only for
+  // heartbeats (A6) — never tears down the session.
   useEffect(() => {
     const onUnload = () => {
+      heartbeatRef.current?.stop()
       const id = viewerIdRef.current
       if (!id) return
       const access = localStorage.getItem('bowtie.accessToken')
@@ -294,6 +425,77 @@ export function Player({ target, onBack }: Props) {
       window.removeEventListener('pagehide', onUnload)
     }
   }, [])
+
+  // Heartbeats: keyed on session-open (viewerId + playlist token). Continue through
+  // pause/stall; stop only on real leave. visibilitychange-hidden → one beat (A6).
+  useEffect(() => {
+    if (loading || error) {
+      heartbeatRef.current?.stop()
+      return
+    }
+
+    const send = () => {
+      const id = viewerIdRef.current
+      const playlist = playlistUrlRef.current
+      if (!id || !playlist) return
+      const token = streamTokenFromPlaylist(playlist)
+      if (!token) return
+      void client.heartbeat(id, token).catch(() => {
+        /* best-effort */
+      })
+    }
+
+    const ctrl = createHeartbeatController({ send })
+    heartbeatRef.current = ctrl
+
+    // Only start when a session is actually open.
+    if (viewerIdRef.current && playlistUrlRef.current) {
+      ctrl.start()
+    }
+
+    const onVis = () => {
+      ctrl.handleVisibilityChange(document.visibilityState)
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      ctrl.stop()
+      if (heartbeatRef.current === ctrl) {
+        heartbeatRef.current = null
+      }
+    }
+  }, [client, loading, error, sessionEpoch])
+
+  // Poll live window + out-of-window clamp (spec B).
+  useEffect(() => {
+    if (loading || error) {
+      setLiveWindow(null)
+      return
+    }
+    const tick = () => {
+      const video = videoRef.current
+      if (!video) return
+      const w = buildLiveWindow(hlsRef.current, video)
+      if (!w) {
+        setLiveWindow(null)
+        return
+      }
+      setLiveWindow(w)
+
+      // Out-of-window: current fell below sliding window start → jump to live + notice.
+      if (!scrubbingRef.current && w.current < w.start - 0.25) {
+        const { pos, clamped } = clampSeek(w.current, w)
+        if (clamped) {
+          video.currentTime = pos
+          setLiveWindow({ ...w, current: pos })
+          showNotice(OUT_OF_WINDOW_NOTICE)
+        }
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, LIVE_WINDOW_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [loading, error, showNotice, sessionEpoch])
 
   // Stats polling from hls.js + video element.
   useEffect(() => {
@@ -502,6 +704,12 @@ export function Player({ target, onBack }: Props) {
             </div>
           ) : null}
 
+          {notice ? (
+            <div className={styles.notice} role="status" aria-live="polite">
+              {notice}
+            </div>
+          ) : null}
+
           <div
             className={styles.controls}
             onMouseEnter={onControlsEnter}
@@ -511,76 +719,87 @@ export function Player({ target, onBack }: Props) {
               setOverlayVisible(true)
             }}
           >
-            <button type="button" className={styles.btn} onClick={() => void onBackClick()}>
-              Back to guide
-            </button>
-            <button
-              type="button"
-              className={styles.btn}
-              onClick={togglePlay}
-              aria-label={playing ? 'Pause' : 'Play'}
-            >
-              {playing ? 'Pause' : 'Play'}
-            </button>
-            <button
-              type="button"
-              className={styles.btn}
-              onClick={toggleMute}
-              aria-label={muted ? 'Unmute' : 'Mute'}
-            >
-              {muted ? 'Unmute' : 'Mute'}
-            </button>
-            <label className={styles.volume}>
-              <span className="visually-hidden">Volume</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={muted ? 0 : volume}
-                onChange={onVolume}
-                aria-label="Volume"
+            <div className={styles.seekRow}>
+              <SeekBar
+                window={liveWindow}
+                disabled={!!error || loading}
+                onSeek={onSeekBarSeek}
+                onSkipBack={onSkipBack}
+                onJumpToLive={onJumpToLive}
               />
-            </label>
-            {isNarrow ? (
-              <QualitySheet
-                value={profile}
-                options={QUALITY_OPTIONS}
-                onChange={onQualityChange}
-                aria-label="Quality"
-              />
-            ) : (
-              <label>
-                <span className="visually-hidden">Quality</span>
-                <select
-                  className={styles.select}
-                  value={profile}
-                  onChange={onQualitySelect}
-                  aria-label="Quality"
-                >
-                  {QUALITY_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+            </div>
+            <div className={styles.controlRow}>
+              <button type="button" className={styles.btn} onClick={() => void onBackClick()}>
+                Back to guide
+              </button>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={togglePlay}
+                aria-label={playing ? 'Pause' : 'Play'}
+              >
+                {playing ? 'Pause' : 'Play'}
+              </button>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={toggleMute}
+                aria-label={muted ? 'Unmute' : 'Mute'}
+              >
+                {muted ? 'Unmute' : 'Mute'}
+              </button>
+              <label className={styles.volume}>
+                <span className="visually-hidden">Volume</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={muted ? 0 : volume}
+                  onChange={onVolume}
+                  aria-label="Volume"
+                />
               </label>
-            )}
-            <button
-              type="button"
-              className={styles.btn}
-              onClick={() => {
-                setShowStats((s) => !s)
-                bumpOverlay()
-              }}
-              aria-pressed={showStats}
-            >
-              Stats
-            </button>
-            <span className={styles.spacer} />
-            <button type="button" className={styles.btn} onClick={toggleFullscreen}>
-              Fullscreen
-            </button>
+              {isNarrow ? (
+                <QualitySheet
+                  value={profile}
+                  options={QUALITY_OPTIONS}
+                  onChange={onQualityChange}
+                  aria-label="Quality"
+                />
+              ) : (
+                <label>
+                  <span className="visually-hidden">Quality</span>
+                  <select
+                    className={styles.select}
+                    value={profile}
+                    onChange={onQualitySelect}
+                    aria-label="Quality"
+                  >
+                    {QUALITY_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={() => {
+                  setShowStats((s) => !s)
+                  bumpOverlay()
+                }}
+                aria-pressed={showStats}
+              >
+                Stats
+              </button>
+              <span className={styles.spacer} />
+              <button type="button" className={styles.btn} onClick={toggleFullscreen}>
+                Fullscreen
+              </button>
+            </div>
           </div>
         </div>
       </div>
