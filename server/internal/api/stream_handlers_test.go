@@ -437,6 +437,187 @@ func TestDeleteSessionBearerOrToken(t *testing.T) {
 	}
 }
 
+func TestHeartbeatStreamTokenAndBearer(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	viewerID := "viewer-hb"
+	ss.register(viewerID, t.TempDir())
+
+	// Stream token → 204 + Touch.
+	tok := stream.SignStreamToken([]byte(streamSecret), viewerID, time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat?token="+tok, nil, nil)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("token heartbeat status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	ss.mu.Lock()
+	if len(ss.touchCalls) != 1 || ss.touchCalls[0] != viewerID {
+		t.Fatalf("Touch calls=%v, want [%s]", ss.touchCalls, viewerID)
+	}
+	ss.mu.Unlock()
+
+	// Bearer → 204 + Touch.
+	rr = doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "alice", "password": "pass",
+	}, nil)
+	login := decodeLogin(t, rr)
+	rr = doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat", nil, map[string]string{
+		"Authorization": "Bearer " + login.AccessToken,
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("bearer heartbeat status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	ss.mu.Lock()
+	if len(ss.touchCalls) != 2 {
+		t.Fatalf("Touch calls after bearer=%v, want 2", ss.touchCalls)
+	}
+	ss.mu.Unlock()
+}
+
+func TestHeartbeatAuthFailure401(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	viewerID := "viewer-hb-bad"
+	ss.register(viewerID, t.TempDir())
+
+	// Bad stream token → 401 (mirrors DELETE; A5).
+	rr := doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat?token=not-a-valid-token", nil, nil)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token status=%d body=%q, want 401", rr.Code, rr.Body.String())
+	}
+
+	// Token for a different viewer → 401.
+	otherTok := stream.SignStreamToken([]byte(streamSecret), "other-viewer", time.Now().UTC().Add(time.Hour))
+	rr = doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat?token="+otherTok, nil, nil)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("mismatch token status=%d body=%q, want 401", rr.Code, rr.Body.String())
+	}
+
+	// No auth at all → 401.
+	rr = doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat", nil, nil)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth status=%d body=%q, want 401", rr.Code, rr.Body.String())
+	}
+
+	ss.mu.Lock()
+	if len(ss.touchCalls) != 0 {
+		t.Fatalf("Touch must not run on auth failure, got %v", ss.touchCalls)
+	}
+	ss.mu.Unlock()
+}
+
+func TestHeartbeatUnknownViewer404(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	viewerID := "viewer-missing"
+	// Not registered on stub → Touch returns false.
+
+	tok := stream.SignStreamToken([]byte(streamSecret), viewerID, time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "POST", "/api/v1/sessions/"+viewerID+"/heartbeat?token="+tok, nil, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown viewer status=%d body=%q, want 404", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHeartbeatAdvancesLastSeen(t *testing.T) {
+	// Real Manager + fake clock: heartbeat must advance viewer's LastSeen.
+	st, err := store.Open(filepath.Join(t.TempDir(), "hb-lastseen.db"))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	if err := st.UpsertDevice(store.Device{
+		DeviceID: "dev-hb", IP: "127.0.0.1", Model: "fake", TunerCount: 2,
+		Manual: true, LastSeen: now, StreamPort: 5004,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncLineup("dev-hb", []store.Channel{
+		{DeviceID: "dev-hb", GuideNumber: "5.1", Name: "NEWS"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chans, err := st.ListChannels(false)
+	if err != nil || len(chans) != 1 {
+		t.Fatalf("channels: %v len=%d", err, len(chans))
+	}
+	chID := chans[0].ID
+	if err := st.UpdateChannel(chID, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	user := seedUser(t, st, "alice", "pass", "viewer")
+
+	clockNow := now
+	clock := func() time.Time { return clockNow }
+
+	segDir := filepath.Join(t.TempDir(), "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ListenAddr: ":0",
+		SegmentDir: segDir,
+		Encoder:    "auto",
+		FFmpegPath: "ffmpeg",
+	}
+	mgr := stream.NewManager(stream.ManagerDeps{
+		Cfg:   cfg,
+		Store: st,
+		StreamURL: func(ch store.Channel) (string, error) {
+			return "http://127.0.0.1/auto/v" + ch.GuideNumber, nil
+		},
+		Caps: transcode.Capabilities{
+			Available: []transcode.Backend{transcode.BackendSoftware},
+			HEVC:      map[transcode.Backend]bool{},
+		},
+		Runner: &e2eStubRunner{},
+		Clock:  clock,
+	})
+
+	h, err := mgr.Start(context.Background(), user, chID, transcode.ClientCaps{
+		VideoCodecs: []string{"h264"},
+		AudioCodecs: []string{"aac"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	info, ok := mgr.SessionInfoOf(h.ViewerID)
+	if !ok || len(info.Viewers) != 1 {
+		t.Fatalf("SessionInfoOf: %+v ok=%v", info, ok)
+	}
+	if !info.Viewers[0].LastSeen.Equal(now) {
+		t.Fatalf("initial LastSeen=%v, want %v", info.Viewers[0].LastSeen, now)
+	}
+
+	apiH := api.New(api.Deps{
+		Cfg:               cfg,
+		Store:             st,
+		Auth:              &auth.Auth{Secret: []byte("0123456789abcdef0123456789abcdef"), Store: st},
+		Streams:           mgr,
+		StreamTokenSecret: []byte(streamSecret),
+	})
+
+	// Advance manager clock; heartbeat should stamp LastSeen to the new time.
+	// Stream-token expiry is wall-clock (verifyStreamAccess uses time.Now), not the fake clock.
+	clockNow = now.Add(20 * time.Second)
+	tok := stream.SignStreamToken([]byte(streamSecret), h.ViewerID, time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, apiH, "POST", "/api/v1/sessions/"+h.ViewerID+"/heartbeat?token="+tok, nil, nil)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("heartbeat status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	info, ok = mgr.SessionInfoOf(h.ViewerID)
+	if !ok || len(info.Viewers) != 1 {
+		t.Fatalf("after beat SessionInfoOf: %+v ok=%v", info, ok)
+	}
+	if !info.Viewers[0].LastSeen.Equal(clockNow) {
+		t.Fatalf("LastSeen after heartbeat=%v, want %v", info.Viewers[0].LastSeen, clockNow)
+	}
+}
+
 func TestAdminSessionsAndTerminate(t *testing.T) {
 	ss := newStubStreams()
 	ss.sessions = []stream.SessionInfo{{

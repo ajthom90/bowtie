@@ -680,6 +680,36 @@ paths:
           description: Viewer stopped (idempotent)
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/sessions/{viewerId}/heartbeat:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Heartbeat a viewer (Bearer JWT or valid stream token)
+      description: |
+        Touches the viewer's last-seen timestamp so the reaper does not drop
+        idle clients (viewerIdleTimeout is 90s). Clients SHOULD send the stream
+        token (query param) rather than Bearer — the stream token never rotates
+        mid-session and avoids racing access-token refresh. Auth mirrors DELETE.
+      operationId: heartbeatSession
+      tags: [stream]
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: Signed stream token (preferred alternative to Bearer auth)
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Viewer touched
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/stream/{viewerId}/index.m3u8:
     parameters:
       - name: viewerId

@@ -112,11 +112,12 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	// Admin transcode probe (Task 11).
 	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
 
-	// Stream sessions (Task 15).
+	// Stream sessions (Task 15 / v0.5.0 heartbeat).
 	handle("POST /api/v1/sessions", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateSession)))
 	handleFunc("GET /api/v1/stream/{viewerId}/index.m3u8", s.handlePlaylist)
 	handleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
 	handleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
+	handleFunc("POST /api/v1/sessions/{viewerId}/heartbeat", s.handleHeartbeat)
 	handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
 	handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
 

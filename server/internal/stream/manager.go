@@ -21,7 +21,10 @@ import (
 )
 
 const (
-	viewerIdleTimeout   = 30 * time.Second
+	// viewerIdleTimeout is how long a viewer may go without playlist/heartbeat
+	// Touch before the reaper drops them. 90s survives throttled background tabs
+	// (timers clamped ~1/min) and short client hiccups between 15s heartbeats.
+	viewerIdleTimeout   = 90 * time.Second
 	sessionEmptyGrace   = 60 * time.Second
 	playlistTimeout     = 15 * time.Second
 	healthyResetAfter   = 60 * time.Second
@@ -460,7 +463,7 @@ func (m *Manager) maintain() {
 	defer m.mu.Unlock()
 	now := m.now()
 
-	// Reap idle viewers (>30s since last heartbeat).
+	// Reap idle viewers (>viewerIdleTimeout since last heartbeat/playlist Touch).
 	var idle []string
 	for id, v := range m.viewers {
 		if now.Sub(v.LastSeen) > viewerIdleTimeout {

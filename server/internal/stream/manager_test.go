@@ -326,12 +326,20 @@ func TestViewerReapAndSessionGrace(t *testing.T) {
 	}
 	sessionDir := h.SessionDir
 
-	// Idle >30s → viewer reaped; session still alive (grace starts).
-	clock.Advance(31 * time.Second)
+	// Idle 60s without beats: still within 90s viewerIdleTimeout → NOT reaped.
+	clock.Advance(60 * time.Second)
+	m.maintain()
+	if !m.Touch(h.ViewerID) {
+		t.Fatal("viewer should still be alive at 60s idle (90s timeout)")
+	}
+
+	// Idle >90s without further beats → viewer reaped; session still alive (grace starts).
+	// Touch above reset LastSeen; advance past 90s from that stamp.
+	clock.Advance(91 * time.Second)
 	m.maintain()
 
 	if m.Touch(h.ViewerID) {
-		t.Fatal("viewer should have been reaped")
+		t.Fatal("viewer should have been reaped after 90s+ idle")
 	}
 	if len(m.Sessions()) != 1 {
 		t.Fatalf("session should still exist during grace, got %d", len(m.Sessions()))
@@ -349,6 +357,40 @@ func TestViewerReapAndSessionGrace(t *testing.T) {
 	}
 	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
 		t.Fatalf("session dir should be removed, err=%v", err)
+	}
+}
+
+func TestViewerKeptAliveByHeartbeats(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m := newTestManager(st, cfg, clock, runner)
+
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Simulate heartbeats every 15s across a span longer than 90s wall time.
+	// Viewer must NOT be reaped while beats keep LastSeen fresh.
+	for i := 0; i < 8; i++ {
+		clock.Advance(15 * time.Second)
+		if !m.Touch(h.ViewerID) {
+			t.Fatalf("viewer reaped at beat %d despite heartbeats", i)
+		}
+		m.maintain()
+	}
+	// 8×15s = 120s of wall time with beats — still alive.
+	if !m.Touch(h.ViewerID) {
+		t.Fatal("viewer should survive 120s wall time with periodic heartbeats")
+	}
+	if len(m.Sessions()) != 1 || len(m.Sessions()[0].Viewers) != 1 {
+		t.Fatalf("want live session with 1 viewer, got %+v", m.Sessions())
+	}
+
+	// Stop beating; after 90s+ idle the reaper removes the viewer.
+	clock.Advance(91 * time.Second)
+	m.maintain()
+	if m.Touch(h.ViewerID) {
+		t.Fatal("viewer should be reaped 90s+ after last heartbeat")
 	}
 }
 

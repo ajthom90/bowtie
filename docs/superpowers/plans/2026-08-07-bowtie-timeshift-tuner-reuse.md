@@ -46,8 +46,8 @@ docs (truenas/compose tmpfs 4g, roku-testing additions, CHANGELOG)
 
 **Interfaces:** endpoint auths exactly like DELETE (stream token query OR Bearer; reuse `authorizeSessionDelete`-equivalent helper — extract shared `authorizeViewerRequest` if that helper is delete-specific). 204 on success; 404 unknown viewer; touches via existing `Manager.Touch`.
 
-- [ ] **Step 1: Failing tests** — heartbeat with stream token → 204 + viewer's lastSeen advances (fake clock via manager); with Bearer → 204; bad token → 403; unknown viewer → 404. Manager: viewer NOT reaped at 60s with beats, reaped after 90s+ without.
-- [ ] **Step 2:** FAIL → implement → PASS. openapi. **Step 3:** Commit `feat: session heartbeat endpoint; 90s viewer idle timeout`
+- [x] **Step 1: Failing tests** — heartbeat with stream token → 204 + viewer's lastSeen advances (fake clock via manager); with Bearer → 204; bad token → 401 (A5); unknown viewer → 404. Manager: viewer NOT reaped at 60s with beats, reaped after 90s+ without.
+- [x] **Step 2:** FAIL → implement → PASS. openapi. **Step 3:** Commit `feat: session heartbeat endpoint; 90s viewer idle timeout`
 
 ### Task 2: `streaming.bufferMinutes` setting + window derivation + web settings field
 

@@ -1040,3 +1040,38 @@ $ UDID=$(xcrun simctl list devices available -j | python3 -c "…") \
 ### Notes
 
 - **v0.4.0 cycle complete** (Tasks 1–7 implemented on main). Orchestrator owns tag `v0.4.0` + release watch (Task 7 Step 3). No tags from this worker.
+
+## v0.5.0 Task 1
+
+**Date:** 2026-08-07
+
+### Built
+
+- `POST /api/v1/sessions/{viewerId}/heartbeat` — stream token query **or** Bearer (shared `authorizeViewerRequest`; auth failure **401** per A5); **204** on Touch success; **404** unknown viewer.
+- Extracted `authorizeSessionDelete` → `authorizeViewerRequest` (DELETE + heartbeat).
+- `viewerIdleTimeout` **30s → 90s** in `stream/manager.go`; reaper comment updated; session empty-grace still 60s.
+- openapi + `Routes()` for heartbeat path.
+- Tests: API token/Bearer/401/404 + LastSeen advance via fake manager clock; manager reap at 90s+, kept alive with periodic Touch across 120s wall.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+```

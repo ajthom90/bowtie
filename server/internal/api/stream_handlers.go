@@ -263,7 +263,7 @@ func (s *Server) handleSegment(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	viewerID := r.PathValue("viewerId")
-	if !s.authorizeSessionDelete(viewerID, r) {
+	if !s.authorizeViewerRequest(viewerID, r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -273,8 +273,26 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// authorizeSessionDelete accepts a valid Bearer JWT or a stream token matching viewerID.
-func (s *Server) authorizeSessionDelete(viewerID string, r *http.Request) bool {
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	viewerID := r.PathValue("viewerId")
+	if !s.authorizeViewerRequest(viewerID, r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.deps.Streams == nil {
+		writeError(w, http.StatusServiceUnavailable, "streaming not available")
+		return
+	}
+	if !s.deps.Streams.Touch(viewerID) {
+		writeError(w, http.StatusNotFound, "viewer not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// authorizeViewerRequest accepts a valid Bearer JWT or a stream token matching viewerID.
+// Shared by DELETE session and POST heartbeat (auth failure → 401).
+func (s *Server) authorizeViewerRequest(viewerID string, r *http.Request) bool {
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		raw := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if raw != "" && s.deps.Auth != nil {
