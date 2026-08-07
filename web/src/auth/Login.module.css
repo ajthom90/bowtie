@@ -68,6 +68,17 @@
   font-weight: 600;
   cursor: pointer;
   transition: filter var(--motion);
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  .input {
+    min-height: 44px;
+  }
+
+  .card {
+    max-width: none;
+  }
 }
 
 .button:disabled {

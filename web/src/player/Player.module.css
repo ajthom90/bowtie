@@ -217,3 +217,52 @@
   font-size: 0.95rem;
   pointer-events: none;
 }
+
+/* Mobile: touch-sized controls; stats stay readable top-right */
+@media (max-width: 640px) {
+  .btn,
+  .select {
+    min-height: 44px;
+    padding: 0.5rem 0.85rem;
+  }
+
+  .controls {
+    gap: 0.45rem;
+    padding: 0.65rem 0.75rem calc(0.65rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .volume input[type='range'] {
+    width: 4.5rem;
+    min-height: 44px;
+  }
+
+  .channelNum {
+    font-size: 1.65rem;
+  }
+
+  .topLeft {
+    top: 0.75rem;
+    left: 0.75rem;
+    max-width: calc(100% - 8rem);
+  }
+
+  .stats {
+    top: 0.65rem;
+    right: 0.5rem;
+    font-size: 0.62rem;
+    line-height: 1.4;
+    min-width: 0;
+    max-width: min(11rem, 46vw);
+    padding: 0.45rem 0.55rem;
+    white-space: normal;
+  }
+
+  .statsRow {
+    gap: 0.5rem;
+  }
+
+  .errorActions .btn {
+    min-height: 44px;
+    min-width: 7rem;
+  }
+}

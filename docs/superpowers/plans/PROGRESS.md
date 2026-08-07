@@ -965,3 +965,28 @@ $ cd ../server && CGO_ENABLED=0 go test ./internal/web/ && echo EMBED_OK
 ok  	github.com/ajthom90/bowtie/server/internal/web
 EMBED_OK
 ```
+
+## v0.4.0 Task 6
+
+**Date:** 2026-08-07
+
+### Built
+
+- **A6 QualitySheet** (`web/src/player/QualitySheet.tsx` + module CSS): under 640px (`matchMedia`) replaces native quality `<select>` with trigger button (current quality) + focus-trapped bottom sheet (`aria-modal`, Escape/scrim close, ≥44px option buttons); selecting calls existing profile/`onQuality` path. Desktop keeps `<select>` with stable `aria-label="Quality"`.
+- **Admin card-collapse** (Channels + Users only per A6): `data-label` on cells; `@media (max-width: 640px)` stacks rows as cards with label::before; action cells full-width buttons. Sessions/Tuners remain card grids (no table work).
+- **Admin nav:** overflow-x pill row on narrow (no wrap soup).
+- **Guide:** `-webkit-overflow-scrolling: touch` on scroll container; toolbar wraps two rows under 640px; sticky channel col retained.
+- **Global:** no page-level horizontal scroll (`overflow-x: clip/hidden`); touch targets `min-height: 44px` for buttons/inputs/selects under 640px; forms full-width; Login/Player control touch sizing + compact stats overlay.
+
+### Verification (evidence)
+
+```
+$ cd web && npx tsc --noEmit && npx vitest run && npm run build && echo WEB_OK
+# vitest: 56 passed (settingsModel 14, guideModel 18, adminModel 13, caps 7, client 4)
+WEB_OK
+```
+
+### Notes
+
+- Orchestrator Playwright gate (390×844 + 1280×800) is post-commit Step 3 — not run in this worker session.
+- Selectors/aria labels kept stable (`aria-label="Quality"`, Preview, admin nav labels).

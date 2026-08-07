@@ -468,3 +468,185 @@
   min-width: 0;
   width: 100%;
 }
+
+/* —— Mobile (≤640px) —— */
+@media (max-width: 640px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .toolbarRight {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  /* Admin nav: scrollable pill row (no wrap soup) */
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 0.4rem;
+    padding: 0.55rem 0.75rem;
+    scrollbar-width: thin;
+  }
+
+  .navBtn {
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    border-color: var(--line);
+    white-space: nowrap;
+  }
+
+  .navBtnActive {
+    border-color: var(--accent);
+    color: var(--accent-ink);
+    background: var(--accent);
+  }
+
+  .btn,
+  .btnSm {
+    min-height: 44px;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .btnSm {
+    font-size: 0.85rem;
+  }
+
+  /* Forms full-width */
+  .formRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .input,
+  .select,
+  .filterInput {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .createForm {
+    grid-template-columns: 1fr;
+  }
+
+  .createForm .btn {
+    width: 100%;
+  }
+
+  .settingsFields {
+    grid-template-columns: 1fr;
+  }
+
+  .sectionHead {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Tables → stacked cards (Channels + Users only; they use .table) */
+  .tableWrap {
+    border: none;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .table {
+    display: block;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .table tr {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.65rem 0.85rem;
+  }
+
+  .table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  /* Hide empty trailing cells (e.g. Channels status with no flash) */
+  .table td:empty {
+    display: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+    max-width: 40%;
+  }
+
+  .table td[data-label='']::before,
+  .table td:not([data-label])::before {
+    content: none;
+  }
+
+  .table td[data-label=''] {
+    justify-content: flex-end;
+  }
+
+  .table td .select,
+  .table td .selectSm,
+  .table td .input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .cardActions {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  .cardActions::before {
+    margin-bottom: 0.25rem;
+    align-self: flex-start;
+  }
+
+  .cardActions .actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .cardActions .btn,
+  .cardActions .actions .btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .toggle {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}

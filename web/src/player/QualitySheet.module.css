@@ -1,0 +1,120 @@
+.root {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.trigger {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 44px;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.trigger:hover {
+  background: var(--line);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.panel {
+  width: 100%;
+  max-width: 28rem;
+  max-height: min(70vh, 28rem);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  padding: 0.65rem 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.handle {
+  width: 2.5rem;
+  height: 0.25rem;
+  border-radius: 2px;
+  background: var(--line);
+  margin: 0.15rem auto 0.35rem;
+}
+
+.title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.option {
+  appearance: none;
+  width: 100%;
+  min-height: 44px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.option:hover {
+  background: var(--line);
+}
+
+.optionSelected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cancel {
+  appearance: none;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancel:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}

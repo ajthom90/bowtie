@@ -187,8 +187,8 @@ export function Users() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
-                  <td>{u.username}</td>
-                  <td>
+                  <td data-label="Username">{u.username}</td>
+                  <td data-label="Role">
                     <select
                       className={`${styles.select} ${styles.selectSm}`}
                       value={u.role}
@@ -200,7 +200,7 @@ export function Users() {
                       <option value="admin">Admin</option>
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Max quality">
                     <select
                       className={`${styles.select} ${styles.selectSm}`}
                       value={u.maxQuality}
@@ -219,7 +219,7 @@ export function Users() {
                       ) : null}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Actions" className={styles.cardActions}>
                     <div className={styles.actions}>
                       <button
                         type="button"

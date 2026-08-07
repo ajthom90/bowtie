@@ -78,6 +78,8 @@
   min-height: 0;
   overflow: auto;
   position: relative;
+  /* iOS momentum scrolling on the guide container */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Grid layout: sticky channel col + time body */
@@ -361,4 +363,53 @@
   font-size: 0.95rem;
   max-width: 36rem;
   line-height: 1.5;
+}
+
+/* Mobile: header wraps to two rows; touch targets; momentum already on .scroll */
+@media (max-width: 640px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.55rem 0.75rem;
+  }
+
+  .toolbarLeft {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .toolbarRight {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .btn {
+    min-height: 44px;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .userMeta {
+    width: 100%;
+    margin: 0.1rem 0 0;
+    order: 10;
+  }
+
+  .channelCell {
+    min-height: 44px;
+  }
+
+  .cellEmpty {
+    min-height: 44px;
+    font-size: 0.78rem;
+  }
+
+  .grid {
+    /* sticky channel col + horizontally scrollable program area (unchanged) */
+    --channel-col: 7.5rem;
+  }
+
+  .channelNum {
+    font-size: 1.45rem;
+  }
 }

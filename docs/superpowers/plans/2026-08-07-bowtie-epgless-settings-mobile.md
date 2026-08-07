@@ -136,8 +136,8 @@ settingsModel.ts (pure, tested): form state ↔ API payload mapping incl. sectio
 
 Approach (CSS-driven): tables get `data-label` on cells; `@media (max-width: 640px)` turns rows into cards (`display:block`, label::before). Admin nav becomes overflow-x auto pill row. Guide: verify sticky column + `-webkit-overflow-scrolling: touch`; header wraps. Player quality menu renders as bottom sheet under 640px. All buttons/inputs min-height 44px under 640px.
 
-- [ ] **Step 1:** Implement; typecheck/vitest/build green (logic untouched — this is CSS + small markup).
-- [ ] **Step 2:** Commit `feat: mobile-friendly web viewer and admin`
+- [x] **Step 1:** Implement; typecheck/vitest/build green (logic untouched — this is CSS + small markup).
+- [x] **Step 2:** Commit `feat: mobile-friendly web viewer and admin`
 - [ ] **Step 3 (orchestrator, post-commit):** Playwright pass at 390×844 and 1280×800 against a live dev server: Login, Guide (empty + populated states), Player chrome, all five admin tabs + Settings; screenshots sent to user; defects → fix round.
 
 ### Task 7: Docs, iOS copy alignment, release

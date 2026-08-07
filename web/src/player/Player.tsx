@@ -11,10 +11,16 @@ import { ApiError, type CreateSessionResponse, type SessionMeta } from '../api/c
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
+import { QualitySheet, useIsNarrow } from './QualitySheet'
 import styles from './Player.module.css'
 
 const PROFILES = ['original', 'high', 'medium', 'low'] as const
 type Profile = (typeof PROFILES)[number]
+
+const QUALITY_OPTIONS = PROFILES.map((p) => ({
+  value: p,
+  label: p.charAt(0).toUpperCase() + p.slice(1),
+}))
 
 const OVERLAY_HIDE_MS = 3000
 
@@ -105,6 +111,7 @@ export function Player({ target, onBack }: Props) {
     bufferLength: null,
   })
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  const isNarrow = useIsNarrow(640)
 
   const clearHideTimer = () => {
     if (hideTimerRef.current != null) {
@@ -372,9 +379,13 @@ export function Player({ target, onBack }: Props) {
     bumpOverlay()
   }
 
-  const onQuality = (e: ChangeEvent<HTMLSelectElement>) => {
-    const next = e.target.value as Profile
-    setProfile(next)
+  const onQualitySelect = (e: ChangeEvent<HTMLSelectElement>) => {
+    setProfile(e.target.value as Profile)
+    bumpOverlay()
+  }
+
+  const onQualityChange = (next: string) => {
+    setProfile(next as Profile)
     bumpOverlay()
   }
 
@@ -531,21 +542,30 @@ export function Player({ target, onBack }: Props) {
                 aria-label="Volume"
               />
             </label>
-            <label>
-              <span className="visually-hidden">Quality</span>
-              <select
-                className={styles.select}
+            {isNarrow ? (
+              <QualitySheet
                 value={profile}
-                onChange={onQuality}
+                options={QUALITY_OPTIONS}
+                onChange={onQualityChange}
                 aria-label="Quality"
-              >
-                {PROFILES.map((p) => (
-                  <option key={p} value={p}>
-                    {p.charAt(0).toUpperCase() + p.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            ) : (
+              <label>
+                <span className="visually-hidden">Quality</span>
+                <select
+                  className={styles.select}
+                  value={profile}
+                  onChange={onQualitySelect}
+                  aria-label="Quality"
+                >
+                  {QUALITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
               className={styles.btn}

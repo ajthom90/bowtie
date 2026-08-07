@@ -117,7 +117,7 @@ export function Channels({ onPreview }: Props) {
             <tbody>
               {visible.map((ch) => (
                 <tr key={ch.id}>
-                  <td>
+                  <td data-label="On">
                     <input
                       className={styles.toggle}
                       type="checkbox"
@@ -127,11 +127,11 @@ export function Channels({ onPreview }: Props) {
                       aria-label={`Enable ${ch.guideNumber} ${ch.name}`}
                     />
                   </td>
-                  <td>
+                  <td data-label="#">
                     <span className={styles.guideNum}>{ch.guideNumber}</span>
                   </td>
-                  <td>{ch.name}</td>
-                  <td>
+                  <td data-label="Name">{ch.name}</td>
+                  <td data-label="EPG mapping">
                     <select
                       className={`${styles.select} ${styles.selectSm}`}
                       value={ch.epgChannelId}
@@ -148,7 +148,7 @@ export function Channels({ onPreview }: Props) {
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Preview" className={styles.cardActions}>
                     <button
                       type="button"
                       className={`${styles.btn} ${styles.btnSm}`}
@@ -164,7 +164,7 @@ export function Channels({ onPreview }: Props) {
                       ▶ Preview
                     </button>
                   </td>
-                  <td>
+                  <td data-label="">
                     {savedId === ch.id ? <span className={styles.savedFlash}>Saved</span> : null}
                   </td>
                 </tr>

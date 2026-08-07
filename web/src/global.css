@@ -30,6 +30,12 @@ body,
   margin: 0;
 }
 
+/* No page-level horizontal scroll — wide content scrolls in its own container */
+html {
+  overflow-x: clip;
+  max-width: 100%;
+}
+
 body {
   font-family: var(--font-ui);
   font-weight: 400;
@@ -37,6 +43,13 @@ body {
   color: var(--text);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 button,
@@ -77,5 +90,22 @@ select:focus:not(:focus-visible) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Mobile baseline: 640px breakpoint; touch targets ≥ 44px */
+@media (max-width: 640px) {
+  button,
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 1.25rem;
+    height: 1.25rem;
+    min-width: 1.25rem;
   }
 }
