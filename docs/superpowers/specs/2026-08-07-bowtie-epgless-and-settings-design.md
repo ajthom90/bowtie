@@ -96,6 +96,34 @@ editing container config instead of the admin UI.
 6. **Docs:** TrueNAS + compose docs trim the env explanation to: data dir mount,
    device IP seed, everything else in Admin → Settings.
 
+## C. Mobile-friendly web (viewer + admin)
+
+The web app must be fully usable on phones — family members will use it as the
+"no app installed" path, and the admin needs to work from a couch.
+
+1. **Baseline:** single breakpoint at 640px (narrow = phone). Viewport meta
+   verified; all touch targets ≥ 44px; no page-level horizontal scroll ever —
+   wide content scrolls inside its own container.
+2. **Viewer:**
+   - Guide: keep the time-grid with the sticky channel column; the program area
+     is already horizontally scrollable — verify momentum scrolling on iOS
+     Safari (-webkit-overflow-scrolling) and that the NOW line/ticks stay
+     aligned. Header controls (Prev/Now/Next, user menu) wrap to two rows on
+     narrow.
+   - Player: controls sized for touch; quality menu becomes a bottom sheet on
+     narrow; stats overlay remains readable (smaller mono, top-right).
+3. **Admin:**
+   - Nav tabs: horizontally scrollable pill row on narrow (no wrapping soup).
+   - Tables (Channels, Users, Sessions): on narrow, each row renders as a
+     stacked card (label/value pairs, actions as full-width buttons); on wide,
+     tables as today. Implementation as CSS-driven card layout, not a second
+     component tree.
+   - Forms (Settings, add-device, user create): full-width fields, comfortable
+     spacing.
+4. **Verification:** vitest for any extracted layout logic; orchestrator review
+   runs Playwright at 390×844 (iPhone-ish) and 1280×800 against the live dev
+   server and screenshots every screen — layout defects are fix-round items.
+
 ## Compatibility
 
 Existing deployments: first boot after upgrade presence-seeds DB from their
@@ -117,7 +145,8 @@ enforces).
   (injectable clock test).
 - stream.Manager: encoder setting change affects next session (existing stub
   runner tests extended).
-- Web: empty-state split logic; preview button routing (vitest on pure logic).
+- Web: empty-state split logic; preview button routing (vitest on pure logic);
+  mobile pass per section C.4 (viewport screenshots both widths, all screens).
 - E2E (fake HDHR): admin previews a DISABLED channel end-to-end; viewer gets 404
   for the same channel.
 
@@ -138,3 +167,6 @@ UI, quality-ladder editing (profiles stay code defaults).
   SD Lineups() method + error table; client work shrunk to copy alignment
   (review verified no client filters program-less channels); release-notes/docs
   obligations made explicit.
+- 2026-08-07: User addition — section C: mobile-friendly web (viewer + admin),
+  640px breakpoint, card-collapsing admin tables, touch targets, Playwright
+  two-viewport verification.
