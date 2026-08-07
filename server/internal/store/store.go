@@ -106,6 +106,7 @@ func (s *Store) migrate() error {
 }
 
 // GetSetting returns the value for key, or "" if missing.
+// Note: missing and stored-empty both return ""; use HasSetting to distinguish.
 func (s *Store) GetSetting(key string) (string, error) {
 	var v string
 	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
@@ -118,6 +119,17 @@ func (s *Store) GetSetting(key string) (string, error) {
 	return v, nil
 }
 
+// HasSetting reports whether key exists in the settings table.
+// A stored empty string is still present (HasSetting returns true).
+func (s *Store) HasSetting(key string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM settings WHERE key = ?`, key).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // SetSetting upserts a key/value pair.
 func (s *Store) SetSetting(key, value string) error {
 	_, err := s.db.Exec(`
@@ -125,6 +137,29 @@ func (s *Store) SetSetting(key, value string) error {
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value
 	`, key, value)
 	return err
+}
+
+// SetSettings upserts all key/value pairs in a single transaction.
+// Empty maps are a no-op success. Partial application must not occur.
+func (s *Store) SetSettings(kv map[string]string) error {
+	if len(kv) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for key, value := range kv {
+		if _, err := tx.Exec(`
+			INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value
+		`, key, value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func formatTime(t time.Time) string {

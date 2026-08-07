@@ -775,3 +775,43 @@ docs/deploy/roku-testing.md. NO runtime tests possible — line-reviewed per tas
 gate pending.
 
 **Phase 3 complete: all 4 Fire TV + all 5 Roku tasks done. All platforms in the plan are built.**
+
+## v0.4.0 Task 1
+
+**Date:** 2026-08-07
+
+### Built
+
+- `store.HasSetting(key)` — true even when value is `""` (presence ≠ GetSetting empty ambiguity)
+- `store.SetSettings(map[string]string)` — single-tx upsert-all (A3; used by provider section setters)
+- `server/internal/settings`: typed `Provider` over the seven product keys (`xmltv.*`, `sd.*`, `transcode.*`); `XMLTV`/`SD`/`Transcode` getters + full-section setters via `SetSettings`; no in-memory cache
+- `SeedFromConfig`: presence-based only; defaults refreshHours=12, encoder=auto, allowHevc=false; log notice when config differs from present DB value (password value not logged)
+- `cmd/bowtie/main.go`: seed immediately after store open (before JWT/bootstrap/epg/stream)
+
+### Tests
+
+- store: `TestHasSettingDistinguishesEmptyFromAbsent`, `TestSetSettingsAtomicUpsert`
+- settings: `TestSeedOnlyWhenAbsent` (disable-survives-restart), `TestTypedRoundTrips`, `TestDefaultsSeeded`
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+```

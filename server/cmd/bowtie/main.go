@@ -20,6 +20,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/stream"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
@@ -80,6 +81,13 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "bowtie.db"))
 	if err != nil {
 		return "", nil, fmt.Errorf("open store: %w", err)
+	}
+
+	// Presence-seed product settings from config/env (first boot only).
+	// After seed the DB is the sole source of truth for these keys.
+	if err := settings.NewProvider(st).SeedFromConfig(cfg); err != nil {
+		_ = st.Close()
+		return "", nil, fmt.Errorf("seed settings: %w", err)
 	}
 
 	secret, err := loadOrCreateJWTSecret(st)

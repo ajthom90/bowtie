@@ -533,3 +533,73 @@ func TestSettings(t *testing.T) {
 		t.Errorf("GetSetting = %q, want cafebabe", v)
 	}
 }
+
+func TestHasSettingDistinguishesEmptyFromAbsent(t *testing.T) {
+	s := openTestStore(t)
+
+	has, err := s.HasSetting("unknown.key")
+	if err != nil {
+		t.Fatalf("HasSetting unknown: %v", err)
+	}
+	if has {
+		t.Fatal("HasSetting(unknown) = true, want false")
+	}
+
+	if err := s.SetSetting("xmltv.source", ""); err != nil {
+		t.Fatalf("SetSetting empty: %v", err)
+	}
+	has, err = s.HasSetting("xmltv.source")
+	if err != nil {
+		t.Fatalf("HasSetting empty value: %v", err)
+	}
+	if !has {
+		t.Fatal("HasSetting after SetSetting(\"\") = false, want true (empty is a real value)")
+	}
+
+	// GetSetting still returns "" for the empty-but-present key (and for missing).
+	v, err := s.GetSetting("xmltv.source")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "" {
+		t.Errorf("GetSetting empty-present = %q, want \"\"", v)
+	}
+}
+
+func TestSetSettingsAtomicUpsert(t *testing.T) {
+	s := openTestStore(t)
+
+	if err := s.SetSettings(map[string]string{
+		"a": "1",
+		"b": "2",
+	}); err != nil {
+		t.Fatalf("SetSettings: %v", err)
+	}
+	for k, want := range map[string]string{"a": "1", "b": "2"} {
+		v, err := s.GetSetting(k)
+		if err != nil {
+			t.Fatalf("GetSetting %s: %v", k, err)
+		}
+		if v != want {
+			t.Errorf("GetSetting(%s) = %q, want %q", k, v, want)
+		}
+	}
+
+	// Overwrite a, add c
+	if err := s.SetSettings(map[string]string{
+		"a": "one",
+		"c": "3",
+	}); err != nil {
+		t.Fatalf("SetSettings update: %v", err)
+	}
+	a, _ := s.GetSetting("a")
+	b, _ := s.GetSetting("b")
+	c, _ := s.GetSetting("c")
+	if a != "one" || b != "2" || c != "3" {
+		t.Errorf("after update a=%q b=%q c=%q", a, b, c)
+	}
+
+	if err := s.SetSettings(map[string]string{}); err != nil {
+		t.Fatalf("SetSettings empty map: %v", err)
+	}
+}

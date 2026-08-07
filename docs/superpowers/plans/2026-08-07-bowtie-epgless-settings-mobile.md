@@ -67,9 +67,9 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error
 // encoder "auto", allowHevc false). If HasSetting and cfg value differs → log.Printf notice.
 ```
 
-- [ ] **Step 1: Failing tests** — store: `TestHasSettingDistinguishesEmptyFromAbsent` (set key to "" → Has=true; unknown → false). settings: `TestSeedOnlyWhenAbsent` (seed cfg with xmltv source; call SeedFromConfig twice; SetXMLTV(Source:"") between → second seed must NOT restore source — the spec's disable-survives-restart test); `TestTypedRoundTrips` (ints/bools through string storage); `TestDefaultsSeeded` (empty cfg → encoder "auto", refreshHours 12, allowHevc false present in DB).
-- [ ] **Step 2:** FAIL → implement → PASS. Wire `SeedFromConfig` into main.go right after store open (before epg/stream construction).
-- [ ] **Step 3:** Commit `feat: db-backed settings provider with presence-based seeding`
+- [x] **Step 1: Failing tests** — store: `TestHasSettingDistinguishesEmptyFromAbsent` (set key to "" → Has=true; unknown → false). settings: `TestSeedOnlyWhenAbsent` (seed cfg with xmltv source; call SeedFromConfig twice; SetXMLTV(Source:"") between → second seed must NOT restore source — the spec's disable-survives-restart test); `TestTypedRoundTrips` (ints/bools through string storage); `TestDefaultsSeeded` (empty cfg → encoder "auto", refreshHours 12, allowHevc false present in DB).
+- [x] **Step 2:** FAIL → implement → PASS. Wire `SeedFromConfig` into main.go right after store open (before epg/stream construction).
+- [x] **Step 3:** Commit `feat: db-backed settings provider with presence-based seeding`
 
 ### Task 2: EPG always-on supervisor
 
