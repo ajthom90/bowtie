@@ -154,7 +154,7 @@ After config is in place, restart Bowtie (or use **Admin → EPG → Refresh**).
 
 Bowtie itself speaks plain HTTP on port **8400**. For HTTPS and off-LAN access, see:
 
-**[docs/deploy/remote-access.md](docs/deploy/remote-access.md)**
+**[docs/deploy/remote-access.md) · TrueNAS: [docs/deploy/truenas.md](docs/deploy/truenas.md](docs/deploy/remote-access.md)**
 
 Copy-paste examples for:
 
