@@ -162,24 +162,30 @@ func TestDeviceChannelFlowAndViewerList(t *testing.T) {
 		t.Errorf("logoUrl = %q, want EPG icon", viewerChans[0].LogoURL)
 	}
 
-	// GET admin/tuners returns the device as reachable.
+	// GET admin/tuners returns the device as reachable (+ ingestChannels payload).
 	rr = doJSON(t, h, "GET", "/api/v1/admin/tuners", nil, adminAuth)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("tuners status = %d, body=%q", rr.Code, rr.Body.String())
 	}
-	var tuners []struct {
-		Device struct {
-			DeviceID string `json:"deviceId"`
-			IP       string `json:"ip"`
-			Manual   bool   `json:"manual"`
-		} `json:"device"`
-		Reachable bool `json:"reachable"`
+	var tunersPayload struct {
+		Devices []struct {
+			Device struct {
+				DeviceID string `json:"deviceId"`
+				IP       string `json:"ip"`
+				Manual   bool   `json:"manual"`
+			} `json:"device"`
+			Reachable bool `json:"reachable"`
+		} `json:"devices"`
+		IngestChannels []int64 `json:"ingestChannels"`
 	}
-	if err := json.NewDecoder(rr.Body).Decode(&tuners); err != nil {
+	if err := json.NewDecoder(rr.Body).Decode(&tunersPayload); err != nil {
 		t.Fatalf("decode tuners: %v", err)
 	}
-	if len(tuners) != 1 || tuners[0].Device.DeviceID != "FAKEDEV01" || !tuners[0].Reachable || !tuners[0].Device.Manual {
-		t.Fatalf("tuners = %+v", tuners)
+	if len(tunersPayload.Devices) != 1 || tunersPayload.Devices[0].Device.DeviceID != "FAKEDEV01" || !tunersPayload.Devices[0].Reachable || !tunersPayload.Devices[0].Device.Manual {
+		t.Fatalf("tuners = %+v", tunersPayload)
+	}
+	if tunersPayload.IngestChannels == nil {
+		t.Fatal("ingestChannels missing (want empty array)")
 	}
 
 	// Sync lineup re-fetches (still 2 channels; enabled preserved).
@@ -234,11 +240,11 @@ func TestDeviceChannelFlowAndViewerList(t *testing.T) {
 		t.Fatalf("delete device status = %d, body=%q", rr.Code, rr.Body.String())
 	}
 	rr = doJSON(t, h, "GET", "/api/v1/admin/tuners", nil, adminAuth)
-	if err := json.NewDecoder(rr.Body).Decode(&tuners); err != nil {
+	if err := json.NewDecoder(rr.Body).Decode(&tunersPayload); err != nil {
 		t.Fatalf("decode tuners after delete: %v", err)
 	}
-	if len(tuners) != 0 {
-		t.Fatalf("tuners after delete = %+v", tuners)
+	if len(tunersPayload.Devices) != 0 {
+		t.Fatalf("tuners after delete = %+v", tunersPayload)
 	}
 }
 

@@ -126,6 +126,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	probeCancel()
 	log.Printf("encoder probe: available=%v version=%s", caps.Available, caps.FFmpegVersion)
 
+	ingest := stream.NewIngestManager(stream.HTTPDial)
 	streamMgr := stream.NewManager(stream.ManagerDeps{
 		Cfg:      cfg,
 		Store:    st,
@@ -133,6 +134,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Caps:     caps,
 		Runner:   &stream.FFmpegRunner{Path: cfg.FFmpegPath},
 		Settings: settingsProv,
+		Ingest:   ingest,
 	})
 	go streamMgr.Run(rootCtx)
 

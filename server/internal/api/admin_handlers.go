@@ -311,11 +311,22 @@ func (s *Server) handleAdminListTuners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statuses := s.deps.Tuners.Devices()
-	out := make([]deviceStatusJSON, 0, len(statuses))
+	devices := make([]deviceStatusJSON, 0, len(statuses))
 	for _, ds := range statuses {
-		out = append(out, deviceStatusToJSON(ds))
+		devices = append(devices, deviceStatusToJSON(ds))
 	}
-	writeJSON(w, http.StatusOK, out)
+	// ingestChannels: channel IDs with an open device stream (incl. 5s tail).
+	// Payload-only this cycle (A4); no web UI for the field yet.
+	ingestChannels := []int64{}
+	if s.deps.Streams != nil {
+		if chans := s.deps.Streams.IngestChannels(); chans != nil {
+			ingestChannels = chans
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"devices":        devices,
+		"ingestChannels": ingestChannels,
+	})
 }
 
 func (s *Server) handleAdminAddDevice(w http.ResponseWriter, r *http.Request) {

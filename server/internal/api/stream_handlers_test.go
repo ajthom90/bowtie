@@ -111,6 +111,8 @@ func (s *stubStreams) SessionInfoOf(viewerID string) (stream.SessionInfo, bool) 
 	}, true
 }
 
+func (s *stubStreams) IngestChannels() []int64 { return nil }
+
 func (s *stubStreams) register(viewerID, dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -289,7 +291,7 @@ func TestSegmentNameTraversal400(t *testing.T) {
 func TestCreateSession503Shape(t *testing.T) {
 	ss := newStubStreams()
 	ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
-		return stream.ViewerHandle{}, errors.New("all tuners in use")
+		return stream.ViewerHandle{}, stream.ErrTunersBusy
 	}
 	h, st, _ := testAPIWithStreams(t, ss)
 	// Viewer 503 filtering uses enabled-channel IDs — seed a matching enabled channel.
@@ -576,6 +578,7 @@ func TestHeartbeatAdvancesLastSeen(t *testing.T) {
 		},
 		Runner: &e2eStubRunner{},
 		Clock:  clock,
+		Ingest: hangIngest(),
 	})
 
 	h, err := mgr.Start(context.Background(), user, chID, transcode.ClientCaps{
@@ -726,6 +729,32 @@ func (p *e2eStubProcess) Stop() {
 	})
 }
 
+// apiHangBody blocks Read until Close — unit dial for fixtures without real TS.
+type apiHangBody struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func newAPIHangBody() *apiHangBody {
+	return &apiHangBody{done: make(chan struct{})}
+}
+
+func (h *apiHangBody) Read(_ []byte) (int, error) {
+	<-h.done
+	return 0, io.EOF
+}
+
+func (h *apiHangBody) Close() error {
+	h.once.Do(func() { close(h.done) })
+	return nil
+}
+
+func hangIngest() *stream.IngestManager {
+	return stream.NewIngestManager(func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		return newAPIHangBody(), 200, nil
+	})
+}
+
 type e2eStubRunner struct {
 	mu sync.Mutex
 }
@@ -733,6 +762,10 @@ type e2eStubRunner struct {
 func (r *e2eStubRunner) Start(_ context.Context, spec transcode.JobSpec) (stream.Process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Drain ingest pipe so fan-out does not stall-force-Close the sub.
+	if spec.Stdin != nil {
+		go func() { _, _ = io.Copy(io.Discard, spec.Stdin) }()
+	}
 	// Realistic live.m3u8 with EXTINF + segment files.
 	m3u := fixturePlaylist()
 	if err := os.WriteFile(filepath.Join(spec.OutDir, "live.m3u8"), []byte(m3u), 0o644); err != nil {
@@ -763,7 +796,7 @@ func TestTunersBusyFilteredForViewers(t *testing.T) {
 		},
 	}
 	ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
-		return stream.ViewerHandle{}, errors.New("all tuners in use")
+		return stream.ViewerHandle{}, stream.ErrTunersBusy
 	}
 	h, st, _ := testAPIWithStreams(t, ss)
 
@@ -899,6 +932,7 @@ func TestAdminPreviewDisabledChannelE2E(t *testing.T) {
 			HEVC:      map[transcode.Backend]bool{},
 		},
 		Runner: &e2eStubRunner{},
+		Ingest: hangIngest(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1041,6 +1075,8 @@ func TestE2EStreamLifecycle(t *testing.T) {
 			HEVC:      map[transcode.Backend]bool{},
 		},
 		Runner: &e2eStubRunner{},
+		// Real HTTP dial so ActiveStreams / tuner-busy paths hit the fake device.
+		Ingest: stream.NewIngestManager(stream.HTTPDial),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1213,3 +1249,121 @@ func TestE2EStreamLifecycle(t *testing.T) {
 	}
 }
 
+
+// TestStartDial503SurfacesTunersBusy: fake with 0 free tuners → 503 payload shape via errors.Is.
+func TestStartDial503SurfacesTunersBusy(t *testing.T) {
+	// Occupy both tuners so the next dial gets 503.
+	fake := hdhrfake.New(t, hdhrfake.Options{
+		DeviceID:   "BUSY01",
+		TunerCount: 1,
+		Lineup: []hdhrfake.LineupEntry{
+			{GuideNumber: "5.1", GuideName: "NEWS"},
+			{GuideNumber: "7.1", GuideName: "OTHER"},
+		},
+	})
+	// Hold the single tuner open.
+	resp, err := http.Get(fake.URL + "/auto/v7.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("hold stream status=%d", resp.StatusCode)
+	}
+
+	u, err := url.Parse(fake.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "busy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	segDir := filepath.Join(t.TempDir(), "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{ListenAddr: ":0", SegmentDir: segDir, Encoder: "auto", FFmpegPath: "ffmpeg"}
+	a := &auth.Auth{Secret: []byte("0123456789abcdef0123456789abcdef"), Store: st}
+	tuners := tuner.New(st, cfg)
+	tuners.SetDiscoverFunc(func(ctx context.Context, timeout time.Duration) ([]hdhr.DiscoverInfo, error) {
+		return nil, nil
+	})
+	mgr := stream.NewManager(stream.ManagerDeps{
+		Cfg:    cfg,
+		Store:  st,
+		Tuners: tuners,
+		Caps: transcode.Capabilities{
+			Available: []transcode.Backend{transcode.BackendSoftware},
+			HEVC:      map[transcode.Backend]bool{},
+		},
+		Runner: &e2eStubRunner{},
+		Ingest: stream.NewIngestManager(stream.HTTPDial),
+	})
+	h := api.New(api.Deps{
+		Cfg: cfg, Store: st, Auth: a, Tuners: tuners, Streams: mgr,
+		StreamTokenSecret: []byte(streamSecret),
+	})
+	seedUser(t, st, "alice", "pass", "viewer")
+	seedUser(t, st, "admin", "adminpass", "admin")
+
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "adminpass",
+	}, nil)
+	adminTok := decodeLogin(t, rr)
+	adminAuth := map[string]string{"Authorization": "Bearer " + adminTok.AccessToken}
+	rr = doJSON(t, h, "POST", "/api/v1/admin/devices", map[string]string{"ip": u.Host}, adminAuth)
+	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
+		t.Fatalf("add device: %d %s", rr.Code, rr.Body.String())
+	}
+	rr = doJSON(t, h, "GET", "/api/v1/admin/channels", nil, adminAuth)
+	var chans []struct {
+		ID          int64  `json:"id"`
+		GuideNumber string `json:"guideNumber"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&chans); err != nil {
+		t.Fatal(err)
+	}
+	var chID int64
+	for _, c := range chans {
+		if c.GuideNumber == "5.1" {
+			chID = c.ID
+		}
+	}
+	if chID == 0 {
+		t.Fatal("channel 5.1 not found")
+	}
+	rr = doJSON(t, h, "PATCH", "/api/v1/admin/channels/"+strconv.FormatInt(chID, 10), map[string]any{
+		"enabled": true,
+	}, adminAuth)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("enable: %d", rr.Code)
+	}
+
+	rr = doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "alice", "password": "pass",
+	}, nil)
+	viewerTok := decodeLogin(t, rr)
+	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+		"channelId": chID,
+		"caps":      map[string]any{"videoCodecs": []string{"h264"}, "audioCodecs": []string{"aac"}},
+	}, map[string]string{"Authorization": "Bearer " + viewerTok.AccessToken})
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%q, want 503", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Error    string               `json:"error"`
+		Sessions []stream.SessionInfo `json:"sessions"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error != "all tuners in use" {
+		t.Fatalf("error=%q", body.Error)
+	}
+	// sessions field present (may be empty — no bowtie sessions holding tuners).
+	if body.Sessions == nil {
+		t.Fatal("sessions field missing")
+	}
+}

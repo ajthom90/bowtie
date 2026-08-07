@@ -31,6 +31,8 @@ type StreamController interface {
 	Terminate(string)
 	SessionDirOf(viewerID string) (string, bool)
 	SessionInfoOf(viewerID string) (stream.SessionInfo, bool)
+	// IngestChannels returns channel IDs with an open device ingest (admin tuners payload).
+	IngestChannels() []int64
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +100,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.User) {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "all tuners in use"):
+	case errors.Is(err, stream.ErrTunersBusy):
 		sessions := []stream.SessionInfo{}
 		if s.deps.Streams != nil {
 			sessions = s.deps.Streams.Sessions()

@@ -5,10 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// HTTPDial is the production DialFunc: GET url and return the response body +
+// status. Callers (Attach) map status 503 → ErrTunersBusy.
+func HTTPDial(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	return resp.Body, resp.StatusCode, nil
+}
 
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.

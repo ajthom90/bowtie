@@ -46,9 +46,10 @@ type Fake struct {
 	opts   Options
 	server *httptest.Server
 
-	mu      sync.Mutex
-	active  int
-	streams map[int]string // tuner index -> VctNumber (guide number)
+	mu         sync.Mutex
+	active     int
+	totalDials int64              // cumulative accepted /auto/v* streams (A3)
+	streams    map[int]string     // tuner index -> VctNumber (guide number)
 }
 
 // New starts a fake HDHomeRun on a random local port. It is closed via t.Cleanup.
@@ -101,6 +102,14 @@ func (f *Fake) ActiveStreams() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.active
+}
+
+// TotalDials returns the cumulative number of accepted stream connections
+// (not rejected 503s). Used by e2e tuner-reuse assertions (A3).
+func (f *Fake) TotalDials() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.totalDials
 }
 
 func (f *Fake) handleDiscover(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +187,7 @@ func (f *Fake) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	f.streams[tunerIdx] = guideNumber
 	f.active++
+	f.totalDials++
 	f.mu.Unlock()
 
 	defer func() {

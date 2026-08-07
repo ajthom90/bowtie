@@ -59,6 +59,9 @@ type ManagerDeps struct {
 	// provider per session. When nil, falls back to Cfg.Encoder/Cfg.AllowHEVC
 	// (keeps existing test fixtures compiling without a provider).
 	Settings *settings.Provider
+	// Ingest is required for process-scoped device fan-out (one dial per channel).
+	// Production and tests always set it (A4). Start fails if nil.
+	Ingest *IngestManager
 }
 
 // Manager owns shared HLS transcode sessions and their viewers.
@@ -71,6 +74,7 @@ type Manager struct {
 	runner    Runner
 	clock     func() time.Time
 	settings  *settings.Provider
+	ingest    *IngestManager
 
 	mu       sync.Mutex
 	sessions map[string]*session // by session ID
@@ -101,10 +105,20 @@ func NewManager(deps ManagerDeps) *Manager {
 		runner:    deps.Runner,
 		clock:     clock,
 		settings:  deps.Settings,
+		ingest:    deps.Ingest,
 		sessions:  make(map[string]*session),
 		byKey:     make(map[string]*session),
 		viewers:   make(map[string]*Viewer),
 	}
+}
+
+// IngestChannels returns channel IDs with an open device ingest (including the
+// 5s post-last-Close tail). Empty when Ingest is unset.
+func (m *Manager) IngestChannels() []int64 {
+	if m.ingest == nil {
+		return nil
+	}
+	return m.ingest.ActiveChannels()
 }
 
 func (m *Manager) now() time.Time {
@@ -197,6 +211,12 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 
 // startAttempt tries one join-or-create. retry=true means the caller should try again
 // with a fresh sessionID/dir/process (duplicate-key race left us with a dead candidate).
+//
+// Process-start ordered contract (A4 / Lifecycle BINDING):
+//
+//	Close(old sub if any) → Attach → JobSpec.Stdin=sub.R → runner.Start
+//
+// Close on: proc-death, abandon, waitPlaylist failure, Terminate, teardown.
 func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Channel, key string, decision transcode.Decision, inputURL string) (ViewerHandle, error, bool) {
 	m.mu.Lock()
 	if existing, ok := m.byKey[key]; ok && !existing.terminated {
@@ -205,6 +225,10 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		return h, err, false
 	}
 	m.mu.Unlock()
+
+	if m.ingest == nil {
+		return ViewerHandle{}, errors.New("ingest not configured"), false
+	}
 
 	sessionID, err := randomID()
 	if err != nil {
@@ -221,10 +245,18 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		return ViewerHandle{}, err, false
 	}
 
+	// Initial process start: no prior sub. Attach → Stdin → Start.
+	sub, err := m.ingest.Attach(ctx, ch.ID, inputURL)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return ViewerHandle{}, err, false
+	}
+
 	procCtx, procCancel := context.WithCancel(context.Background())
-	spec := transcode.JobSpec{InputURL: inputURL, OutDir: dir, D: decision, HLSListSize: listSize}
+	spec := transcode.JobSpec{Stdin: sub.R, OutDir: dir, D: decision, HLSListSize: listSize}
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
+		_ = sub.Close()
 		procCancel()
 		_ = os.RemoveAll(dir)
 		return ViewerHandle{}, err, false
@@ -233,6 +265,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 	if err := m.waitPlaylist(ctx, dir, proc); err != nil {
 		proc.Stop()
 		procCancel()
+		_ = sub.Close()
 		_ = os.RemoveAll(dir)
 		return ViewerHandle{}, err, false
 	}
@@ -250,6 +283,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		procCancel:  procCancel,
 		procStart:   now,
 		inputURL:    inputURL,
+		sub:         sub,
 		hlsListSize: listSize,
 		viewers:     make(map[string]*Viewer),
 	}
@@ -258,9 +292,10 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 	// Race: another Start may have registered the same key while we waited.
 	if existing, ok := m.byKey[key]; ok && !existing.terminated {
 		m.mu.Unlock()
-		// Abandon our candidate (stop process, remove dir) then try to join the winner.
+		// Abandon our candidate (Close sub, stop process, remove dir) then join winner.
 		proc.Stop()
 		procCancel()
+		_ = sub.Close()
 		_ = os.RemoveAll(dir)
 		m.mu.Lock()
 		if existing, ok := m.byKey[key]; ok && !existing.terminated {
@@ -531,11 +566,33 @@ func (m *Manager) restartSessionLocked(sess *session) {
 		sess.restartAfter = m.now().Add(sess.backoff)
 		return
 	}
+
+	// Ordered contract: Close(old sub) → Attach → Stdin → Start.
+	// Proc-death already Closes; Close again is safe (double-Close).
+	if sess.sub != nil {
+		_ = sess.sub.Close()
+		sess.sub = nil
+	}
+	if m.ingest == nil {
+		log.Printf("stream: restart %s: ingest not configured", sess.id)
+		sess.backoff = nextBackoff(sess.backoff)
+		sess.restartAfter = m.now().Add(sess.backoff)
+		return
+	}
+	sub, err := m.ingest.Attach(context.Background(), sess.channelID, sess.inputURL)
+	if err != nil {
+		log.Printf("stream: re-Attach channel %d for restart: %v", sess.channelID, err)
+		sess.backoff = nextBackoff(sess.backoff)
+		sess.restartAfter = m.now().Add(sess.backoff)
+		return
+	}
+
 	procCtx, procCancel := context.WithCancel(context.Background())
 	// Buffer window is fixed at session start (not live-mutable mid-session).
-	spec := transcode.JobSpec{InputURL: sess.inputURL, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize}
+	spec := transcode.JobSpec{Stdin: sub.R, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize}
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
+		_ = sub.Close()
 		procCancel()
 		sess.procCancel = nil
 		sess.backoff = nextBackoff(sess.backoff)
@@ -543,6 +600,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 		return
 	}
 	now := m.now()
+	sess.sub = sub
 	sess.proc = proc
 	sess.procCancel = procCancel
 	sess.procStart = now
@@ -601,6 +659,13 @@ func (m *Manager) supervise(sess *session) {
 			m.mu.Unlock()
 			continue
 		}
+		// Proc-death: Close sub immediately. Tail absorbs quick restarts
+		// (restart backoff 1s+2s < 5s tail → no redial). Longer backoff can
+		// exceed the tail; that redial is CORRECT and expected (A4).
+		if sess.sub != nil {
+			_ = sess.sub.Close()
+			sess.sub = nil
+		}
 		now := m.now()
 		sess.backoff = computeCrashBackoff(sess.backoff, sess.procStart, now)
 		sess.crashed = true
@@ -625,6 +690,11 @@ func (m *Manager) teardownSessionLocked(sess *session) {
 	if sess.procCancel != nil {
 		sess.procCancel()
 	}
+	// Terminate/teardown Close (A4).
+	if sess.sub != nil {
+		_ = sess.sub.Close()
+		sess.sub = nil
+	}
 	delete(m.sessions, sess.id)
 	if m.byKey[sess.key] == sess {
 		delete(m.byKey, sess.key)
@@ -642,6 +712,10 @@ func (m *Manager) shutdownAll() {
 		m.teardownSessionLocked(s)
 	}
 	m.mu.Unlock()
+
+	if m.ingest != nil {
+		m.ingest.Shutdown()
+	}
 
 	done := make(chan struct{})
 	go func() {

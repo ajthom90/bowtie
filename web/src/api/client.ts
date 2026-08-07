@@ -85,6 +85,12 @@ export interface DeviceStatus {
   tuners: TunerStatus[]
 }
 
+/** GET /admin/tuners envelope (devices + ingest channel IDs). */
+export interface AdminTunersResponse {
+  devices: DeviceStatus[]
+  ingestChannels: number[]
+}
+
 export interface AdminChannel {
   id: number
   deviceId: string
@@ -291,7 +297,8 @@ export class ApiClient {
   // ── Admin endpoints ──────────────────────────────────────────────────────
 
   async getAdminTuners(): Promise<DeviceStatus[]> {
-    return this.request<DeviceStatus[]>('GET', '/api/v1/admin/tuners')
+    const body = await this.request<AdminTunersResponse>('GET', '/api/v1/admin/tuners')
+    return body.devices ?? []
   }
 
   async addDevice(ip: string): Promise<Device> {

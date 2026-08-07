@@ -1212,3 +1212,59 @@ ok  github.com/ajthom90/bowtie/server/internal/stream  (race)
 0 issues.
 OK
 ```
+
+## v0.5.0 Task 5
+
+**Date:** 2026-08-07
+
+### Built
+
+- `ManagerDeps.Ingest *IngestManager` — required (A4); production `main.go` wires `NewIngestManager(HTTPDial)`
+- Process-start ordered contract (commented): **Close(old sub) → Attach → JobSpec.Stdin=sub.R → runner.Start**
+  - Close on: proc-death (`supervise`), restart, abandon, waitPlaylist failure, Terminate/teardown
+  - session holds `sub *IngestSub`; `inputURL` kept only for re-Attach URL
+- `writeStartError`: `errors.Is(err, stream.ErrTunersBusy)` replaces string-contains (A4)
+- Admin `GET /admin/tuners` envelope: `{devices, ingestChannels}` (ActiveChannels); openapi `AdminTunersResponse`
+- `hdhrfake.TotalDials()` cumulative counter (A3)
+- `stream.HTTPDial` production dial
+- Suite default non-nil Ingest + counting dial + shared fake clock (A1/A4); nil-Ingest path removed
+
+### Tests (named e2e bar)
+
+- `TestDualProfileOneDial` — ActiveStreams==1, TotalDials==1, DialCalls==1, both playlists
+- `TestCrashTwiceReattaches` — AttachCalls==3, TotalDials==1 (1s+2s backoff < 5s tail)
+- `TestCoWatcherSurvivesTerminate`, `TestQualityReplaceKeepsRefcount`
+- `TestTunerFreeBudget` — shared clock; grace + 5s tail closes dial
+- `TestStartDial503SurfacesTunersBusy` (manager + API payload shape)
+- `TestJobSpecStdinSetOnStart`
+
+### Notes
+
+- No lifecycle ambiguities requiring STOP. Grace uses existing `> sessionEmptyGrace` (same as v0.4.0).
+- Web client: `getAdminTuners` unwraps `{devices}` so Tuners page keeps working (payload-only ingestChannels; no UI).
+- Step 4 real-device check left for orchestrator.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && CGO_ENABLED=1 go test -race ./internal/stream/ ./internal/api/ && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+ok  	github.com/ajthom90/bowtie/server/internal/stream  (race)
+ok  	github.com/ajthom90/bowtie/server/internal/api     (race)
+0 issues.
+OK
+```

@@ -60,8 +60,9 @@ type session struct {
 	restartAfter time.Time     // zero if not waiting to restart
 	crashed      bool
 	procStart    time.Time // when current process was started (for 60s healthy reset)
-	inputURL     string    // kept for restart JobSpec
-	hlsListSize  int       // fixed at session start (streaming.bufferMinutes → segments)
+	inputURL     string    // device stream URL for re-Attach on restart (not JobSpec input)
+	sub          *IngestSub // process-scoped ingest; closed on every process death
+	hlsListSize  int        // fixed at session start (streaming.bufferMinutes → segments)
 	terminated   bool
 
 	// empty grace: set when viewers drop to 0
