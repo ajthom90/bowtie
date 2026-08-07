@@ -753,6 +753,66 @@ func TestAdminCanStartDisabledChannel(t *testing.T) {
 	}
 }
 
+// --- v0.5.0 Task 2: streaming.bufferMinutes → JobSpec.HLSListSize ------------
+
+func TestHLSListSizeFromStreamingSetting(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	prov := settings.NewProvider(st)
+	if err := prov.SeedFromConfig(cfg); err != nil {
+		t.Fatalf("SeedFromConfig: %v", err)
+	}
+	m := NewManager(ManagerDeps{
+		Cfg:   cfg,
+		Store: st,
+		StreamURL: func(ch store.Channel) (string, error) {
+			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
+		},
+		Caps:     transcode.Capabilities{Available: []transcode.Backend{transcode.BackendSoftware}, HEVC: map[transcode.Backend]bool{}},
+		Runner:   runner,
+		Clock:    clock.Now,
+		Settings: prov,
+	})
+
+	// bufferMinutes=2 → list size 2*60/4 = 30
+	if err := prov.SetStreaming(settings.Streaming{BufferMinutes: 2}); err != nil {
+		t.Fatalf("SetStreaming 2: %v", err)
+	}
+	h1, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start buffer=2: %v", err)
+	}
+	if got := runner.lastSpec.HLSListSize; got != 30 {
+		t.Fatalf("bufferMinutes=2 → HLSListSize=%d, want 30", got)
+	}
+	m.Terminate(h1.SessionID)
+
+	// bufferMinutes=15 → 225
+	if err := prov.SetStreaming(settings.Streaming{BufferMinutes: 15}); err != nil {
+		t.Fatalf("SetStreaming 15: %v", err)
+	}
+	h2, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start buffer=15: %v", err)
+	}
+	if got := runner.lastSpec.HLSListSize; got != 225 {
+		t.Fatalf("bufferMinutes=15 → HLSListSize=%d, want 225", got)
+	}
+	m.Terminate(h2.SessionID)
+}
+
+func TestHLSListSizeNilProviderFallback30(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	// newTestManager leaves Settings nil — historical default of 30.
+	m := newTestManager(st, cfg, clock, runner)
+	_, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := runner.lastSpec.HLSListSize; got != 30 {
+		t.Fatalf("nil Settings → HLSListSize=%d, want 30", got)
+	}
+}
+
 func TestViewerDisabledChannel404(t *testing.T) {
 	st, cfg, clock, runner, chID, user := setupEnv(t)
 	if err := st.UpdateChannel(chID, false, ""); err != nil {
@@ -794,17 +854,18 @@ func (p *gateProcess) Stop() {
 }
 
 // raceRunner coordinates the duplicate-key race:
-//   start #1 (B): signals entered, waits for release, returns process with Stop gate
-//   start #2 (A): succeeds immediately (A wins the key)
-//   start #3+ (B retry): succeeds immediately with a live dir
+//
+//	start #1 (B): signals entered, waits for release, returns process with Stop gate
+//	start #2 (A): succeeds immediately (A wins the key)
+//	start #3+ (B retry): succeeds immediately with a live dir
 type raceRunner struct {
-	mu          sync.Mutex
-	starts      int
-	bEntered    chan struct{} // closed when B's first Start begins blocking
-	bRelease    chan struct{} // B waits here before returning from Start
-	bStopGate   chan struct{} // B's abandoned process Stop waits here
-	bStopEnter  chan struct{} // closed when B's abandoned Stop is entered
-	procs       []*stubProcess
+	mu         sync.Mutex
+	starts     int
+	bEntered   chan struct{} // closed when B's first Start begins blocking
+	bRelease   chan struct{} // B waits here before returning from Start
+	bStopGate  chan struct{} // B's abandoned process Stop waits here
+	bStopEnter chan struct{} // closed when B's abandoned Stop is entered
+	procs      []*stubProcess
 }
 
 func newRaceRunner() *raceRunner {

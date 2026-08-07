@@ -32,19 +32,25 @@ type settingsTranscodeJSON struct {
 	HEVCCapable map[string]bool `json:"hevcCapable"`
 }
 
+type settingsStreamingJSON struct {
+	BufferMinutes int `json:"bufferMinutes"`
+}
+
 type settingsResponseJSON struct {
 	XMLTV           settingsXMLTVJSON     `json:"xmltv"`
 	SchedulesDirect settingsSDJSON        `json:"schedulesDirect"`
 	Transcode       settingsTranscodeJSON `json:"transcode"`
+	Streaming       settingsStreamingJSON `json:"streaming"`
 }
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
 // Within a present section every field is required except schedulesDirect.password
-// (absent or empty = keep existing).
+// (absent or empty = keep existing). streaming is optional (omit = leave unchanged).
 type putSettingsRequest struct {
 	XMLTV           *putXMLTVSection     `json:"xmltv"`
 	SchedulesDirect *putSDSection        `json:"schedulesDirect"`
 	Transcode       *putTranscodeSection `json:"transcode"`
+	Streaming       *putStreamingSection `json:"streaming"`
 }
 
 type putXMLTVSection struct {
@@ -61,6 +67,10 @@ type putSDSection struct {
 type putTranscodeSection struct {
 	Encoder   string `json:"encoder"`
 	AllowHEVC bool   `json:"allowHevc"`
+}
+
+type putStreamingSection struct {
+	BufferMinutes int `json:"bufferMinutes"`
 }
 
 type lineupJSON struct {
@@ -182,6 +192,10 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 	if err != nil {
 		return settingsResponseJSON{}, err
 	}
+	stream, err := s.deps.Settings.Streaming()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
 
 	caps := s.probeCaps()
 	available := make([]string, 0, len(caps.Available))
@@ -208,6 +222,9 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 			AllowHEVC:   tc.AllowHEVC,
 			Available:   available,
 			HEVCCapable: hevc,
+		},
+		Streaming: settingsStreamingJSON{
+			BufferMinutes: stream.BufferMinutes,
 		},
 	}, nil
 }
@@ -263,6 +280,13 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 		}
 		kv[settings.KeyTranscodeEncoder] = req.Transcode.Encoder
 		kv[settings.KeyTranscodeAllowHEVC] = strconv.FormatBool(req.Transcode.AllowHEVC)
+	}
+
+	if req.Streaming != nil {
+		if req.Streaming.BufferMinutes < 2 || req.Streaming.BufferMinutes > 60 {
+			return nil, "bufferMinutes must be between 2 and 60"
+		}
+		kv[settings.KeyStreamingBufferMinutes] = strconv.Itoa(req.Streaming.BufferMinutes)
 	}
 
 	return kv, ""

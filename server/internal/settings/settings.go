@@ -18,19 +18,21 @@ import (
 
 // Settings keys (exact strings; also used by Admin API and docs).
 const (
-	KeyXMLTVSource        = "xmltv.source"
-	KeyXMLTVRefreshHours  = "xmltv.refreshHours"
-	KeySDUsername         = "sd.username"
-	KeySDPassword         = "sd.password"
-	KeySDLineupID         = "sd.lineupId"
-	KeyTranscodeEncoder   = "transcode.encoder"
-	KeyTranscodeAllowHEVC = "transcode.allowHevc"
+	KeyXMLTVSource            = "xmltv.source"
+	KeyXMLTVRefreshHours      = "xmltv.refreshHours"
+	KeySDUsername             = "sd.username"
+	KeySDPassword             = "sd.password"
+	KeySDLineupID             = "sd.lineupId"
+	KeyTranscodeEncoder       = "transcode.encoder"
+	KeyTranscodeAllowHEVC     = "transcode.allowHevc"
+	KeyStreamingBufferMinutes = "streaming.bufferMinutes"
 )
 
 // Default product values used when seeding from empty/zero config.
 const (
-	DefaultRefreshHours = 12
-	DefaultEncoder      = "auto"
+	DefaultRefreshHours  = 12
+	DefaultEncoder       = "auto"
+	DefaultBufferMinutes = 15
 )
 
 // Provider is a typed facade over store settings. It is safe for concurrent use
@@ -61,6 +63,11 @@ type SD struct {
 type Transcode struct {
 	Encoder   string
 	AllowHEVC bool
+}
+
+// Streaming is the live DVR buffer section (pause/rewind window).
+type Streaming struct {
+	BufferMinutes int
 }
 
 // XMLTV returns the current XMLTV settings.
@@ -114,6 +121,19 @@ func (p *Provider) Transcode() (Transcode, error) {
 	return Transcode{Encoder: enc, AllowHEVC: allow}, nil
 }
 
+// Streaming returns the current streaming (DVR buffer) settings.
+func (p *Provider) Streaming() (Streaming, error) {
+	raw, err := p.st.GetSetting(KeyStreamingBufferMinutes)
+	if err != nil {
+		return Streaming{}, err
+	}
+	mins, err := parseIntSetting(raw)
+	if err != nil {
+		return Streaming{}, fmt.Errorf("%s: %w", KeyStreamingBufferMinutes, err)
+	}
+	return Streaming{BufferMinutes: mins}, nil
+}
+
 // SetXMLTV writes the full XMLTV section atomically.
 func (p *Provider) SetXMLTV(v XMLTV) error {
 	return p.st.SetSettings(map[string]string{
@@ -139,6 +159,13 @@ func (p *Provider) SetTranscode(v Transcode) error {
 	})
 }
 
+// SetStreaming writes the full streaming section atomically.
+func (p *Provider) SetStreaming(v Streaming) error {
+	return p.st.SetSettings(map[string]string{
+		KeyStreamingBufferMinutes: strconv.Itoa(v.BufferMinutes),
+	})
+}
+
 // Apply upserts all keys in a single store transaction. Used by the admin PUT
 // settings handler to write multiple sections atomically after full validation
 // (A3: no partial application across sections).
@@ -152,7 +179,7 @@ func (p *Provider) Apply(kv map[string]string) error {
 // notice is logged (DB is the sole source of truth after first seed).
 //
 // Defaults applied when cfg leaves fields zero: refreshHours=12, encoder=auto,
-// allowHevc=false.
+// allowHevc=false, bufferMinutes=15.
 func (p *Provider) SeedFromConfig(cfg config.Config) error {
 	refreshHours := cfg.XMLTV.RefreshHours
 	if refreshHours == 0 {
@@ -174,6 +201,7 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		{KeySDLineupID, cfg.SchedulesDirect.LineupID},
 		{KeyTranscodeEncoder, encoder},
 		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC)},
+		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes)},
 	}
 
 	for _, s := range seeds {

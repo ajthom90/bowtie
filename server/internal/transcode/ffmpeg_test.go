@@ -235,6 +235,188 @@ func TestCommandReturnsCmd(t *testing.T) {
 	}
 }
 
+// TestHLSListSizeDefaultZero documents that HLSListSize 0 → 30 (legacy default).
+func TestHLSListSizeDefaultZero(t *testing.T) {
+	s := transcode.JobSpec{
+		InputURL:    "http://hdhr/auto/v7.1",
+		OutDir:      "/tmp/out",
+		HLSListSize: 0,
+		D: transcode.Decision{
+			VideoCodec:   "h264",
+			VideoEncoder: "libx264",
+			AudioCopy:    false,
+			Profile:      transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+			Backend:      transcode.BackendSoftware,
+		},
+	}
+	got := transcode.BuildArgs(s)
+	if !containsAdjacent(got, "-hls_list_size", "30") {
+		t.Fatalf("HLSListSize 0 should emit -hls_list_size 30; args=%v", got)
+	}
+}
+
+// TestHLSListSize225AcrossBackends is A8: non-default (225 = 15 min) goldens
+// across all five backends — full argv must match including list size.
+func TestHLSListSize225AcrossBackends(t *testing.T) {
+	out := "/tmp/out"
+	const listSize = 225
+
+	type caseSpec struct {
+		name string
+		s    transcode.JobSpec
+		want []string
+	}
+	cases := []caseSpec{
+		{
+			name: "software",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, HLSListSize: listSize,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "libx264", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendSoftware,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-i", "http://hdhr/auto/v7.1",
+				"-vf", "yadif=0:-1:0,scale=-2:480",
+				"-c:v", "libx264",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "veryfast", "-profile:v", "high",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "videotoolbox",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, HLSListSize: listSize,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_videotoolbox", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendVideoToolbox,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-i", "http://hdhr/auto/v7.1",
+				"-vf", "yadif=0:-1:0,scale=-2:480",
+				"-c:v", "h264_videotoolbox",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-realtime", "1", "-profile:v", "high",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "qsv",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, HLSListSize: listSize,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_qsv", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendQSV,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
+				"-i", "http://hdhr/auto/v7.1",
+				"-vf", "vpp_qsv=deinterlace=2:scale_mode=hq:w=-1:h=480",
+				"-c:v", "h264_qsv",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "veryfast",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "vaapi",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, HLSListSize: listSize,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_vaapi", AudioCopy: false,
+					Profile: transcode.Profile{Name: "medium", Height: 720, VideoKbps: 2500, AudioKbps: 128},
+					Backend: transcode.BackendVAAPI,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
+				"-i", "http://hdhr/auto/v7.1",
+				"-vf", "deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720",
+				"-c:v", "h264_vaapi",
+				"-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+		{
+			name: "nvenc",
+			s: transcode.JobSpec{
+				InputURL: "http://hdhr/auto/v7.1", OutDir: out, HLSListSize: listSize,
+				D: transcode.Decision{
+					VideoCodec: "h264", VideoEncoder: "h264_nvenc", AudioCopy: false,
+					Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+					Backend: transcode.BackendNVENC,
+				},
+			},
+			want: []string{
+				"-hide_banner", "-loglevel", "warning", "-nostats",
+				"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+				"-i", "http://hdhr/auto/v7.1",
+				"-vf", "yadif_cuda=0:-1:0,scale_cuda=-2:480",
+				"-c:v", "h264_nvenc",
+				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
+				"-preset", "p4",
+				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
+				"-hls_flags", "delete_segments+temp_file",
+				"-hls_segment_type", "mpegts",
+				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
+				filepath.Join(out, "live.m3u8"),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertArgs(t, transcode.BuildArgs(tc.s), tc.want)
+		})
+	}
+}
+
+func containsAdjacent(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
+}
+
 func assertArgs(t *testing.T, got, want []string) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {

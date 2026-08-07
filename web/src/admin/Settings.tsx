@@ -4,10 +4,12 @@ import { useAuth } from '../auth/AuthContext'
 import {
   PASSWORD_PLACEHOLDER_CONFIGURED,
   SAVE_FEEDBACK,
+  STREAMING_TMPFS_HINT,
   buildSectionPayload,
   encoderOptions,
   lineupOptionLabel,
   settingsToForm,
+  validateStreamingHint,
   validateTranscodeHint,
   validateXmltvHint,
   type SettingsFormState,
@@ -73,6 +75,13 @@ export function Settings() {
         return
       }
     }
+    if (section === 'streaming') {
+      const h = validateStreamingHint(form.streaming.bufferMinutes)
+      if (h) {
+        setHint(h)
+        return
+      }
+    }
 
     setSaving(section)
     try {
@@ -116,6 +125,11 @@ export function Settings() {
   function onTranscodeSubmit(e: FormEvent) {
     e.preventDefault()
     void saveSection('transcode')
+  }
+
+  function onStreamingSubmit(e: FormEvent) {
+    e.preventDefault()
+    void saveSection('streaming')
   }
 
   if (loading && !form) {
@@ -378,6 +392,51 @@ export function Settings() {
             disabled={saving === 'transcode'}
           >
             {saving === 'transcode' ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </form>
+
+      {/* Streaming (DVR buffer) */}
+      <form className={styles.settingsCard} onSubmit={onStreamingSubmit}>
+        <div className={styles.sectionHead}>
+          <h3 className={styles.cardTitle}>Streaming</h3>
+        </div>
+        <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+          Live pause/rewind buffer length. {STREAMING_TMPFS_HINT}
+        </p>
+        <div className={styles.settingsFields}>
+          <label className={styles.label}>
+            Buffer minutes
+            <input
+              className={styles.input}
+              type="number"
+              min={2}
+              max={60}
+              value={form.streaming.bufferMinutes}
+              onChange={(e) =>
+                setForm((f) =>
+                  f
+                    ? {
+                        ...f,
+                        streaming: { ...f.streaming, bufferMinutes: e.target.value },
+                      }
+                    : f,
+                )
+              }
+              disabled={saving === 'streaming'}
+            />
+          </label>
+        </div>
+        <div className={styles.settingsFooter}>
+          {saved === 'streaming' ? (
+            <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
+          ) : null}
+          <button
+            type="submit"
+            className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+            disabled={saving === 'streaming'}
+          >
+            {saving === 'streaming' ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

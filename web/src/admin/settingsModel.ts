@@ -1,9 +1,9 @@
 /**
- * Pure settings form ↔ API payload mapping (v0.4.0 Task 5).
+ * Pure settings form ↔ API payload mapping (v0.4.0 Task 5; v0.5.0 streaming).
  * Server is authority for validation; client hints are advisory only.
  */
 
-export type SettingsSection = 'xmltv' | 'schedulesDirect' | 'transcode'
+export type SettingsSection = 'xmltv' | 'schedulesDirect' | 'transcode' | 'streaming'
 
 export interface SettingsXMLTV {
   source: string
@@ -23,11 +23,16 @@ export interface SettingsTranscode {
   hevcCapable: Record<string, boolean>
 }
 
+export interface SettingsStreaming {
+  bufferMinutes: number
+}
+
 /** GET /api/v1/admin/settings response shape. */
 export interface SettingsResponse {
   xmltv: SettingsXMLTV
   schedulesDirect: SettingsSchedulesDirect
   transcode: SettingsTranscode
+  streaming: SettingsStreaming
 }
 
 export interface SDLineupSummary {
@@ -55,12 +60,16 @@ export interface SettingsFormState {
     allowHevc: boolean
     available: string[]
   }
+  streaming: {
+    bufferMinutes: string
+  }
 }
 
 export type PutSettingsRequest = {
   xmltv?: { source: string; refreshHours: number }
   schedulesDirect?: { username: string; password?: string; lineupId: string }
   transcode?: { encoder: string; allowHevc: boolean }
+  streaming?: { bufferMinutes: number }
 }
 
 /** Seed form state from a GET response. Password field starts empty. */
@@ -81,6 +90,9 @@ export function settingsToForm(s: SettingsResponse): SettingsFormState {
       allowHevc: Boolean(s.transcode.allowHevc),
       available: s.transcode.available ? [...s.transcode.available] : [],
     },
+    streaming: {
+      bufferMinutes: String(s.streaming?.bufferMinutes ?? 15),
+    },
   }
 }
 
@@ -99,6 +111,8 @@ export function buildSectionPayload(
       return buildSchedulesDirectPayload(form)
     case 'transcode':
       return buildTranscodePayload(form)
+    case 'streaming':
+      return buildStreamingPayload(form)
   }
 }
 
@@ -142,8 +156,24 @@ export function buildTranscodePayload(form: SettingsFormState): PutSettingsReque
   }
 }
 
+export function buildStreamingPayload(form: SettingsFormState): PutSettingsRequest {
+  const mins = parseBufferMinutes(form.streaming.bufferMinutes)
+  return {
+    streaming: {
+      bufferMinutes: mins ?? 15,
+    },
+  }
+}
+
 /** Parse refreshHours input; returns null if not a finite integer. */
 export function parseRefreshHours(raw: string): number | null {
+  const n = Number(raw.trim())
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null
+  return n
+}
+
+/** Parse bufferMinutes input; returns null if not a finite integer. */
+export function parseBufferMinutes(raw: string): number | null {
   const n = Number(raw.trim())
   if (!Number.isFinite(n) || !Number.isInteger(n)) return null
   return n
@@ -169,6 +199,14 @@ export function validateTranscodeHint(encoder: string, available: string[]): str
   return `Encoder must be "auto" or one of: ${available.join(', ') || '(none probed)'}`
 }
 
+/** Client-side hint: bufferMinutes 2–60. */
+export function validateStreamingHint(bufferMinutesRaw: string): string | null {
+  const mins = parseBufferMinutes(bufferMinutesRaw)
+  if (mins === null) return 'Buffer minutes must be a whole number'
+  if (mins < 2 || mins > 60) return 'Buffer minutes must be between 2 and 60'
+  return null
+}
+
 /** Encoder dropdown options: always "auto" plus probed backends. */
 export function encoderOptions(available: string[]): { value: string; label: string }[] {
   const opts = [{ value: 'auto', label: 'Auto' }]
@@ -191,3 +229,7 @@ export function lineupOptionLabel(lu: SDLineupSummary): string {
 export const PASSWORD_PLACEHOLDER_CONFIGURED = 'unchanged'
 
 export const SAVE_FEEDBACK = 'Saved.'
+
+/** Hint copy for tmpfs sizing relative to buffer length. */
+export const STREAMING_TMPFS_HINT =
+  '~60 MB per minute per session at top profile. Ensure tmpfs has headroom (e.g. size=4g for multi-session). Applies to new sessions only.'

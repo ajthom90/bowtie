@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSectionPayload,
   buildSchedulesDirectPayload,
+  buildStreamingPayload,
   buildTranscodePayload,
   buildXmltvPayload,
   encoderOptions,
   lineupOptionLabel,
+  parseBufferMinutes,
   parseRefreshHours,
   settingsToForm,
+  validateStreamingHint,
   validateTranscodeHint,
   validateXmltvHint,
   type SettingsFormState,
@@ -28,6 +31,7 @@ function sampleSettings(overrides: Partial<SettingsResponse> = {}): SettingsResp
       available: ['software', 'videotoolbox'],
       hevcCapable: { software: true, videotoolbox: true },
     },
+    streaming: { bufferMinutes: 15 },
     ...overrides,
   }
 }
@@ -48,6 +52,7 @@ describe('settingsToForm', () => {
     expect(form.transcode.encoder).toBe('auto')
     expect(form.transcode.allowHevc).toBe(false)
     expect(form.transcode.available).toEqual(['software', 'videotoolbox'])
+    expect(form.streaming.bufferMinutes).toBe('15')
   })
 })
 
@@ -62,6 +67,7 @@ describe('buildSectionPayload — per-section merge', () => {
     })
     expect(body.schedulesDirect).toBeUndefined()
     expect(body.transcode).toBeUndefined()
+    expect(body.streaming).toBeUndefined()
   })
 
   it('transcode payload includes only transcode', () => {
@@ -80,7 +86,21 @@ describe('buildSectionPayload — per-section merge', () => {
     const body = buildSectionPayload('schedulesDirect', form)
     expect(body.xmltv).toBeUndefined()
     expect(body.transcode).toBeUndefined()
+    expect(body.streaming).toBeUndefined()
     expect(body.schedulesDirect).toBeDefined()
+  })
+
+  it('streaming payload includes only streaming (full section peer)', () => {
+    const form = formFrom()
+    form.streaming.bufferMinutes = '30'
+    const body = buildSectionPayload('streaming', form)
+    expect(body).toEqual({
+      streaming: { bufferMinutes: 30 },
+    })
+    expect(body.xmltv).toBeUndefined()
+    expect(body.schedulesDirect).toBeUndefined()
+    expect(body.transcode).toBeUndefined()
+    expect(Object.keys(body)).toEqual(['streaming'])
   })
 })
 
@@ -168,6 +188,32 @@ describe('parseRefreshHours / validation hints', () => {
     expect(validateTranscodeHint('auto', ['software'])).toBeNull()
     expect(validateTranscodeHint('software', ['software'])).toBeNull()
     expect(validateTranscodeHint('nvenc', ['software'])).toMatch(/auto/)
+  })
+})
+
+describe('streaming section payload + validation', () => {
+  it('buildStreamingPayload parses buffer minutes', () => {
+    const form = formFrom()
+    form.streaming.bufferMinutes = ' 45 '
+    expect(buildStreamingPayload(form)).toEqual({
+      streaming: { bufferMinutes: 45 },
+    })
+  })
+
+  it('parseBufferMinutes accepts integers only', () => {
+    expect(parseBufferMinutes('15')).toBe(15)
+    expect(parseBufferMinutes(' 2 ')).toBe(2)
+    expect(parseBufferMinutes('1.5')).toBeNull()
+    expect(parseBufferMinutes('abc')).toBeNull()
+  })
+
+  it('validateStreamingHint enforces 2–60', () => {
+    expect(validateStreamingHint('15')).toBeNull()
+    expect(validateStreamingHint('2')).toBeNull()
+    expect(validateStreamingHint('60')).toBeNull()
+    expect(validateStreamingHint('1')).toMatch(/2 and 60/)
+    expect(validateStreamingHint('61')).toMatch(/2 and 60/)
+    expect(validateStreamingHint('abc')).toMatch(/whole number/)
   })
 })
 

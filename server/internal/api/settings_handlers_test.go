@@ -136,6 +136,10 @@ func TestGetSettingsShapePasswordConfigured(t *testing.T) {
 	if hevc["videotoolbox"] != true || hevc["software"] != false {
 		t.Fatalf("hevcCapable = %v", hevc)
 	}
+	streamSec := section(body, "streaming")
+	if int(streamSec["bufferMinutes"].(float64)) != 15 {
+		t.Fatalf("streaming.bufferMinutes = %v, want 15 (seed default)", streamSec["bufferMinutes"])
+	}
 
 	// Set SD password → passwordConfigured true; still no password field.
 	if err := prov.SetSD(settings.SD{Username: "u", Password: "secret", LineupID: "L1"}); err != nil {
@@ -378,6 +382,95 @@ func TestPutSettingsValidationEncoder(t *testing.T) {
 		}, authHeader(tok))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("encoder %q status = %d body=%q", enc, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+// --- streaming section (v0.5.0 Task 2) ---
+
+func TestPutSettingsStreamingOnlyLeavesOtherSectionsUntouched(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+	if err := prov.SetTranscode(settings.Transcode{Encoder: "software", AllowHEVC: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := prov.SetXMLTV(settings.XMLTV{Source: "https://keep.example/g.xml", RefreshHours: 6}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"streaming": map[string]any{"bufferMinutes": 30},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	body := decodeSettings(t, rr)
+	streamSec := section(body, "streaming")
+	if int(streamSec["bufferMinutes"].(float64)) != 30 {
+		t.Fatalf("streaming = %v", streamSec)
+	}
+	tc := section(body, "transcode")
+	if tc["encoder"] != "software" || tc["allowHevc"] != true {
+		t.Fatalf("transcode touched: %v", tc)
+	}
+	xmltv := section(body, "xmltv")
+	if xmltv["source"] != "https://keep.example/g.xml" || int(xmltv["refreshHours"].(float64)) != 6 {
+		t.Fatalf("xmltv touched: %v", xmltv)
+	}
+}
+
+func TestPutSettingsStreamingOmittedRoundTrip(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+	if err := prov.SetStreaming(settings.Streaming{BufferMinutes: 45}); err != nil {
+		t.Fatal(err)
+	}
+
+	// PUT without streaming section must leave bufferMinutes alone.
+	rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"transcode": map[string]any{"encoder": "auto", "allowHevc": false},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	body := decodeSettings(t, rr)
+	streamSec := section(body, "streaming")
+	if int(streamSec["bufferMinutes"].(float64)) != 45 {
+		t.Fatalf("omitted streaming section changed bufferMinutes to %v", streamSec["bufferMinutes"])
+	}
+	// GET always returns streaming.
+	rr = doJSON(t, h, "GET", "/api/v1/admin/settings", nil, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET status = %d", rr.Code)
+	}
+	streamSec = section(decodeSettings(t, rr), "streaming")
+	if int(streamSec["bufferMinutes"].(float64)) != 45 {
+		t.Fatalf("GET streaming = %v", streamSec)
+	}
+}
+
+func TestPutSettingsValidationBufferMinutes(t *testing.T) {
+	h, st, _ := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+
+	for _, mins := range []int{0, 1, 61, -5} {
+		rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+			"streaming": map[string]any{"bufferMinutes": mins},
+		}, authHeader(tok))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("bufferMinutes=%d status = %d, want 400 body=%q", mins, rr.Code, rr.Body.String())
+		}
+	}
+	for _, mins := range []int{2, 15, 60} {
+		rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+			"streaming": map[string]any{"bufferMinutes": mins},
+		}, authHeader(tok))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("bufferMinutes=%d status = %d body=%q", mins, rr.Code, rr.Body.String())
+		}
+		body := decodeSettings(t, rr)
+		if int(section(body, "streaming")["bufferMinutes"].(float64)) != mins {
+			t.Fatalf("bufferMinutes=%d not reflected in response", mins)
 		}
 	}
 }

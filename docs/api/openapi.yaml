@@ -1104,6 +1104,9 @@ components:
           description: Backend chosen for config.encoder (auto or forced)
     Settings:
       type: object
+      # streaming is always returned by GET but is optional in the schema so
+      # older clients that omit it on PUT continue to type-check; required only
+      # the v0.4.0 sections. OpenAPI delta (v0.5.0): add streaming, NOT to required.
       required: [xmltv, schedulesDirect, transcode]
       properties:
         xmltv:
@@ -1112,6 +1115,8 @@ components:
           $ref: '#/components/schemas/SettingsSchedulesDirect'
         transcode:
           $ref: '#/components/schemas/SettingsTranscode'
+        streaming:
+          $ref: '#/components/schemas/SettingsStreaming'
     SettingsXMLTV:
       type: object
       required: [source, refreshHours]
@@ -1153,11 +1158,24 @@ components:
           additionalProperties:
             type: boolean
           description: Map of backend name → HEVC support
+    SettingsStreaming:
+      type: object
+      required: [bufferMinutes]
+      properties:
+        bufferMinutes:
+          type: integer
+          minimum: 2
+          maximum: 60
+          description: |
+            Live pause/rewind buffer length in minutes. Default 15.
+            FFmpeg -hls_list_size = bufferMinutes*60/4 (4s segments).
+            Read at session start; not live-mutable mid-session.
     PutSettingsRequest:
       type: object
       description: |
         Section-merge body. Omit a section to leave it unchanged. Within a
         present section all fields are required except schedulesDirect.password.
+        streaming is optional (omit = leave bufferMinutes unchanged).
       properties:
         xmltv:
           $ref: '#/components/schemas/PutSettingsXMLTV'
@@ -1165,6 +1183,8 @@ components:
           $ref: '#/components/schemas/PutSettingsSchedulesDirect'
         transcode:
           $ref: '#/components/schemas/PutSettingsTranscode'
+        streaming:
+          $ref: '#/components/schemas/PutSettingsStreaming'
     PutSettingsXMLTV:
       type: object
       required: [source, refreshHours]
@@ -1195,6 +1215,14 @@ components:
           type: string
         allowHevc:
           type: boolean
+    PutSettingsStreaming:
+      type: object
+      required: [bufferMinutes]
+      properties:
+        bufferMinutes:
+          type: integer
+          minimum: 2
+          maximum: 60
     SDLineupSummary:
       type: object
       required: [lineupId, name, location, transport]

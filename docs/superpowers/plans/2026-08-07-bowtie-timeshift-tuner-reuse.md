@@ -56,7 +56,7 @@ docs (truenas/compose tmpfs 4g, roku-testing additions, CHANGELOG)
 
 **Interfaces:** `settings.Streaming struct { BufferMinutes int }`; `JobSpec.HLSListSize int`.
 
-- [ ] **Step 1: Failing tests** per file list (incl. manager: SetStreaming(2) → next session's JobSpec.HLSListSize==30, SetStreaming(15)→225). **Step 2:** implement → PASS. **Step 3:** Commit `feat: settings-backed dvr buffer window`
+- [x] **Step 1: Failing tests** per file list (incl. manager: SetStreaming(2) → next session's JobSpec.HLSListSize==30, SetStreaming(15)→225). **Step 2:** implement → PASS. **Step 3:** Commit `feat: settings-backed dvr buffer window`
 
 ### Task 3: FFmpeg pipe input + discardcorrupt
 

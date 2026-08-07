@@ -15,7 +15,13 @@ type JobSpec struct {
 	InputURL string
 	OutDir   string
 	D        Decision
+	// HLSListSize is the -hls_list_size value (DVR window in segments).
+	// Zero means the historical default of 30 (~2 min at 4s segments).
+	HLSListSize int
 }
+
+// DefaultHLSListSize is used when JobSpec.HLSListSize is 0 (legacy / unset).
+const DefaultHLSListSize = 30
 
 // BuildArgs returns the full FFmpeg argv for s (excluding the binary path).
 // Argument order is part of the contract; see plan Task 13.
@@ -52,12 +58,17 @@ func BuildArgs(s JobSpec) []string {
 		)
 	}
 
+	listSize := s.HLSListSize
+	if listSize == 0 {
+		listSize = DefaultHLSListSize
+	}
+
 	segPattern := filepath.Join(s.OutDir, "seg%05d.ts")
 	playlist := filepath.Join(s.OutDir, "live.m3u8")
 	args = append(args,
 		"-f", "hls",
 		"-hls_time", "4",
-		"-hls_list_size", "30",
+		"-hls_list_size", fmt.Sprintf("%d", listSize),
 		"-hls_flags", "delete_segments+temp_file",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", segPattern,

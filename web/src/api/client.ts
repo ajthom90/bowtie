@@ -179,11 +179,16 @@ export interface SettingsTranscode {
   hevcCapable: Record<string, boolean>
 }
 
+export interface SettingsStreaming {
+  bufferMinutes: number
+}
+
 /** GET /api/v1/admin/settings */
 export interface Settings {
   xmltv: SettingsXMLTV
   schedulesDirect: SettingsSchedulesDirect
   transcode: SettingsTranscode
+  streaming: SettingsStreaming
 }
 
 /** PUT /api/v1/admin/settings — section merge; omit sections to leave untouched. */
@@ -191,6 +196,7 @@ export interface PutSettingsRequest {
   xmltv?: { source: string; refreshHours: number }
   schedulesDirect?: { username: string; password?: string; lineupId: string }
   transcode?: { encoder: string; allowHevc: boolean }
+  streaming?: { bufferMinutes: number }
 }
 
 export interface SDLineupSummary {

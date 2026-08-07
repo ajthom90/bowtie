@@ -61,6 +61,7 @@ type session struct {
 	crashed      bool
 	procStart    time.Time // when current process was started (for 60s healthy reset)
 	inputURL     string    // kept for restart JobSpec
+	hlsListSize  int       // fixed at session start (streaming.bufferMinutes → segments)
 	terminated   bool
 
 	// empty grace: set when viewers drop to 0

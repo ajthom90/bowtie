@@ -1075,3 +1075,44 @@ ok  	github.com/ajthom90/bowtie/server/internal/web
 0 issues.
 OK
 ```
+
+## v0.5.0 Task 2
+
+**Date:** 2026-08-07
+
+### Built
+
+- Settings key `streaming.bufferMinutes` (default **15**, validate **2–60**); provider `Streaming()` / `SetStreaming`; presence-seeded in `SeedFromConfig`.
+- Admin settings API: GET always returns `streaming`; PUT optional section-merge (omit = leave unchanged); openapi adds `streaming` to Settings properties **not** required list.
+- `JobSpec.HLSListSize` (0 → 30 default); goldens for list size **30** (existing backends) and **225** (A8 table across all five backends).
+- Manager: `hls_list_size = bufferMinutes*60/4` at session Start (SetStreaming(2)→30, (15)→225); nil-provider fallback **30**; value fixed on session for crash-restart.
+- Web Admin → Settings: Streaming section peer (`settingsModel` union + form + PUT payload); buffer minutes field + tmpfs sizing hint.
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+
+$ cd web && npx tsc --noEmit && npx vitest run && npm run build && echo OK
+Test Files  5 passed (5)
+     Tests  60 passed (60)
+✓ built in …
+OK
+```

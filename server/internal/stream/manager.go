@@ -124,6 +124,23 @@ func (m *Manager) transcodePrefs() (encoder string, allowHEVC bool, err error) {
 	return t.Encoder, t.AllowHEVC, nil
 }
 
+// hlsListSizeForStart returns -hls_list_size for a new session process.
+// Derived from streaming.bufferMinutes (segments = minutes*60/4 at 4s segments).
+// Nil provider (fixtures) keeps the historical default of 30.
+func (m *Manager) hlsListSizeForStart() (int, error) {
+	if m.settings == nil {
+		return transcode.DefaultHLSListSize, nil
+	}
+	s, err := m.settings.Streaming()
+	if err != nil {
+		return 0, fmt.Errorf("streaming settings: %w", err)
+	}
+	if s.BufferMinutes <= 0 {
+		return transcode.DefaultHLSListSize, nil
+	}
+	return s.BufferMinutes * 60 / 4, nil
+}
+
 // Start joins or creates a session for the channel and returns a viewer handle.
 // Errors: negotiation failure, unknown/disabled channel, stream URL / runner failure,
 // playlist timeout (or process exit before playlist).
@@ -198,8 +215,14 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		return ViewerHandle{}, fmt.Errorf("mkdir session dir: %w", err), false
 	}
 
+	listSize, err := m.hlsListSizeForStart()
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return ViewerHandle{}, err, false
+	}
+
 	procCtx, procCancel := context.WithCancel(context.Background())
-	spec := transcode.JobSpec{InputURL: inputURL, OutDir: dir, D: decision}
+	spec := transcode.JobSpec{InputURL: inputURL, OutDir: dir, D: decision, HLSListSize: listSize}
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
 		procCancel()
@@ -227,6 +250,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		procCancel:  procCancel,
 		procStart:   now,
 		inputURL:    inputURL,
+		hlsListSize: listSize,
 		viewers:     make(map[string]*Viewer),
 	}
 
@@ -508,7 +532,8 @@ func (m *Manager) restartSessionLocked(sess *session) {
 		return
 	}
 	procCtx, procCancel := context.WithCancel(context.Background())
-	spec := transcode.JobSpec{InputURL: sess.inputURL, OutDir: sess.dir, D: sess.decision}
+	// Buffer window is fixed at session start (not live-mutable mid-session).
+	spec := transcode.JobSpec{InputURL: sess.inputURL, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize}
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
 		procCancel()

@@ -96,6 +96,9 @@ func TestTypedRoundTrips(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetTranscode: %v", err)
 	}
+	if err := p.SetStreaming(settings.Streaming{BufferMinutes: 30}); err != nil {
+		t.Fatalf("SetStreaming: %v", err)
+	}
 
 	xmltv, err := p.XMLTV()
 	if err != nil {
@@ -121,6 +124,14 @@ func TestTypedRoundTrips(t *testing.T) {
 		t.Errorf("Transcode = %+v", tc)
 	}
 
+	st, err := p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming: %v", err)
+	}
+	if st.BufferMinutes != 30 {
+		t.Errorf("Streaming.BufferMinutes = %d, want 30", st.BufferMinutes)
+	}
+
 	// Bool false and int round-trip
 	if err := p.SetTranscode(settings.Transcode{Encoder: "auto", AllowHEVC: false}); err != nil {
 		t.Fatalf("SetTranscode false: %v", err)
@@ -142,6 +153,16 @@ func TestTypedRoundTrips(t *testing.T) {
 	if xmltv.RefreshHours != 1 {
 		t.Errorf("RefreshHours = %d, want 1", xmltv.RefreshHours)
 	}
+	if err := p.SetStreaming(settings.Streaming{BufferMinutes: 2}); err != nil {
+		t.Fatalf("SetStreaming 2: %v", err)
+	}
+	st, err = p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming 2: %v", err)
+	}
+	if st.BufferMinutes != 2 {
+		t.Errorf("BufferMinutes = %d, want 2", st.BufferMinutes)
+	}
 }
 
 func TestDefaultsSeeded(t *testing.T) {
@@ -160,6 +181,7 @@ func TestDefaultsSeeded(t *testing.T) {
 		settings.KeySDLineupID,
 		settings.KeyTranscodeEncoder,
 		settings.KeyTranscodeAllowHEVC,
+		settings.KeyStreamingBufferMinutes,
 	} {
 		has, err := st.HasSetting(key)
 		if err != nil {
@@ -192,11 +214,64 @@ func TestDefaultsSeeded(t *testing.T) {
 		t.Error("AllowHEVC = true, want false")
 	}
 
+	stream, err := p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming: %v", err)
+	}
+	if stream.BufferMinutes != 15 {
+		t.Errorf("BufferMinutes = %d, want 15", stream.BufferMinutes)
+	}
+
 	// Defaults present as raw DB strings too.
 	enc, _ := st.GetSetting(settings.KeyTranscodeEncoder)
 	rh, _ := st.GetSetting(settings.KeyXMLTVRefreshHours)
 	ah, _ := st.GetSetting(settings.KeyTranscodeAllowHEVC)
-	if enc != "auto" || rh != "12" || ah != "false" {
-		t.Errorf("raw defaults encoder=%q refreshHours=%q allowHevc=%q", enc, rh, ah)
+	bm, _ := st.GetSetting(settings.KeyStreamingBufferMinutes)
+	if enc != "auto" || rh != "12" || ah != "false" || bm != "15" {
+		t.Errorf("raw defaults encoder=%q refreshHours=%q allowHevc=%q bufferMinutes=%q", enc, rh, ah, bm)
+	}
+}
+
+// TestStreamingRoundTripAndSeedDefault covers Streaming()/SetStreaming and the
+// presence-seeded default of 15 for streaming.bufferMinutes.
+func TestStreamingRoundTripAndSeedDefault(t *testing.T) {
+	p, st := openProvider(t)
+
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatalf("SeedFromConfig: %v", err)
+	}
+	s, err := p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming after seed: %v", err)
+	}
+	if s.BufferMinutes != settings.DefaultBufferMinutes {
+		t.Fatalf("BufferMinutes after seed = %d, want %d", s.BufferMinutes, settings.DefaultBufferMinutes)
+	}
+
+	if err := p.SetStreaming(settings.Streaming{BufferMinutes: 45}); err != nil {
+		t.Fatalf("SetStreaming: %v", err)
+	}
+	s, err = p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming after set: %v", err)
+	}
+	if s.BufferMinutes != 45 {
+		t.Fatalf("BufferMinutes = %d, want 45", s.BufferMinutes)
+	}
+
+	// Presence seed must not overwrite deliberate value.
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatalf("SeedFromConfig second: %v", err)
+	}
+	s, err = p.Streaming()
+	if err != nil {
+		t.Fatalf("Streaming after re-seed: %v", err)
+	}
+	if s.BufferMinutes != 45 {
+		t.Fatalf("re-seed overwrote BufferMinutes = %d, want 45", s.BufferMinutes)
+	}
+	raw, _ := st.GetSetting(settings.KeyStreamingBufferMinutes)
+	if raw != "45" {
+		t.Fatalf("raw bufferMinutes = %q, want 45", raw)
 	}
 }
