@@ -153,3 +153,31 @@ Approach (CSS-driven): tables get `data-label` on cells; `@media (max-width: 640
 ## Post-plan notes
 - Sequential on `main` (each task consumes the previous; no parallel tracks needed at this size).
 - Orchestrator Playwright mobile review after Task 6 is a GATE before Task 7.
+
+---
+
+# REVIEW AMENDMENTS (BINDING — override task text above where they conflict)
+
+Incorporated from the Grok plan review, 2026-08-07.
+
+## A1. Task 2 — testable supervisor seam (replaces "keep clock injection as-is")
+`Service` gains an injectable `after func(time.Duration) <-chan time.Time` (default `time.After`) AND records each computed wait (`lastWait[source]` guarded, or a test hook channel emitting the chosen duration). Supervisor tests drive loops via the injected after-channel (close/send to advance) and assert: refresh call counts via stub fetchers, and recorded wait durations within jitter bounds (interval±10%) — never real sleeps. Add test `TestRefreshAllReadsProviderLive` (RefreshAll picks up a source set AFTER service construction) — covers the hot-read path separately from the loops.
+
+## A2. Task 4 — SD error mapping (replaces "SD 401 → 401")
+Admin-API mapping table: creds missing → 422; SD AUTH-CLASS failure → 401 — auth-class means: `apiError` with code 4003/INVALID_USER, or Token() rejection (including HTTP-200-with-nonzero-code token responses); transport errors/timeouts/SD 5xx → 502. Tests use the as-built fake SD's 400+code-4003 behavior for the 401 case.
+
+## A3. Task 4 — write atomicity
+Validate ALL present sections fully BEFORE any write. Then apply all keys of the request in ONE store transaction: store gains `SetSettings(map[string]string) error` (single tx upsert-all); provider section setters build maps and call it; the PUT handler composes one map across sections. Partial application is a specified bug with a test (invalid transcode + valid xmltv in one PUT → NOTHING written).
+
+## A4. Task 3 — wiring completeness
+- `ManagerDeps.Settings` is nil-safe: nil → fall back to `m.cfg.Encoder`/`m.cfg.AllowHEVC` (keeps every existing fixture compiling and green); production main.go always passes the provider.
+- `writeStartError` gains the caller (signature: `writeStartError(w, err, user store.User)`) for role-based 503 filtering; filtering uses ONE `ListChannels(true)` enabled-ID set per 503, not per-session lookups.
+
+## A5. Task 5 — Preview navigation wiring
+`App.tsx` is in scope: `Admin` gains `onPreview(target: WatchTarget)` prop (WatchTarget = the existing `watching` shape: channelId, guideNumber, name); Shell passes `(t) => setWatching(t)`; Player Back returns to Guide (accepted simplification — document in the commit body). Channels.tsx Preview builds the target from the row.
+
+## A6. Task 6 — quality bottom sheet is a real component
+Under 640px the player quality control is a custom sheet (button opens overlay + option list, focus-trapped, Escape/scrim closes, aria-modal), replacing the native `<select>` at that breakpoint (desktop keeps the select). This is component work, not CSS — "logic untouched" applies to the rest of Task 6 only. Card-collapse applies to Channels + Users tables (Sessions/Tuners are already card grids — verify at review, no table work there).
+
+## A7. Task 5 — guide scope confirmation
+Guide.tsx already renders clickable full-width empty cells and splits loading/error/empty; the work is exactly: copy updates ("No guide data — press to watch"), zero-enabled-channels copy split by role (admins get the Admin → Channels link), and an extracted pure empty-state selector with tests.
