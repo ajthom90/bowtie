@@ -139,6 +139,13 @@ func (p *Provider) SetTranscode(v Transcode) error {
 	})
 }
 
+// Apply upserts all keys in a single store transaction. Used by the admin PUT
+// settings handler to write multiple sections atomically after full validation
+// (A3: no partial application across sections).
+func (p *Provider) Apply(kv map[string]string) error {
+	return p.st.SetSettings(kv)
+}
+
 // SeedFromConfig presence-seeds each product key from cfg when the key is
 // absent in the DB. Stored empty strings are real values and are never
 // re-seeded. When a key is already present and the config value differs, a

@@ -21,6 +21,15 @@ type fakeSD struct {
 	lastSchedBody   []byte
 	expiredOnce     bool // first protected call returns TOKEN_EXPIRED once
 	expiredReturned atomic.Bool
+	// lineupsJSON, when non-nil, is written as the GET /lineups body.
+	// When nil, a default wiki-shaped account lineup list is returned.
+	lineupsJSON []byte
+	// lineupsStatus, when non-zero, is the HTTP status for GET /lineups.
+	lineupsStatus int
+	// tokenHTTP200Reject: /token returns HTTP 200 with nonzero code (auth reject).
+	tokenHTTP200Reject bool
+	// tokenDown: /token returns HTTP 503.
+	tokenDown bool
 }
 
 func (f *fakeSD) handler() http.Handler {
@@ -29,6 +38,11 @@ func (f *fakeSD) handler() http.Handler {
 		f.tokenCalls.Add(1)
 		if r.Method != http.MethodPost {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
+			return
+		}
+		if f.tokenDown {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("maintenance"))
 			return
 		}
 		var body struct {
@@ -40,6 +54,15 @@ func (f *fakeSD) handler() http.Handler {
 			return
 		}
 		if body.Username != "user" || body.Password != sha1Hex("secret") {
+			if f.tokenHTTP200Reject {
+				// HTTP 200 with nonzero code — Token() rejection path.
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code":    4003,
+					"message": "Invalid username or password.",
+				})
+				return
+			}
+			// As-built: 400 + code 4003 INVALID_USER (auth-class for admin API 401).
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"response": "INVALID_USER",
@@ -54,6 +77,52 @@ func (f *fakeSD) handler() http.Handler {
 			"message":      "OK",
 			"token":        f.token,
 			"tokenExpires": time.Now().Add(24 * time.Hour).Unix(),
+		})
+	})
+	// GET /lineups — account lineup list (exact path; distinct from /lineups/{id}).
+	mux.HandleFunc("/lineups", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+			return
+		}
+		if !f.checkToken(w, r) {
+			return
+		}
+		if f.lineupsStatus != 0 {
+			w.WriteHeader(f.lineupsStatus)
+			if len(f.lineupsJSON) > 0 {
+				_, _ = w.Write(f.lineupsJSON)
+			} else {
+				_, _ = w.Write([]byte("upstream error"))
+			}
+			return
+		}
+		if f.lineupsJSON != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(f.lineupsJSON)
+			return
+		}
+		// Wiki-shaped GET /lineups response (API 20141201).
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":     0,
+			"serverID": "20141201.test",
+			"datetime": "2026-08-07T12:00:00Z",
+			"lineups": []map[string]string{
+				{
+					"lineup":    "USA-OTA-60030",
+					"name":      "Local Over the Air Broadcast",
+					"transport": "Antenna",
+					"location":  "60030",
+					"uri":       "/20141201/lineups/USA-OTA-60030",
+				},
+				{
+					"lineup":    "USA-IL57303-X",
+					"name":      "Comcast Waukegan/Lake Forest Area - Digital",
+					"transport": "Cable",
+					"location":  "Lake Forest",
+					"uri":       "/20141201/lineups/USA-IL57303-X",
+				},
+			},
 		})
 	})
 	mux.HandleFunc("/lineups/", func(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +320,68 @@ func TestLineupParse(t *testing.T) {
 	st := lu.Stations[0]
 	if st.Callsign != "WBBMDT" || st.Name != "WBBM-DT" || st.Logo.URL != "https://example.com/logo.png" {
 		t.Fatalf("station = %+v", st)
+	}
+}
+
+func TestLineupsParseWikiShape(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	list, err := c.Lineups(context.Background())
+	if err != nil {
+		t.Fatalf("Lineups: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(list), list)
+	}
+	if list[0].LineupID != "USA-OTA-60030" || list[0].Name == "" ||
+		list[0].Location != "60030" || list[0].Transport != "Antenna" {
+		t.Fatalf("first lineup = %+v (wire keys lineup/name/location/transport)", list[0])
+	}
+	if list[1].LineupID != "USA-IL57303-X" || list[1].Transport != "Cable" {
+		t.Fatalf("second lineup = %+v", list[1])
+	}
+	if f.tokenCalls.Load() < 1 {
+		t.Fatal("Lineups must authenticate (token header)")
+	}
+}
+
+func TestIsAuthError4003(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	c.Username = "bad"
+	c.Password = "wrong"
+	err := c.Token(context.Background())
+	if err == nil {
+		t.Fatal("expected token error for bad creds")
+	}
+	if !IsAuthError(err) {
+		t.Fatalf("IsAuthError(%v) = false, want true (400+4003 INVALID_USER)", err)
+	}
+}
+
+func TestIsAuthErrorTokenHTTP200NonzeroCode(t *testing.T) {
+	f := &fakeSD{requireToken: true, tokenHTTP200Reject: true}
+	c := newTestClient(t, f)
+	c.Username = "bad"
+	c.Password = "wrong"
+	err := c.Token(context.Background())
+	if err == nil {
+		t.Fatal("expected token error")
+	}
+	if !IsAuthError(err) {
+		t.Fatalf("IsAuthError(%v) = false, want true (200-with-nonzero-code)", err)
+	}
+}
+
+func TestIsAuthErrorNotTransport(t *testing.T) {
+	f := &fakeSD{requireToken: true, tokenDown: true}
+	c := newTestClient(t, f)
+	err := c.Token(context.Background())
+	if err == nil {
+		t.Fatal("expected error when SD is down")
+	}
+	if IsAuthError(err) {
+		t.Fatalf("IsAuthError(%v) = true, want false (5xx/transport → 502)", err)
 	}
 }
 

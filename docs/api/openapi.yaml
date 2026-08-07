@@ -471,6 +471,113 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/epg/lineups:
+    get:
+      summary: List Schedules Direct lineups on the configured account
+      description: |
+        Requires SD username+password in settings. Error contract for the UI:
+        - 422 when credentials are not configured
+        - 401 when Schedules Direct rejects the credentials (auth-class:
+          apiError code 4003/INVALID_USER, or Token() rejection including
+          HTTP 200 with nonzero code)
+        - 502 when Schedules Direct is unreachable (transport/timeouts/5xx)
+        Secrets are never echoed in error bodies.
+      operationId: adminEPGLineups
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Account lineup list from Schedules Direct GET /lineups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SDLineupSummary'
+        '401':
+          description: Missing auth, or Schedules Direct rejected credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Schedules Direct credentials not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Schedules Direct is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/admin/settings:
+    get:
+      summary: Product settings (XMLTV, Schedules Direct, transcode)
+      description: |
+        Returns the runtime settings provider state. Schedules Direct password
+        is never returned; use `passwordConfigured` instead. Transcode
+        `available` / `hevcCapable` come from the injected FFmpeg probe.
+      operationId: adminGetSettings
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      summary: Update product settings (section merge)
+      description: |
+        Explicit section merge: each top-level section (`xmltv`,
+        `schedulesDirect`, `transcode`) is optional; a nil/omitted section is
+        left untouched. Within a present section every field is required,
+        except `schedulesDirect.password` — absent or empty keeps the existing
+        password. Clearing Schedules Direct entirely: submit `schedulesDirect`
+        with an empty `username` (username, password, and lineupId are all
+        cleared).
+
+        Validation runs for ALL present sections before any write; all keys
+        are applied in a single store transaction (no partial application).
+
+        Validation rules:
+        - `xmltv.refreshHours` 1–168
+        - `xmltv.source` empty (disabled), http(s) URL, or absolute path
+        - `transcode.encoder` `"auto"` or a probed-available backend
+      operationId: adminPutSettings
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutSettingsRequest'
+      responses:
+        '200':
+          description: Settings after apply (same shape as GET)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/admin/transcode:
     get:
       summary: Encoder probe status (available backends, HEVC support, selected)
@@ -965,6 +1072,113 @@ components:
         selected:
           type: string
           description: Backend chosen for config.encoder (auto or forced)
+    Settings:
+      type: object
+      required: [xmltv, schedulesDirect, transcode]
+      properties:
+        xmltv:
+          $ref: '#/components/schemas/SettingsXMLTV'
+        schedulesDirect:
+          $ref: '#/components/schemas/SettingsSchedulesDirect'
+        transcode:
+          $ref: '#/components/schemas/SettingsTranscode'
+    SettingsXMLTV:
+      type: object
+      required: [source, refreshHours]
+      properties:
+        source:
+          type: string
+          description: Empty disables XMLTV; otherwise http(s) URL or absolute path
+        refreshHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+    SettingsSchedulesDirect:
+      type: object
+      required: [username, passwordConfigured, lineupId]
+      properties:
+        username:
+          type: string
+        passwordConfigured:
+          type: boolean
+          description: True when a password is stored; the password itself is never returned
+        lineupId:
+          type: string
+    SettingsTranscode:
+      type: object
+      required: [encoder, allowHevc, available, hevcCapable]
+      properties:
+        encoder:
+          type: string
+          description: Preference ("auto" or a backend name)
+        allowHevc:
+          type: boolean
+        available:
+          type: array
+          items:
+            type: string
+          description: Probed encoder backends (same source as GET /admin/transcode)
+        hevcCapable:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Map of backend name → HEVC support
+    PutSettingsRequest:
+      type: object
+      description: |
+        Section-merge body. Omit a section to leave it unchanged. Within a
+        present section all fields are required except schedulesDirect.password.
+      properties:
+        xmltv:
+          $ref: '#/components/schemas/PutSettingsXMLTV'
+        schedulesDirect:
+          $ref: '#/components/schemas/PutSettingsSchedulesDirect'
+        transcode:
+          $ref: '#/components/schemas/PutSettingsTranscode'
+    PutSettingsXMLTV:
+      type: object
+      required: [source, refreshHours]
+      properties:
+        source:
+          type: string
+        refreshHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+    PutSettingsSchedulesDirect:
+      type: object
+      required: [username, lineupId]
+      properties:
+        username:
+          type: string
+          description: Empty clears username, password, and lineupId
+        password:
+          type: string
+          description: Absent or empty keeps the existing password
+        lineupId:
+          type: string
+    PutSettingsTranscode:
+      type: object
+      required: [encoder, allowHevc]
+      properties:
+        encoder:
+          type: string
+        allowHevc:
+          type: boolean
+    SDLineupSummary:
+      type: object
+      required: [lineupId, name, location, transport]
+      properties:
+        lineupId:
+          type: string
+          description: Schedules Direct lineup id (wire key "lineup")
+        name:
+          type: string
+        location:
+          type: string
+        transport:
+          type: string
+          description: e.g. Antenna, Cable, Satellite, DVB-T
     ClientCaps:
       type: object
       properties:

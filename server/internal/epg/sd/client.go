@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,16 @@ type Lineup struct {
 			URL string `json:"URL"`
 		} `json:"logo"`
 	} `json:"stations"`
+}
+
+// LineupSummary is one entry from GET /lineups (account lineup list).
+// Wire keys verified against Schedules Direct API 20141201 wiki:
+// lineup, name, location, transport (plus uri, ignored).
+type LineupSummary struct {
+	LineupID  string `json:"lineup"`
+	Name      string `json:"name"`
+	Location  string `json:"location"`
+	Transport string `json:"transport"`
 }
 
 // StationSchedule is one element of the POST /schedules response.
@@ -125,6 +136,48 @@ func (c *Client) Lineup(ctx context.Context, lineupID string) (Lineup, error) {
 		return Lineup{}, err
 	}
 	return lu, nil
+}
+
+// Lineups lists lineups the account has added at Schedules Direct.
+// GET /lineups — response shape: {code, lineups:[{lineup,name,location,transport,uri}, ...]}.
+func (c *Client) Lineups(ctx context.Context) ([]LineupSummary, error) {
+	var resp struct {
+		Code    int             `json:"code"`
+		Lineups []LineupSummary `json:"lineups"`
+	}
+	if err := c.doAuthed(ctx, http.MethodGet, "/lineups", nil, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("sd: lineups: code %d", resp.Code)
+	}
+	if resp.Lineups == nil {
+		return []LineupSummary{}, nil
+	}
+	return resp.Lineups, nil
+}
+
+// IsAuthError reports whether err is an SD authentication-class failure suitable
+// for mapping to HTTP 401 at the admin API:
+//   - apiError with code 4003 or response INVALID_USER
+//   - Token() rejection including HTTP-200-with-nonzero-code token responses
+//
+// Transport errors, timeouts, and 5xx are not auth-class (map to 502).
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ae apiError
+	if errors.As(err, &ae) {
+		if ae.Code == 4003 || strings.EqualFold(ae.Response, "INVALID_USER") {
+			return true
+		}
+		return false
+	}
+	// Token() returns fmt.Errorf("sd: token: code %d: %s", ...) on HTTP 200
+	// responses with a nonzero code (credential / account rejection).
+	msg := err.Error()
+	return strings.Contains(msg, "sd: token: code ")
 }
 
 // Schedules fetches schedule data for the given stations and dates.

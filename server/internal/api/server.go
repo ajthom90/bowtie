@@ -26,8 +26,13 @@ type Deps struct {
 	Streams           StreamController              // Task 15
 	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
 	// Settings is the DB-backed product settings provider (v0.4.0). Used for
-	// admin transcode "selected" and (Task 4) settings API routes.
+	// admin transcode "selected" and settings API routes.
 	Settings *settings.Provider
+	// SDBaseURL and SDHTTP optionally override the Schedules Direct client used
+	// by GET /admin/epg/lineups (tests inject an httptest fake; production leaves
+	// both zero so the client uses the SD default base URL).
+	SDBaseURL string
+	SDHTTP    *http.Client
 }
 
 // Server is the HTTP API surface.
@@ -98,6 +103,11 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("GET /api/v1/admin/epg/status", admin(http.HandlerFunc(s.handleAdminEPGStatus)))
 	handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
 	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
+	handle("GET /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGLineups)))
+
+	// Admin product settings (v0.4.0 Task 4).
+	handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminGetSettings)))
+	handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminPutSettings)))
 
 	// Admin transcode probe (Task 11).
 	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))

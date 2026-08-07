@@ -114,8 +114,8 @@ loop(source):
 
 Endpoints per spec EXACTLY (section-merge PUT with pointer sections; password keep-on-empty; clear-SD-via-empty-username clears username+password+lineupId; encoder validated against probe `available` + "auto"; refreshHours 1–168; xmltv.source "" | http(s) URL | absolute path; lineups error table 422/401/502).
 
-- [ ] **Step 1: Failing tests** — GET shape (passwordConfigured true/false, never password; available from injected probe); PUT merge (transcode-only PUT leaves SD untouched; xmltv-only PUT leaves transcode); password semantics (empty keeps; new value replaces; empty username clears trio); validation each rule; lineups: no-creds 422, SD 401 → 401, SD down → 502 (httptest fake SD).
-- [ ] **Step 2:** FAIL → implement → PASS. **Step 3:** openapi. Commit `feat: admin settings api with sd lineup listing`
+- [x] **Step 1: Failing tests** — GET shape (passwordConfigured true/false, never password; available from injected probe); PUT merge (transcode-only PUT leaves SD untouched; xmltv-only PUT leaves transcode); password semantics (empty keeps; new value replaces; empty username clears trio); validation each rule; lineups: no-creds 422, SD 401 → 401, SD down → 502 (httptest fake SD).
+- [x] **Step 2:** FAIL → implement → PASS. **Step 3:** openapi. Commit `feat: admin settings api with sd lineup listing`
 
 ### Task 5: Web — Settings tab, EPG slimdown, Preview, empty states, watchable no-data cells
 

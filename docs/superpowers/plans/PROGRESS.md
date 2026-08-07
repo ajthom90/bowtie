@@ -897,3 +897,46 @@ ok  	github.com/ajthom90/bowtie/server/internal/web
 0 issues.
 OK
 ```
+
+## v0.4.0 Task 4
+
+**Date:** 2026-08-07
+
+### Built
+
+- `sd.Client.Lineups(ctx)` — GET `/lineups` account list; wire keys verified against SD wiki API 20141201 (`lineup`, `name`, `location`, `transport`)
+- `sd.IsAuthError` — auth-class detection for admin API mapping (apiError 4003/INVALID_USER; Token() `sd: token: code N` including HTTP-200-with-nonzero-code)
+- `settings.Provider.Apply` — multi-key single-transaction write for PUT section merge (A3)
+- `GET/PUT /api/v1/admin/settings` — section-merge PUT (pointer sections); password never returned (`passwordConfigured`); empty password keeps; empty username clears SD trio; encoder vs probe; refreshHours 1–168; xmltv.source empty|http(s)|abs path; validate-all-then-one-tx
+- `GET /api/v1/admin/epg/lineups` — error table A2: 422 creds missing; 401 auth-class; 502 transport/5xx (never echoes secrets)
+- `Deps.SDBaseURL` / `Deps.SDHTTP` test injection for lineups
+- `docs/api/openapi.yaml` — routes + Settings / PutSettings* / SDLineupSummary schemas
+
+### Tests
+
+- settings handlers: GET shape, viewer 403, section-merge (transcode-only / xmltv-only), password keep/replace/clear-trio, validation (refreshHours, source, encoder), A3 nothing-written-on-partial-invalid
+- lineups: 422 / 401 (400+4003) / 401 (200-nonzero) / 502 / success
+- sd: Lineups wiki parse, IsAuthError 4003 / 200-nonzero / not-transport
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+```
