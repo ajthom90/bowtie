@@ -68,7 +68,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	h, err := s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
 	if err != nil {
-		s.writeStartError(w, err)
+		s.writeStartError(w, err, u)
 		return
 	}
 
@@ -92,13 +92,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) writeStartError(w http.ResponseWriter, err error) {
+// writeStartError maps stream.Start failures to HTTP. user is required for
+// role-based 503 filtering: non-admins only see sessions on enabled channels
+// (admin preview of disabled channels must not leak unlisted names to viewers).
+func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.User) {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "all tuners in use"):
 		sessions := []stream.SessionInfo{}
 		if s.deps.Streams != nil {
 			sessions = s.deps.Streams.Sessions()
+		}
+		if user.Role != "admin" {
+			sessions = filterSessionsEnabledOnly(sessions, s.enabledChannelIDs())
 		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error":    "all tuners in use",
@@ -113,6 +119,37 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "failed to start session")
 	}
+}
+
+// enabledChannelIDs returns the set of currently enabled channel IDs (one store
+// lookup). Empty set on store error — safer to hide sessions than leak names.
+func (s *Server) enabledChannelIDs() map[int64]struct{} {
+	out := make(map[int64]struct{})
+	if s.deps.Store == nil {
+		return out
+	}
+	chans, err := s.deps.Store.ListChannels(true)
+	if err != nil {
+		return out
+	}
+	for _, c := range chans {
+		out[c.ID] = struct{}{}
+	}
+	return out
+}
+
+// filterSessionsEnabledOnly keeps sessions whose ChannelID is in enabledIDs.
+func filterSessionsEnabledOnly(sessions []stream.SessionInfo, enabledIDs map[int64]struct{}) []stream.SessionInfo {
+	if len(sessions) == 0 {
+		return sessions
+	}
+	out := make([]stream.SessionInfo, 0, len(sessions))
+	for _, sess := range sessions {
+		if _, ok := enabledIDs[sess.ChannelID]; ok {
+			out = append(out, sess)
+		}
+	}
+	return out
 }
 
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
@@ -302,10 +339,7 @@ func (s *Server) handleAdminTranscode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	selected := ""
-	forced := s.deps.Cfg.Encoder
-	if forced == "" {
-		forced = "auto"
-	}
+	forced := s.transcodeEncoderSelected()
 	if sel, err := caps.Select(forced); err == nil {
 		selected = string(sel)
 	}
@@ -316,4 +350,20 @@ func (s *Server) handleAdminTranscode(w http.ResponseWriter, r *http.Request) {
 		"ffmpegVersion": caps.FFmpegVersion,
 		"selected":      selected,
 	})
+}
+
+// transcodeEncoderSelected is the runtime encoder preference used for admin
+// probe "selected". Same source of truth as stream.Manager.Start (settings
+// provider when wired; otherwise boot-time cfg).
+func (s *Server) transcodeEncoderSelected() string {
+	if s.deps.Settings != nil {
+		if t, err := s.deps.Settings.Transcode(); err == nil && t.Encoder != "" {
+			return t.Encoder
+		}
+	}
+	forced := s.deps.Cfg.Encoder
+	if forced == "" {
+		return "auto"
+	}
+	return forced
 }

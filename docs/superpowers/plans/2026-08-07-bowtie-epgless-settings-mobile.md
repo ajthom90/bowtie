@@ -102,9 +102,9 @@ loop(source):
 - Modify: `server/internal/api/server.go` (**Deps gains `Settings *settings.Provider` in THIS task** — Task 4 only adds routes), `server/internal/stream/manager.go`, `manager_test.go` (ManagerDeps: + `Settings *settings.Provider`; Negotiate uses provider Encoder/AllowHEVC per Start; `Start` skips the `!ch.Enabled` rejection when `user.Role == "admin"`), `server/internal/api/admin_handlers.go` (transcode endpoint `selected` from provider), `server/internal/api/stream_handlers.go` + test (503 payload: non-admin gets only enabled-channel sessions — needs channel-enabled lookup; add `EnabledOnly bool` filtering helper in handler using store), `docs/api/openapi.yaml`
 - Test: extend `manager_test.go` + `stream_handlers_test.go`
 
-- [ ] **Step 1: Failing tests** — manager: `TestEncoderSettingAppliesPerSession` (stub runner; SetTranscode(encoder software→forced-different) between two Starts → second JobSpec differs); `TestAdminCanStartDisabledChannel` + `TestViewerDisabledChannel404` (fake HDHR + disabled channel). handlers: `TestTunersBusyFilteredForViewers` (two sessions, one on disabled channel; viewer 503 lists 1, admin 503 lists 2); e2e `TestAdminPreviewDisabledChannelE2E` (login admin → POST session for disabled channel → playlist 200).
-- [ ] **Step 2:** FAIL → implement → PASS.
-- [ ] **Step 3:** Update openapi (sessions POST description: admin-may-preview-disabled; 503 shape note). Commit `feat: runtime transcode settings; admin preview of disabled channels`
+- [x] **Step 1: Failing tests** — manager: `TestEncoderSettingAppliesPerSession` (stub runner; SetTranscode(encoder software→forced-different) between two Starts → second JobSpec differs); `TestAdminCanStartDisabledChannel` + `TestViewerDisabledChannel404` (fake HDHR + disabled channel). handlers: `TestTunersBusyFilteredForViewers` (two sessions, one on disabled channel; viewer 503 lists 1, admin 503 lists 2); e2e `TestAdminPreviewDisabledChannelE2E` (login admin → POST session for disabled channel → playlist 200).
+- [x] **Step 2:** FAIL → implement → PASS.
+- [x] **Step 3:** Update openapi (sessions POST description: admin-may-preview-disabled; 503 shape note). Commit `feat: runtime transcode settings; admin preview of disabled channels`
 
 ### Task 4: Settings API + SD Lineups
 

@@ -857,3 +857,43 @@ ok  	github.com/ajthom90/bowtie/server/internal/web
 0 issues.
 OK
 ```
+
+## v0.4.0 Task 3
+
+**Date:** 2026-08-07
+
+### Built
+
+- `stream.ManagerDeps.Settings *settings.Provider` — nil-safe: nil falls back to `cfg.Encoder`/`cfg.AllowHEVC` (existing fixtures stay green); production main always passes provider
+- `Manager.Start`: reads encoder/allowHevc per session from provider; skips `!ch.Enabled` rejection when `user.Role == "admin"` (enabled check still before session-key join — viewers cannot join admin previews)
+- `api.Deps.Settings` + `GET /admin/transcode` `selected` from the same provider (no second stale truth)
+- `writeStartError(w, err, user)`: non-admin 503 payloads filtered to enabled-channel sessions via ONE `ListChannels(true)` enabled-ID set
+- `docs/api/openapi.yaml`: sessions POST admin-preview semantics; 404/503 role notes; transcode selected from runtime settings
+
+### Tests
+
+- manager: `TestEncoderSettingAppliesPerSession`, `TestAdminCanStartDisabledChannel`, `TestViewerDisabledChannel404`
+- handlers: `TestTunersBusyFilteredForViewers`, `TestAdminPreviewDisabledChannelE2E` (hdhrfake + stub runner)
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+OK
+```

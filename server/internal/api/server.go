@@ -7,6 +7,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
@@ -24,6 +25,9 @@ type Deps struct {
 	Probe             func() transcode.Capabilities // Task 11
 	Streams           StreamController              // Task 15
 	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
+	// Settings is the DB-backed product settings provider (v0.4.0). Used for
+	// admin transcode "selected" and (Task 4) settings API routes.
+	Settings *settings.Provider
 }
 
 // Server is the HTTP API surface.

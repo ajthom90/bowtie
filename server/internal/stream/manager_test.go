@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 )
@@ -634,6 +636,98 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met within timeout")
+}
+
+// --- v0.4.0 Task 3: provider encoder + admin disabled-channel preview --------
+
+func TestEncoderSettingAppliesPerSession(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	prov := settings.NewProvider(st)
+	if err := prov.SeedFromConfig(cfg); err != nil {
+		t.Fatalf("SeedFromConfig: %v", err)
+	}
+	// Multi-backend caps so forced encoder choice is visible on JobSpec.
+	caps := transcode.Capabilities{
+		Available: []transcode.Backend{transcode.BackendVideoToolbox, transcode.BackendSoftware},
+		HEVC:      map[transcode.Backend]bool{},
+	}
+	if err := prov.SetTranscode(settings.Transcode{Encoder: "software", AllowHEVC: false}); err != nil {
+		t.Fatalf("SetTranscode software: %v", err)
+	}
+	m := NewManager(ManagerDeps{
+		Cfg:   cfg,
+		Store: st,
+		StreamURL: func(ch store.Channel) (string, error) {
+			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
+		},
+		Caps:     caps,
+		Runner:   runner,
+		Clock:    clock.Now,
+		Settings: prov,
+	})
+
+	h1, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start software: %v", err)
+	}
+	if got := runner.lastSpec.D.Backend; got != transcode.BackendSoftware {
+		t.Fatalf("first backend=%q, want software", got)
+	}
+	m.Terminate(h1.SessionID)
+
+	if err := prov.SetTranscode(settings.Transcode{Encoder: "videotoolbox", AllowHEVC: false}); err != nil {
+		t.Fatalf("SetTranscode videotoolbox: %v", err)
+	}
+	h2, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("Start videotoolbox: %v", err)
+	}
+	if got := runner.lastSpec.D.Backend; got != transcode.BackendVideoToolbox {
+		t.Fatalf("second backend=%q, want videotoolbox", got)
+	}
+	if h1.SessionID == h2.SessionID {
+		t.Fatal("sessions should differ after encoder change + terminate")
+	}
+}
+
+func TestAdminCanStartDisabledChannel(t *testing.T) {
+	st, cfg, clock, runner, chID, _ := setupEnv(t)
+	// setupEnv enables the channel; disable it for preview.
+	if err := st.UpdateChannel(chID, false, ""); err != nil {
+		t.Fatalf("UpdateChannel disable: %v", err)
+	}
+	admin := store.User{ID: 99, Username: "admin", Role: "admin"}
+	m := newTestManager(st, cfg, clock, runner)
+
+	h, err := m.Start(context.Background(), admin, chID, clientCaps(""))
+	if err != nil {
+		t.Fatalf("admin Start disabled channel: %v", err)
+	}
+	if h.ViewerID == "" || h.SessionID == "" {
+		t.Fatalf("empty handle: %+v", h)
+	}
+	if runner.Starts() != 1 {
+		t.Fatalf("starts=%d, want 1", runner.Starts())
+	}
+}
+
+func TestViewerDisabledChannel404(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	if err := st.UpdateChannel(chID, false, ""); err != nil {
+		t.Fatalf("UpdateChannel disable: %v", err)
+	}
+	m := newTestManager(st, cfg, clock, runner)
+
+	_, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err == nil {
+		t.Fatal("viewer should not start disabled channel")
+	}
+	if !strings.Contains(err.Error(), "is disabled") {
+		t.Fatalf("err=%v, want disabled", err)
+	}
+	if runner.Starts() != 0 {
+		t.Fatalf("starts=%d, want 0", runner.Starts())
+	}
 }
 
 // gateProcess is a Process whose Stop signals then blocks until release,

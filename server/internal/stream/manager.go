@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 	"github.com/ajthom90/bowtie/server/internal/tuner"
@@ -51,6 +52,10 @@ type ManagerDeps struct {
 	Caps      transcode.Capabilities
 	Runner    Runner
 	Clock     func() time.Time // nil → time.Now
+	// Settings is optional. When non-nil, Start reads encoder/allowHevc from the
+	// provider per session. When nil, falls back to Cfg.Encoder/Cfg.AllowHEVC
+	// (keeps existing test fixtures compiling without a provider).
+	Settings *settings.Provider
 }
 
 // Manager owns shared HLS transcode sessions and their viewers.
@@ -62,6 +67,7 @@ type Manager struct {
 	caps      transcode.Capabilities
 	runner    Runner
 	clock     func() time.Time
+	settings  *settings.Provider
 
 	mu       sync.Mutex
 	sessions map[string]*session // by session ID
@@ -91,6 +97,7 @@ func NewManager(deps ManagerDeps) *Manager {
 		caps:      deps.Caps,
 		runner:    deps.Runner,
 		clock:     clock,
+		settings:  deps.Settings,
 		sessions:  make(map[string]*session),
 		byKey:     make(map[string]*session),
 		viewers:   make(map[string]*Viewer),
@@ -99,6 +106,19 @@ func NewManager(deps ManagerDeps) *Manager {
 
 func (m *Manager) now() time.Time {
 	return m.clock()
+}
+
+// transcodePrefs returns encoder + allowHEVC for this Start. Provider when set;
+// otherwise cfg (nil-safe Settings for fixtures that never inject a provider).
+func (m *Manager) transcodePrefs() (encoder string, allowHEVC bool, err error) {
+	if m.settings == nil {
+		return m.cfg.Encoder, m.cfg.AllowHEVC, nil
+	}
+	t, err := m.settings.Transcode()
+	if err != nil {
+		return "", false, fmt.Errorf("transcode settings: %w", err)
+	}
+	return t.Encoder, t.AllowHEVC, nil
 }
 
 // Start joins or creates a session for the channel and returns a viewer handle.
@@ -116,11 +136,17 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 		}
 		return ViewerHandle{}, fmt.Errorf("channel %d: %w", channelID, err)
 	}
-	if !ch.Enabled {
+	// Admin may preview disabled channels (EPG-less smoke test). Viewers cannot
+	// join those sessions either: the enabled check runs before session-key join.
+	if !ch.Enabled && user.Role != "admin" {
 		return ViewerHandle{}, fmt.Errorf("channel %d is disabled", channelID)
 	}
 
-	decision, err := transcode.Negotiate(caps, user.MaxQuality, m.caps, m.cfg.Encoder, m.cfg.AllowHEVC, transcode.DefaultProfiles())
+	encoder, allowHEVC, err := m.transcodePrefs()
+	if err != nil {
+		return ViewerHandle{}, err
+	}
+	decision, err := transcode.Negotiate(caps, user.MaxQuality, m.caps, encoder, allowHEVC, transcode.DefaultProfiles())
 	if err != nil {
 		return ViewerHandle{}, fmt.Errorf("negotiate: %w", err)
 	}

@@ -127,11 +127,12 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	log.Printf("encoder probe: available=%v version=%s", caps.Available, caps.FFmpegVersion)
 
 	streamMgr := stream.NewManager(stream.ManagerDeps{
-		Cfg:    cfg,
-		Store:  st,
-		Tuners: tuners,
-		Caps:   caps,
-		Runner: &stream.FFmpegRunner{Path: cfg.FFmpegPath},
+		Cfg:      cfg,
+		Store:    st,
+		Tuners:   tuners,
+		Caps:     caps,
+		Runner:   &stream.FFmpegRunner{Path: cfg.FFmpegPath},
+		Settings: settingsProv,
 	})
 	go streamMgr.Run(rootCtx)
 
@@ -144,6 +145,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Probe:             func() transcode.Capabilities { return caps },
 		Streams:           streamMgr,
 		StreamTokenSecret: streamSecret,
+		Settings:          settingsProv,
 	})
 
 	mux := http.NewServeMux()

@@ -288,9 +288,34 @@ func TestSegmentNameTraversal400(t *testing.T) {
 
 func TestCreateSession503Shape(t *testing.T) {
 	ss := newStubStreams()
+	ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
+		return stream.ViewerHandle{}, errors.New("all tuners in use")
+	}
+	h, st, _ := testAPIWithStreams(t, ss)
+	// Viewer 503 filtering uses enabled-channel IDs — seed a matching enabled channel.
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	if err := st.UpsertDevice(store.Device{
+		DeviceID: "dev-503shape", IP: "127.0.0.1", Model: "fake", TunerCount: 1,
+		Manual: true, LastSeen: now, StreamPort: 5004,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncLineup("dev-503shape", []store.Channel{
+		{DeviceID: "dev-503shape", GuideNumber: "5.1", Name: "NEWS"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chans, err := st.ListChannels(false)
+	if err != nil || len(chans) != 1 {
+		t.Fatalf("channels: %v len=%d", err, len(chans))
+	}
+	chID := chans[0].ID
+	if err := st.UpdateChannel(chID, true, ""); err != nil {
+		t.Fatal(err)
+	}
 	ss.sessions = []stream.SessionInfo{{
 		ID:          "sess-1",
-		ChannelID:   1,
+		ChannelID:   chID,
 		ChannelName: "NEWS",
 		Key:         "ch1|h264|original|aac",
 		VideoCodec:  "h264",
@@ -299,10 +324,6 @@ func TestCreateSession503Shape(t *testing.T) {
 		Viewers:     []stream.ViewerInfo{{ID: "v1", Username: "bob"}},
 		StartedAt:   time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
 	}}
-	ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
-		return stream.ViewerHandle{}, errors.New("all tuners in use")
-	}
-	h, st, _ := testAPIWithStreams(t, ss)
 	seedUser(t, st, "alice", "pass", "viewer")
 
 	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
@@ -312,7 +333,7 @@ func TestCreateSession503Shape(t *testing.T) {
 	authH := map[string]string{"Authorization": "Bearer " + tok.AccessToken}
 
 	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
-		"channelId": 1,
+		"channelId": chID,
 		"caps": map[string]any{
 			"videoCodecs": []string{"h264"},
 			"audioCodecs": []string{"aac"},
@@ -542,6 +563,251 @@ func (r *e2eStubRunner) Start(_ context.Context, spec transcode.JobSpec) (stream
 		}
 	}
 	return newE2EProc(), nil
+}
+
+func TestTunersBusyFilteredForViewers(t *testing.T) {
+	// Two live sessions: one on an enabled channel, one on a disabled channel.
+	// Viewer 503 must list only the enabled-channel session; admin sees both.
+	ss := newStubStreams()
+	ss.sessions = []stream.SessionInfo{
+		{
+			ID: "sess-enabled", ChannelID: 0, ChannelName: "NEWS",
+			Key: "k1", VideoCodec: "h264", Profile: "original", Backend: "software",
+			StartedAt: time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			ID: "sess-disabled", ChannelID: 0, ChannelName: "SECRET",
+			Key: "k2", VideoCodec: "h264", Profile: "original", Backend: "software",
+			StartedAt: time.Date(2026, 8, 4, 12, 1, 0, 0, time.UTC),
+		},
+	}
+	ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
+		return stream.ViewerHandle{}, errors.New("all tuners in use")
+	}
+	h, st, _ := testAPIWithStreams(t, ss)
+
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	if err := st.UpsertDevice(store.Device{
+		DeviceID: "dev-503", IP: "127.0.0.1", Model: "fake", TunerCount: 2,
+		Manual: true, LastSeen: now, StreamPort: 5004,
+	}); err != nil {
+		t.Fatalf("UpsertDevice: %v", err)
+	}
+	if err := st.SyncLineup("dev-503", []store.Channel{
+		{DeviceID: "dev-503", GuideNumber: "5.1", Name: "NEWS"},
+		{DeviceID: "dev-503", GuideNumber: "9.1", Name: "SECRET"},
+	}); err != nil {
+		t.Fatalf("SyncLineup: %v", err)
+	}
+	chans, err := st.ListChannels(false)
+	if err != nil || len(chans) != 2 {
+		t.Fatalf("ListChannels: %v len=%d", err, len(chans))
+	}
+	var enabledID, disabledID int64
+	for _, c := range chans {
+		switch c.GuideNumber {
+		case "5.1":
+			enabledID = c.ID
+			if err := st.UpdateChannel(c.ID, true, ""); err != nil {
+				t.Fatal(err)
+			}
+		case "9.1":
+			disabledID = c.ID
+			// leave disabled
+		}
+	}
+	ss.sessions[0].ChannelID = enabledID
+	ss.sessions[1].ChannelID = disabledID
+
+	seedUser(t, st, "alice", "pass", "viewer")
+	seedUser(t, st, "admin", "adminpass", "admin")
+
+	// Viewer: only enabled session.
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "alice", "password": "pass",
+	}, nil)
+	viewerTok := decodeLogin(t, rr)
+	viewerAuth := map[string]string{"Authorization": "Bearer " + viewerTok.AccessToken}
+	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+		"channelId": enabledID,
+		"caps":      map[string]any{"videoCodecs": []string{"h264"}, "audioCodecs": []string{"aac"}},
+	}, viewerAuth)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("viewer 503 status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	var viewerBody struct {
+		Error    string               `json:"error"`
+		Sessions []stream.SessionInfo `json:"sessions"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&viewerBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(viewerBody.Sessions) != 1 || viewerBody.Sessions[0].ID != "sess-enabled" {
+		t.Fatalf("viewer sessions=%+v, want only sess-enabled", viewerBody.Sessions)
+	}
+
+	// Admin: both sessions.
+	rr = doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "adminpass",
+	}, nil)
+	adminTok := decodeLogin(t, rr)
+	adminAuth := map[string]string{"Authorization": "Bearer " + adminTok.AccessToken}
+	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+		"channelId": enabledID,
+		"caps":      map[string]any{"videoCodecs": []string{"h264"}, "audioCodecs": []string{"aac"}},
+	}, adminAuth)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("admin 503 status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	var adminBody struct {
+		Sessions []stream.SessionInfo `json:"sessions"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&adminBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(adminBody.Sessions) != 2 {
+		t.Fatalf("admin sessions=%+v, want 2", adminBody.Sessions)
+	}
+}
+
+func TestAdminPreviewDisabledChannelE2E(t *testing.T) {
+	fake := hdhrfake.New(t, hdhrfake.Options{
+		DeviceID:   "PREVDEV01",
+		TunerCount: 2,
+		Lineup: []hdhrfake.LineupEntry{
+			{GuideNumber: "7.1", GuideName: "PREVIEW"},
+		},
+	})
+	u, err := url.Parse(fake.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceIP := u.Host
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "preview.db"))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	segDir := filepath.Join(t.TempDir(), "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ListenAddr: ":0",
+		SegmentDir: segDir,
+		Encoder:    "auto",
+		AllowHEVC:  false,
+		FFmpegPath: "ffmpeg",
+	}
+	a := &auth.Auth{
+		Secret: []byte("0123456789abcdef0123456789abcdef"),
+		Store:  st,
+	}
+	tuners := tuner.New(st, cfg)
+	tuners.SetDiscoverFunc(func(ctx context.Context, timeout time.Duration) ([]hdhr.DiscoverInfo, error) {
+		return nil, nil
+	})
+	mgr := stream.NewManager(stream.ManagerDeps{
+		Cfg:    cfg,
+		Store:  st,
+		Tuners: tuners,
+		Caps: transcode.Capabilities{
+			Available: []transcode.Backend{transcode.BackendSoftware},
+			HEVC:      map[transcode.Backend]bool{},
+		},
+		Runner: &e2eStubRunner{},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Run(ctx)
+
+	h := api.New(api.Deps{
+		Cfg:               cfg,
+		Store:             st,
+		Auth:              a,
+		Tuners:            tuners,
+		Streams:           mgr,
+		StreamTokenSecret: []byte(streamSecret),
+		Probe: func() transcode.Capabilities {
+			return transcode.Capabilities{
+				Available: []transcode.Backend{transcode.BackendSoftware},
+				HEVC:      map[transcode.Backend]bool{},
+			}
+		},
+	})
+
+	seedUser(t, st, "admin", "adminpass", "admin")
+	seedUser(t, st, "viewer", "viewerpass", "viewer")
+
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "admin", "password": "adminpass",
+	}, nil)
+	adminTok := decodeLogin(t, rr)
+	adminAuth := map[string]string{"Authorization": "Bearer " + adminTok.AccessToken}
+
+	rr = doJSON(t, h, "POST", "/api/v1/admin/devices", map[string]string{"ip": deviceIP}, adminAuth)
+	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
+		t.Fatalf("add device status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	rr = doJSON(t, h, "GET", "/api/v1/admin/channels", nil, adminAuth)
+	var adminChans []struct {
+		ID      int64 `json:"id"`
+		Enabled bool  `json:"enabled"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&adminChans); err != nil {
+		t.Fatal(err)
+	}
+	if len(adminChans) == 0 {
+		t.Fatal("no channels")
+	}
+	chID := adminChans[0].ID
+	// Channel stays disabled — admin preview must still work.
+	if adminChans[0].Enabled {
+		t.Fatal("expected newly synced channel to be disabled by default")
+	}
+
+	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+		"channelId": chID,
+		"caps": map[string]any{
+			"videoCodecs": []string{"h264"},
+			"audioCodecs": []string{"aac"},
+		},
+	}, adminAuth)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin preview create status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	var sessResp struct {
+		ViewerID    string `json:"viewerId"`
+		PlaylistURL string `json:"playlistUrl"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&sessResp); err != nil {
+		t.Fatal(err)
+	}
+	if sessResp.PlaylistURL == "" {
+		t.Fatal("empty playlistUrl")
+	}
+	rr = doJSON(t, h, "GET", sessResp.PlaylistURL, nil, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin preview playlist status=%d body=%q", rr.Code, rr.Body.String())
+	}
+
+	// Viewer still gets 404 for the same disabled channel.
+	rr = doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{
+		"username": "viewer", "password": "viewerpass",
+	}, nil)
+	viewerTok := decodeLogin(t, rr)
+	rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+		"channelId": chID,
+		"caps": map[string]any{
+			"videoCodecs": []string{"h264"},
+			"audioCodecs": []string{"aac"},
+		},
+	}, map[string]string{"Authorization": "Bearer " + viewerTok.AccessToken})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("viewer disabled status=%d body=%q, want 404", rr.Code, rr.Body.String())
+	}
 }
 
 func TestE2EStreamLifecycle(t *testing.T) {
