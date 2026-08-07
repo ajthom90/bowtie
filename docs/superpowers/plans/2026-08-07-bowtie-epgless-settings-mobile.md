@@ -146,8 +146,8 @@ Approach (CSS-driven): tables get `data-label` on cells; `@media (max-width: 640
 - Modify: `docs/deploy/truenas.md`, `deploy/docker-compose.yml` comments, `README.md` (settings now in Admin → Settings; env keys = first-boot seeds), Create `CHANGELOG.md` (v0.4.0 entry incl. the seeds-not-overrides breaking note), `ios/App/iOS/ChannelListView.swift` + `ios/App/tvOS/ChannelRailView.swift` ("Nothing on now" → "No guide data"), plan checkboxes/PROGRESS.md
 - Verification adds: `cd ios && xcodegen generate && swift test --package-path BowtieKit` + iOS sim test suite.
 
-- [ ] **Step 1:** Docs + copy changes; full multi-platform verification (server, web, ios tests; android/roku untouched).
-- [ ] **Step 2:** Commit `docs: settings control plane docs; ios guide copy alignment; v0.4.0 changelog`
+- [x] **Step 1:** Docs + copy changes; full multi-platform verification (server, web, ios tests; android/roku untouched).
+- [x] **Step 2:** Commit `docs: settings control plane docs; ios guide copy alignment; v0.4.0 changelog`
 - [ ] **Step 3 (orchestrator):** tag v0.4.0 → release watch → asset check.
 
 ## Post-plan notes

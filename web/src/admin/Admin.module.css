@@ -469,6 +469,22 @@
   width: 100%;
 }
 
+/* Save row sits under fields at the bottom of each Settings section card */
+.settingsFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.settingsSave {
+  min-width: 5.5rem;
+}
+
 /* —— Mobile (≤640px) —— */
 @media (max-width: 640px) {
   .toolbar {
@@ -540,6 +556,15 @@
 
   .settingsFields {
     grid-template-columns: 1fr;
+  }
+
+  .settingsFooter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settingsFooter .settingsSave {
+    width: 100%;
   }
 
   .sectionHead {

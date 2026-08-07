@@ -5,6 +5,11 @@
 #
 # Image is published by the release workflow as ghcr.io/ajthom90/bowtie:latest.
 # To build from a local checkout instead, uncomment the `build:` block.
+#
+# Product settings (XMLTV / Schedules Direct / encoder / HEVC) are configured in
+# Admin → Settings (DB-backed, restart-free). Env and config.yaml keys for those
+# are FIRST-BOOT SEEDS only — once present in the DB, UI wins and survives
+# restarts. Infra-only keys still apply every start (data dir, devices, listen).
 
 services:
   bowtie:
@@ -32,14 +37,15 @@ services:
     #   (a) set network_mode: host (comment ports: when you do — host mode
     #       publishes 8400 on the host directly), or
     #   (b) leave bridge mode and add devices by IP via Admin → Tuners or
-    #       BOWTIE_DEVICES / config.yaml `devices:`.
+    #       BOWTIE_DEVICES (first-boot / device-table seed).
     # network_mode: host
     restart: unless-stopped
     environment:
-      # Optional overrides (env wins over /data/config.yaml):
-      # BOWTIE_ENCODER: auto   # auto|qsv|vaapi|nvenc|software
-      # BOWTIE_DEVICES: 192.168.1.50
+      # Infra (always honored):
       BOWTIE_DATA_DIR: /data
+      # BOWTIE_DEVICES: 192.168.1.50   # optional tuner IP seed
+      # Product settings — first-boot seeds only (Admin → Settings is control plane):
+      # BOWTIE_ENCODER: auto          # auto|qsv|vaapi|nvenc|software|videotoolbox
 
 volumes:
   bowtie-data:

@@ -152,16 +152,6 @@ export function Settings() {
       <form className={styles.settingsCard} onSubmit={onXmltvSubmit}>
         <div className={styles.sectionHead}>
           <h3 className={styles.cardTitle}>XMLTV</h3>
-          <div className={styles.actions}>
-            {saved === 'xmltv' ? <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span> : null}
-            <button
-              type="submit"
-              className={`${styles.btn} ${styles.btnPrimary}`}
-              disabled={saving === 'xmltv'}
-            >
-              {saving === 'xmltv' ? 'Saving…' : 'Save'}
-            </button>
-          </div>
         </div>
         <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
           Leave source empty to disable XMLTV. Otherwise use an http(s) URL or absolute path.
@@ -198,24 +188,22 @@ export function Settings() {
             />
           </label>
         </div>
+        <div className={styles.settingsFooter}>
+          {saved === 'xmltv' ? <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span> : null}
+          <button
+            type="submit"
+            className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+            disabled={saving === 'xmltv'}
+          >
+            {saving === 'xmltv' ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </form>
 
       {/* Schedules Direct */}
       <form className={styles.settingsCard} onSubmit={onSdSubmit}>
         <div className={styles.sectionHead}>
           <h3 className={styles.cardTitle}>Schedules Direct</h3>
-          <div className={styles.actions}>
-            {saved === 'schedulesDirect' ? (
-              <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
-            ) : null}
-            <button
-              type="submit"
-              className={`${styles.btn} ${styles.btnPrimary}`}
-              disabled={saving === 'schedulesDirect'}
-            >
-              {saving === 'schedulesDirect' ? 'Saving…' : 'Save'}
-            </button>
-          </div>
         </div>
         <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
           Clear username and save to remove Schedules Direct credentials and lineup.
@@ -319,24 +307,24 @@ export function Settings() {
             {lineups.length} lineup{lineups.length === 1 ? '' : 's'} loaded.
           </p>
         ) : null}
+        <div className={styles.settingsFooter}>
+          {saved === 'schedulesDirect' ? (
+            <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
+          ) : null}
+          <button
+            type="submit"
+            className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+            disabled={saving === 'schedulesDirect'}
+          >
+            {saving === 'schedulesDirect' ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </form>
 
       {/* Transcode */}
       <form className={styles.settingsCard} onSubmit={onTranscodeSubmit}>
         <div className={styles.sectionHead}>
           <h3 className={styles.cardTitle}>Transcode</h3>
-          <div className={styles.actions}>
-            {saved === 'transcode' ? (
-              <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
-            ) : null}
-            <button
-              type="submit"
-              className={`${styles.btn} ${styles.btnPrimary}`}
-              disabled={saving === 'transcode'}
-            >
-              {saving === 'transcode' ? 'Saving…' : 'Save'}
-            </button>
-          </div>
         </div>
         <div className={styles.settingsFields}>
           <label className={styles.label}>
@@ -379,6 +367,18 @@ export function Settings() {
             />
             Allow HEVC
           </label>
+        </div>
+        <div className={styles.settingsFooter}>
+          {saved === 'transcode' ? (
+            <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
+          ) : null}
+          <button
+            type="submit"
+            className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+            disabled={saving === 'transcode'}
+          >
+            {saving === 'transcode' ? 'Saving…' : 'Save'}
+          </button>
         </div>
       </form>
     </div>

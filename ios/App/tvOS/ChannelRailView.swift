@@ -276,7 +276,7 @@ private struct RailRowView: View {
                         .frame(width: 120, height: 6)
                         .accessibilityHidden(true)
                     } else {
-                        Text("Nothing on now")
+                        Text("No guide data")
                             .font(Theme.body(20))
                             .foregroundStyle(Theme.dim)
                             .lineLimit(1)

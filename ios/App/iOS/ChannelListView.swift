@@ -293,7 +293,7 @@ private struct ChannelRowView: View {
                             .frame(maxWidth: 180)
                     }
                 } else {
-                    Text("Nothing on now")
+                    Text("No guide data")
                         .font(Theme.body(14))
                         .foregroundStyle(Theme.dim)
                         .lineLimit(1)

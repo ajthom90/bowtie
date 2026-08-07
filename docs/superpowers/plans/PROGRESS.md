@@ -990,3 +990,53 @@ WEB_OK
 
 - Orchestrator Playwright gate (390×844 + 1280×800) is post-commit Step 3 — not run in this worker session.
 - Selectors/aria labels kept stable (`aria-label="Quality"`, Preview, admin nav labels).
+
+## v0.4.0 Task 7
+
+**Date:** 2026-08-07
+
+### Built
+
+- Docs: `docs/deploy/truenas.md`, `deploy/docker-compose.yml` comments, `README.md` — product settings (XMLTV/SD/encoder/HEVC) in **Admin → Settings**; env/yaml for those keys are **first-boot seeds only** (Compatibility obligations).
+- `CHANGELOG.md` v0.4.0: EPG-less watching, Settings control plane, mobile web, seeds-not-overrides breaking-ish note.
+- iOS copy: "Nothing on now" → "No guide data" in `ChannelListView.swift` + `ChannelRailView.swift`.
+- Mobile polish: Settings section Save buttons moved below fields; full-width under 640px (`.settingsFooter` / `.settingsSave`).
+
+### Verification (evidence)
+
+```
+$ cd server && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... && golangci-lint run && echo SERVER_OK
+ok  	github.com/ajthom90/bowtie/server/cmd/bowtie
+ok  	github.com/ajthom90/bowtie/server/internal/api
+ok  	github.com/ajthom90/bowtie/server/internal/auth
+ok  	github.com/ajthom90/bowtie/server/internal/config
+ok  	github.com/ajthom90/bowtie/server/internal/epg
+ok  	github.com/ajthom90/bowtie/server/internal/epg/sd
+ok  	github.com/ajthom90/bowtie/server/internal/epg/xmltv
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr
+ok  	github.com/ajthom90/bowtie/server/internal/hdhr/hdhrfake
+ok  	github.com/ajthom90/bowtie/server/internal/settings
+ok  	github.com/ajthom90/bowtie/server/internal/store
+ok  	github.com/ajthom90/bowtie/server/internal/stream
+ok  	github.com/ajthom90/bowtie/server/internal/transcode
+ok  	github.com/ajthom90/bowtie/server/internal/tuner
+ok  	github.com/ajthom90/bowtie/server/internal/web
+0 issues.
+SERVER_OK
+
+$ cd ../web && npx tsc --noEmit && npx vitest run && npm run build && echo WEB_OK
+# vitest: 56 passed (settingsModel 14, guideModel 18, adminModel 13, caps 7, client 4)
+WEB_OK
+
+$ cd ../ios && xcodegen generate && swift test --package-path BowtieKit 2>&1 | grep -E "Executed [0-9]+ tests"
+	 Executed 55 tests, with 0 failures (0 unexpected) in 0.089 (0.094) seconds
+
+$ UDID=$(xcrun simctl list devices available -j | python3 -c "…") \
+  && xcodebuild -project Bowtie.xcodeproj -scheme Bowtie -destination "id=$UDID" test 2>&1 \
+  | grep -E "TEST SUCCEEDED|TEST FAILED"
+** TEST SUCCEEDED **
+```
+
+### Notes
+
+- **v0.4.0 cycle complete** (Tasks 1–7 implemented on main). Orchestrator owns tag `v0.4.0` + release watch (Task 7 Step 3). No tags from this worker.

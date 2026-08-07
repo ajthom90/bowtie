@@ -12,7 +12,8 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 - Serves a TV guide (XMLTV and/or Schedules Direct)
 - Lets an admin manage users, devices, channels, and active sessions
 
-**Project status:** v0.1.0 series — Phase 1 (server + web). Client apps (iOS/tvOS, Android, Roku, Fire TV) are planned for later phases.
+**Project status:** v0.4.0 — server + web (EPG-less watching, Admin → Settings,
+mobile-friendly UI) plus iOS/tvOS, Android/Fire TV, and Roku clients.
 
 ---
 
@@ -98,8 +99,11 @@ Then:
 1. Open **http://localhost:8400** (or `http://<host>:8400` on your LAN).
 2. Log in as `admin` and **change the password** (Profile / password API).
 3. **Admin → Tuners** — add your HDHomeRun by IP if it is not discovered automatically.
-4. **Admin → Channels** — enable the channels you want to stream.
-5. Open the **guide**, pick a channel, and watch.
+4. **Admin → Channels** — enable the channels you want to stream (watch works
+   without guide data; admins can Preview disabled channels).
+5. **Admin → Settings** — optional XMLTV / Schedules Direct, encoder, and HEVC
+   (restart-free; see [Configuration](#configuration)).
+6. Open the **guide**, pick a channel, and watch.
 
 Persistent data lives under `--data-dir` / `BOWTIE_DATA_DIR` (Docker: the `bowtie-data` volume at `/data`). HLS segments use a tmpfs mount in Compose so they do not wear the volume.
 
@@ -117,8 +121,10 @@ Bowtie shells out to FFmpeg (never links it). Encoder selection defaults to `aut
 | **NVENC**      | NVIDIA GPUs                      | Community-tested  | Needs host NVIDIA runtime / drivers        |
 | **software**   | Anywhere                         | Fallback          | `libx264` when no hardware encoder works   |
 
-Override with `BOWTIE_ENCODER` or `encoder:` in `<dataDir>/config.yaml`
-(`auto` \| `videotoolbox` \| `qsv` \| `vaapi` \| `nvenc` \| `software`).
+**Preferred:** set encoder and Allow HEVC in **Admin → Settings → Transcode**
+(restart-free). `BOWTIE_ENCODER` / `encoder:` in `<dataDir>/config.yaml` are
+**first-boot seeds only** once the setting exists in the DB (`auto` \|
+`videotoolbox` \| `qsv` \| `vaapi` \| `nvenc` \| `software`).
 
 The Docker Compose file passes `/dev/dri` into the container for QSV/VAAPI on Intel NUCs and similar hosts.
 
@@ -126,10 +132,17 @@ The Docker Compose file passes `/dev/dri` into the container for QSV/VAAPI on In
 
 ## EPG setup
 
-Guide data is optional but recommended. Configure via `<dataDir>/config.yaml`
-(inside Docker: `/data/config.yaml` on the volume).
+Guide data is **optional** — channels are fully watchable with no EPG configured.
 
-### XMLTV
+**Preferred:** configure XMLTV and/or Schedules Direct in **Admin → Settings**
+(lineup picker, clear credentials by emptying username). Changes apply without
+restart; **Admin → EPG** is status + Refresh only. Map each enabled channel to
+an EPG channel ID under **Admin → Channels**.
+
+Env / `config.yaml` EPG keys (below) are **first-boot seeds only** — after the
+DB has those keys, the UI is the control plane (see [Configuration](#configuration)).
+
+### XMLTV (seed / optional file)
 
 ```yaml
 xmltv:
@@ -137,7 +150,7 @@ xmltv:
   refreshHours: 12
 ```
 
-### Schedules Direct
+### Schedules Direct (seed / optional file)
 
 ```yaml
 schedulesDirect:
@@ -146,15 +159,13 @@ schedulesDirect:
   lineupId: "USA-OTA-90210"                 # your SD lineup ID
 ```
 
-After config is in place, restart Bowtie (or use **Admin → EPG → Refresh**). Map each enabled channel to an EPG channel ID under **Admin → Channels**.
-
 ---
 
 ## Remote access
 
 Bowtie itself speaks plain HTTP on port **8400**. For HTTPS and off-LAN access, see:
 
-**[docs/deploy/remote-access.md) · TrueNAS: [docs/deploy/truenas.md](docs/deploy/truenas.md](docs/deploy/remote-access.md)**
+**[docs/deploy/remote-access.md](docs/deploy/remote-access.md)** · TrueNAS: **[docs/deploy/truenas.md](docs/deploy/truenas.md)**
 
 Copy-paste examples for:
 
@@ -173,8 +184,17 @@ add devices by IP.
 | Source | Keys |
 |--------|------|
 | Flag / env | `--data-dir` / `BOWTIE_DATA_DIR` (default `./data`, Docker `/data`) |
-| Env (override file) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_ENCODER`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES` |
+| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES` |
+| Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
+| Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC (DB-backed) |
 | File | `<dataDir>/config.yaml` |
+
+**Seeds vs overrides:** product keys (EPG sources, encoder, HEVC) are
+presence-seeded into the SQLite `settings` table on first boot (or first
+upgrade that introduces a key). After a key exists — including empty string —
+Admin → Settings wins; env/yaml for those keys is **not** a live override.
+Infra keys (listen, data dir, segments, FFmpeg path, device IP list) still
+apply every process start.
 
 Default listen address: `:8400`. Health check: `GET /healthz` → `ok`.
 

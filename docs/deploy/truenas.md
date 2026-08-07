@@ -18,7 +18,7 @@ Apps → Discover Apps → ⋮ (top-right) → **Install via YAML** → name it
 ```yaml
 services:
   bowtie:
-    image: ghcr.io/ajthom90/bowtie:0.3.0
+    image: ghcr.io/ajthom90/bowtie:0.4.0
     container_name: bowtie
     restart: unless-stopped
     ports:
@@ -27,10 +27,11 @@ services:
       BOWTIE_DATA_DIR: /data
       # Bridge networking cannot receive HDHomeRun's UDP discovery broadcasts,
       # so list the tuner IP(s) here (comma-separated) — CHANGE-ME:
+      # First-boot seed for the device table (Admin → Tuners can also add IPs).
       BOWTIE_DEVICES: "192.168.1.50"
-      # Encoder is auto-probed (qsv → vaapi → software on Intel). Force only
-      # if the probe picks wrong:
-      # BOWTIE_ENCODER: qsv
+      # Product settings (EPG sources, encoder, HEVC) live in Admin → Settings.
+      # BOWTIE_ENCODER / yaml EPG+transcode keys are first-boot seeds only —
+      # after the DB has those keys, UI changes win and survive restarts.
     volumes:
       # Persistent state (SQLite, config, secrets) — CHANGE-ME to your dataset:
       - /mnt/tank/apps/bowtie:/data
@@ -57,14 +58,20 @@ Apps → bowtie → Workloads → the container's ⋮ → Logs — look for
 ## 4. First-run setup
 
 1. Open `http://<truenas-ip>:8400`, sign in as `admin`, change the password
-   (Settings).
+   (Profile / password API).
 2. Admin → Tuners: your HDHomeRun should already be listed (from
    `BOWTIE_DEVICES`); if not, add it by IP. Sync lineups.
-3. Admin → Channels: enable the channels your family should see.
-4. Admin → Transcode: confirm the probe lists `qsv` and/or `vaapi` with an
-   FFmpeg version — that's hardware transcoding live. If only `software`
-   appears, see the GPU note below.
-5. Guide → pick a channel → watch. The player's stats overlay (and Admin →
+3. Admin → Channels: enable the channels your family should see. You can watch
+   immediately — guide data is optional. Admins can ▶ Preview a disabled
+   channel before enabling it.
+4. Admin → Settings: configure XMLTV and/or Schedules Direct (with lineup
+   picker), encoder, and HEVC. Changes apply without restart. Admin → EPG
+   shows status + Refresh only.
+5. Admin → Transcode (status page): confirm the probe lists `qsv` and/or
+   `vaapi` with an FFmpeg version — that's hardware transcoding live. If only
+   `software` appears, see the GPU note below. Prefer **Admin → Settings →
+   Transcode** to pick encoder / Allow HEVC.
+6. Guide → pick a channel → watch. The player's stats overlay (and Admin →
    Sessions) shows which encoder backend the session negotiated.
 
 ## GPU notes (Intel iGPU)
@@ -89,3 +96,9 @@ Apps → bowtie → Workloads → the container's ⋮ → Logs — look for
 
 Edit the app's YAML, bump the image tag (e.g. `:0.4.0`), save. State lives in
 your dataset; segments are disposable.
+
+**v0.4.0 note:** On first boot after upgrade, EPG/transcode keys are
+presence-seeded from env/yaml into the DB (defaults: encoder `auto`,
+refreshHours `12`, allowHevc `false`). After that, **Admin → Settings** is the
+control plane — changing `BOWTIE_ENCODER` or yaml EPG/transcode keys will not
+override values already stored.
