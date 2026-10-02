@@ -13,4 +13,3 @@ type Clock struct {
 func RealClock() Clock {
 	return Clock{Now: time.Now, After: time.After}
 }
-
