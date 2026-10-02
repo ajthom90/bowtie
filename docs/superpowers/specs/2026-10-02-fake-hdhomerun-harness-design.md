@@ -245,6 +245,20 @@ Implemented **after** §A–C, each change preceded by a failing scenario.
    starves. Plan 1 adds a `device-silent-stall` scenario with
    `expect.maxGapSeconds` marked `xfail`; Plan 2 decides the fix.
 
+6. **Plan 1 findings** (2026-10-02, harness runs):
+   - `baseline-1080i` reproduces the restart with **no injected fault**: on a
+     loaded host FFmpeg falls behind during 1080i ramp-up, the sub channel
+     (64 × 64 KiB ≈ 4 MiB, under 2 s at 19 Mbps) fills, the 2 s stall timer
+     force-closes the sub and Bowtie restarts FFmpeg (~1 in 3 runs alone).
+     Marked `flaky:` until Plan 2; evidence for item 4.
+   - A lost RST also leaves ingest half-open: macOS drops a RST that arrives
+     with data in flight (RFC 5961 challenge-ACK limits) about a third of the
+     time, so item 5's read deadline covers real resets too, not just silent
+     devices.
+   - Also pinned as `xfail` pipeline tests: device dial has no timeout; the
+     first device dial is bound to the `POST /sessions` request context (the
+     device sees a dial, an immediate client-gone, and a redial 1 s later).
+
 ## E. Plan review amendments (2026-10-02)
 
 - Work is split into three plans: **Plan 1** harness core (§A1–A4, §C);

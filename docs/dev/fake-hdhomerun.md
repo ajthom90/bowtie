@@ -61,6 +61,13 @@ Faults: `signal` (strength/quality/symbol), `stall` (for, burst), `drop`
 (to), `busy`, `hang`. Scope: `channel` (default; everyone on the channel, now
 and later), `connections` (only connections open when it fires), `device`.
 
+`drop` with `mode: reset` stops writing and waits up to 1s for the client to
+take in-flight data before sending the RST. A RST that lands while data is
+still in flight carries a sequence number the client hasn't reached, and the
+kernel may silently drop it (macOS lost about a third in testing), leaving
+the client half-open instead of reset. If the client isn't reading, the RST
+can still be lost, as it can on a real network.
+
 **`xfail: "<reason>"`** marks expectations that fail today because of a known
 Bowtie gap. The test then *requires* them to fail, so whoever fixes the gap
 must delete the marker. Pipeline tests use the same idea via `xfail(t, …)`.

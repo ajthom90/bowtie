@@ -543,7 +543,19 @@ func (f *Fake) isClosed() bool {
 	}
 }
 
-// abort closes the underlying TCP connection with RST.
+// Bounds on how long abort waits for the client to take in-flight data.
+const (
+	abortDrainMax   = time.Second
+	abortDrainPause = 200 * time.Millisecond // when the queue can't be read
+)
+
+// abort closes the underlying TCP connection with RST. A RST sent while data
+// is still in flight carries a sequence number the client hasn't reached, and
+// the kernel may drop it (RFC 5961; macOS loses about a third of them), which
+// leaves the client half-open instead of reset. So abort first stops writing
+// and waits, up to abortDrainMax, for the send queue to empty. If the client
+// isn't reading, the RST goes out anyway and may still be lost, just as on a
+// real network.
 func abort(w http.ResponseWriter) error {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
@@ -558,11 +570,36 @@ func abort(w http.ResponseWriter) error {
 		_ = c.Close()
 		return fmt.Errorf("not TCP: %T", c)
 	}
+	drainSendQueue(tc)
 	if err := tc.SetLinger(0); err != nil {
 		_ = c.Close()
 		return fmt.Errorf("linger: %w", err)
 	}
 	return c.Close()
+}
+
+// drainSendQueue waits until tc's send buffer is empty or abortDrainMax passes.
+func drainSendQueue(tc *net.TCPConn) {
+	rc, err := tc.SyscallConn()
+	if err != nil {
+		return
+	}
+	deadline := time.Now().Add(abortDrainMax)
+	for {
+		var n int
+		var known bool
+		if err := rc.Control(func(fd uintptr) { n, known = sendQueue(fd) }); err != nil {
+			return
+		}
+		if !known {
+			time.Sleep(abortDrainPause)
+			return
+		}
+		if n == 0 || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func hostOf(addr string) string {
