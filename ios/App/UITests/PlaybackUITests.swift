@@ -71,6 +71,22 @@ final class PlaybackUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3), "not on the player screen; screen shows: \(shown)")
     }
 
+    func testSwitchToSavedServerKeepsLogin() throws {
+        try testPlayChannel() // ensures we are signed in and the server is saved
+        app.buttons["Done"].tap()
+
+        app.buttons["Settings"].tap()
+        app.buttons["Change server"].tap()
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Saved server")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), "saved server not listed")
+        attach("saved-servers")
+        saved.tap()
+
+        XCTAssertTrue(app.navigationBars["Channels"].waitForExistence(timeout: 20),
+                      "switching to a saved server should not ask to sign in again")
+        XCTAssertFalse(app.textFields["Username"].exists)
+    }
+
     private func waitForAny(_ elements: [XCUIElement], timeout: TimeInterval) -> XCUIElement? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
