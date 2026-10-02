@@ -39,7 +39,9 @@ type StartError struct {
 	Body   string
 }
 
-func (e *StartError) Error() string { return fmt.Sprintf("start session: HTTP %d: %s", e.Status, e.Body) }
+func (e *StartError) Error() string {
+	return fmt.Sprintf("start session: HTTP %d: %s", e.Status, e.Body)
+}
 
 // Report is the viewer experience of one run.
 type Report struct {
