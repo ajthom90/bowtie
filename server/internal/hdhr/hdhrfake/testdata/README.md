@@ -14,3 +14,7 @@ ffmpeg -f lavfi -i "testsrc2=duration=2:size=720x480:rate=29.97" \
 ```
 
 Do not regenerate in CI; the binary is committed so tests run without FFmpeg.
+
+Larger, broadcast-format sources (480i / 720p / 1080i MPEG-2 + AC-3) are
+generated at test time by `internal/hdhr/hdhrfake/synth` (requires FFmpeg) and
+are never committed. Real captures from a device are local-only (gitignored).

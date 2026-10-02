@@ -26,10 +26,10 @@ const (
 type Action int
 
 const (
-	Emit Action = iota // write Decision.Packets
-	Skip               // drop this packet silently
-	Hold               // stall: withhold (Burst: deliver later) or discard
-	Close              // end the connection (Reset: abortive)
+	Emit  Action = iota // write Decision.Packets
+	Skip                // drop this packet silently
+	Hold                // stall: withhold (Burst: deliver later) or discard
+	Close               // end the connection (Reset: abortive)
 )
 
 // Decision is the engine's verdict on one packet.
