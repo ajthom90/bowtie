@@ -37,6 +37,17 @@ func newPipeline(t *testing.T, start bool) *pipeline {
 		Runner: count,
 	})
 	pl := &pipeline{h: h, stub: stub, gate: gate, count: count}
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, e := range h.Fake.Events() {
+			t.Logf("fake: %s %s %s %s %s", e.At.Format("15:04:05.000"), e.Kind, e.Channel, e.Conn, e.Detail)
+		}
+		for _, d := range h.DialLog() {
+			t.Logf("ingest: %s", d)
+		}
+	})
 	if !start {
 		return pl
 	}

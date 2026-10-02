@@ -63,7 +63,8 @@ type Harness struct {
 	dials     []string
 }
 
-// DialLog returns every device dial Bowtie's ingest made, with outcome.
+// DialLog returns every device dial Bowtie's ingest made, with outcome, and
+// how each stream ended.
 func (h *Harness) DialLog() []string {
 	h.dialMu.Lock()
 	defer h.dialMu.Unlock()
@@ -106,15 +107,25 @@ func New(t testing.TB, o Options) *Harness {
 		h.dialMu.Lock()
 		h.dials = append(h.dials, fmt.Sprintf("%s dial %s → status=%d err=%v (%v)", start.Format("15:04:05.000"), u, status, err, time.Since(start).Round(time.Millisecond)))
 		h.dialMu.Unlock()
+		if body != nil {
+			body = &loggedBody{ReadCloser: body, h: h}
+		}
 		return body, status, err
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
 		Cfg: cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	go mgr.Run(ctx)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		mgr.Run(ctx)
+	}()
 	t.Cleanup(func() {
 		cancel()
+		// Run's shutdown waits for transcoder processes; without this a
+		// process can still be writing segments when TempDir is removed.
+		<-runDone
 		ingest.Shutdown()
 	})
 
@@ -228,4 +239,34 @@ func (h *Harness) Sessions(t testing.TB) []stream.SessionInfo {
 	var out []stream.SessionInfo
 	h.call(t, http.MethodGet, "/api/v1/admin/sessions", nil, &out)
 	return out
+}
+
+// loggedBody records how a device stream ended in the dial log.
+type loggedBody struct {
+	io.ReadCloser
+	h     *Harness
+	bytes int64
+	once  sync.Once
+}
+
+func (b *loggedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.bytes += int64(n)
+	if err != nil {
+		b.note(fmt.Sprintf("read ended after %d bytes: %v", b.bytes, err))
+	}
+	return n, err
+}
+
+func (b *loggedBody) Close() error {
+	b.note("closed by ingest")
+	return b.ReadCloser.Close()
+}
+
+func (b *loggedBody) note(s string) {
+	b.once.Do(func() {
+		b.h.dialMu.Lock()
+		b.h.dials = append(b.h.dials, time.Now().Format("15:04:05.000")+" "+s)
+		b.h.dialMu.Unlock()
+	})
 }
