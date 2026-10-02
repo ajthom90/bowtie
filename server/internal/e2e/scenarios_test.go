@@ -175,6 +175,12 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 		t.Logf("xfail (%s): %s", sc.Expect.XFail, strings.Join(violations, "; "))
 		return
 	}
+	if sc.Expect.Flaky != "" {
+		if len(violations) > 0 {
+			t.Logf("flaky (%s): %s", sc.Expect.Flaky, strings.Join(violations, "; "))
+		}
+		return
+	}
 	for _, v := range violations {
 		t.Error(v)
 	}

@@ -55,7 +55,7 @@ type Observed struct {
 	TunersBusy        bool
 }
 
-// Check returns one message per unmet expectation (XFail is not consulted).
+// Check returns one message per unmet expectation (XFail and Flaky are not consulted).
 func (e *Expect) Check(o Observed) []string {
 	var v []string
 	if e.SequenceMonotonic != nil && *e.SequenceMonotonic != o.SequenceMonotonic {

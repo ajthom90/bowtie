@@ -58,6 +58,9 @@ type Expect struct {
 	// XFail marks expectations known to fail today; the test then requires
 	// them to still fail, so a fix forces removing the marker.
 	XFail string `yaml:"xfail"`
+	// Flaky marks expectations that fail intermittently because of a known
+	// gap; violations are logged but never fail the test, in either direction.
+	Flaky string `yaml:"flaky"`
 }
 
 // Load reads and parses a scenario file.
@@ -124,8 +127,13 @@ func (s *Scenario) validate() error {
 			return fmt.Errorf("scenario %s: slowConsumer window %v+%v outside 0..%v", s.Name, w.At, w.For, s.Duration)
 		}
 	}
-	if e := s.Expect; e != nil && e.XFail != "" && e.empty() {
-		return fmt.Errorf("scenario %s: xfail needs at least one expectation", s.Name)
+	if e := s.Expect; e != nil {
+		if e.XFail != "" && e.Flaky != "" {
+			return fmt.Errorf("scenario %s: xfail and flaky are mutually exclusive", s.Name)
+		}
+		if (e.XFail != "" || e.Flaky != "") && e.empty() {
+			return fmt.Errorf("scenario %s: xfail/flaky needs at least one expectation", s.Name)
+		}
 	}
 	return nil
 }

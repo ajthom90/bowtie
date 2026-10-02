@@ -22,7 +22,7 @@ busy and hung devices. Design: `docs/superpowers/specs/2026-10-02-fake-hdhomerun
 ```sh
 cd server
 go test ./internal/e2e/                                              # pipeline tests, ~25s
-go test -tags ffmpeg -run TestScenarios -parallel 10 -v ./internal/e2e/  # real FFmpeg, ~50s
+go test -tags ffmpeg -run TestScenarios -parallel 3 -v ./internal/e2e/   # real FFmpeg, ~2 min
 go test -tags ffmpeg,soak -run TestScenarios ./internal/e2e/         # include soak scenarios
 BOWTIE_FAKE_SOURCE=~/captures/fox9.ts go test -tags ffmpeg -run TestScenarios ./internal/e2e/
 ```
@@ -64,6 +64,10 @@ and later), `connections` (only connections open when it fires), `device`.
 **`xfail: "<reason>"`** marks expectations that fail today because of a known
 Bowtie gap. The test then *requires* them to fail, so whoever fixes the gap
 must delete the marker. Pipeline tests use the same idea via `xfail(t, …)`.
+
+**`flaky: "<reason>"`** is the non-strict form for a known gap that only shows
+up some of the time (usually under CPU load): violations are logged but the
+scenario never fails. Prefer `xfail` whenever the failure is deterministic.
 
 ## Captures
 

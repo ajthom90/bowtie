@@ -81,6 +81,8 @@ func TestParseRejects(t *testing.T) {
 		"open overlap":    "name: x\nduration: 30s\ntimeline:\n  - {at: 1s, fault: stall}\n  - {at: 20s, fault: stall, for: 2s}\n",
 		"slow past end":   "name: x\nduration: 10s\nbowtie:\n  slowConsumer: {at: 8s, for: 5s}\n",
 		"xfail alone":     "name: x\nduration: 5s\nexpect:\n  xfail: why\n",
+		"flaky alone":     "name: x\nduration: 5s\nexpect:\n  flaky: why\n",
+		"flaky and xfail": "name: x\nduration: 5s\nexpect:\n  maxGapSeconds: 5\n  xfail: a\n  flaky: b\n",
 		"bad scope":       "name: x\nduration: 5s\ntimeline:\n  - {at: 1s, fault: stall, scope: planet}\n",
 		"step field typo": "name: x\nduration: 5s\ntimeline:\n  - {at: 1s, fault: stall, fro: 2s}\n",
 	}
@@ -88,6 +90,16 @@ func TestParseRejects(t *testing.T) {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestParseFlaky(t *testing.T) {
+	s, err := Parse([]byte("name: x\nduration: 5s\nexpect:\n  maxGapSeconds: 5\n  flaky: ramp-up\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Expect.Flaky != "ramp-up" {
+		t.Fatalf("Flaky = %q", s.Expect.Flaky)
 	}
 }
 
