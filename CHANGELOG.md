@@ -5,6 +5,15 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] — 2026-08-07
+
+### Fixed
+
+- Docker image now includes the Intel oneVPL GPU runtime (`libmfx-gen1.2` +
+  `libvpl2`), enabling the `qsv` encoder path on Gen12+ iGPUs (12th/13th-gen
+  Core, e.g. i3-13100). Previously only `vaapi` probed on those chips — same
+  silicon, but now both API paths are available.
+
 ## [0.5.0] — 2026-08-07
 
 ### Added

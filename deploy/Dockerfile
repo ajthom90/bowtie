@@ -54,7 +54,13 @@ RUN apt-get update \
       mesa-va-drivers \
       tini \
  && if [ "$TARGETARCH" = "amd64" ]; then \
-      apt-get install -y --no-install-recommends intel-media-va-driver-non-free; \
+      # iHD driver for VAAPI + oneVPL GPU runtime so FFmpeg's QSV path works on
+      # Gen12+ iGPUs (Alder/Raptor Lake etc.) — without libmfx-gen1.2 the QSV
+      # probe fails on those chips even though the hardware is present.
+      apt-get install -y --no-install-recommends \
+        intel-media-va-driver-non-free \
+        libmfx-gen1.2 \
+        libvpl2; \
     fi \
  && rm -rf /var/lib/apt/lists/*
 
