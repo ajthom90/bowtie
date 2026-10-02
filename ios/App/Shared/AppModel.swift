@@ -37,6 +37,7 @@ public final class AppModel {
             self.client = nil
             self.phase = .connect
         }
+        self.savedServers = store.savedServers()
     }
 
     /// Normalize + healthz-validate `rawURL`, persist server, advance to `.login`.
@@ -47,6 +48,7 @@ public final class AppModel {
         guard ok else { return false }
 
         store.save(server: url, refreshToken: nil)
+        savedServers = store.savedServers()
         client = BowtieClient(server: url, store: store, urlSession: urlSession)
         user = nil
         phase = .login
@@ -83,12 +85,36 @@ public final class AppModel {
         phase = .login
     }
 
-    /// Clears server + tokens and returns to Connect.
+    /// Returns to Connect. The current server stays saved, signed in, for
+    /// switching back.
     public func changeServer() {
         store.save(server: nil, refreshToken: nil)
         client = nil
         user = nil
         phase = .connect
+        savedServers = store.savedServers()
+    }
+
+    /// Servers the user has connected to, oldest first.
+    public private(set) var savedServers: [SavedServer] = []
+
+    /// Switch to a saved server: its saved login → `.checking` (call `start`),
+    /// otherwise `.login`.
+    public func selectServer(_ url: URL) {
+        store.selectServer(url)
+        client = BowtieClient(server: url, store: store, urlSession: urlSession)
+        user = nil
+        phase = store.loadRefreshToken() != nil ? .checking : .login
+    }
+
+    public func removeServer(_ url: URL) {
+        store.removeServer(url)
+        savedServers = store.savedServers()
+        if store.loadServer() == nil, phase != .connect {
+            client = nil
+            user = nil
+            phase = .connect
+        }
     }
 
     // MARK: - Private

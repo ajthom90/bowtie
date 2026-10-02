@@ -23,8 +23,12 @@ struct ConnectView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header
 
+                if !appModel.savedServers.isEmpty {
+                    savedServers
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Server address")
+                    Text(appModel.savedServers.isEmpty ? "Server address" : "Add a server")
                         .font(Theme.label())
                         .foregroundStyle(Theme.dim)
                         .accessibilityHidden(true)
@@ -84,7 +88,53 @@ struct ConnectView: View {
             .bowtieFocusSection()
         }
         .bowtieScreenBackground()
-        .onAppear { urlFocused = true }
+        .onAppear { urlFocused = appModel.savedServers.isEmpty }
+    }
+
+    /// Previously used servers; each keeps its own login. Long-press to remove.
+    private var savedServers: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Saved servers")
+                .font(Theme.label())
+                .foregroundStyle(Theme.dim)
+                .accessibilityHidden(true)
+
+            ForEach(appModel.savedServers) { server in
+                Button {
+                    appModel.selectServer(server.url)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(server.label)
+                                .font(Theme.label(17))
+                                .foregroundStyle(Theme.text)
+                            Text(server.url.absoluteString)
+                                .font(Theme.body(13))
+                                .foregroundStyle(Theme.dim)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(Theme.amber)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Theme.raised)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                }
+                .buttonStyle(BowtiePlainButtonStyle())
+                .contextMenu {
+                    Button(role: .destructive) {
+                        appModel.removeServer(server.url)
+                    } label: {
+                        Label("Remove", systemImage: "trash")
+                    }
+                }
+                .accessibilityLabel("Saved server \(server.label)")
+                .accessibilityHint("Connect to this server. Long-press to remove it.")
+            }
+        }
+        .bowtieFocusSection()
     }
 
     private var header: some View {
