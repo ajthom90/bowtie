@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 // HTTPDial is the production DialFunc: GET url and return the response body +
-// status. Callers (Attach) map status 503 → ErrTunersBusy.
+// status. A non-2xx response is an error (never a stream), classified by the
+// device's X-HDHomeRun-Error header: see DeviceError.
 func HTTPDial(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -22,12 +24,47 @@ func HTTPDial(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_ = resp.Body.Close()
+		return nil, resp.StatusCode, &DeviceError{Status: resp.StatusCode, Reason: resp.Header.Get("X-HDHomeRun-Error")}
+	}
 	return resp.Body, resp.StatusCode, nil
 }
 
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.
 var ErrTunersBusy = errors.New("all tuners in use")
+
+// ErrNoSignal is returned when the device tuned but could not deliver the
+// channel (HDHomeRun 806 Tune Failed / 807 No Video Data): weak or no signal.
+var ErrNoSignal = errors.New("no signal")
+
+// DeviceError is a non-2xx device response. Reason is the X-HDHomeRun-Error
+// header ("807 No Video Data"), empty when the device sent none.
+type DeviceError struct {
+	Status int
+	Reason string
+}
+
+func (e *DeviceError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("device returned HTTP %d: %s", e.Status, e.Reason)
+	}
+	return fmt.Sprintf("device returned HTTP %d", e.Status)
+}
+
+// Is classifies the error: 806/807 → ErrNoSignal; any other 503 (805 or no
+// header) → ErrTunersBusy.
+func (e *DeviceError) Is(target error) bool {
+	noSignal := strings.HasPrefix(e.Reason, "806") || strings.HasPrefix(e.Reason, "807")
+	switch target {
+	case ErrNoSignal:
+		return noSignal
+	case ErrTunersBusy:
+		return e.Status == http.StatusServiceUnavailable && !noSignal
+	}
+	return false
+}
 
 // DialFunc opens a device stream. It returns the body, the HTTP status code
 // (0 when not applicable), and an error. A 503 status maps to ErrTunersBusy.
@@ -269,17 +306,17 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 	}
 
 	body, status, err := c.im.dial(ctx, url)
-	if status == 503 {
-		if body != nil {
-			_ = body.Close()
-		}
-		return nil, fmt.Errorf("ingest dial: %w", ErrTunersBusy)
+	if err == nil && (status < 200 || status > 299) && status != 0 {
+		err = &DeviceError{Status: status}
 	}
 	if err != nil {
 		if body != nil {
 			_ = body.Close()
 		}
-		return nil, err
+		if status == http.StatusServiceUnavailable && !errors.Is(err, ErrNoSignal) && !errors.Is(err, ErrTunersBusy) {
+			return nil, fmt.Errorf("ingest dial: %w (%v)", ErrTunersBusy, err)
+		}
+		return nil, fmt.Errorf("ingest dial: %w", err)
 	}
 	if body == nil {
 		return nil, errors.New("ingest dial: nil body")
@@ -348,9 +385,12 @@ func (c *channelIngest) startTail() {
 	c.cancelTailLocked()
 	cancel := make(chan struct{})
 	c.tailCancel = cancel
+	// Arm the timer before spawning so the tail starts now, not whenever the
+	// goroutine is scheduled.
+	expired := c.im.after(ingestTailDuration)
 	go func() {
 		select {
-		case <-c.im.after(ingestTailDuration):
+		case <-expired:
 			c.mu.Lock()
 			if len(c.subs) == 0 && c.running && c.tailCancel == cancel {
 				c.teardownLocked()
@@ -593,9 +633,10 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 				cancel := make(chan struct{})
 				s.stallTimerCancel = cancel
 				sub := s
+				expired := c.im.after(ingestStallTimeout)
 				go func() {
 					select {
-					case <-c.im.after(ingestStallTimeout):
+					case <-expired:
 						c.mu.Lock()
 						still := sub.stalled && !sub.isClosed()
 						c.mu.Unlock()

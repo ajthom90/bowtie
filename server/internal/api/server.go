@@ -23,6 +23,8 @@ type Deps struct {
 	Tuners            *tuner.Manager // Task 7
 	EPG               *epg.Service   // Task 10
 	Probe             func() transcode.Capabilities // Task 11
+	// Version is the release version, served by GET /api/v1/version.
+	Version string
 	Streams           StreamController              // Task 15
 	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
 	// Settings is the DB-backed product settings provider (v0.4.0). Used for
@@ -71,6 +73,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 		mux.HandleFunc(pattern, h)
 	}
 
+	handleFunc("GET /api/v1/version", s.handleVersion)
 	handleFunc("POST /api/v1/auth/login", s.handleLogin)
 	handleFunc("POST /api/v1/auth/refresh", s.handleRefresh)
 	handleFunc("POST /api/v1/auth/logout", s.handleLogout)
@@ -142,4 +145,10 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
+}
+
+// handleVersion reports the running release so deployments can be checked
+// remotely. Public: it reveals nothing the startup log doesn't.
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": s.deps.Version})
 }

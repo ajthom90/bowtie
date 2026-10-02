@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -118,9 +119,22 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.Us
 		writeError(w, http.StatusNotFound, "channel not found")
 	case strings.Contains(msg, "negotiate:"):
 		writeError(w, http.StatusUnprocessableEntity, msg)
+	case errors.Is(err, stream.ErrNoSignal):
+		log.Printf("session start: user=%s: %v", user.Username, err)
+		writeError(w, http.StatusBadGateway, startErrorMessage("no signal on this channel", err, user))
 	default:
-		writeError(w, http.StatusInternalServerError, "failed to start session")
+		log.Printf("session start failed: user=%s: %v", user.Username, err)
+		writeError(w, http.StatusInternalServerError, startErrorMessage("failed to start session", err, user))
 	}
+}
+
+// startErrorMessage appends the underlying cause for admins, who can act on
+// it; viewers get the plain message.
+func startErrorMessage(msg string, err error, user store.User) string {
+	if user.Role != "admin" {
+		return msg
+	}
+	return msg + ": " + err.Error()
 }
 
 // enabledChannelIDs returns the set of currently enabled channel IDs (one store
