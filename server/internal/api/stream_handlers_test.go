@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1365,5 +1366,64 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	// sessions field present (may be empty — no bowtie sessions holding tuners).
 	if body.Sessions == nil {
 		t.Fatal("sessions field missing")
+	}
+}
+
+func TestCreateSessionStartErrors(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         error
+		status      int
+		viewerMsg   string // exact
+		adminSubstr string // admins also see the cause
+	}{
+		{
+			name:        "no signal",
+			err:         fmt.Errorf("ingest dial: %w", &stream.DeviceError{Status: 503, Reason: "807 No Video Data"}),
+			status:      http.StatusBadGateway,
+			viewerMsg:   "no signal on this channel",
+			adminSubstr: "807 No Video Data",
+		},
+		{
+			name:        "ffmpeg died",
+			err:         errors.New("ffmpeg exited before playlist ready: exit status 1"),
+			status:      http.StatusInternalServerError,
+			viewerMsg:   "failed to start session",
+			adminSubstr: "ffmpeg exited before playlist ready: exit status 1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ss := newStubStreams()
+			ss.startFn = func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
+				return stream.ViewerHandle{}, tc.err
+			}
+			h, st, _ := testAPIWithStreams(t, ss)
+			seedUser(t, st, "viewer1", "pass", "viewer")
+			seedUser(t, st, "admin1", "pass", "admin")
+			for _, who := range []string{"viewer1", "admin1"} {
+				rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": who, "password": "pass"}, nil)
+				authH := map[string]string{"Authorization": "Bearer " + decodeLogin(t, rr).AccessToken}
+				rr = doJSON(t, h, "POST", "/api/v1/sessions", map[string]any{
+					"channelId": 1,
+					"caps":      map[string]any{"videoCodecs": []string{"h264"}, "audioCodecs": []string{"aac"}},
+				}, authH)
+				if rr.Code != tc.status {
+					t.Fatalf("%s: status=%d body=%q", who, rr.Code, rr.Body.String())
+				}
+				var body struct {
+					Error string `json:"error"`
+				}
+				if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+					t.Fatalf("%s: decode: %v", who, err)
+				}
+				if who == "viewer1" && body.Error != tc.viewerMsg {
+					t.Errorf("viewer error=%q, want %q", body.Error, tc.viewerMsg)
+				}
+				if who == "admin1" && (!strings.HasPrefix(body.Error, tc.viewerMsg) || !strings.Contains(body.Error, tc.adminSubstr)) {
+					t.Errorf("admin error=%q, want %q plus %q", body.Error, tc.viewerMsg, tc.adminSubstr)
+				}
+			}
+		})
 	}
 }

@@ -5,6 +5,26 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] — 2026-10-02
+
+### Fixed
+
+- "Failed to start session" now says why. The underlying cause is always
+  logged, and admins see it in the error message (for example in the iOS
+  app), so a failing channel can be diagnosed without digging through logs.
+- A channel the tuner can't receive (HDHomeRun `806 Tune Failed` /
+  `807 No Video Data`, weak or no signal) is reported as "no signal on this
+  channel" (HTTP 502) instead of "all tuners in use".
+- Any other non-2xx device response (for example an unknown channel) is
+  now an error. Previously it was streamed into FFmpeg as if it were video,
+  which surfaced as a generic "failed to start session".
+- The ingest tail and stall timers start when their countdown begins, not
+  when their goroutine is scheduled.
+
+### Added
+
+- `GET /api/v1/version` reports the running server version (public).
+
 ## [0.5.2] — 2026-10-02
 
 ### Fixed
