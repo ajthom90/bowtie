@@ -5,7 +5,17 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.5] — 2026-10-02
+
+### Fixed
+
+- QSV: sessions no longer fail with "ffmpeg exited before playlist ready".
+  The `vpp_qsv` scaler was given `w=-1`, which FFmpeg 5.1 (the image's
+  build) doesn't treat as "keep aspect", so it produced a 0-pixel-wide frame
+  ("Picture size 0x1088 is invalid"). The width is now an explicit
+  aspect-preserving expression.
+- When FFmpeg exits during startup, the error now ends with FFmpeg's last
+  error lines, so admins see the actual cause in the app.
 
 ### Added
 
