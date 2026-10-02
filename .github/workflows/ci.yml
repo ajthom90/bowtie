@@ -73,9 +73,8 @@ jobs:
             android/gradle/libs.versions.toml
             android/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
+      # No setup-android: ubuntu-latest ships the SDK (same as release.yml), and
+      # setup-android@v3 fails on cmdline-tools 16+ (legacy 'tools' package gone).
       - name: test + assemble debug
         run: ./gradlew :core:test :app:testDebugUnitTest :tv:testDebugUnitTest :app:assembleDebug :tv:assembleDebug
 
@@ -100,6 +99,8 @@ jobs:
 
   ios:
     runs-on: macos-15
+    # Green runs take ~5 min; cap a hung simulator test (seen 2026-10-02).
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ios
