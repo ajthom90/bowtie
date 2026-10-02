@@ -8,11 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,6 +59,15 @@ type Harness struct {
 	Channels map[string]int64
 
 	pollEvery time.Duration
+	dialMu    sync.Mutex
+	dials     []string
+}
+
+// DialLog returns every device dial Bowtie's ingest made, with outcome.
+func (h *Harness) DialLog() []string {
+	h.dialMu.Lock()
+	defer h.dialMu.Unlock()
+	return append([]string(nil), h.dials...)
 }
 
 // New builds the stack, logs in as admin, adds the fake by address and
@@ -88,7 +99,15 @@ func New(t testing.TB, o Options) *Harness {
 
 	tuners := tuner.New(st, cfg)
 	tuners.SetDiscoverFunc(func(context.Context, time.Duration) ([]hdhr.DiscoverInfo, error) { return nil, nil })
-	ingest := stream.NewIngestManager(stream.HTTPDial)
+	h := &Harness{Channels: map[string]int64{}}
+	ingest := stream.NewIngestManager(func(ctx context.Context, u string) (io.ReadCloser, int, error) {
+		start := time.Now()
+		body, status, err := stream.HTTPDial(ctx, u)
+		h.dialMu.Lock()
+		h.dials = append(h.dials, fmt.Sprintf("%s dial %s → status=%d err=%v (%v)", start.Format("15:04:05.000"), u, status, err, time.Since(start).Round(time.Millisecond)))
+		h.dialMu.Unlock()
+		return body, status, err
+	})
 	mgr := stream.NewManager(stream.ManagerDeps{
 		Cfg: cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
 	})
@@ -124,7 +143,7 @@ func New(t testing.TB, o Options) *Harness {
 	if poll <= 0 {
 		poll = time.Second
 	}
-	h := &Harness{Fake: fake, Store: st, Streams: mgr, Ingest: ingest, Server: srv, Channels: map[string]int64{}, pollEvery: poll}
+	h.Fake, h.Store, h.Streams, h.Ingest, h.Server, h.pollEvery = fake, st, mgr, ingest, srv, poll
 	var login struct {
 		AccessToken string `json:"accessToken"`
 	}

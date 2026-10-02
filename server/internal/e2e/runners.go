@@ -16,20 +16,76 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 )
 
-// CountingRunner counts process starts (initial start + every restart).
+// CountingRunner counts process starts (initial start + every restart) and
+// logs each process's life: when its input ended and how it exited — the
+// facts Bowtie itself does not log.
 type CountingRunner struct {
 	Inner  stream.Runner
 	starts atomic.Int64
+
+	mu  sync.Mutex
+	log []string
+}
+
+func (r *CountingRunner) logf(format string, a ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.log = append(r.log, time.Now().Format("15:04:05.000")+" "+fmt.Sprintf(format, a...))
+}
+
+// Log returns the per-process lifecycle log.
+func (r *CountingRunner) Log() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.log...)
 }
 
 // Start implements stream.Runner.
 func (r *CountingRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.Process, error) {
-	r.starts.Add(1)
-	return r.Inner.Start(ctx, spec)
+	n := r.starts.Add(1)
+	if spec.Stdin != nil {
+		spec.Stdin = &watchReader{r: spec.Stdin, onErr: func(err error) { r.logf("proc %d: input ended: %v", n, err) }}
+	}
+	p, err := r.Inner.Start(ctx, spec)
+	if err != nil {
+		r.logf("proc %d: start failed: %v", n, err)
+		return nil, err
+	}
+	r.logf("proc %d: started", n)
+	w := &watchProc{inner: p, done: make(chan error, 1)}
+	go func() {
+		err := <-p.Done()
+		r.logf("proc %d: exited: %v", n, err)
+		w.done <- err
+	}()
+	return w, nil
 }
 
 // Starts returns how many processes were started.
 func (r *CountingRunner) Starts() int { return int(r.starts.Load()) }
+
+type watchReader struct {
+	r     io.Reader
+	once  sync.Once
+	onErr func(error)
+}
+
+func (w *watchReader) Read(p []byte) (int, error) {
+	n, err := w.r.Read(p)
+	if err != nil {
+		w.once.Do(func() { w.onErr(err) })
+	}
+	return n, err
+}
+
+type watchProc struct {
+	inner stream.Process
+	done  chan error
+}
+
+func (w *watchProc) Done() <-chan error { return w.done }
+
+func (w *watchProc) Stop() { w.inner.Stop() }
 
 // Gate pauses readers; the zero value is not usable — use NewGate.
 type Gate struct {

@@ -1,0 +1,9 @@
+name: signal-fade
+duration: 35s
+timeline:
+  - {at: 5s, fault: signal, quality: 65, for: 10s}
+  - {at: 15s, fault: signal, quality: 45, for: 6s}
+expect:
+  sequenceMonotonic: true
+  maxGapSeconds: 14
+  sessionSurvives: true

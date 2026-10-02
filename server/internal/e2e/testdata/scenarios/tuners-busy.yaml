@@ -1,0 +1,6 @@
+name: tuners-busy
+duration: 5s
+timeline:
+  - {at: 0s, fault: busy}
+expect:
+  tunersBusy: true

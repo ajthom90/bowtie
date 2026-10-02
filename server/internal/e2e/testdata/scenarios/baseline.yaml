@@ -1,0 +1,7 @@
+name: baseline
+duration: 30s
+expect:
+  sequenceMonotonic: true
+  maxGapSeconds: 10
+  sessionSurvives: true
+  maxFfmpegRestarts: 0

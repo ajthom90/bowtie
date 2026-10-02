@@ -1,0 +1,7 @@
+name: timestamp-jump
+duration: 30s
+timeline:
+  - {at: 10s, fault: timestamp-jump, by: 30s}
+expect:
+  sessionSurvives: true
+  maxGapSeconds: 12

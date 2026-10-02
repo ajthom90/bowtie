@@ -1,0 +1,8 @@
+name: baseline-1080i
+source: synthetic-1080i
+duration: 30s
+expect:
+  sequenceMonotonic: true
+  maxGapSeconds: 10
+  sessionSurvives: true
+  maxFfmpegRestarts: 0

@@ -519,7 +519,9 @@ func (f *Fake) handleStream(w http.ResponseWriter, r *http.Request) {
 			case faults.Close:
 				if d.Reset {
 					reason = "drop-reset"
-					abort(w)
+					if err := abort(w); err != nil {
+						reason = "drop-reset (" + err.Error() + ")"
+					}
 				} else {
 					reason = "drop-clean"
 				}
@@ -542,19 +544,25 @@ func (f *Fake) isClosed() bool {
 }
 
 // abort closes the underlying TCP connection with RST.
-func abort(w http.ResponseWriter) {
+func abort(w http.ResponseWriter) error {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		return
+		return errors.New("not hijackable")
 	}
 	c, _, err := hj.Hijack()
 	if err != nil {
-		return
+		return fmt.Errorf("hijack: %w", err)
 	}
-	if tc, ok := c.(*net.TCPConn); ok {
-		_ = tc.SetLinger(0)
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		_ = c.Close()
+		return fmt.Errorf("not TCP: %T", c)
 	}
-	_ = c.Close()
+	if err := tc.SetLinger(0); err != nil {
+		_ = c.Close()
+		return fmt.Errorf("linger: %w", err)
+	}
+	return c.Close()
 }
 
 func hostOf(addr string) string {
