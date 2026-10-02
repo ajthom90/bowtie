@@ -25,3 +25,4 @@ server/bowtie
 .DS_Store
 *.swp
 *~
+.playwright-mcp/
