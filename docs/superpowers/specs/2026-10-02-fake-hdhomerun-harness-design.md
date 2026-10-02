@@ -1,7 +1,7 @@
 # Bowtie — Fake HDHomeRun Fault-Injection Harness
 
 **Date:** 2026-10-02
-**Status:** Draft — pending user review
+**Status:** Approved 2026-10-02 (amended after plan review — see §E)
 **Motivation:** On 2026-10-02 a FOX 9 viewer froze on v0.5.2 (vaapi). The log
 shows FFmpeg restarting mid-session (second process 6s after the first, same
 session `startedAt`) with no error, and re-entering the channel recovered.
@@ -61,16 +61,23 @@ func (l *Loop) Next(ctx context.Context) ([]byte, error) // next 188-byte packet
 
 - **Timestamp continuity.** On each wrap, add `loopDuration` to PCR (27 MHz,
   adaptation field), PTS and DTS (90 kHz, PES header), modulo 2^33 / PCR
-  wrap. `loopDuration = lastPCR − firstPCR + one PCR interval`, computed once
-  in `Load`.
+  wrap. `loopDuration = max over PES PIDs of (lastTS − firstTS + typicalΔ)`
+  where `typicalΔ` is the most common delta between consecutive timestamps on
+  that PID (the shorter track gets a tiny gap, never an overlap). Computed
+  once in `Load`. (Fixture facts, verified 2026-10-02: PCR on video PID
+  0x100; video PES carry PTS+DTS; audio 0x101 PTS only; audio runs ~15 ms
+  longer than video.)
 - **Continuity counters.** Rewrite each PID's CC so it stays continuous
   across the wrap (otherwise every loop is a CC error).
 - **Pacing.** Emit a packet when the clock reaches its PCR time, interpolating
   between PCRs by byte position. `Clock` is injectable (real or fake).
 - **Source switch.** `Loop.Switch(*Source)` continues the timeline from the
   current position (used by the `source-switch` fault).
-- **Multiple connections** each get their own `Loop` and start at the head of
-  the clip, like tuning in.
+- **One timeline per channel** (amended): the channel's broadcast clock
+  advances whether or not anyone is connected; a connection (including a
+  Bowtie ingest reconnect) joins at the channel's *current* position, like a
+  real tuner. Restarting the clip per connection would inject a bogus
+  backward PTS/PCR jump into the same FFmpeg after every `drop`.
 
 ### A2. `faults`
 
@@ -211,9 +218,13 @@ restart scheduling/backoff, one-tuner-per-channel under faults, 503 mapping.
 Implemented **after** §A–C, each change preceded by a failing scenario.
 
 1. **Failing scenario** `testdata/scenarios/restart-keeps-playlist.yaml`:
-   `drop` at 15s (forces an FFmpeg restart via EOF) with
-   `sequenceMonotonic: true`, `sessionSurvives: true`. Expected to FAIL on
-   current code (sequence resets to 0).
+   `bowtie.slowConsumer` long enough (≥8s; fill time depends on HTTP read
+   sizes, not bitrate math) to trip the subscriber force-close → FFmpeg EOF →
+   restart, with `sequenceMonotonic: true`, `sessionSurvives: true`. Expected
+   to FAIL on current code (sequence resets to 0). (Amended: a device `drop`
+   does NOT restart FFmpeg — ingest reconnects transparently and FFmpeg keeps
+   its pipe. Device-side paths to a restart are only the 60s ingest give-up
+   and a reconnect answered with 503.)
 2. **Playlist continuity:** restarts continue numbering and mark a
    discontinuity. Candidate: add `append_list+discont_start` to `-hls_flags`
    (verified 2026-10-02 on the v0.5.2 image's FFmpeg 5.1: numbering continues
@@ -227,6 +238,28 @@ Implemented **after** §A–C, each change preceded by a failing scenario.
    force-close path; production logs from (3) confirm or refute it on the
    user's box. Any change to the 2s/4 MiB policy is decided on that evidence —
    not in this spec.
+
+5. **Silent device stall** (found in plan review): `pump()` calls
+   `body.Read` with no deadline, so a device that stops sending but keeps the
+   connection open never triggers reconnect — every viewer on the channel
+   starves. Plan 1 adds a `device-silent-stall` scenario with
+   `expect.maxGapSeconds` marked `xfail`; Plan 2 decides the fix.
+
+## E. Plan review amendments (2026-10-02)
+
+- Work is split into three plans: **Plan 1** harness core (§A1–A4, §C);
+  **Plan 2** freeze fix (§D), written after Plan 1 lands because its flag
+  choice depends on harness evidence (note: CI's Ubuntu FFmpeg is newer than
+  the image's 5.1 — a second data point, not the same one); **Plan 3**
+  standalone tool, control page and `make capture` (§B).
+- `expect.xfail: "<reason>"` marks a scenario whose expectations are known
+  to fail today; the test asserts they still fail, so a fix forces removing
+  the marker.
+- Clock injection reuses the `(now func() time.Time, after
+  func(time.Duration) <-chan time.Time)` shape from
+  `stream.WithIngestClock`, so one fake clock drives ingest and the fake.
+- `drop{mode: reset}` uses `http.Hijacker` + `SetLinger(0)`; `hang` is a
+  handler that blocks until the client goes away.
 
 ## Out of scope
 
