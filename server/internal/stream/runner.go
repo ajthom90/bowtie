@@ -1,8 +1,12 @@
 package stream
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/ajthom90/bowtie/server/internal/transcode"
@@ -20,6 +24,8 @@ func (r *FFmpegRunner) Start(ctx context.Context, spec transcode.JobSpec) (Proce
 		path = "ffmpeg"
 	}
 	cmd := transcode.Command(ctx, path, spec)
+	tail := &stderrTail{max: 3}
+	cmd.Stderr = io.MultiWriter(cmd.Stderr, tail)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -28,9 +34,50 @@ func (r *FFmpegRunner) Start(ctx context.Context, spec transcode.JobSpec) (Proce
 		done: make(chan error, 1),
 	}
 	go func() {
-		p.done <- cmd.Wait()
+		err := cmd.Wait()
+		if err != nil {
+			if last := tail.String(); last != "" {
+				err = fmt.Errorf("%w: %s", err, last)
+			}
+		}
+		p.done <- err
 	}()
 	return p, nil
+}
+
+// stderrTail keeps FFmpeg's last few stderr lines so an exit error can say
+// why ("exit status 1" alone does not).
+type stderrTail struct {
+	mu    sync.Mutex
+	max   int
+	lines []string
+	buf   bytes.Buffer
+}
+
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf.Write(p)
+	for {
+		line, err := t.buf.ReadString('\n')
+		if err != nil {
+			t.buf.WriteString(line)
+			break
+		}
+		if line = strings.TrimSpace(line); line != "" {
+			t.lines = append(t.lines, line)
+			if len(t.lines) > t.max {
+				t.lines = t.lines[1:]
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (t *stderrTail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Join(t.lines, " | ")
 }
 
 type cmdProcess struct {
