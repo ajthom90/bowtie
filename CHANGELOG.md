@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- iOS / tvOS: saved servers. The Connect screen lists every server you've
+  used; tap one to switch, long-press to remove it. Each server keeps its own
+  login, and "Change server" no longer signs you out, so switching between
+  servers doesn't require signing in again. Existing installs keep their
+  server and login.
+
 ## [0.5.4] — 2026-10-02
 
 ### Fixed
