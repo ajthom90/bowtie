@@ -5,6 +5,17 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] — 2026-10-02
+
+### Fixed
+
+- QSV streams no longer fail with "failed to start session". The `vpp_qsv`
+  filter was given `scale_mode=hq`, which the image's FFmpeg 5.1 rejects, so
+  every QSV session died on its first frame. Exposed by 0.5.1 making QSV
+  available (and selected by `auto`) on Gen12+ iGPUs.
+- Docker image now reports its release version in the startup log instead of
+  `0.1.0-dev`.
+
 ## [0.5.1] — 2026-08-07
 
 ### Fixed

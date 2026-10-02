@@ -129,7 +129,9 @@ func inputHWAccel(b Backend) []string {
 func videoFilter(b Backend, height int) string {
 	switch b {
 	case BackendQSV:
-		return fmt.Sprintf("vpp_qsv=deinterlace=2:scale_mode=hq:w=-1:h=%d", height)
+		// No scale_mode: FFmpeg 5.1 (the image's bookworm build) rejects named
+		// values like "hq" and ignores the option entirely under its MSDK.
+		return fmt.Sprintf("vpp_qsv=deinterlace=2:w=-1:h=%d", height)
 	case BackendNVENC:
 		return fmt.Sprintf("yadif_cuda=0:-1:0,scale_cuda=-2:%d", height)
 	case BackendVAAPI:

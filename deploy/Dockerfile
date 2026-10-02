@@ -32,7 +32,9 @@ COPY server/ ./
 COPY --from=web /src/server/internal/web/dist ./internal/web/dist
 
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w" -o /bowtie ./cmd/bowtie
+# Release builds pass the tag (sans "v"); local builds keep the dev default.
+ARG VERSION=0.1.0-dev
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /bowtie ./cmd/bowtie
 
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime — FFmpeg + VAAPI/QSV drivers + tini
