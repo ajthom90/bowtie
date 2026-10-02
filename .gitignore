@@ -25,3 +25,6 @@ server/bowtie
 .DS_Store
 *.swp
 *~
+
+# Local HDHomeRun captures (broadcast content — never commit)
+captures/
