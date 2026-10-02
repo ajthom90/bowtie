@@ -348,9 +348,12 @@ func (c *channelIngest) startTail() {
 	c.cancelTailLocked()
 	cancel := make(chan struct{})
 	c.tailCancel = cancel
+	// Arm the timer before spawning so the tail starts now, not whenever the
+	// goroutine is scheduled.
+	expired := c.im.after(ingestTailDuration)
 	go func() {
 		select {
-		case <-c.im.after(ingestTailDuration):
+		case <-expired:
 			c.mu.Lock()
 			if len(c.subs) == 0 && c.running && c.tailCancel == cancel {
 				c.teardownLocked()
@@ -593,9 +596,10 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 				cancel := make(chan struct{})
 				s.stallTimerCancel = cancel
 				sub := s
+				expired := c.im.after(ingestStallTimeout)
 				go func() {
 					select {
-					case <-c.im.after(ingestStallTimeout):
+					case <-expired:
 						c.mu.Lock()
 						still := sub.stalled && !sub.isClosed()
 						c.mu.Unlock()
