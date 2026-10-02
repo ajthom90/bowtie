@@ -5,6 +5,25 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.4] — 2026-10-02
+
+### Fixed
+
+- iOS / tvOS: live channels no longer fail with "Playback stalled" as soon as
+  they start. AVPlayer begins every load waiting to buffer, which the apps
+  treated as a stall; their retries then reloaded the stream before it could
+  start. A stall now needs playback to have started and a wait longer than
+  4 s (or no start within 20 s).
+- VideoToolbox (Mac-hosted servers): H.264 streams play on Apple devices
+  again. The encoder's closed-caption SEI was malformed and AVPlayer
+  rejected the whole stream (CoreMediaErrorDomain -12971); captions are now
+  off for that encoder.
+
+### Added
+
+- iOS UI test that plays a channel end to end against a live server
+  (skipped unless `TEST_RUNNER_BOWTIE_UITEST_URL` is set).
+
 ## [0.5.3] — 2026-10-02
 
 ### Fixed

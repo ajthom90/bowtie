@@ -48,6 +48,7 @@ targets:
     scheme:
       testTargets:
         - SharedTests
+        - BowtieUITests
 
   BowtieTV:
     type: application
@@ -85,5 +86,23 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Bowtie.app/Bowtie"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: LL334G7KP2
+
+  # Drives the real app against a live server; skipped unless
+  # TEST_RUNNER_BOWTIE_UITEST_URL is set (see PlaybackUITests.swift).
+  BowtieUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App/UITests
+    dependencies:
+      - target: Bowtie
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.bowtie.UITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Bowtie
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: LL334G7KP2

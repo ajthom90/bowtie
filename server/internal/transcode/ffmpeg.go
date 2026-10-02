@@ -151,7 +151,10 @@ func encoderExtras(d Decision) []string {
 	case "h264_nvenc":
 		return []string{"-preset", "p4"}
 	case "h264_videotoolbox":
-		return []string{"-realtime", "1", "-profile:v", "high"}
+		// -a53cc 0: VideoToolbox's closed-caption SEI is malformed ("Unexpected
+		// end of SEI NAL Unit") and AVPlayer rejects the whole stream with
+		// CoreMediaErrorDomain -12971. Seen with FFmpeg 8.0.1 on ATSC input.
+		return []string{"-realtime", "1", "-profile:v", "high", "-a53cc", "0"}
 	case "hevc_videotoolbox":
 		// profile:v high is h264-only per plan
 		return []string{"-realtime", "1"}
