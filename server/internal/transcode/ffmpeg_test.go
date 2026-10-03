@@ -41,7 +41,7 @@ func TestBuildArgsSoftwareAAC(t *testing.T) {
 		"-preset", "veryfast", "-profile:v", "high",
 		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -73,7 +73,7 @@ func TestBuildArgsSoftwareAudioCopy(t *testing.T) {
 		"-preset", "veryfast", "-profile:v", "high",
 		"-c:a", "copy",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -105,7 +105,7 @@ func TestBuildArgsVideoToolbox(t *testing.T) {
 		"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
 		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -138,7 +138,7 @@ func TestBuildArgsQSV(t *testing.T) {
 		"-preset", "veryfast",
 		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -170,7 +170,7 @@ func TestBuildArgsVAAPI(t *testing.T) {
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-c:a", "aac", "-ac", "2", "-b:a", "128k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -203,7 +203,7 @@ func TestBuildArgsNVENC(t *testing.T) {
 		"-preset", "p4",
 		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 		filepath.Join(out, "live.m3u8"),
@@ -310,7 +310,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-preset", "veryfast", "-profile:v", "high",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -336,7 +336,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -363,7 +363,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-preset", "veryfast",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -389,7 +389,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -416,7 +416,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-preset", "p4",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -483,7 +483,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-preset", "veryfast", "-profile:v", "high",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -509,7 +509,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -536,7 +536,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-preset", "veryfast",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -562,7 +562,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -589,7 +589,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-preset", "p4",
 				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
-				"-hls_flags", "delete_segments+temp_file",
+				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
 				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
 				filepath.Join(out, "live.m3u8"),
@@ -639,4 +639,28 @@ func assertArgs(t *testing.T, got, want []string) {
 			}
 		}
 	}
+}
+
+func TestBuildArgsAppendOnRestart(t *testing.T) {
+	s := transcode.JobSpec{OutDir: "/tmp/out", Stdin: strings.NewReader(""), D: transcode.Decision{
+		VideoCodec: "h264", VideoEncoder: "libx264", AudioCopy: false,
+		Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+		Backend: transcode.BackendSoftware,
+	}}
+	if got := flagValue(transcode.BuildArgs(s), "-hls_flags"); got != "delete_segments+temp_file+omit_endlist" {
+		t.Fatalf("first start -hls_flags = %q", got)
+	}
+	s.Append = true
+	if got := flagValue(transcode.BuildArgs(s), "-hls_flags"); got != "delete_segments+temp_file+omit_endlist+append_list+discont_start" {
+		t.Fatalf("restart -hls_flags = %q", got)
+	}
+}
+
+func flagValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
 }

@@ -1,9 +1,12 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,6 +66,8 @@ type stubRunner struct {
 	startErr error
 	// lastSpec is the most recent JobSpec
 	lastSpec transcode.JobSpec
+	// specs records every JobSpec in start order
+	specs []transcode.JobSpec
 	// onStart optional hook
 	onStart func(spec transcode.JobSpec)
 }
@@ -75,6 +80,7 @@ func (r *stubRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 	}
 	r.starts++
 	r.lastSpec = spec
+	r.specs = append(r.specs, spec)
 	if r.onStart != nil {
 		r.onStart(spec)
 	}
@@ -1372,7 +1378,9 @@ func TestTunerFreeBudget(t *testing.T) {
 	closed := make(chan struct{})
 	var closeOnce sync.Once
 	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
-		body := &notifyCloseBody{hang: newHangBody(), onClose: func() {
+		// A live device streams continuously; a silent one would (correctly)
+		// be closed by the 8s idle watchdog long before the 60s grace ends.
+		body := &liveNotifyBody{onClose: func() {
 			closeOnce.Do(func() { close(closed) })
 		}}
 		return body, 200, nil
@@ -1389,10 +1397,10 @@ func TestTunerFreeBudget(t *testing.T) {
 
 	m.StopViewer(h.ViewerID)
 	// 60s empty grace keeps session (and sub) alive.
-	clock.Advance(60 * time.Second)
+	stepClock(clock, 60*time.Second)
 	m.maintain()
 	// Just under grace end: may still be open. Advance past grace → teardown → Close sub → 5s tail.
-	clock.Advance(2 * time.Second)
+	stepClock(clock, 2*time.Second)
 	m.maintain()
 	if len(m.Sessions()) != 0 {
 		t.Fatalf("session should be gone after grace, got %d", len(m.Sessions()))
@@ -1422,7 +1430,7 @@ func TestTunerFreeBudget(t *testing.T) {
 	// longer exists): Close at teardown + 5s tail ≤5s after session ends. And
 	// "after the last interested session ends" end-to-end from leave ≈65s.
 	// Implementation uses `>` so we need 61s to teardown. Assert closed by 66s from leave.
-	clock.Advance(5 * time.Second)
+	stepClock(clock, 5*time.Second)
 	// Fire tail timers.
 	select {
 	case <-closed:
@@ -1435,21 +1443,6 @@ func TestTunerFreeBudget(t *testing.T) {
 			t.Fatal("dial not closed within tail after session teardown")
 		}
 	}
-}
-
-// notifyCloseBody wraps hangBody and signals when Close is called.
-type notifyCloseBody struct {
-	hang    *hangBody
-	onClose func()
-}
-
-func (b *notifyCloseBody) Read(p []byte) (int, error) { return b.hang.Read(p) }
-func (b *notifyCloseBody) Close() error {
-	err := b.hang.Close()
-	if b.onClose != nil {
-		b.onClose()
-	}
-	return err
 }
 
 // TestStartDial503SurfacesTunersBusy: dial 503 → errors.Is ErrTunersBusy.
@@ -1487,5 +1480,232 @@ func TestJobSpecStdinSetOnStart(t *testing.T) {
 	}
 	if runner.lastSpec.InputURL != "" {
 		t.Fatalf("InputURL=%q, want empty when Stdin set", runner.lastSpec.InputURL)
+	}
+}
+
+// An abandoned start (request cancelled while waiting for the first playlist)
+// leaves no FFmpeg process and no ingest subscriber behind.
+func TestCancelledStartCleansUp(t *testing.T) {
+	st, cfg, clock, _, chID, user := setupEnv(t)
+	runner := &stubRunner{writeM3U: false}
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	if _, err := m.Start(ctx, user, chID, clientCaps("")); err == nil {
+		t.Fatal("want error from cancelled start")
+	}
+	if n := runner.LiveProcs(); n != 0 {
+		t.Fatalf("running ffmpeg processes = %d, want 0", n)
+	}
+	// The 5s tail may keep the device open briefly; no subscriber may remain.
+	if n := im.SubCount(chID); n != 0 {
+		t.Fatalf("ingest subscribers = %d, want 0", n)
+	}
+}
+
+// LiveProcs counts started stub processes that have not been stopped.
+func (r *stubRunner) LiveProcs() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, p := range r.procs {
+		select {
+		case <-p.stopCh:
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// stepClock advances the fake clock one second at a time so a streaming test
+// device keeps "receiving" data in between (one big jump looks like silence to
+// the ingest idle watchdog).
+func stepClock(c *fakeClock, d time.Duration) {
+	for d > 0 {
+		step := time.Second
+		if d < step {
+			step = d
+		}
+		c.Advance(step)
+		d -= step
+		time.Sleep(3 * time.Millisecond) // let the device read stamp the new time
+	}
+}
+
+// liveNotifyBody is a device stream that keeps sending null TS packets until
+// closed, then reports the close.
+type liveNotifyBody struct {
+	closed  atomic.Bool
+	once    sync.Once
+	onClose func()
+}
+
+func (b *liveNotifyBody) Read(p []byte) (int, error) {
+	if b.closed.Load() {
+		return 0, io.EOF
+	}
+	time.Sleep(time.Millisecond)
+	n := len(p) - len(p)%188
+	if n == 0 {
+		return 0, nil
+	}
+	for off := 0; off < n; off += 188 {
+		p[off], p[off+1], p[off+2], p[off+3] = 0x47, 0x1F, 0xFF, 0x10
+	}
+	return n, nil
+}
+
+func (b *liveNotifyBody) Close() error {
+	b.closed.Store(true)
+	b.once.Do(func() {
+		if b.onClose != nil {
+			b.onClose()
+		}
+	})
+	return nil
+}
+
+func (r *stubRunner) Specs() []transcode.JobSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]transcode.JobSpec(nil), r.specs...)
+}
+
+// The first FFmpeg for a session starts fresh; a restart appends to the
+// existing playlist.
+func TestRestartAppendsToPlaylist(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	runner.LastProc().Crash(errors.New("boom"))
+	// supervise marks the crash asynchronously; step time until the restart.
+	deadline := time.Now().Add(3 * time.Second)
+	for runner.Starts() < 2 && time.Now().Before(deadline) {
+		clock.Advance(time.Second)
+		m.maintain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	specs := runner.Specs()
+	if len(specs) != 2 {
+		t.Fatalf("starts = %d, want 2", len(specs))
+	}
+	if specs[0].Append || !specs[1].Append {
+		t.Fatalf("Append = %v then %v, want false then true", specs[0].Append, specs[1].Append)
+	}
+}
+
+// An FFmpeg exit and the restart that follows are logged with the session,
+// channel and backend, so production logs explain a hiccup.
+func TestRestartIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	log.SetOutput(writerFunc(func(p []byte) (int, error) {
+		bufMu.Lock()
+		defer bufMu.Unlock()
+		return buf.Write(p)
+	}))
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	sessID := m.Sessions()[0].ID
+	runner.LastProc().Crash(errors.New("boom"))
+	deadline := time.Now().Add(3 * time.Second)
+	for runner.Starts() < 2 && time.Now().Before(deadline) {
+		clock.Advance(time.Second)
+		m.maintain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+	for _, want := range []string{
+		"session " + sessID,
+		fmt.Sprintf("channel %d", chID),
+		"ffmpeg exited",
+		"boom",
+		"restarting ffmpeg (append to playlist)",
+		"ffmpeg restarted",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// The manager registers its FFmpeg's Stop as the sub's force-close hook, so a
+// transcoder ingest gives up on is stopped even if it never exits on EOF.
+func TestForceClosedSubStopsProcess(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	var sub *IngestSub
+	for _, s := range m.sessions {
+		sub = s.sub
+	}
+	m.mu.Unlock()
+	sub.forceClose()
+	select {
+	case <-runner.LastProc().stopCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("force-closed sub did not stop its ffmpeg")
+	}
+}
+
+// A restart waits on the device (a slow or no-signal tuner can take ~10s per
+// try); every other viewer request must keep being served meanwhile.
+func TestRestartDialDoesNotBlockManager(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	release := make(chan struct{})
+	defer close(release)
+	var dials atomic.Int64
+	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if dials.Add(1) == 1 {
+			return &liveNotifyBody{}, 200, nil
+		}
+		<-release // the restart's dial: tuner slow to answer
+		return nil, 0, errors.New("released")
+	}
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, dial)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.LastProc().Crash(errors.New("boom"))
+	waitFor(t, 2*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, s := range m.sessions {
+			return s.crashed
+		}
+		return false
+	})
+	stepClock(clock, 6*time.Second) // past restart backoff and the 5s ingest tail
+	go m.maintain()                // restart → Attach → dial blocks
+	waitFor(t, 2*time.Second, func() bool { return dials.Load() == 2 })
+
+	done := make(chan struct{})
+	go func() {
+		m.Touch(h.ViewerID)
+		_ = m.Sessions()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("manager calls blocked while a restart waited on the device")
 	}
 }

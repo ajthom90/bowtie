@@ -1,0 +1,10 @@
+name: slow-consumer-drops
+duration: 40s
+bowtie:
+  # FFmpeg stops reading for 10s: its 16 MiB queue drops the oldest data
+  # instead of Bowtie cutting it off and restarting it.
+  slowConsumer: {at: 10s, for: 10s}
+expect:
+  sequenceMonotonic: true
+  sessionSurvives: true
+  maxFfmpegRestarts: 0

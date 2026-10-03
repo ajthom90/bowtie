@@ -1,0 +1,9 @@
+name: nosignal-reconnect
+duration: 45s
+timeline:
+  # Loss of lock: the open connection goes silent and new tunes get 807.
+  - {at: 10s, fault: signal, quality: 10, for: 12s}
+expect:
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0

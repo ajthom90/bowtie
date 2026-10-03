@@ -23,8 +23,10 @@ type CountingRunner struct {
 	Inner  stream.Runner
 	starts atomic.Int64
 
-	mu  sync.Mutex
-	log []string
+	mu           sync.Mutex
+	log          []string
+	current      stream.Process // newest started process (for KillCurrent)
+	currentInput *watchReader   // its stdin (for CloseCurrentInput)
 }
 
 func (r *CountingRunner) logf(format string, a ...any) {
@@ -43,8 +45,10 @@ func (r *CountingRunner) Log() []string {
 // Start implements stream.Runner.
 func (r *CountingRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.Process, error) {
 	n := r.starts.Add(1)
+	var input *watchReader
 	if spec.Stdin != nil {
-		spec.Stdin = &watchReader{r: spec.Stdin, onErr: func(err error) { r.logf("proc %d: input ended: %v", n, err) }}
+		input = &watchReader{r: spec.Stdin, onErr: func(err error) { r.logf("proc %d: input ended: %v", n, err) }}
+		spec.Stdin = input
 	}
 	p, err := r.Inner.Start(ctx, spec)
 	if err != nil {
@@ -53,6 +57,10 @@ func (r *CountingRunner) Start(ctx context.Context, spec transcode.JobSpec) (str
 	}
 	r.logf("proc %d: started", n)
 	w := &watchProc{inner: p, done: make(chan error, 1)}
+	r.mu.Lock()
+	r.current = w
+	r.currentInput = input
+	r.mu.Unlock()
 	go func() {
 		err := <-p.Done()
 		r.logf("proc %d: exited: %v", n, err)
@@ -61,16 +69,50 @@ func (r *CountingRunner) Start(ctx context.Context, spec transcode.JobSpec) (str
 	return w, nil
 }
 
+// KillCurrent stops the newest transcoder (scenario fault). Reports whether
+// one was running.
+func (r *CountingRunner) KillCurrent() bool {
+	r.mu.Lock()
+	p := r.current
+	r.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	r.logf("killing current transcoder (scenario)")
+	p.Stop()
+	return true
+}
+
+// CloseCurrentInput ends the newest transcoder's input (EOF), the way Bowtie's
+// ingest does when it gives up on a transcoder: FFmpeg exits gracefully and
+// writes its HLS trailer, unlike KillCurrent's SIGKILL.
+func (r *CountingRunner) CloseCurrentInput() bool {
+	r.mu.Lock()
+	in := r.currentInput
+	r.mu.Unlock()
+	if in == nil {
+		return false
+	}
+	r.logf("closing current transcoder input (scenario)")
+	in.closed.Store(true)
+	return true
+}
+
 // Starts returns how many processes were started.
 func (r *CountingRunner) Starts() int { return int(r.starts.Load()) }
 
 type watchReader struct {
-	r     io.Reader
-	once  sync.Once
-	onErr func(error)
+	r      io.Reader
+	once   sync.Once
+	onErr  func(error)
+	closed atomic.Bool // CloseCurrentInput: report EOF like a closed ingest sub
 }
 
 func (w *watchReader) Read(p []byte) (int, error) {
+	if w.closed.Load() {
+		w.once.Do(func() { w.onErr(io.EOF) })
+		return 0, io.EOF
+	}
 	n, err := w.r.Read(p)
 	if err != nil {
 		w.once.Do(func() { w.onErr(err) })

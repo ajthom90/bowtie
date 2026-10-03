@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,24 +14,47 @@ import (
 	"time"
 )
 
-// HTTPDial is the production DialFunc: GET url and return the response body +
-// status. A non-2xx response is an error (never a stream), classified by the
-// device's X-HDHomeRun-Error header: see DeviceError.
-func HTTPDial(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, 0, err
+const (
+	deviceConnectTimeout = 5 * time.Second
+	// deviceHeaderTimeout bounds the wait for the device's response headers.
+	// The HDHomeRun answers 806/807 after ~10s, so this must stay above that;
+	// it must also stay under the 15s "hung device fails fast" bound.
+	deviceHeaderTimeout = 12 * time.Second
+)
+
+// NewHTTPDial returns a DialFunc with connect and response-header timeouts and
+// no overall timeout (the body is a live stream). A non-2xx response is an
+// error, classified by X-HDHomeRun-Error (see DeviceError).
+func NewHTTPDial(connectTimeout, headerTimeout time.Duration) DialFunc {
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
+		ResponseHeaderTimeout: headerTimeout,
+	}}
+	return func(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			_ = resp.Body.Close()
+			return nil, resp.StatusCode, &DeviceError{Status: resp.StatusCode, Reason: resp.Header.Get("X-HDHomeRun-Error")}
+		}
+		return resp.Body, resp.StatusCode, nil
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_ = resp.Body.Close()
-		return nil, resp.StatusCode, &DeviceError{Status: resp.StatusCode, Reason: resp.Header.Get("X-HDHomeRun-Error")}
-	}
-	return resp.Body, resp.StatusCode, nil
 }
+
+// HTTPDial is the production DialFunc.
+var HTTPDial = NewHTTPDial(deviceConnectTimeout, deviceHeaderTimeout)
+
+// ingestIdleTimeout: a device streams continuously once tuned, so this long
+// without a byte means the connection is dead (silent device or a reset the
+// kernel dropped). The body is closed and the normal reconnect path runs.
+const ingestIdleTimeout = 8 * time.Second
 
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.
@@ -71,17 +96,21 @@ func (e *DeviceError) Is(target error) bool {
 type DialFunc func(ctx context.Context, url string) (io.ReadCloser, int, error)
 
 const (
-	ingestChunkSize     = 64 * 1024
-	ingestSubChanCap    = 64
-	ingestJoinBufMax    = 1 * 1024 * 1024
-	ingestStallTimeout  = 2 * time.Second
-	ingestTailDuration  = 5 * time.Second
-	ingestReconnectMin  = 1 * time.Second
-	ingestReconnectMax  = 30 * time.Second
-	ingestGiveUpAfter   = 60 * time.Second
-	tsPacketSize        = 188
-	tsSyncByte          = 0x47
-	tsPIDPAT            = 0
+	ingestChunkSize  = 64 * 1024
+	ingestJoinBufMax = 1 * 1024 * 1024
+	// ingestSubQueueMax bounds each transcoder's backlog (≈7s at 19 Mbps);
+	// beyond it the oldest data is dropped instead of cutting FFmpeg off.
+	ingestSubQueueMax = 16 << 20
+	// ingestSubStuckTimeout: a transcoder that takes nothing for this long is
+	// hung and its input is closed so the manager restarts it.
+	ingestSubStuckTimeout = 30 * time.Second
+	ingestTailDuration    = 5 * time.Second
+	ingestReconnectMin    = 1 * time.Second
+	ingestReconnectMax    = 30 * time.Second
+	ingestGiveUpAfter     = 60 * time.Second
+	tsPacketSize          = 188
+	tsSyncByte            = 0x47
+	tsPIDPAT              = 0
 )
 
 // IngestManager owns per-channel device streams and fans MPEG-TS out to
@@ -101,7 +130,7 @@ type IngestManager struct {
 // IngestOption configures NewIngestManager.
 type IngestOption func(*IngestManager)
 
-// WithIngestClock injects now/after for tests. ALL ingest timing (stall, tail,
+// WithIngestClock injects now/after for tests. ALL ingest timing (idle watchdog, stuck rule, tail,
 // reconnect backoff, give-up) must use these — never wall time.
 func WithIngestClock(now func() time.Time, after func(time.Duration) <-chan time.Time) IngestOption {
 	return func(im *IngestManager) {
@@ -157,12 +186,20 @@ func (im *IngestManager) Attach(ctx context.Context, channelID int64, url string
 // ActiveChannels returns channel IDs with an open device connection (including
 // the 5s post-last-Close tail).
 func (im *IngestManager) ActiveChannels() []int64 {
+	// Snapshot under im.mu, then ask each channel without holding it: a
+	// channel that is dialing holds its own lock for up to the dial timeout.
 	im.mu.Lock()
-	defer im.mu.Unlock()
-	out := make([]int64, 0, len(im.channels))
+	ids := make([]int64, 0, len(im.channels))
+	chs := make([]*channelIngest, 0, len(im.channels))
 	for id, ch := range im.channels {
+		ids = append(ids, id)
+		chs = append(chs, ch)
+	}
+	im.mu.Unlock()
+	out := make([]int64, 0, len(chs))
+	for i, ch := range chs {
 		if ch.isActive() {
-			out = append(out, id)
+			out = append(out, ids[i])
 		}
 	}
 	return out
@@ -196,6 +233,19 @@ func (im *IngestManager) removeChannel(channelID int64, ch *channelIngest) {
 	}
 }
 
+// SubCount returns the number of subscribers on a channel (0 if none).
+func (im *IngestManager) SubCount(channelID int64) int {
+	im.mu.Lock()
+	ch := im.channels[channelID]
+	im.mu.Unlock()
+	if ch == nil {
+		return 0
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return len(ch.subs)
+}
+
 // IngestSub is one process's view of a channel ingest.
 // R is the only read handle; Close only via IngestSub.Close (not R.Close alone
 // for lifecycle — R.Close is safe but does not drop the refcount; always call Close).
@@ -204,16 +254,32 @@ type IngestSub struct {
 
 	pr *io.PipeReader
 	pw *io.PipeWriter
-	ch chan []byte
+	q  *subQueue
 
 	ci *channelIngest
 
 	closeOnce sync.Once
 	closed    atomic.Bool
 
-	// stall tracking (written under channelIngest.mu)
-	stalled    bool
-	stallTimerCancel chan struct{}
+	// lastDropLog rate-limits the "transcoder behind" log (under channelIngest.mu).
+	lastDropLog time.Time
+
+	onForceClose atomic.Pointer[func()]
+}
+
+// OnForceClose registers f to run when ingest gives up on this subscriber
+// (stuck transcoder, device lost, tuner taken). The owner uses it to stop a
+// transcoder that might not exit on EOF.
+func (s *IngestSub) OnForceClose(f func()) {
+	s.onForceClose.Store(&f)
+}
+
+// forceClose closes the sub on ingest's initiative and runs the owner's hook.
+func (s *IngestSub) forceClose() {
+	_ = s.Close()
+	if f := s.onForceClose.Load(); f != nil {
+		(*f)()
+	}
 }
 
 // Close detaches this sub. Double-Close is safe. Last Close on a channel starts
@@ -243,7 +309,11 @@ func (s *IngestSub) drain(join []byte) {
 			return
 		}
 	}
-	for chunk := range s.ch {
+	for {
+		chunk, ok := s.q.pop()
+		if !ok {
+			return
+		}
 		if _, err := s.pw.Write(chunk); err != nil {
 			return
 		}
@@ -260,6 +330,9 @@ type channelIngest struct {
 	url     string
 	body    io.ReadCloser
 	running bool // pump goroutine active / device held (incl. tail)
+	// active mirrors running for lock-free reads (isActive): attach holds mu
+	// for the whole device dial, up to the dial timeout.
+	active atomic.Bool
 
 	subs map[*IngestSub]struct{}
 
@@ -288,9 +361,7 @@ func newChannelIngest(im *IngestManager, channelID int64) *channelIngest {
 }
 
 func (c *channelIngest) isActive() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.running
+	return c.active.Load()
 }
 
 func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, error) {
@@ -305,7 +376,9 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 		return c.addSubLocked(), nil
 	}
 
-	body, status, err := c.im.dial(ctx, url)
+	// The device stream may be shared by other sessions and must not die when
+	// the request that started it returns.
+	body, status, err := c.im.dial(context.WithoutCancel(ctx), url)
 	if err == nil && (status < 200 || status > 299) && status != 0 {
 		err = &DeviceError{Status: status}
 	}
@@ -325,6 +398,7 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 	c.url = url
 	c.body = body
 	c.running = true
+	c.active.Store(true)
 	c.stopPump = make(chan struct{})
 	c.pumpDone = make(chan struct{})
 	go c.pump()
@@ -338,7 +412,7 @@ func (c *channelIngest) addSubLocked() *IngestSub {
 		R:  pr,
 		pr: pr,
 		pw: pw,
-		ch: make(chan []byte, ingestSubChanCap),
+		q:  newSubQueue(ingestSubQueueMax, c.im.now),
 		ci: c,
 	}
 	join := c.joinSnapshotLocked()
@@ -363,9 +437,8 @@ func (c *channelIngest) removeSub(s *IngestSub) {
 	c.mu.Lock()
 	if _, ok := c.subs[s]; ok {
 		delete(c.subs, s)
-		// Close send side; drain ranges until closed.
-		close(s.ch)
-		c.cancelSubStallLocked(s)
+		// Wakes drain, which exits.
+		s.q.close()
 	}
 	n := len(c.subs)
 	running := c.running
@@ -411,14 +484,6 @@ func (c *channelIngest) cancelTailLocked() {
 	}
 }
 
-func (c *channelIngest) cancelSubStallLocked(s *IngestSub) {
-	if s.stallTimerCancel != nil {
-		close(s.stallTimerCancel)
-		s.stallTimerCancel = nil
-	}
-	s.stalled = false
-}
-
 // teardownLocked closes the device body and stops the pump. Caller holds c.mu.
 func (c *channelIngest) teardownLocked() {
 	c.cancelTailLocked()
@@ -434,6 +499,7 @@ func (c *channelIngest) teardownLocked() {
 		c.body = nil
 	}
 	c.running = false
+	c.active.Store(false)
 	// Wait for pump outside lock would deadlock if pump needs mu — pump exits
 	// on body close / stopPump without needing to re-enter while we hold mu
 	// only if we don't wait here. Callers that need pumpDone wait after unlock.
@@ -449,17 +515,7 @@ func (c *channelIngest) shutdown() {
 	// Drop subs under lock so removeSub sees them gone / ch already closed carefully
 	for s := range c.subs {
 		delete(c.subs, s)
-		// ch may still be open
-		select {
-		case <-s.ch:
-		default:
-		}
-		// close ch if not already
-		func(ch chan []byte) {
-			defer func() { _ = recover() }()
-			close(ch)
-		}(s.ch)
-		c.cancelSubStallLocked(s)
+		s.q.close()
 	}
 	c.mu.Unlock()
 
@@ -481,8 +537,37 @@ func (c *channelIngest) closeAllSubs(reason error) {
 	}
 	c.mu.Unlock()
 	for _, s := range subs {
-		_ = s.Close()
+		s.forceClose()
 	}
+}
+
+// watchIdle closes body once lastRead (UnixNano, updated by pump) is
+// ingestIdleTimeout old. The returned stop func ends the watch.
+func (c *channelIngest) watchIdle(body io.Closer, lastRead *atomic.Int64) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	wait := func() time.Duration {
+		return ingestIdleTimeout - c.im.now().Sub(time.Unix(0, lastRead.Load()))
+	}
+	// Arm before spawning so a test's Advance can't race timer registration.
+	timer := c.im.after(wait())
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-timer:
+			}
+			w := wait()
+			if w <= 0 {
+				log.Printf("ingest: channel %d: no data for %v, reconnecting", c.channelID, ingestIdleTimeout)
+				_ = body.Close()
+				return
+			}
+			timer = c.im.after(w)
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
 }
 
 func (c *channelIngest) pump() {
@@ -491,6 +576,12 @@ func (c *channelIngest) pump() {
 	buf := make([]byte, ingestChunkSize)
 	var failStart time.Time
 	backoff := ingestReconnectMin
+
+	var lastRead atomic.Int64
+	var watched io.ReadCloser
+	var carry []byte // partial TS packet from the previous read
+	stopWatch := func() {}
+	defer func() { stopWatch() }()
 
 	for {
 		c.mu.Lock()
@@ -502,8 +593,18 @@ func (c *channelIngest) pump() {
 		if !running || body == nil {
 			return
 		}
+		if body != watched {
+			carry = nil
+			stopWatch()
+			lastRead.Store(c.im.now().UnixNano())
+			watched = body
+			stopWatch = c.watchIdle(body, &lastRead)
+		}
 
 		n, err := body.Read(buf)
+		if n > 0 {
+			lastRead.Store(c.im.now().UnixNano())
+		}
 
 		// Check stop before processing (body.Close unblocks Read).
 		select {
@@ -515,9 +616,11 @@ func (c *channelIngest) pump() {
 		if n > 0 {
 			failStart = time.Time{}
 			backoff = ingestReconnectMin
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			c.ingestChunk(chunk)
+			var whole []byte
+			whole, carry = alignTS(carry, buf[:n])
+			if len(whole) > 0 {
+				c.ingestChunk(whole)
+			}
 		}
 
 		if err == nil {
@@ -575,17 +678,20 @@ func (c *channelIngest) pump() {
 			}
 
 			body, status, dialErr := c.im.dial(context.Background(), url)
-			if status == 503 {
+			if status == http.StatusServiceUnavailable && !errors.Is(dialErr, ErrNoSignal) {
 				if body != nil {
 					_ = body.Close()
 				}
-				// 503 on reconnect closes all subs (tuner stolen).
+				// 805 / header-less 503 on reconnect: the tuner was taken.
 				c.closeAllSubs(ErrTunersBusy)
 				c.mu.Lock()
 				c.teardownLocked()
 				c.mu.Unlock()
 				c.im.removeChannel(c.channelID, c)
 				return
+			}
+			if errors.Is(dialErr, ErrNoSignal) {
+				log.Printf("ingest: channel %d: no signal on reconnect, retrying", c.channelID)
 			}
 			if dialErr == nil && body != nil {
 				c.mu.Lock()
@@ -617,39 +723,36 @@ func (c *channelIngest) pump() {
 func (c *channelIngest) ingestChunk(chunk []byte) {
 	c.mu.Lock()
 	c.updateJoinLocked(chunk)
+	tables := c.tablesLocked()
+	now := c.im.now()
+	var stuck []*IngestSub
 	for s := range c.subs {
 		if s.isClosed() {
 			continue
 		}
-		select {
-		case s.ch <- chunk:
-			if s.stalled {
-				c.cancelSubStallLocked(s)
-			}
-		default:
-			// Channel full → mark stalled; force-Close after 2s if still stalled.
-			if !s.stalled {
-				s.stalled = true
-				cancel := make(chan struct{})
-				s.stallTimerCancel = cancel
-				sub := s
-				expired := c.im.after(ingestStallTimeout)
-				go func() {
-					select {
-					case <-expired:
-						c.mu.Lock()
-						still := sub.stalled && !sub.isClosed()
-						c.mu.Unlock()
-						if still {
-							_ = sub.Close()
-						}
-					case <-cancel:
-					}
-				}()
-			}
+		if n := s.q.push(chunk, tables); n > 0 && now.Sub(s.lastDropLog) >= 10*time.Second {
+			s.lastDropLog = now
+			log.Printf("ingest: channel %d: transcoder behind, dropped %d KiB of old data", c.channelID, n>>10)
+		}
+		if s.q.idleFor(now) >= ingestSubStuckTimeout {
+			stuck = append(stuck, s)
 		}
 	}
 	c.mu.Unlock()
+	for _, s := range stuck {
+		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout)
+		s.forceClose()
+	}
+}
+
+// tablesLocked returns a fresh copy of the current PAT+PMT (nil if unknown).
+func (c *channelIngest) tablesLocked() []byte {
+	if len(c.lastPAT)+len(c.lastPMT) == 0 {
+		return nil
+	}
+	out := make([]byte, 0, len(c.lastPAT)+len(c.lastPMT))
+	out = append(out, c.lastPAT...)
+	return append(out, c.lastPMT...)
 }
 
 func (c *channelIngest) updateJoinLocked(chunk []byte) {

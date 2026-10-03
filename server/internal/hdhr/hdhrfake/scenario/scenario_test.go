@@ -85,6 +85,7 @@ func TestParseRejects(t *testing.T) {
 		"flaky and xfail": "name: x\nduration: 5s\nexpect:\n  maxGapSeconds: 5\n  xfail: a\n  flaky: b\n",
 		"bad scope":       "name: x\nduration: 5s\ntimeline:\n  - {at: 1s, fault: stall, scope: planet}\n",
 		"step field typo": "name: x\nduration: 5s\ntimeline:\n  - {at: 1s, fault: stall, fro: 2s}\n",
+		"kill past end":   "name: x\nduration: 10s\nbowtie:\n  killTranscoderAt: 10s\n",
 	}
 	for name, y := range cases {
 		if _, err := Parse([]byte(y)); err == nil {
@@ -183,5 +184,15 @@ func TestCheck(t *testing.T) {
 		if !strings.Contains(strings.Join(v, " "), want) {
 			t.Fatalf("no %q violation in %v", want, v)
 		}
+	}
+}
+
+func TestParseKillTranscoder(t *testing.T) {
+	s, err := Parse([]byte("name: x\nduration: 30s\nbowtie:\n  killTranscoderAt: 15s\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Bowtie == nil || s.Bowtie.KillTranscoderAt != 15*time.Second {
+		t.Fatalf("KillTranscoderAt = %+v", s.Bowtie)
 	}
 }

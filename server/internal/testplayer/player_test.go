@@ -183,3 +183,13 @@ func TestHeartbeats(t *testing.T) {
 		t.Fatalf("heartbeats = %d", s.heartbeats)
 	}
 }
+
+// A playlist that says the stream is over (#EXT-X-ENDLIST) is recorded: a real
+// player stops reloading when it sees one, even if segments appear later.
+func TestEndListRecorded(t *testing.T) {
+	s := &scripted{playlists: []string{playlist(0, 3, -1), playlist(0, 3, -1) + "#EXT-X-ENDLIST\n", playlist(0, 4, -1)}}
+	_, r := run(t, s, 6, 0)
+	if !r.EndList {
+		t.Fatalf("EndList = false, want true (report %+v)", r)
+	}
+}

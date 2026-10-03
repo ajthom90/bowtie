@@ -108,19 +108,18 @@ func TestPipelineSignalFadeKeepsSession(t *testing.T) {
 	}
 }
 
-func TestPipelineSlowConsumerRestarts(t *testing.T) {
+func TestPipelineSlowConsumerKeepsProcess(t *testing.T) {
 	t.Parallel()
 	pl := newPipeline(t, true)
-	// Documents current behavior: a transcoder that stops reading for longer
-	// than the ingest queue + stall timeout is cut off and restarted.
+	// A transcoder that stops reading for 8s loses old data but is not restarted.
 	pl.gate.Pause()
 	time.Sleep(8 * time.Second)
 	pl.gate.Resume()
-	if !within(10*time.Second, func() bool { return pl.count.Starts() == 2 }) {
-		t.Fatalf("transcoder starts = %d, want 2 after a slow-consumer cutoff", pl.count.Starts())
-	}
 	if !pl.bytesGrow(5 * time.Second) {
-		t.Fatal("restarted transcoder gets no bytes")
+		t.Fatal("transcoder gets no bytes after resuming")
+	}
+	if n := pl.count.Starts(); n != 1 {
+		t.Fatalf("transcoder starts = %d, want 1 (slowness must not restart FFmpeg)", n)
 	}
 }
 
@@ -144,12 +143,14 @@ func TestPipelineHalfOpenStallRedials(t *testing.T) {
 	if _, err := pl.h.Fake.Apply(faults.Target{Channel: guide, Scope: faults.ScopeConnections}, faults.Spec{Fault: faults.Stall}); err != nil {
 		t.Fatal(err)
 	}
-	xfail(t, "ingest has no read deadline (Plan 2)", func() error {
+	if err := func() error {
 		if !within(12*time.Second, func() bool { return pl.h.Fake.TotalDials() > pl.baseDials }) {
 			return errorf("no redial within 12s of a silent connection (dials=%d)", pl.h.Fake.TotalDials())
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPipelineDialHangFailsFast(t *testing.T) {
@@ -158,20 +159,22 @@ func TestPipelineDialHangFailsFast(t *testing.T) {
 	if _, err := pl.h.Fake.Apply(faults.Target{Scope: faults.ScopeDevice}, faults.Spec{Fault: faults.Hang}); err != nil {
 		t.Fatal(err)
 	}
-	xfail(t, "device dial has no timeout (Plan 2)", func() error {
+	if err := func() error {
 		start := time.Now()
 		_, err := pl.h.PlayerWith(t, guide, &http.Client{Timeout: 20 * time.Second})
 		if el := time.Since(start); el > 15*time.Second {
 			return errorf("session start took %v against a hung device (err=%v)", el.Round(time.Second), err)
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPipelineStartKeepsFirstDial(t *testing.T) {
 	t.Parallel()
 	pl := newPipeline(t, true)
-	xfail(t, "first device dial is bound to the POST /sessions request context (Plan 2)", func() error {
+	if err := func() error {
 		if pl.baseDials != 1 {
 			var log []string
 			for _, e := range pl.h.Fake.Events() {
@@ -180,5 +183,7 @@ func TestPipelineStartKeepsFirstDial(t *testing.T) {
 			return errorf("session start dialed the device %d times: %v", pl.baseDials, log)
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
