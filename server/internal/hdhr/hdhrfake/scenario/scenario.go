@@ -43,6 +43,9 @@ type BowtieSpec struct {
 	// KillTranscoderAt stops the running FFmpeg at this point in the scenario,
 	// so Bowtie restarts it into the same session.
 	KillTranscoderAt time.Duration `yaml:"killTranscoderAt"`
+	// CloseTranscoderInputAt ends FFmpeg's input (EOF) at this point, as the
+	// ingest does when it gives up on a transcoder; FFmpeg exits gracefully.
+	CloseTranscoderInputAt time.Duration `yaml:"closeTranscoderInputAt"`
 }
 
 // Window is a span of scenario time.
@@ -123,6 +126,10 @@ func (s *Scenario) validate() error {
 				return fmt.Errorf("scenario %s: steps %d and %d: overlapping %s", s.Name, j, i, st.Fault)
 			}
 		}
+	}
+	if s.Bowtie != nil && s.Bowtie.CloseTranscoderInputAt != 0 &&
+		(s.Bowtie.CloseTranscoderInputAt < 0 || s.Bowtie.CloseTranscoderInputAt >= s.Duration) {
+		return fmt.Errorf("scenario %s: closeTranscoderInputAt %v outside 0..%v", s.Name, s.Bowtie.CloseTranscoderInputAt, s.Duration)
 	}
 	if s.Bowtie != nil && s.Bowtie.KillTranscoderAt != 0 &&
 		(s.Bowtie.KillTranscoderAt < 0 || s.Bowtie.KillTranscoderAt >= s.Duration) {

@@ -140,6 +140,15 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 				gate.Resume()
 			}()
 		}
+		if sc.Bowtie != nil && sc.Bowtie.CloseTranscoderInputAt > 0 {
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-time.After(sc.Bowtie.CloseTranscoderInputAt):
+					count.CloseCurrentInput()
+				}
+			}()
+		}
 		if sc.Bowtie != nil && sc.Bowtie.KillTranscoderAt > 0 {
 			go func() {
 				select {
@@ -159,7 +168,8 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 		r := p.Report()
 		obs.SequenceMonotonic = r.BackwardJumps == 0
 		obs.MaxGap = r.MaxGap
-		obs.SessionSurvived = !r.SessionGone && len(h.Sessions(t)) > 0
+		// A playlist that said #EXT-X-ENDLIST ended playback in a real player.
+		obs.SessionSurvived = !r.SessionGone && !r.EndList && len(h.Sessions(t)) > 0
 		obs.FfmpegRestarts = count.Starts() - 1
 		t.Logf("player: polls=%d segments=%d segErrors=%d backward=%d discontinuities=%d maxGap=%v gone=%v newest=%v errors=%v",
 			r.Polls, r.SegmentsFetched, r.SegmentErrors, r.BackwardJumps, r.Discontinuities, r.MaxGap.Round(100*time.Millisecond), r.SessionGone, r.Newest, r.Errors)

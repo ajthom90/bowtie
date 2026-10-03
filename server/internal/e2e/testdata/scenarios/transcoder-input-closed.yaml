@@ -1,0 +1,11 @@
+name: transcoder-input-closed
+duration: 45s
+bowtie:
+  # End FFmpeg's input at 15s, the way ingest does when it gives up on a
+  # transcoder (stuck, long no-signal, tuner taken): FFmpeg exits gracefully
+  # and must not tell players the stream is over (#EXT-X-ENDLIST).
+  closeTranscoderInputAt: 15s
+expect:
+  sequenceMonotonic: true
+  sessionSurvives: true
+  maxGapSeconds: 14

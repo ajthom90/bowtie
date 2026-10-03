@@ -35,7 +35,10 @@ const DefaultHLSListSize = 30
 // BuildArgs returns the full FFmpeg argv for s (excluding the binary path).
 // Argument order is part of the contract; see plan Task 13.
 func BuildArgs(s JobSpec) []string {
-	hlsFlags := "delete_segments+temp_file"
+	// omit_endlist: FFmpeg exits gracefully when Bowtie closes its input (a
+	// restart Bowtie triggers); its trailer must not tell players the stream
+	// is over, because the restarted process continues the same playlist.
+	hlsFlags := "delete_segments+temp_file+omit_endlist"
 	if s.Append {
 		hlsFlags += "+append_list+discont_start"
 	}
