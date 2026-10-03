@@ -1,0 +1,8 @@
+name: pts-wrap
+duration: 30s
+ptsWrapIn: 15s
+expect:
+  sequenceMonotonic: true
+  maxGapSeconds: 10
+  sessionSurvives: true
+  maxFfmpegRestarts: 0

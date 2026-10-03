@@ -8,6 +8,7 @@ on:
 jobs:
   server:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: server
@@ -24,8 +25,20 @@ jobs:
         with:
           working-directory: server
 
+      - name: install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: test
         run: go test ./...
+        env:
+          CGO_ENABLED: "0"
+
+      # Real-FFmpeg tests: transcode e2e plus the fake-HDHomeRun fault
+      # scenarios (internal/e2e/testdata/scenarios). Packages run one at a
+      # time and scenarios two at a time: concurrent software transcodes on a
+      # 4-vCPU runner make FFmpeg fall behind and trip the ingest stall timer.
+      - name: test (ffmpeg + fault scenarios)
+        run: go test -tags ffmpeg -p 1 -parallel 2 -timeout 15m ./...
         env:
           CGO_ENABLED: "0"
 

@@ -101,7 +101,7 @@ func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string, pipe
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		// Empty URL; BuildArgs must use pipe:0, not the path.
 		spec.InputURL = ""
 		spec.Stdin = f

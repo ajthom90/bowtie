@@ -658,13 +658,22 @@ func TestStartPlaylistTimeout(t *testing.T) {
 	runner := &stubRunner{writeM3U: false}
 	m := newTestManager(st, cfg, clock, runner)
 
-	// Advance clock while Start is polling.
+	// Keep advancing the clock until Start returns: a single advance can land
+	// before Start computes its deadline on a loaded machine, leaving the poll
+	// loop waiting forever.
 	var advanced atomic.Bool
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		// Let Start enter the poll loop first.
-		time.Sleep(50 * time.Millisecond)
-		clock.Advance(16 * time.Second)
-		advanced.Store(true)
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(20 * time.Millisecond):
+				clock.Advance(4 * time.Second)
+				advanced.Store(true)
+			}
+		}
 	}()
 
 	_, err := m.Start(context.Background(), user, chID, clientCaps(""))

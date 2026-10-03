@@ -1,0 +1,8 @@
+name: slow-consumer-restart
+duration: 40s
+bowtie:
+  slowConsumer: {at: 10s, for: 10s}
+expect:
+  sequenceMonotonic: true
+  sessionSurvives: true
+  xfail: "playlist resets to segment 0 when FFmpeg restarts (Plan 2)"

@@ -1,0 +1,8 @@
+name: half-open-stall
+duration: 40s
+timeline:
+  - {at: 10s, fault: stall, scope: connections}
+expect:
+  maxGapSeconds: 15
+  sessionSurvives: true
+  xfail: "ingest has no read deadline, so a silent connection is never redialed (Plan 2)"
