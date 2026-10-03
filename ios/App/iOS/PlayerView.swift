@@ -39,19 +39,17 @@ struct PlayerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
+            // Taps go to AVPlayerViewController so its transport (scrubber,
+            // skip, play/pause) appears; the container reports them so the
+            // Bowtie chrome shows at the same time.
             PlayerContainer(
                 bridge: bridge,
                 onPictureInPictureActiveChange: { active in
                     bridge.isPictureInPictureActive = active
-                }
+                },
+                onTap: { bumpChrome() }
             )
             .ignoresSafeArea()
-
-            // Tap anywhere to revive chrome (controls sit above the player).
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { bumpChrome() }
-                .allowsHitTesting(showChrome == false && !isBlockingError)
 
             if showChrome || isBlockingError {
                 chromeLayer
@@ -184,8 +182,6 @@ struct PlayerView: View {
                 errorPanel
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
-            } else {
-                bottomBar
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showChrome)
@@ -213,6 +209,11 @@ struct PlayerView: View {
 
             Spacer(minLength: 0)
 
+            // The bottom edge belongs to the system transport (live scrubber).
+            if !isBlockingError {
+                playerButtons
+            }
+
             Button {
                 Task { await leave() }
             } label: {
@@ -228,7 +229,8 @@ struct PlayerView: View {
             .accessibilityHint("Stop playback and return to the channel list")
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
+        // Below AVKit's own top row (full screen, AirPlay, mute).
+        .padding(.top, 64)
         .padding(.bottom, 10)
         .background(
             LinearGradient(
@@ -236,11 +238,13 @@ struct PlayerView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            // Decoration only: AVKit's top buttons sit under this gradient.
+            .allowsHitTesting(false)
         )
     }
 
-    private var bottomBar: some View {
-        HStack(spacing: 18) {
+    private var playerButtons: some View {
+        HStack(spacing: 10) {
             qualityMenu
 
             Button {
@@ -254,22 +258,7 @@ struct PlayerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(showStats ? "Hide stats" : "Show stats")
-
-            AirPlayRoutePicker()
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("AirPlay")
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(
-            LinearGradient(
-                colors: [Color.black.opacity(0), Color.black.opacity(0.8)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
     }
 
     private var qualityMenu: some View {
@@ -294,7 +283,9 @@ struct PlayerView: View {
                 Image(systemName: "slider.horizontal.3")
                 Text(qualityLabel)
                     .font(Theme.label(14))
+                    .lineLimit(1)
             }
+            .fixedSize()
             .foregroundStyle(Theme.amber)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -860,6 +851,7 @@ final class PlayerBridge {
 private struct PlayerContainer: UIViewControllerRepresentable {
     var bridge: PlayerBridge
     var onPictureInPictureActiveChange: (Bool) -> Void
+    var onTap: () -> Void
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
@@ -870,6 +862,12 @@ private struct PlayerContainer: UIViewControllerRepresentable {
         vc.requiresLinearPlayback = false
         vc.delegate = context.coordinator
         vc.player = bridge.player
+        // Observe taps without taking them from AVKit, which uses them to show
+        // its transport controls.
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        vc.view.addGestureRecognizer(tap)
         return vc
     }
 
@@ -878,20 +876,38 @@ private struct PlayerContainer: UIViewControllerRepresentable {
             vc.player = bridge.player
         }
         context.coordinator.onPictureInPictureActiveChange = onPictureInPictureActiveChange
+        context.coordinator.onTap = onTap
         context.coordinator.bridge = bridge
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(bridge: bridge, onPictureInPictureActiveChange: onPictureInPictureActiveChange)
+        Coordinator(bridge: bridge, onPictureInPictureActiveChange: onPictureInPictureActiveChange, onTap: onTap)
     }
 
-    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate, UIGestureRecognizerDelegate {
         var bridge: PlayerBridge
         var onPictureInPictureActiveChange: (Bool) -> Void
+        var onTap: () -> Void
 
-        init(bridge: PlayerBridge, onPictureInPictureActiveChange: @escaping (Bool) -> Void) {
+        init(
+            bridge: PlayerBridge,
+            onPictureInPictureActiveChange: @escaping (Bool) -> Void,
+            onTap: @escaping () -> Void
+        ) {
             self.bridge = bridge
             self.onPictureInPictureActiveChange = onPictureInPictureActiveChange
+            self.onTap = onTap
+        }
+
+        @objc func handleTap() {
+            onTap()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
 
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
@@ -932,21 +948,6 @@ private struct PlayerContainer: UIViewControllerRepresentable {
             }
         }
     }
-}
-
-// MARK: - AirPlay route picker
-
-private struct AirPlayRoutePicker: UIViewRepresentable {
-    func makeUIView(context: Context) -> AVRoutePickerView {
-        let view = AVRoutePickerView()
-        // Resolve design tokens through UIColor(Color:) (iOS 17+).
-        view.tintColor = UIColor(Theme.amber)
-        view.activeTintColor = UIColor(Theme.signal)
-        view.prioritizesVideoDevices = true
-        return view
-    }
-
-    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
 // MARK: - Preview
