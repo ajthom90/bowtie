@@ -995,3 +995,48 @@ func TestReconnectNoSignalKeepsSubs(t *testing.T) {
 	go func() { _, _ = third.Write(make([]byte, 188*4)) }()
 	readN(t, sub.R, 188*4, 2*time.Second)
 }
+
+// While one channel's device dial is slow, the admin tuner view and other
+// channels' starts must not block on it.
+func TestActiveChannelsDoesNotWaitOnDialingChannel(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 22, 0, 0, 0, time.UTC))
+	release := make(chan struct{})
+	defer close(release)
+	other := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if url == "slow" {
+			<-release // tuner still answering
+			return nil, 0, errors.New("released")
+		}
+		return other, 200, nil
+	}, clock)
+	go func() { _, _ = im.Attach(context.Background(), 1, "slow") }()
+	time.Sleep(50 * time.Millisecond) // channel 1 is now dialing under its lock
+
+	done := make(chan struct{})
+	go func() {
+		_ = im.ActiveChannels()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ActiveChannels blocked on a channel that is dialing")
+	}
+	attached := make(chan error, 1)
+	go func() {
+		sub, err := im.Attach(context.Background(), 2, "fast")
+		if err == nil {
+			_ = sub.Close()
+		}
+		attached <- err
+	}()
+	select {
+	case err := <-attached:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("another channel's Attach blocked behind a dialing channel")
+	}
+}

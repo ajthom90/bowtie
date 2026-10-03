@@ -186,12 +186,20 @@ func (im *IngestManager) Attach(ctx context.Context, channelID int64, url string
 // ActiveChannels returns channel IDs with an open device connection (including
 // the 5s post-last-Close tail).
 func (im *IngestManager) ActiveChannels() []int64 {
+	// Snapshot under im.mu, then ask each channel without holding it: a
+	// channel that is dialing holds its own lock for up to the dial timeout.
 	im.mu.Lock()
-	defer im.mu.Unlock()
-	out := make([]int64, 0, len(im.channels))
+	ids := make([]int64, 0, len(im.channels))
+	chs := make([]*channelIngest, 0, len(im.channels))
 	for id, ch := range im.channels {
+		ids = append(ids, id)
+		chs = append(chs, ch)
+	}
+	im.mu.Unlock()
+	out := make([]int64, 0, len(chs))
+	for i, ch := range chs {
 		if ch.isActive() {
-			out = append(out, id)
+			out = append(out, ids[i])
 		}
 	}
 	return out
@@ -305,6 +313,9 @@ type channelIngest struct {
 	url     string
 	body    io.ReadCloser
 	running bool // pump goroutine active / device held (incl. tail)
+	// active mirrors running for lock-free reads (isActive): attach holds mu
+	// for the whole device dial, up to the dial timeout.
+	active atomic.Bool
 
 	subs map[*IngestSub]struct{}
 
@@ -333,9 +344,7 @@ func newChannelIngest(im *IngestManager, channelID int64) *channelIngest {
 }
 
 func (c *channelIngest) isActive() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.running
+	return c.active.Load()
 }
 
 func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, error) {
@@ -372,6 +381,7 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 	c.url = url
 	c.body = body
 	c.running = true
+	c.active.Store(true)
 	c.stopPump = make(chan struct{})
 	c.pumpDone = make(chan struct{})
 	go c.pump()
@@ -472,6 +482,7 @@ func (c *channelIngest) teardownLocked() {
 		c.body = nil
 	}
 	c.running = false
+	c.active.Store(false)
 	// Wait for pump outside lock would deadlock if pump needs mu — pump exits
 	// on body close / stopPump without needing to re-enter while we hold mu
 	// only if we don't wait here. Callers that need pumpDone wait after unlock.
