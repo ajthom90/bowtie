@@ -139,19 +139,51 @@ func TestCancelledStartCleansUp(t *testing.T) {
 	if _, err := m.Start(ctx, user, chID, clientCaps("")); err == nil {
 		t.Fatal("want error from cancelled start")
 	}
-	if n := runner.Running(); n != 0 {
+	if n := runner.LiveProcs(); n != 0 {
 		t.Fatalf("running ffmpeg processes = %d, want 0", n)
 	}
-	if ch := im.ActiveChannels(); len(ch) != 0 {
-		// The 5s tail may hold the device briefly; no subscriber may remain.
-		if im.SubCount(chID) != 0 {
-			t.Fatalf("ingest subscribers = %d, want 0", im.SubCount(chID))
-		}
+	// The 5s tail may keep the device open briefly; no subscriber may remain.
+	if n := im.SubCount(chID); n != 0 {
+		t.Fatalf("ingest subscribers = %d, want 0", n)
 	}
 }
 ```
 
-If `stubRunner` has no `Running()` count or `IngestManager` has no `SubCount`, add them in this step: `Running()` counts started-minus-stopped processes; `func (im *IngestManager) SubCount(channelID int64) int` returns `len(ch.subs)` under `ch.mu` (0 if no channel).
+Add the two helpers this test needs. In `manager_test.go`:
+
+```go
+// LiveProcs counts started stub processes that have not been stopped.
+func (r *stubRunner) LiveProcs() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, p := range r.procs {
+		select {
+		case <-p.stopCh:
+		default:
+			n++
+		}
+	}
+	return n
+}
+```
+
+In `ingest.go`:
+
+```go
+// SubCount returns the number of subscribers on a channel (0 if none).
+func (im *IngestManager) SubCount(channelID int64) int {
+	im.mu.Lock()
+	ch := im.channels[channelID]
+	im.mu.Unlock()
+	if ch == nil {
+		return 0
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return len(ch.subs)
+}
+```
 
 - [ ] **Step 2: Run** `cd server && go test -run 'HTTPDial|OutlivesRequest|CancelledStart' ./internal/stream/` → FAIL (undefined `NewHTTPDial`; stream dies after cancel).
 
@@ -386,10 +418,10 @@ In `pump()`, track the watched body and last-read time:
 // A new tune while the channel has lost lock gets 503 + 807, like a real
 // HDHomeRun, instead of an empty stream.
 func TestDialDuringLossOfLockGets807(t *testing.T) {
-	f := newTestFake(t) // existing helper in this file; channel "90.1"
+	f := oneChannel(t) // channel "90.1"
 	q := 10
 	apply(t, f, faults.Target{Channel: "90.1"}, faults.Spec{Fault: faults.Signal, Quality: &q})
-	resp, err := http.Get(f.URL() + "/auto/v90.1")
+	resp, err := http.Get(f.URL + "/auto/v90.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,34 +661,24 @@ func TestStuckSubClosedAfter30s(t *testing.T) {
 
 In `TestConcurrentCloseVsForceClose`, replace the "fill the channel" loop with filling past `ingestSubQueueMax` and advancing the clock past `ingestSubStuckTimeout` before the concurrent Close, so the force-close path is still exercised.
 
-Alignment test:
+Alignment test (pure function the pump uses; add to `subqueue_test.go`):
 
 ```go
-// Chunks handed to subscribers are whole TS packets even when the device's
-// reads split a packet.
-func TestPumpAlignsChunksToPackets(t *testing.T) {
-	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
-	pb := newPipeBody()
-	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
-	sub, _ := im.Attach(context.Background(), 1, "u")
-	defer sub.Close()
-	go func() {
-		_, _ = pb.Write(make([]byte, 100))
-		_, _ = pb.Write(make([]byte, 188*2-100))
-	}()
-	q := sub.q
-	waitFor(t, func() bool { q.mu.Lock(); defer q.mu.Unlock(); return q.bytes > 0 || len(q.chunks) == 0 && false })
-	got := readN(t, sub.R, 188*2, 2*time.Second)
-	if len(got) != 376 {
-		t.Fatalf("read %d bytes", len(got))
+// Device reads can split a TS packet; only whole packets are handed on and the
+// remainder carries into the next read.
+func TestAlignTS(t *testing.T) {
+	whole, rest := alignTS(nil, make([]byte, 100))
+	if len(whole) != 0 || len(rest) != 100 {
+		t.Fatalf("100 bytes: whole=%d rest=%d, want 0/100", len(whole), len(rest))
 	}
-	q.mu.Lock()
-	for _, ch := range q.chunks {
-		if len(ch)%188 != 0 {
-			t.Fatalf("queued chunk of %d bytes is not packet aligned", len(ch))
-		}
+	whole, rest = alignTS(rest, make([]byte, 188*2-100+50))
+	if len(whole) != 188*2 || len(rest) != 50 {
+		t.Fatalf("carry+426: whole=%d rest=%d, want 376/50", len(whole), len(rest))
 	}
-	q.mu.Unlock()
+	whole, rest = alignTS(nil, make([]byte, 188*3))
+	if len(whole) != 188*3 || len(rest) != 0 {
+		t.Fatalf("exact: whole=%d rest=%d", len(whole), len(rest))
+	}
 }
 ```
 
@@ -792,19 +814,30 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 }
 ```
 
+- Add to `subqueue.go`:
+
+```go
+// alignTS joins carry and data and splits off the whole TS packets. Both
+// results are fresh slices (safe to keep after buf is reused).
+func alignTS(carry, data []byte) (whole, rest []byte) {
+	all := make([]byte, 0, len(carry)+len(data))
+	all = append(all, carry...)
+	all = append(all, data...)
+	n := len(all) - len(all)%tsPacketSize
+	return all[:n:n], append([]byte(nil), all[n:]...)
+}
+```
+
 - `pump` alignment: keep a `carry []byte` local (reset to nil whenever the watched body changes, Task 2's `body != watched` branch), and replace the chunk copy with:
 
 ```go
 		if n > 0 {
 			failStart = time.Time{}
 			backoff = ingestReconnectMin
-			data := append(carry, buf[:n]...)
-			whole := len(data) - len(data)%tsPacketSize
-			carry = append([]byte(nil), data[whole:]...)
-			if whole > 0 {
-				chunk := make([]byte, whole)
-				copy(chunk, data[:whole])
-				c.ingestChunk(chunk)
+			var whole []byte
+			whole, carry = alignTS(carry, buf[:n])
+			if len(whole) > 0 {
+				c.ingestChunk(whole)
 			}
 		}
 ```
@@ -833,7 +866,7 @@ func TestPipelineSlowConsumerKeepsProcess(t *testing.T) {
   - `baseline-1080i.yaml`: delete the `flaky:` line and its comment.
 
 - [ ] **Step 5: Run** `go test ./...`; `go test -tags ffmpeg -p 1 -parallel 2 ./...` → PASS (run the ffmpeg suite twice; `baseline-1080i` must pass both times). Vet, lint.
-- [ ] **Step 6: Real-player check (Mac only, no tuner needed).** Capture the HLS output of `slow-consumer-drops` (`BOWTIE_E2E_KEEP=1` if the harness supports keeping the session dir; otherwise reproduce with the gate locally) and play it with the macOS AVPlayer probe (`swiftc` the probe from the plan's appendix): status `readyToPlay`, rate 1, no `CoreMediaErrorDomain` error. Record the result in the commit message.
+- [ ] **Step 6: Real-player check after a drop (Mac, real HDHomeRun, one tuner, about 1 minute).** Build and run the local server from this branch (`BOWTIE_DEVICES=192.168.50.32 BOWTIE_LISTEN_ADDR=:8400 ./bowtie -data-dir <dir>`). Start a session on 9.1 with iOS caps via the API (`POST /api/v1/sessions`, `{"channelId":<9.1 id>,"caps":{"videoCodecs":["h264"],"audioCodecs":["aac","ac3"],"maxHeight":1080,"profile":""}}`). Find the session's FFmpeg with `pgrep -f 'ffmpeg -hide_banner'`, `kill -STOP <pid>` for 12 s (the queue overflows and drops), then `kill -CONT <pid>`. Within 10 s the server log must show `dropped … KiB of old data` and no FFmpeg restart. Then play the session's playlist URL with the AVPlayer probe (Appendix): `status=1 rate=1.0 err=-`. Delete the session. Record the result in the commit message.
 - [ ] **Step 7: Commit** `fix(ingest): buffer 16 MiB per transcoder and drop old data instead of restarting it`
 
 ---
@@ -882,7 +915,17 @@ func flagValue(args []string, flag string) string {
 }
 ```
 
-`manager_test.go` (stubRunner must record specs; add `specs []transcode.JobSpec` guarded by its mutex if absent):
+`manager_test.go`. First make `stubRunner` record every spec: add a `specs []transcode.JobSpec` field, append `spec` in `Start` (under `r.mu`, next to `r.lastSpec = spec`), and add:
+
+```go
+func (r *stubRunner) Specs() []transcode.JobSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]transcode.JobSpec(nil), r.specs...)
+}
+```
+
+Then the test:
 
 ```go
 // The first FFmpeg for a session starts fresh; a restart appends to the
@@ -893,9 +936,14 @@ func TestRestartAppendsToPlaylist(t *testing.T) {
 	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
 		t.Fatal(err)
 	}
-	runner.CrashLatest(errors.New("boom")) // existing helper, or add: finish the newest stub process with err
-	clock.Advance(restartBackoffStart + time.Second)
-	m.maintain()
+	runner.LastProc().Crash(errors.New("boom"))
+	// supervise marks the crash asynchronously; step time until the restart.
+	deadline := time.Now().Add(3 * time.Second)
+	for runner.Starts() < 2 && time.Now().Before(deadline) {
+		clock.Advance(time.Second)
+		m.maintain()
+		time.Sleep(10 * time.Millisecond)
+	}
 	specs := runner.Specs()
 	if len(specs) != 2 {
 		t.Fatalf("starts = %d, want 2", len(specs))
