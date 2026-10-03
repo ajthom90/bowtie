@@ -13,5 +13,5 @@ test('Right opens the quality dialog during playback', () => {
 });
 
 test('chrome hint names the Right key for quality', () => {
-    assert.match(src, /"Quality: " \+ label \+ " · OK play\/pause · ▶ quality"/);
+    assert.match(src, /"Quality: " \+ label \+ " · OK play\/pause · Right: quality"/);
 });

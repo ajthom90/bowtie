@@ -169,7 +169,7 @@ function qualityHintText() as string
     if m.selectedProfile <> invalid and m.selectedProfile <> ""
         label = m.selectedProfile
     end if
-    return "Quality: " + label + " · OK play/pause · ▶ quality"
+    return "Quality: " + label + " · OK play/pause · Right: quality"
 end function
 
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
