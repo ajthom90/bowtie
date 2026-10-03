@@ -158,8 +158,8 @@ final class ModelsTests: XCTestCase {
             BowtieError.server(status: 502, message: "x")
         )
         XCTAssertEqual(
-            BowtieError.tunersBusy([]),
-            BowtieError.tunersBusy([])
+            BowtieError.tunersBusy([], otherInUse: 0),
+            BowtieError.tunersBusy([], otherInUse: 0)
         )
     }
 

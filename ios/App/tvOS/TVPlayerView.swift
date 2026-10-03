@@ -165,12 +165,19 @@ struct TVPlayerView: View {
     @ViewBuilder
     private var errorPanel: some View {
         switch playerModel.state {
-        case .tunersBusy(let sessions):
+        case .tunersBusy(let sessions, let otherInUse):
             VStack(spacing: 20) {
                 Text("All tuners are in use")
                     .font(Theme.title(28))
                     .foregroundStyle(Theme.alert)
                     .multilineTextAlignment(.center)
+
+                if let otherApps = TunersBusyCopy.otherAppsLine(otherInUse: otherInUse) {
+                    Text(otherApps)
+                        .font(Theme.body(22))
+                        .foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.center)
+                }
 
                 if !sessions.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {

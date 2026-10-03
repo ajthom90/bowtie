@@ -321,7 +321,8 @@ final class BowtieClientTests: XCTestCase {
               ],
               "startedAt": "2024-06-15T19:00:00Z"
             }
-          ]
+          ],
+          "otherInUse": 1
         }
         """.data(using: .utf8)!
 
@@ -332,9 +333,10 @@ final class BowtieClientTests: XCTestCase {
             _ = try await client.createSession(channelId: 1, caps: caps)
             XCTFail("expected tunersBusy")
         } catch let error as BowtieError {
-            guard case .tunersBusy(let sessions) = error else {
+            guard case .tunersBusy(let sessions, let otherInUse) = error else {
                 return XCTFail("expected tunersBusy, got \(error)")
             }
+            XCTAssertEqual(otherInUse, 1, "tuners held by other apps (e.g. Plex)")
             XCTAssertEqual(sessions.count, 1)
             XCTAssertEqual(sessions[0].channelName, "WABC")
             XCTAssertEqual(sessions[0].viewers.map(\.username), ["bob"])
