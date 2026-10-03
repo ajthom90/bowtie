@@ -77,8 +77,9 @@ for everyone.
 
 ### 4. Device dial: timeout and lifetime
 - Dedicated `http.Client` for device streams: dial timeout 5 s,
-  `ResponseHeaderTimeout` **15 s** (the HDHomeRun answers 806/807 after
-  ~10 s, so 15 s never cuts off a legitimate "no signal" answer). No overall
+  `ResponseHeaderTimeout` **12 s** (the HDHomeRun answers 806/807 after
+  ~10 s, so 12 s never cuts off a legitimate "no signal" answer, and a hung
+  device still fails inside the harness's 15 s fail-fast bound). No overall
   `Client.Timeout` (the body is a live stream).
 - The device stream outlives the `POST /sessions` request. Contexts by
   phase:
@@ -106,10 +107,11 @@ One line each, with session id, channel and backend where known:
 
 1. Make the scenario/xfail fail for the right reason, then fix, then remove
    the marker (the harness fails the test if a marker outlives its fix).
-2. Scenarios: the existing `slow-consumer-restart.yaml` (spec §D.1) drops
-   its xfail once restarts continue the playlist (made to restart via the
-   30 s stuck rule); new `nosignal-reconnect.yaml` (807 for 5 s mid-stream →
-   session survives) and `slow-consumer-drops.yaml` (8 s slowConsumer → no
+2. Scenarios: `slow-consumer-restart.yaml` becomes `slow-consumer-drops.yaml`
+   (a slow consumer no longer restarts FFmpeg); the restart path is tested by
+   a new `transcoder-restart.yaml` that kills FFmpeg mid-session
+   (`bowtie.killTranscoderAt`), starting as an xfail that the fix removes; new `nosignal-reconnect.yaml` (807 for 5 s mid-stream →
+   session survives) and `slow-consumer-drops.yaml` (10 s slowConsumer → no
    restart, sequence monotonic). The virtual test player does not decode,
    so the drop scenario also gets a real-player check: its HLS output plays
    in AVPlayer (the macOS AVPlayer probe) without error.
