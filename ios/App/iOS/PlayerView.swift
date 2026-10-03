@@ -188,10 +188,38 @@ struct PlayerView: View {
     }
 
     private var topBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            identityRow
+            // The bottom edge belongs to the system transport (live scrubber),
+            // so Bowtie's player controls get a second row up here.
+            if !isBlockingError {
+                HStack(spacing: 10) {
+                    livePill
+                    playerButtons
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        // Below AVKit's own top row (full screen, AirPlay, mute).
+        .padding(.top, 64)
+        .padding(.bottom, 10)
+        .background(
+            LinearGradient(
+                colors: [Color.black.opacity(0.75), Color.black.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            // Decoration only: AVKit's top buttons sit under this gradient.
+            .allowsHitTesting(false)
+        )
+    }
+
+    private var identityRow: some View {
         HStack(alignment: .center, spacing: 12) {
             Text(channel.guideNumber)
                 .font(Theme.channelNumber(36))
                 .foregroundStyle(Theme.amber)
+                .fixedSize()
                 .accessibilityLabel("Channel \(channel.guideNumber)")
 
             VStack(alignment: .leading, spacing: 2) {
@@ -209,11 +237,6 @@ struct PlayerView: View {
 
             Spacer(minLength: 0)
 
-            // The bottom edge belongs to the system transport (live scrubber).
-            if !isBlockingError {
-                playerButtons
-            }
-
             Button {
                 Task { await leave() }
             } label: {
@@ -228,19 +251,40 @@ struct PlayerView: View {
             .accessibilityLabel("Done")
             .accessibilityHint("Stop playback and return to the channel list")
         }
-        .padding(.horizontal, 16)
-        // Below AVKit's own top row (full screen, AirPlay, mute).
-        .padding(.top, 64)
-        .padding(.bottom, 10)
-        .background(
-            LinearGradient(
-                colors: [Color.black.opacity(0.75), Color.black.opacity(0)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            // Decoration only: AVKit's top buttons sit under this gradient.
-            .allowsHitTesting(false)
-        )
+    }
+
+    /// "Live": red dot when at the live point; when behind, shows how far and
+    /// jumps back to live on tap.
+    @ViewBuilder
+    private var livePill: some View {
+        if let behind = bridge.secondsBehindLive {
+            let live = LiveEdge.isLive(secondsBehind: behind)
+            Button {
+                bridge.jumpToLive()
+                bumpChrome()
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(live ? Color.red : Theme.dim)
+                        .frame(width: 8, height: 8)
+                    Text(live ? "Live" : "Live \(LiveEdge.behindLabel(secondsBehind: behind))")
+                        .font(Theme.label(14))
+                        .foregroundStyle(live ? Theme.text : Theme.amber)
+                        .lineLimit(1)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Theme.raised.opacity(0.9))
+                .clipShape(Capsule())
+                .fixedSize()
+            }
+            .buttonStyle(.plain)
+            .disabled(live)
+            .accessibilityLabel("Live")
+            .accessibilityValue(live ? "Watching live" : "\(Int(behind)) seconds behind")
+            .accessibilityHint(live ? "" : "Jump to live")
+        }
     }
 
     private var playerButtons: some View {
@@ -612,6 +656,8 @@ final class PlayerBridge {
     var playerDidRecover = false
     /// Out-of-window clamp: position fell before seekable start → jumped to live edge.
     var playerDidJumpToLive = false
+    /// Seconds behind the live point; nil until the seekable range is known.
+    var secondsBehindLive: Double?
 
     private var itemStatusObs: NSKeyValueObservation?
     private var itemKeepUpObs: NSKeyValueObservation?
@@ -638,6 +684,7 @@ final class PlayerBridge {
             player = p
         }
         observe(item: item)
+        secondsBehindLive = nil
         stallGate.loaded(at: now)
         startStallTicker()
         player?.play()
@@ -706,13 +753,14 @@ final class PlayerBridge {
                 }
             }
             // Periodic check so a paused head that slowly exits the window is caught.
-            let interval = CMTime(seconds: 2, preferredTimescale: 600)
+            let interval = CMTime(seconds: 1, preferredTimescale: 600)
             periodicTimeObserver = player.addPeriodicTimeObserver(
                 forInterval: interval,
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
                     self?.clampIfBehindSeekableWindow()
+                    self?.updateLivePosition()
                 }
             }
         }
@@ -731,6 +779,48 @@ final class PlayerBridge {
 
     /// When playback position is before the first seekable range start, seek to
     /// the live edge (range end) and flag the out-of-window notice.
+    func updateLivePosition() {
+        guard let player, let item = player.currentItem,
+              let range = item.seekableTimeRanges.last?.timeRangeValue,
+              range.duration.isNumeric, range.duration.seconds > 0 else {
+            secondsBehindLive = nil
+            return
+        }
+        let current = player.currentTime()
+        guard current.isNumeric else { return }
+        secondsBehindLive = LiveEdge.secondsBehind(
+            seekableEnd: CMTimeRangeGetEnd(range).seconds,
+            current: current.seconds,
+            liveOffset: liveOffsetSeconds(item)
+        )
+    }
+
+    private func liveOffsetSeconds(_ item: AVPlayerItem) -> Double {
+        let offset = item.recommendedTimeOffsetFromLive
+        return offset.isNumeric ? offset.seconds : 0
+    }
+
+    /// Seek to where AVPlayer plays live (its recommended offset from the edge).
+    func jumpToLive() {
+        guard let player, let item = player.currentItem,
+              let range = item.seekableTimeRanges.last?.timeRangeValue,
+              range.duration.isNumeric else { return }
+        // The player's live point, not the very end (seeking there stalls).
+        let target = CMTime(
+            seconds: LiveEdge.liveTarget(
+                seekableEnd: CMTimeRangeGetEnd(range).seconds,
+                liveOffset: liveOffsetSeconds(item)
+            ),
+            preferredTimescale: 600
+        )
+        player.seek(to: target) { [weak self] _ in
+            Task { @MainActor in self?.updateLivePosition() }
+        }
+        if player.timeControlStatus == .paused {
+            player.play()
+        }
+    }
+
     func clampIfBehindSeekableWindow() {
         guard let player, let item = player.currentItem else { return }
         let ranges = item.seekableTimeRanges

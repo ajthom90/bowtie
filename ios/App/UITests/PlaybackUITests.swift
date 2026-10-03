@@ -90,8 +90,35 @@ final class PlaybackUITests: XCTestCase {
         treeAttachment.name = "after-tap-tree"
         treeAttachment.lifetime = .keepAlways
         add(treeAttachment)
-        let scrubber = app.sliders.firstMatch
+        let scrubber = app.sliders.matching(NSPredicate(format: "identifier == %@", "Current position")).firstMatch
         XCTAssertTrue(scrubber.exists && scrubber.isHittable, "no reachable scrubber; tree:\n\(tree)")
+
+        // Live pill: a just-started channel can leave playback behind the live
+        // point; Live catches up. After skipping back it reports the delay and
+        // jumps back to live when tapped.
+        let live = app.buttons["Live"]
+        XCTAssertTrue(live.exists, "no Live pill")
+        if live.value as? String != "Watching live" {
+            live.tap()
+            expectation(for: NSPredicate(format: "value == %@", "Watching live"), evaluatedWith: live)
+            waitForExpectations(timeout: 8)
+        }
+        if !app.buttons["Skip Backward"].isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        app.buttons["Skip Backward"].tap()
+        app.buttons["Skip Backward"].tap()
+        let behind = NSPredicate(format: "value ENDSWITH %@", "seconds behind")
+        expectation(for: behind, evaluatedWith: live)
+        waitForExpectations(timeout: 5)
+        attach("behind-live")
+        if !live.isHittable {
+            // Chrome auto-hid; a tap on the video brings it back.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        }
+        live.tap()
+        expectation(for: NSPredicate(format: "value == %@", "Watching live"), evaluatedWith: live)
+        waitForExpectations(timeout: 8)
     }
 
     func testSwitchToSavedServerKeepsLogin() throws {

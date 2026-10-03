@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **iPhone/iPad: "Live" button.** The player's top controls show **Live** with
+  a red dot while you're at the live point. When you've rewound (or a channel
+  you just tuned starts behind), it shows how far behind you are
+  (e.g. "Live −0:20"); tap it to jump back to live.
+
 ### Fixed
 
 - **iPhone/iPad: live rewind controls were unreachable.** Bowtie's own player
