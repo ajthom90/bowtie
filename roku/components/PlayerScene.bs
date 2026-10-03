@@ -91,8 +91,8 @@ sub observeApi()
     unobserveApi()
     task = m.top.apiTask
     if task <> invalid
-        task.observeField("response", "onApiResponse")
-        task.observeField("authEvent", "onAuthEvent")
+        task.observeFieldScoped("response", "onApiResponse")
+        task.observeFieldScoped("authEvent", "onAuthEvent")
         m.observing = true
     end if
 end sub
@@ -101,8 +101,8 @@ sub unobserveApi()
     if m.observing = true
         task = m.top.apiTask
         if task <> invalid
-            task.unobserveField("response")
-            task.unobserveField("authEvent")
+            task.unobserveFieldScoped("response")
+            task.unobserveFieldScoped("authEvent")
         end if
         m.observing = false
     end if
