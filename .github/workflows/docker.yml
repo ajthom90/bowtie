@@ -1,0 +1,37 @@
+name: Docker
+
+# Runs only when files this job checks change (or this workflow itself).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "server/**"
+      - "web/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "server/**"
+      - "web/**"
+      - ".github/workflows/docker.yml"
+
+jobs:
+  # Build the multi-stage image on PRs and main (no push). amd64 only for
+  # speed; multi-arch publish happens in the release workflow (Task 21).
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (linux/amd64, load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: bowtie:ci
