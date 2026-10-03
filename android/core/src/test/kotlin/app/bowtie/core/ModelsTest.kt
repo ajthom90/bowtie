@@ -148,7 +148,7 @@ class ModelsTest {
             }
         """.trimIndent()
 
-        val body = BowtieJson.decodeFromString<TunersBusyPayload>(json)
+        val body = BowtieJson.decodeFromString<TestTunersBusyPayload>(json)
         assertEquals("all tuners in use", body.error)
         assertEquals(1, body.sessions.size)
         val session = body.sessions[0]
@@ -212,11 +212,27 @@ class ModelsTest {
         assertEquals(500, (server as BowtieError.Server).status)
         assertNotNull((network as BowtieError.Network).cause2)
     }
+
+    @Test
+    fun tunersBusyCopy_namesOtherApps() {
+        assertEquals("1 tuner is in use by another app (like Plex).", TunersBusyCopy.otherAppsLine(1))
+        assertEquals("2 tuners are in use by another app (like Plex).", TunersBusyCopy.otherAppsLine(2))
+        assertNull(TunersBusyCopy.otherAppsLine(0))
+    }
+
+    @Test
+    fun decode_channel_reception() {
+        val json = """[{"id":18,"guideNumber":"11.1","name":"KARE-HD","logoUrl":"","reception":"noSignal","receptionCheckedAt":"2026-10-03T13:18:49Z"},{"id":14,"guideNumber":"9.1","name":"FOX 9","logoUrl":"","reception":"ok"},{"id":2,"guideNumber":"5.1","name":"KSTP","logoUrl":""}]"""
+        val channels = BowtieJson.decodeFromString<List<Channel>>(json)
+        assertTrue(channels[0].hasNoSignal)
+        assertEquals(false, channels[1].hasNoSignal)
+        assertEquals("an older server sends no reception field", false, channels[2].hasNoSignal)
+    }
 }
 
 /** Wire envelope for 503 tuners-busy; kept here so Models stays viewer-DTO focused. */
 @Serializable
-private data class TunersBusyPayload(
+private data class TestTunersBusyPayload(
     val error: String,
     val sessions: List<ActiveSessionSummary>,
 )

@@ -180,6 +180,7 @@ struct ChannelRailView: View {
                         now: now,
                         isPlaying: playerModel.currentChannel?.id == row.channel.id
                     )
+                    .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                 }
                 // Default button style → system focus scale / highlight.
                 .listRowBackground(Theme.bg)
@@ -222,6 +223,9 @@ struct ChannelRailView: View {
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
         ]
+        if row.channel.hasNoSignal {
+            parts.append("No signal last time")
+        }
         if let nowTitle = row.nowNext.now?.title, !nowTitle.isEmpty {
             parts.append("Now \(nowTitle)")
         }
@@ -256,6 +260,14 @@ private struct RailRowView: View {
                     .font(Theme.label(28))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
+
+                if row.channel.hasNoSignal {
+                    // Last tune got no signal; still tappable (signal may return).
+                    Text("No signal")
+                        .font(Theme.label(18))
+                        .foregroundStyle(Theme.alert)
+                        .textCase(.uppercase)
+                }
 
                 HStack(spacing: 16) {
                     if let program = row.nowNext.now {

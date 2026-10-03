@@ -41,6 +41,7 @@ type stubStreams struct {
 	sessions   []stream.SessionInfo
 	dirs       map[string]string // viewerID → dir
 	viewers    map[string]bool
+	reception  map[int64]stream.Reception
 }
 
 func newStubStreams() *stubStreams {
@@ -113,6 +114,11 @@ func (s *stubStreams) SessionInfoOf(viewerID string) (stream.SessionInfo, bool) 
 }
 
 func (s *stubStreams) IngestChannels() []int64 { return nil }
+
+func (s *stubStreams) ChannelReception(id int64) (stream.Reception, bool) {
+	r, ok := s.reception[id]
+	return r, ok
+}
 
 func (s *stubStreams) register(viewerID, dir string) {
 	s.mu.Lock()
@@ -1354,8 +1360,9 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 		t.Fatalf("status=%d body=%q, want 503", rr.Code, rr.Body.String())
 	}
 	var body struct {
-		Error    string               `json:"error"`
-		Sessions []stream.SessionInfo `json:"sessions"`
+		Error      string               `json:"error"`
+		Sessions   []stream.SessionInfo `json:"sessions"`
+		OtherInUse *int                 `json:"otherInUse"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -1366,6 +1373,10 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	// sessions field present (may be empty — no bowtie sessions holding tuners).
 	if body.Sessions == nil {
 		t.Fatal("sessions field missing")
+	}
+	// The one tuner is held by something other than Bowtie (e.g. Plex).
+	if body.OtherInUse == nil || *body.OtherInUse != 1 {
+		t.Fatalf("otherInUse = %v, want 1", body.OtherInUse)
 	}
 }
 
@@ -1425,5 +1436,57 @@ func TestCreateSessionStartErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Viewers see each channel's last known reception so the apps can mark
+// channels the antenna can't receive right now.
+func TestChannelsIncludeReception(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	now := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	if err := st.UpsertDevice(store.Device{DeviceID: "dev-rx", IP: "127.0.0.1", Model: "fake", TunerCount: 2, Manual: true, LastSeen: now, StreamPort: 5004}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncLineup("dev-rx", []store.Channel{
+		{DeviceID: "dev-rx", GuideNumber: "9.1", Name: "FOX 9"},
+		{DeviceID: "dev-rx", GuideNumber: "11.1", Name: "KARE"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chans, err := st.ListChannels(false)
+	if err != nil || len(chans) != 2 {
+		t.Fatalf("channels: %v len=%d", err, len(chans))
+	}
+	ids := map[string]int64{}
+	for _, c := range chans {
+		ids[c.GuideNumber] = c.ID
+		if err := st.UpdateChannel(c.ID, true, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ss.reception = map[int64]stream.Reception{ids["11.1"]: {State: stream.ReceptionNoSignal, CheckedAt: now}}
+	seedUser(t, st, "viewer1", "pass", "viewer")
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": "viewer1", "password": "pass"}, nil)
+	authH := map[string]string{"Authorization": "Bearer " + decodeLogin(t, rr).AccessToken}
+	rr = doJSON(t, h, "GET", "/api/v1/channels", nil, authH)
+	var got []struct {
+		GuideNumber        string  `json:"guideNumber"`
+		Reception          string  `json:"reception"`
+		ReceptionCheckedAt *string `json:"receptionCheckedAt"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]int{}
+	for i, c := range got {
+		by[c.GuideNumber] = i
+	}
+	kare, fox := got[by["11.1"]], got[by["9.1"]]
+	if kare.Reception != "noSignal" || kare.ReceptionCheckedAt == nil || *kare.ReceptionCheckedAt != "2026-10-03T10:00:00Z" {
+		t.Errorf("11.1 = %+v, want noSignal at 2026-10-03T10:00:00Z", kare)
+	}
+	if fox.Reception != "unknown" || fox.ReceptionCheckedAt != nil {
+		t.Errorf("9.1 = %+v, want unknown with no timestamp", fox)
 	}
 }

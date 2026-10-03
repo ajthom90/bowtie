@@ -1089,3 +1089,42 @@ func TestNoSignalRetriesStayFrequent(t *testing.T) {
 	go func() { _, _ = last.Write(make([]byte, 188*4)) }()
 	readN(t, sub.R, 188*4, 2*time.Second)
 }
+
+// Ingest remembers each channel's last tune outcome: a stream means "ok", an
+// 806/807 answer means "noSignal" (on first attach and on reconnect).
+func TestReceptionRecordsTuneOutcomes(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC))
+	body := newPipeBody()
+	var dials atomic.Int64
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		switch dials.Add(1) {
+		case 1:
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		case 2:
+			return body, 200, nil
+		default:
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		}
+	}, clock)
+	if _, ok := im.Reception(1); ok {
+		t.Fatal("reception known before any tune")
+	}
+	if _, err := im.Attach(context.Background(), 1, "u"); !errors.Is(err, ErrNoSignal) {
+		t.Fatalf("first attach err = %v, want ErrNoSignal", err)
+	}
+	if r, _ := im.Reception(1); r.State != ReceptionNoSignal || !r.CheckedAt.Equal(clock.Now()) {
+		t.Fatalf("after 807: %+v, want noSignal at %v", r, clock.Now())
+	}
+	sub, err := im.Attach(context.Background(), 1, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sub.Close() }()
+	if r, _ := im.Reception(1); r.State != ReceptionOK {
+		t.Fatalf("after stream: %+v, want ok", r)
+	}
+	_ = body.Close() // signal lost mid-stream; the reconnect gets 807
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestReconnectMin) })
+	clock.Advance(ingestReconnectMin)
+	waitFor(t, 3*time.Second, func() bool { r, _ := im.Reception(1); return r.State == ReceptionNoSignal })
+}

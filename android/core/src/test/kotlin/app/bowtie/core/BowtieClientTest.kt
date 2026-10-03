@@ -303,7 +303,8 @@ class BowtieClientTest {
                     }
                   ]
                 }
-              ]
+              ],
+              "otherInUse": 1
             }
         """.trimIndent()
 
@@ -319,6 +320,7 @@ class BowtieClientTest {
             )
             fail("expected TunersBusy")
         } catch (e: BowtieError.TunersBusy) {
+            assertEquals("tuners held by other apps (e.g. Plex)", 1, e.otherInUse)
             assertEquals(1, e.sessions.size)
             assertEquals("WABC", e.sessions[0].channelName)
             assertEquals(listOf("alice", "bob"), e.sessions[0].viewers.map { it.username })

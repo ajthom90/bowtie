@@ -1044,7 +1044,7 @@ components:
           type: string
     ViewerChannel:
       type: object
-      required: [id, guideNumber, name, logoUrl]
+      required: [id, guideNumber, name, logoUrl, reception]
       properties:
         id:
           type: integer
@@ -1056,9 +1056,21 @@ components:
         logoUrl:
           type: string
           description: Icon URL from mapped EPG channel, or empty
+        reception:
+          type: string
+          enum: [ok, noSignal, unknown]
+          description: |
+            The channel's last tune outcome, learned from real tunes (the
+            HDHomeRun reports signal only for a channel it is tuned to).
+            "noSignal" means the tuner last answered 806/807; "unknown" means
+            not tuned since the server started.
+        receptionCheckedAt:
+          type: string
+          format: date-time
+          description: When reception was last learned; absent when unknown.
     GuideChannel:
       type: object
-      required: [channelId, guideNumber, name, logoUrl, programs]
+      required: [channelId, guideNumber, name, logoUrl, programs, reception]
       properties:
         channelId:
           type: integer
@@ -1069,6 +1081,14 @@ components:
           type: string
         logoUrl:
           type: string
+        reception:
+          type: string
+          enum: [ok, noSignal, unknown]
+          description: Same as ViewerChannel.reception.
+        receptionCheckedAt:
+          type: string
+          format: date-time
+          description: Same as ViewerChannel.receptionCheckedAt.
         programs:
           type: array
           items:
@@ -1391,6 +1411,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SessionInfo'
+        otherInUse:
+          type: integer
+          description: |
+            Tuners busy for something other than Bowtie (for example Plex):
+            tuners the HDHomeRun reports streaming minus the ones Bowtie's own
+            streams hold.
   responses:
     BadRequest:
       description: Invalid request body

@@ -55,7 +55,12 @@ data class Channel(
     val guideNumber: String,
     val name: String,
     val logoUrl: String,
-)
+    /** Last tune outcome learned by the server: "ok", "noSignal" or "unknown"; null from servers older than 0.6.3. */
+    val reception: String? = null,
+) {
+    /** The antenna got no signal the last time this channel was tuned. */
+    val hasNoSignal: Boolean get() = reception == "noSignal"
+}
 
 @Serializable
 data class GuideProgram(

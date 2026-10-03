@@ -59,11 +59,16 @@ targets:
       - path: App/Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.bowtie.tv
+        # Same bundle ID as the iOS app: one App Store Connect record (universal
+        # purchase) with an added tvOS platform, so Xcode Cloud can ship both.
+        PRODUCT_BUNDLE_IDENTIFIER: app.bowtie
         PRODUCT_NAME: BowtieTV
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: App/tvOS/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Bowtie
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: LL334G7KP2

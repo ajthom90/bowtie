@@ -9,7 +9,8 @@ sealed class BowtieError : Exception() {
     data object Unauthorized : BowtieError()
 
     /** 503 — all tuners in use; [sessions] is the trimmed UI summary. */
-    data class TunersBusy(val sessions: List<ActiveSessionSummary>) : BowtieError()
+    /** [otherInUse]: tuners held by other apps (e.g. Plex); 0 when none or from an older server. */
+    data class TunersBusy(val sessions: List<ActiveSessionSummary>, val otherInUse: Int = 0) : BowtieError()
 
     /** 422 — codec/profile negotiation failed. */
     data class NegotiationFailed(override val message: String) : BowtieError()

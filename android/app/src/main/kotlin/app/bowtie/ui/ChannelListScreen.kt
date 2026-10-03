@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -207,6 +208,8 @@ private fun ChannelRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
+            // Last tune got no signal: dim (still tappable; signal may return).
+            .alpha(if (row.channel.hasNoSignal) 0.55f else 1f)
             .padding(
                 horizontal = BowtieDimens.screenPadding,
                 vertical = BowtieDimens.rowPadding,
@@ -226,6 +229,13 @@ private fun ChannelRow(
                 style = BowtieType.body,
                 color = BowtieColors.text,
             )
+            if (row.channel.hasNoSignal) {
+                Text(
+                    text = "NO SIGNAL",
+                    style = BowtieType.label,
+                    color = BowtieColors.alert,
+                )
+            }
             if (now != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(

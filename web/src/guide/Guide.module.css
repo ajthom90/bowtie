@@ -413,3 +413,17 @@
     font-size: 1.45rem;
   }
 }
+
+/* Last tune got no signal: dim the channel (still tappable; signal may return). */
+.noSignal {
+  opacity: 0.55;
+}
+
+.rxBadge {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--alert);
+}

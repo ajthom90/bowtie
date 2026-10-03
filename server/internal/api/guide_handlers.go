@@ -52,6 +52,16 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load guide")
 		return
 	}
+	for i := range guide {
+		guide[i].Reception = "unknown"
+		if s.deps.Streams != nil {
+			if rx, ok := s.deps.Streams.ChannelReception(guide[i].ChannelID); ok {
+				at := rx.CheckedAt.UTC()
+				guide[i].Reception = rx.State
+				guide[i].ReceptionCheckedAt = &at
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, guide)
 }
 

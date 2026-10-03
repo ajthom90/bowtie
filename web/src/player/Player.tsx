@@ -19,6 +19,7 @@ import {
   createHeartbeatController,
   skipBack,
   type LiveWindow,
+  tunerBusyMessage,
 } from './seekModel'
 import styles from './Player.module.css'
 
@@ -350,11 +351,8 @@ export function Player({ target, onBack }: Props) {
     } catch (err) {
       setLoading(false)
       if (err instanceof ApiError && err.status === 503) {
-        setError({
-          message:
-            'All tuners are in use — someone else is watching. Try again in a few minutes.',
-          tunerBusy: true,
-        })
+        const otherInUse = (err.body as { otherInUse?: number } | undefined)?.otherInUse
+        setError({ message: tunerBusyMessage(otherInUse), tunerBusy: true })
       } else if (err instanceof ApiError) {
         setError({
           message: err.message || 'Could not start playback.',

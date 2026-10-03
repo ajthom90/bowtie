@@ -25,7 +25,7 @@ public final class PlayerModel {
         case playing(CreatedSession)
         case stalled
         case failed(String)
-        case tunersBusy([ActiveSessionSummary])
+        case tunersBusy([ActiveSessionSummary], otherInUse: Int)
 
         public static func == (lhs: State, rhs: State) -> Bool {
             switch (lhs, rhs) {
@@ -37,8 +37,8 @@ public final class PlayerModel {
                     && a.session == b.session
             case let (.failed(a), .failed(b)):
                 return a == b
-            case let (.tunersBusy(a), .tunersBusy(b)):
-                return a == b
+            case let (.tunersBusy(a, ao), .tunersBusy(b, bo)):
+                return a == b && ao == bo
             default:
                 return false
             }
@@ -314,8 +314,8 @@ public final class PlayerModel {
                 state = .failed(Self.deviceCantPlayMessage)
             }
 
-        case .tunersBusy(let sessions):
-            state = .tunersBusy(sessions)
+        case .tunersBusy(let sessions, let otherInUse):
+            state = .tunersBusy(sessions, otherInUse: otherInUse)
 
         case .notFound:
             // 404: channel unknown/disabled — signal list reload.

@@ -199,6 +199,7 @@ struct ChannelListView: View {
                         now: now,
                         isPlaying: playerModel.currentChannel?.id == row.channel.id
                     )
+                    .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                 }
                 .buttonStyle(.plain)
                 .listRowBackground(Theme.bg)
@@ -247,6 +248,9 @@ struct ChannelListView: View {
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
         ]
+        if row.channel.hasNoSignal {
+            parts.append("No signal last time")
+        }
         if let nowTitle = row.nowNext.now?.title, !nowTitle.isEmpty {
             parts.append("Now \(nowTitle)")
         }
@@ -281,6 +285,14 @@ private struct ChannelRowView: View {
                     .font(Theme.label(17))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
+
+                if row.channel.hasNoSignal {
+                    // Last tune got no signal; still tappable (signal may return).
+                    Text("No signal")
+                        .font(Theme.label(12))
+                        .foregroundStyle(Theme.alert)
+                        .textCase(.uppercase)
+                }
 
                 if let program = row.nowNext.now {
                     VStack(alignment: .leading, spacing: 4) {

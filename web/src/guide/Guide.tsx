@@ -9,6 +9,7 @@ import {
   halfHourTicks,
   layoutRow,
   nowLinePct,
+  receptionNote,
   selectGuidePageState,
   shiftWindow,
 } from './guideModel'
@@ -232,14 +233,15 @@ function ChannelRow({
     const n = now.getTime()
     return n >= a && n < b
   })?.title
+  const rxNote = receptionNote(channel.reception)
 
   return (
     <>
       <button
         type="button"
-        className={styles.channelCell}
+        className={`${styles.channelCell} ${rxNote ? styles.noSignal : ''}`}
         onClick={() => watch(currentTitle)}
-        aria-label={`Watch channel ${channel.guideNumber} ${channel.name}`}
+        aria-label={`Watch channel ${channel.guideNumber} ${channel.name}${rxNote ? `, ${rxNote.toLowerCase()} last time` : ''}`}
       >
         <span className={styles.channelNum}>{channel.guideNumber}</span>
         {channel.logoUrl ? (
@@ -247,6 +249,7 @@ function ChannelRow({
         ) : null}
         <span className={styles.channelMeta}>
           <span className={styles.callSign}>{channel.name}</span>
+          {rxNote ? <span className={styles.rxBadge}>{rxNote}</span> : null}
         </span>
       </button>
 

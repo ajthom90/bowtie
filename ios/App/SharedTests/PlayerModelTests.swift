@@ -542,7 +542,7 @@ final class PlayerModelTests: XCTestCase {
         let model = makeModel()
         await playThroughDebounce(model)
 
-        guard case .tunersBusy(let sessions) = model.state else {
+        guard case .tunersBusy(let sessions, _) = model.state else {
             return XCTFail("expected tunersBusy, got \(model.state)")
         }
         XCTAssertEqual(sessions.count, 1)

@@ -36,13 +36,20 @@ public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let guideNumber: String
     public let name: String
     public let logoUrl: String
+    /// Last tune outcome learned by the server: "ok", "noSignal" or "unknown".
+    /// Absent from servers older than 0.6.3.
+    public let reception: String?
 
-    public init(id: Int64, guideNumber: String, name: String, logoUrl: String) {
+    public init(id: Int64, guideNumber: String, name: String, logoUrl: String, reception: String? = nil) {
         self.id = id
         self.guideNumber = guideNumber
         self.name = name
         self.logoUrl = logoUrl
+        self.reception = reception
     }
+
+    /// The antenna got no signal the last time this channel was tuned.
+    public var hasNoSignal: Bool { reception == "noSignal" }
 }
 
 public struct GuideProgram: Codable, Equatable, Sendable {

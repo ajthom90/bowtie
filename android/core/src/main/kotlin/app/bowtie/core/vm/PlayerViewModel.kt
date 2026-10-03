@@ -52,7 +52,7 @@ class PlayerViewModel(
         data class Playing(val s: CreatedSession) : State()
         data object Stalled : State()
         data class Failed(val message: String) : State()
-        data class TunersBusy(val sessions: List<ActiveSessionSummary>) : State()
+        data class TunersBusy(val sessions: List<ActiveSessionSummary>, val otherInUse: Int = 0) : State()
     }
 
     companion object {
@@ -329,7 +329,7 @@ class PlayerViewModel(
                 }
             }
             is BowtieError.TunersBusy -> {
-                _state.value = State.TunersBusy(error.sessions)
+                _state.value = State.TunersBusy(error.sessions, error.otherInUse)
             }
             is BowtieError.NotFound -> {
                 _channelsStale.value = true

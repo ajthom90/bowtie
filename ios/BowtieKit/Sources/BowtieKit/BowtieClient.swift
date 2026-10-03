@@ -28,6 +28,7 @@ private struct ErrorBody: Decodable {
 private struct TunersBusyBody: Decodable {
     let error: String
     let sessions: [ActiveSessionSummary]
+    let otherInUse: Int?
 }
 
 // MARK: - Client
@@ -427,7 +428,7 @@ public actor BowtieClient {
             throw BowtieError.negotiationFailed(message)
         case 503:
             if let busy = try? decoder.decode(TunersBusyBody.self, from: data) {
-                throw BowtieError.tunersBusy(busy.sessions)
+                throw BowtieError.tunersBusy(busy.sessions, otherInUse: busy.otherInUse ?? 0)
             }
             let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? "service unavailable"
             throw BowtieError.server(status: status, message: message)

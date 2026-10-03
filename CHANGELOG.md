@@ -5,6 +5,25 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-10-03
+
+### Added
+
+- **Channels the antenna can't receive are marked.** The server learns each
+  channel's reception from real tunes (the HDHomeRun only reports signal for
+  a channel it's tuned to): a "no signal" answer marks the channel, a working
+  stream clears it. Web, iOS, Apple TV, Android and Fire TV dim those
+  channels and label them "No signal"; they stay tappable since signal can
+  return. API: `reception` and `receptionCheckedAt` on `/api/v1/channels`
+  and `/api/v1/guide`.
+- **"All tuners in use" says when another app holds them.** The 503 body
+  has `otherInUse` (tuners the HDHomeRun reports busy minus the ones Bowtie
+  holds), and every app adds e.g. "1 tuner is in use by another app (like
+  Plex)."
+- **Apple TV app is ready for TestFlight**: layered app icon, Top Shelf
+  images, and the iOS bundle ID so it ships as a tvOS platform of the same
+  App Store Connect app.
+
 ## [0.6.2] — 2026-10-03
 
 ### Fixed

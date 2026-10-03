@@ -11,11 +11,16 @@ export interface LoginResponse {
   user: User
 }
 
+/** Last tune outcome, learned by the server from real tunes. */
+export type Reception = 'ok' | 'noSignal' | 'unknown'
+
 export interface ViewerChannel {
   id: number
   guideNumber: string
   name: string
   logoUrl: string
+  reception: Reception
+  receptionCheckedAt?: string
 }
 
 export interface GuideProgram {
@@ -32,6 +37,8 @@ export interface GuideChannel {
   guideNumber: string
   name: string
   logoUrl: string
+  reception: Reception
+  receptionCheckedAt?: string
   programs: GuideProgram[]
 }
 
@@ -498,7 +505,7 @@ export class ApiClient {
         data && typeof data === 'object' && data !== null && 'error' in data
           ? String((data as { error: unknown }).error)
           : res.statusText
-      throw new ApiError(res.status, msg)
+      throw new ApiError(res.status, msg, data)
     }
     return data as T
   }
@@ -506,10 +513,13 @@ export class ApiClient {
 
 export class ApiError extends Error {
   status: number
+  /** Parsed JSON error body, when the server sent one. */
+  body?: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.body = body
   }
 }
