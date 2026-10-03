@@ -5,6 +5,26 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] — 2026-10-03
+
+Roku release: first build verified on a real Roku TV against production.
+
+### Fixed
+
+- **The Roku channel installs.** A stray `bs_const=true` in the manifest made
+  the firmware reject the whole package.
+- **Roku screens receive API responses.** A hidden screen tearing down its
+  listener removed every screen's listener, so Connect never saw the server
+  answer. Listeners are now scoped per screen.
+- **The Roku channel list loads.** It crashed on a misnamed date method.
+- **Back on Roku always ends the session.** A request sent at the same moment
+  as another one could be dropped, leaving the viewer on the server until the
+  idle timeout.
+- **Quality is reachable on Roku TVs.** Roku TVs keep `*` for their picture
+  menu during playback; press **Right** to open the quality dialog.
+- Roku request bodies use the API's camelCase keys; Connect and Login are
+  centered; the on-device self-test passes 41/41.
+
 ## [0.6.0] — 2026-10-02
 
 Reliability release: ordinary hiccups no longer freeze or end a stream.
