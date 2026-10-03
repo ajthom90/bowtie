@@ -1664,3 +1664,48 @@ func TestForceClosedSubStopsProcess(t *testing.T) {
 		t.Fatal("force-closed sub did not stop its ffmpeg")
 	}
 }
+
+// A restart waits on the device (a slow or no-signal tuner can take ~10s per
+// try); every other viewer request must keep being served meanwhile.
+func TestRestartDialDoesNotBlockManager(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	release := make(chan struct{})
+	defer close(release)
+	var dials atomic.Int64
+	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if dials.Add(1) == 1 {
+			return &liveNotifyBody{}, 200, nil
+		}
+		<-release // the restart's dial: tuner slow to answer
+		return nil, 0, errors.New("released")
+	}
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, dial)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.LastProc().Crash(errors.New("boom"))
+	waitFor(t, 2*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, s := range m.sessions {
+			return s.crashed
+		}
+		return false
+	})
+	stepClock(clock, 6*time.Second) // past restart backoff and the 5s ingest tail
+	go m.maintain()                // restart → Attach → dial blocks
+	waitFor(t, 2*time.Second, func() bool { return dials.Load() == 2 })
+
+	done := make(chan struct{})
+	go func() {
+		m.Touch(h.ViewerID)
+		_ = m.Sessions()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("manager calls blocked while a restart waited on the device")
+	}
+}
