@@ -29,6 +29,15 @@ Reliability release: ordinary hiccups no longer freeze or end a stream.
   session start.
 - **The device stream outlives the start request**, so every new session no
   longer reconnects to the tuner one second in.
+- **Restarts Bowtie triggers itself no longer end playback.** FFmpeg used to
+  write "end of stream" to the playlist when Bowtie closed its input, so
+  players stopped during the restart.
+- **A restart waiting on a slow tuner no longer stalls every viewer** on
+  every channel; the device wait now happens outside the session lock.
+- **A truly hung FFmpeg is stopped and restarted**, not just cut off from
+  its input.
+- **The admin tuners view no longer blocks** (or blocks other channels'
+  starts) while one channel is still connecting to the tuner.
 
 ### Added
 
