@@ -1642,3 +1642,25 @@ func TestRestartIsLogged(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// The manager registers its FFmpeg's Stop as the sub's force-close hook, so a
+// transcoder ingest gives up on is stopped even if it never exits on EOF.
+func TestForceClosedSubStopsProcess(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	var sub *IngestSub
+	for _, s := range m.sessions {
+		sub = s.sub
+	}
+	m.mu.Unlock()
+	sub.forceClose()
+	select {
+	case <-runner.LastProc().stopCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("force-closed sub did not stop its ffmpeg")
+	}
+}

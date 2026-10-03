@@ -261,6 +261,8 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		_ = os.RemoveAll(dir)
 		return ViewerHandle{}, err, false
 	}
+	// If ingest gives up on this transcoder, stop it even if it ignores EOF.
+	sub.OnForceClose(proc.Stop)
 
 	if err := m.waitPlaylist(ctx, dir, proc); err != nil {
 		proc.Stop()
@@ -602,6 +604,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 		sess.restartAfter = m.now().Add(sess.backoff)
 		return
 	}
+	sub.OnForceClose(proc.Stop)
 	now := m.now()
 	log.Printf("stream: session %s channel %d: ffmpeg restarted", sess.id, sess.channelID)
 	sess.sub = sub

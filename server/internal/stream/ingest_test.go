@@ -1040,3 +1040,16 @@ func TestActiveChannelsDoesNotWaitOnDialingChannel(t *testing.T) {
 		t.Fatal("another channel's Attach blocked behind a dialing channel")
 	}
 }
+
+// When ingest gives up on a stuck transcoder it also runs the owner's
+// force-close hook, so an FFmpeg that ignores EOF is still stopped.
+func TestStuckSubRunsForceCloseHook(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 22, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
+	var stopped atomic.Bool
+	stuck.OnForceClose(func() { stopped.Store(true) })
+	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)+2)
+	waitFor(t, 2*time.Second, stopped.Load)
+}

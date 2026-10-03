@@ -263,6 +263,23 @@ type IngestSub struct {
 
 	// lastDropLog rate-limits the "transcoder behind" log (under channelIngest.mu).
 	lastDropLog time.Time
+
+	onForceClose atomic.Pointer[func()]
+}
+
+// OnForceClose registers f to run when ingest gives up on this subscriber
+// (stuck transcoder, device lost, tuner taken). The owner uses it to stop a
+// transcoder that might not exit on EOF.
+func (s *IngestSub) OnForceClose(f func()) {
+	s.onForceClose.Store(&f)
+}
+
+// forceClose closes the sub on ingest's initiative and runs the owner's hook.
+func (s *IngestSub) forceClose() {
+	_ = s.Close()
+	if f := s.onForceClose.Load(); f != nil {
+		(*f)()
+	}
 }
 
 // Close detaches this sub. Double-Close is safe. Last Close on a channel starts
@@ -520,7 +537,7 @@ func (c *channelIngest) closeAllSubs(reason error) {
 	}
 	c.mu.Unlock()
 	for _, s := range subs {
-		_ = s.Close()
+		s.forceClose()
 	}
 }
 
@@ -724,7 +741,7 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 	c.mu.Unlock()
 	for _, s := range stuck {
 		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout)
-		_ = s.Close()
+		s.forceClose()
 	}
 }
 
