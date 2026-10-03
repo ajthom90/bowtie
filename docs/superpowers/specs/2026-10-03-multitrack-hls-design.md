@@ -19,11 +19,13 @@ production's QSV.
 
 ## Constraints found in the spike (2026-10-03, image FFmpeg 5.1.9)
 
-1. **Captions can't ride inside the video on production.** `h264_qsv` in
-   FFmpeg 5.1 has no `a53cc` option; libx264 does (AVPlayer shows in-band
-   "CC" from it); VideoToolbox's `a53cc` corrupts the stream (disabled in
-   0.5.4). So captions must be a separate **WebVTT** rendition for every
-   encoder.
+1. **In-band captions can't be relied on.** `h264_qsv`, `h264_nvenc` and
+   libx264 in FFmpeg 5.1 have `-a53cc` (default on), but whether 608 data
+   survives the `mpeg2_qsv` hardware decode is unknown and only testable on
+   the production box; VideoToolbox's `a53cc` corrupts the stream (disabled
+   in 0.5.4); VAAPI has none. So captions are a separate **WebVTT**
+   rendition for every encoder, and `-a53cc 0` is set whenever that
+   rendition exists so players don't list captions twice.
 2. **Players can't switch audio tracks muxed into one stream**, so each
    extra audio track must be its own HLS audio rendition.
 3. **One FFmpeg 5.1 process can do it.** Verified two ways:
