@@ -7,6 +7,7 @@ import {
   nowLinePct,
   selectGuidePageState,
   type GuideProgram,
+  receptionNote,
 } from './guideModel'
 
 /** Fixed UTC helpers so layout math is timezone-stable. */
@@ -258,5 +259,16 @@ describe('selectGuidePageState', () => {
 
   it('exposes program-less cell copy constant', () => {
     expect(GUIDE_COPY.noGuideData).toBe('No guide data — press to watch')
+  })
+})
+
+describe('receptionNote', () => {
+  it('labels channels the antenna could not receive on the last tune', () => {
+    expect(receptionNote('noSignal')).toBe('No signal')
+  })
+  it('says nothing for received or never-tuned channels', () => {
+    expect(receptionNote('ok')).toBeNull()
+    expect(receptionNote('unknown')).toBeNull()
+    expect(receptionNote(undefined)).toBeNull()
   })
 })

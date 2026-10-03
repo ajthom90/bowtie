@@ -201,7 +201,14 @@ export const GUIDE_COPY = {
   noChannelsViewer: 'No channels enabled yet. Ask your admin to enable some channels.',
   /** Full-width program-less cell (clickable). */
   noGuideData: 'No guide data — press to watch',
+  /** Channel badge when the last tune got no signal (still tappable). */
+  noSignal: 'No signal',
 } as const
+
+/** Badge text for a channel's last known reception, or null for none. */
+export function receptionNote(reception: string | undefined): string | null {
+  return reception === 'noSignal' ? GUIDE_COPY.noSignal : null
+}
 
 export type GuidePageState =
   | { kind: 'loading' }

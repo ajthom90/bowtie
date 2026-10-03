@@ -11,11 +11,16 @@ export interface LoginResponse {
   user: User
 }
 
+/** Last tune outcome, learned by the server from real tunes. */
+export type Reception = 'ok' | 'noSignal' | 'unknown'
+
 export interface ViewerChannel {
   id: number
   guideNumber: string
   name: string
   logoUrl: string
+  reception: Reception
+  receptionCheckedAt?: string
 }
 
 export interface GuideProgram {
@@ -32,6 +37,8 @@ export interface GuideChannel {
   guideNumber: string
   name: string
   logoUrl: string
+  reception: Reception
+  receptionCheckedAt?: string
   programs: GuideProgram[]
 }
 
