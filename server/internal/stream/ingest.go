@@ -56,6 +56,12 @@ var HTTPDial = NewHTTPDial(deviceConnectTimeout, deviceHeaderTimeout)
 // kernel dropped). The body is closed and the normal reconnect path runs.
 const ingestIdleTimeout = 8 * time.Second
 
+// ingestNoSignalRetry caps the reconnect backoff while the tuner answers
+// "no signal" (806/807): a real HDHomeRun takes ~10s to give that answer, so
+// retrying this soon after it costs little and resumes playback within ~2s of
+// the signal returning instead of after a doubled backoff of up to 30s.
+const ingestNoSignalRetry = 2 * time.Second
+
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.
 var ErrTunersBusy = errors.New("all tuners in use")
@@ -715,6 +721,11 @@ func (c *channelIngest) pump() {
 				if backoff > ingestReconnectMax {
 					backoff = ingestReconnectMax
 				}
+			}
+			// No signal is waiting on the antenna, not a failing device: keep
+			// retrying often so playback resumes soon after the signal returns.
+			if errors.Is(dialErr, ErrNoSignal) && backoff > ingestNoSignalRetry {
+				backoff = ingestNoSignalRetry
 			}
 		}
 	}

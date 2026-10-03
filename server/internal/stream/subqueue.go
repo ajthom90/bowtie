@@ -33,6 +33,11 @@ func (q *subQueue) push(chunk, tables []byte) int {
 	if q.closed {
 		return 0
 	}
+	if len(q.chunks) == 0 {
+		// Data starts waiting now: a quiet input (no signal) is not a stuck
+		// reader, so the stuck clock must not count the empty time.
+		q.lastPop = q.now()
+	}
 	dropped := 0
 	if q.bytes+len(chunk) > q.max {
 		// Make room for the chunk and the PAT+PMT that will follow a drop.
@@ -80,7 +85,8 @@ func (q *subQueue) close() {
 	q.cond.Broadcast()
 }
 
-// idleFor is how long data has waited without the reader taking any; 0 when
+// idleFor is how long queued data has waited without the reader taking any
+// (since the last pop, or since data arrived in an empty queue); 0 when
 // nothing is queued.
 func (q *subQueue) idleFor(now time.Time) time.Duration {
 	q.mu.Lock()

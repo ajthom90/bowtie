@@ -81,3 +81,24 @@ func TestAlignTS(t *testing.T) {
 		t.Fatalf("exact: whole=%d rest=%d", len(whole), len(rest))
 	}
 }
+
+// A quiet input (e.g. a long loss of signal) is not a stuck reader: when data
+// arrives after the queue sat empty, it has only just started waiting.
+func TestSubQueueIdleForIgnoresQuietInput(t *testing.T) {
+	now := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	q := newSubQueue(1<<20, clock)
+	q.push(make([]byte, 188), nil)
+	if _, ok := q.pop(); !ok {
+		t.Fatal("pop failed")
+	}
+	now = now.Add(40 * time.Second) // no input for 40s; queue empty
+	q.push(make([]byte, 188), nil)
+	if d := q.idleFor(now); d != 0 {
+		t.Fatalf("idleFor = %v right after data resumed, want 0", d)
+	}
+	now = now.Add(31 * time.Second) // now the reader really is stuck
+	if d := q.idleFor(now); d < 30*time.Second {
+		t.Fatalf("idleFor = %v after 31s unconsumed, want ≥30s", d)
+	}
+}
