@@ -431,6 +431,14 @@ func (f *Fake) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A real HDHomeRun that cannot lock answers 503 "807 No Video Data".
+	if !f.engine.Signal(guide).Locked() {
+		f.log("reject", guide, "", "no signal")
+		w.Header().Set("X-HDHomeRun-Error", "807 No Video Data")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
 	f.mu.Lock()
 	tunerIdx := -1
 	if !f.engine.Busy() && f.active < f.opts.TunerCount {

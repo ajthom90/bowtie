@@ -61,6 +61,10 @@ Faults: `signal` (strength/quality/symbol), `stall` (for, burst), `drop`
 (to), `busy`, `hang`. Scope: `channel` (default; everyone on the channel, now
 and later), `connections` (only connections open when it fires), `device`.
 
+While a channel's signal quality is below 30 (loss of lock), open
+connections go silent and new tunes get `503` with `X-HDHomeRun-Error: 807
+No Video Data`, as on a real HDHomeRun.
+
 `drop` with `mode: reset` stops writing and waits up to 1s for the client to
 take in-flight data before sending the RST. A RST that lands while data is
 still in flight carries a sequence number the client hasn't reached, and the

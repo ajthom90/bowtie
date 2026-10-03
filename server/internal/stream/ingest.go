@@ -658,17 +658,20 @@ func (c *channelIngest) pump() {
 			}
 
 			body, status, dialErr := c.im.dial(context.Background(), url)
-			if status == 503 {
+			if status == http.StatusServiceUnavailable && !errors.Is(dialErr, ErrNoSignal) {
 				if body != nil {
 					_ = body.Close()
 				}
-				// 503 on reconnect closes all subs (tuner stolen).
+				// 805 / header-less 503 on reconnect: the tuner was taken.
 				c.closeAllSubs(ErrTunersBusy)
 				c.mu.Lock()
 				c.teardownLocked()
 				c.mu.Unlock()
 				c.im.removeChannel(c.channelID, c)
 				return
+			}
+			if errors.Is(dialErr, ErrNoSignal) {
+				log.Printf("ingest: channel %d: no signal on reconnect, retrying", c.channelID)
 			}
 			if dialErr == nil && body != nil {
 				c.mu.Lock()

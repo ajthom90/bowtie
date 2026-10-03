@@ -979,3 +979,39 @@ func TestIdleWatchdogRedialsSilentDevice(t *testing.T) {
 	go func() { _, _ = second.Write(make([]byte, 188*4)) }()
 	readN(t, sub.R, 188*4, 2*time.Second)
 }
+
+// A reconnect answered with 807 (no signal) keeps retrying instead of tearing
+// the channel down as "tuner stolen"; subs survive and get data when the
+// signal returns.
+func TestReconnectNoSignalKeepsSubs(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
+	first, third := newPipeBody(), newPipeBody()
+	var dials atomic.Int64
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		switch dials.Add(1) {
+		case 1:
+			return first, 200, nil
+		case 2:
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		default:
+			return third, 200, nil
+		}
+	}, clock)
+	sub, err := im.Attach(context.Background(), 1, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sub.Close() }()
+	_ = first.Close() // connection lost
+	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	clock.Advance(ingestReconnectMin) // dial 2 → 807
+	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 2 })
+	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	clock.Advance(2 * ingestReconnectMin) // backoff doubled → dial 3
+	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 3 })
+	if sub.isClosed() {
+		t.Fatal("807 on reconnect closed the subscriber")
+	}
+	go func() { _, _ = third.Write(make([]byte, 188*4)) }()
+	readN(t, sub.R, 188*4, 2*time.Second)
+}
