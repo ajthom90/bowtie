@@ -561,7 +561,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 	}
 	// Defensive: ensure the segment dir exists (e.g. was removed by a failed race path).
 	if err := os.MkdirAll(sess.dir, 0o755); err != nil {
-		log.Printf("stream: mkdir session dir %s for restart: %v", sess.dir, err)
+		log.Printf("stream: session %s: mkdir session dir %s for restart: %v", sess.id, sess.dir, err)
 		sess.backoff = nextBackoff(sess.backoff)
 		sess.restartAfter = m.now().Add(sess.backoff)
 		return
@@ -581,7 +581,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 	}
 	sub, err := m.ingest.Attach(context.Background(), sess.channelID, sess.inputURL)
 	if err != nil {
-		log.Printf("stream: re-Attach channel %d for restart: %v", sess.channelID, err)
+		log.Printf("stream: session %s: re-Attach channel %d for restart: %v", sess.id, sess.channelID, err)
 		sess.backoff = nextBackoff(sess.backoff)
 		sess.restartAfter = m.now().Add(sess.backoff)
 		return
@@ -594,6 +594,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 	log.Printf("stream: session %s: restarting ffmpeg (append to playlist)", sess.id)
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
+		log.Printf("stream: session %s: ffmpeg restart failed: %v", sess.id, err)
 		_ = sub.Close()
 		procCancel()
 		sess.procCancel = nil
@@ -602,6 +603,7 @@ func (m *Manager) restartSessionLocked(sess *session) {
 		return
 	}
 	now := m.now()
+	log.Printf("stream: session %s channel %d: ffmpeg restarted", sess.id, sess.channelID)
 	sess.sub = sub
 	sess.proc = proc
 	sess.procCancel = procCancel
@@ -669,10 +671,11 @@ func (m *Manager) supervise(sess *session) {
 			sess.sub = nil
 		}
 		now := m.now()
+		log.Printf("stream: session %s channel %d (%s): ffmpeg exited after %v: %v",
+			sess.id, sess.channelID, sess.decision.Backend, now.Sub(sess.procStart).Round(time.Second), err)
 		sess.backoff = computeCrashBackoff(sess.backoff, sess.procStart, now)
 		sess.crashed = true
 		sess.restartAfter = now.Add(sess.backoff)
-		_ = err
 		m.mu.Unlock()
 	}
 }

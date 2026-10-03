@@ -1,9 +1,12 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1593,3 +1596,49 @@ func TestRestartAppendsToPlaylist(t *testing.T) {
 		t.Fatalf("Append = %v then %v, want false then true", specs[0].Append, specs[1].Append)
 	}
 }
+
+// An FFmpeg exit and the restart that follows are logged with the session,
+// channel and backend, so production logs explain a hiccup.
+func TestRestartIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	var bufMu sync.Mutex
+	log.SetOutput(writerFunc(func(p []byte) (int, error) {
+		bufMu.Lock()
+		defer bufMu.Unlock()
+		return buf.Write(p)
+	}))
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	sessID := m.Sessions()[0].ID
+	runner.LastProc().Crash(errors.New("boom"))
+	deadline := time.Now().Add(3 * time.Second)
+	for runner.Starts() < 2 && time.Now().Before(deadline) {
+		clock.Advance(time.Second)
+		m.maintain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	bufMu.Lock()
+	out := buf.String()
+	bufMu.Unlock()
+	for _, want := range []string{
+		"session " + sessID,
+		fmt.Sprintf("channel %d", chID),
+		"ffmpeg exited",
+		"boom",
+		"restarting ffmpeg (append to playlist)",
+		"ffmpeg restarted",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
