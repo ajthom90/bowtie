@@ -180,6 +180,13 @@ func (c *ingestClock) Advance(d time.Duration) {
 	}
 }
 
+// Pending returns how many timers are armed (tests wait on it before Advance).
+func (c *ingestClock) Pending() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.timers)
+}
+
 // --- counting dial (A3) ------------------------------------------------------
 
 type countingDial struct {
@@ -940,4 +947,35 @@ func TestActiveChannels(t *testing.T) {
 	}
 	_ = s1.Close()
 	_ = s2.Close()
+}
+
+// A device connection that goes silent is closed after ingestIdleTimeout and
+// redialed; the subscriber keeps receiving data from the new connection.
+func TestIdleWatchdogRedialsSilentDevice(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
+	first, second := newPipeBody(), newPipeBody()
+	var dials atomic.Int64
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if dials.Add(1) == 1 {
+			return first, 200, nil
+		}
+		return second, 200, nil
+	}, clock)
+	sub, err := im.Attach(context.Background(), 1, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	go func() { _, _ = first.Write(make([]byte, 188*4)) }() // then silence
+	readN(t, sub.R, 188*4, 2*time.Second)
+
+	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 }) // watchdog armed
+	clock.Advance(ingestIdleTimeout)
+	waitFor(t, 3*time.Second, func() bool { return first.closed.Load() })
+	// Reconnect backoff (1s) then redial.
+	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	clock.Advance(ingestReconnectMin)
+	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 2 })
+	go func() { _, _ = second.Write(make([]byte, 188*4)) }()
+	readN(t, sub.R, 188*4, 2*time.Second)
 }

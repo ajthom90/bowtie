@@ -1372,7 +1372,9 @@ func TestTunerFreeBudget(t *testing.T) {
 	closed := make(chan struct{})
 	var closeOnce sync.Once
 	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
-		body := &notifyCloseBody{hang: newHangBody(), onClose: func() {
+		// A live device streams continuously; a silent one would (correctly)
+		// be closed by the 8s idle watchdog long before the 60s grace ends.
+		body := &liveNotifyBody{onClose: func() {
 			closeOnce.Do(func() { close(closed) })
 		}}
 		return body, 200, nil
@@ -1389,10 +1391,10 @@ func TestTunerFreeBudget(t *testing.T) {
 
 	m.StopViewer(h.ViewerID)
 	// 60s empty grace keeps session (and sub) alive.
-	clock.Advance(60 * time.Second)
+	stepClock(clock, 60*time.Second)
 	m.maintain()
 	// Just under grace end: may still be open. Advance past grace → teardown → Close sub → 5s tail.
-	clock.Advance(2 * time.Second)
+	stepClock(clock, 2*time.Second)
 	m.maintain()
 	if len(m.Sessions()) != 0 {
 		t.Fatalf("session should be gone after grace, got %d", len(m.Sessions()))
@@ -1422,7 +1424,7 @@ func TestTunerFreeBudget(t *testing.T) {
 	// longer exists): Close at teardown + 5s tail ≤5s after session ends. And
 	// "after the last interested session ends" end-to-end from leave ≈65s.
 	// Implementation uses `>` so we need 61s to teardown. Assert closed by 66s from leave.
-	clock.Advance(5 * time.Second)
+	stepClock(clock, 5*time.Second)
 	// Fire tail timers.
 	select {
 	case <-closed:
@@ -1523,4 +1525,52 @@ func (r *stubRunner) LiveProcs() int {
 		}
 	}
 	return n
+}
+
+// stepClock advances the fake clock one second at a time so a streaming test
+// device keeps "receiving" data in between (one big jump looks like silence to
+// the ingest idle watchdog).
+func stepClock(c *fakeClock, d time.Duration) {
+	for d > 0 {
+		step := time.Second
+		if d < step {
+			step = d
+		}
+		c.Advance(step)
+		d -= step
+		time.Sleep(3 * time.Millisecond) // let the device read stamp the new time
+	}
+}
+
+// liveNotifyBody is a device stream that keeps sending null TS packets until
+// closed, then reports the close.
+type liveNotifyBody struct {
+	closed  atomic.Bool
+	once    sync.Once
+	onClose func()
+}
+
+func (b *liveNotifyBody) Read(p []byte) (int, error) {
+	if b.closed.Load() {
+		return 0, io.EOF
+	}
+	time.Sleep(time.Millisecond)
+	n := len(p) - len(p)%188
+	if n == 0 {
+		return 0, nil
+	}
+	for off := 0; off < n; off += 188 {
+		p[off], p[off+1], p[off+2], p[off+3] = 0x47, 0x1F, 0xFF, 0x10
+	}
+	return n, nil
+}
+
+func (b *liveNotifyBody) Close() error {
+	b.closed.Store(true)
+	b.once.Do(func() {
+		if b.onClose != nil {
+			b.onClose()
+		}
+	})
+	return nil
 }

@@ -5,4 +5,3 @@ timeline:
 expect:
   maxGapSeconds: 15
   sessionSurvives: true
-  xfail: "ingest has no read deadline, so a silent connection is never redialed (Plan 2)"

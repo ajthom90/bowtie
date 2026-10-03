@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -49,6 +50,11 @@ func NewHTTPDial(connectTimeout, headerTimeout time.Duration) DialFunc {
 
 // HTTPDial is the production DialFunc.
 var HTTPDial = NewHTTPDial(deviceConnectTimeout, deviceHeaderTimeout)
+
+// ingestIdleTimeout: a device streams continuously once tuned, so this long
+// without a byte means the connection is dead (silent device or a reset the
+// kernel dropped). The body is closed and the normal reconnect path runs.
+const ingestIdleTimeout = 8 * time.Second
 
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.
@@ -519,12 +525,46 @@ func (c *channelIngest) closeAllSubs(reason error) {
 	}
 }
 
+// watchIdle closes body once lastRead (UnixNano, updated by pump) is
+// ingestIdleTimeout old. The returned stop func ends the watch.
+func (c *channelIngest) watchIdle(body io.Closer, lastRead *atomic.Int64) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	wait := func() time.Duration {
+		return ingestIdleTimeout - c.im.now().Sub(time.Unix(0, lastRead.Load()))
+	}
+	// Arm before spawning so a test's Advance can't race timer registration.
+	timer := c.im.after(wait())
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-timer:
+			}
+			w := wait()
+			if w <= 0 {
+				log.Printf("ingest: channel %d: no data for %v, reconnecting", c.channelID, ingestIdleTimeout)
+				_ = body.Close()
+				return
+			}
+			timer = c.im.after(w)
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
 func (c *channelIngest) pump() {
 	defer close(c.pumpDone)
 
 	buf := make([]byte, ingestChunkSize)
 	var failStart time.Time
 	backoff := ingestReconnectMin
+
+	var lastRead atomic.Int64
+	var watched io.ReadCloser
+	stopWatch := func() {}
+	defer func() { stopWatch() }()
 
 	for {
 		c.mu.Lock()
@@ -536,8 +576,17 @@ func (c *channelIngest) pump() {
 		if !running || body == nil {
 			return
 		}
+		if body != watched {
+			stopWatch()
+			lastRead.Store(c.im.now().UnixNano())
+			watched = body
+			stopWatch = c.watchIdle(body, &lastRead)
+		}
 
 		n, err := body.Read(buf)
+		if n > 0 {
+			lastRead.Store(c.im.now().UnixNano())
+		}
 
 		// Check stop before processing (body.Close unblocks Read).
 		select {

@@ -144,12 +144,14 @@ func TestPipelineHalfOpenStallRedials(t *testing.T) {
 	if _, err := pl.h.Fake.Apply(faults.Target{Channel: guide, Scope: faults.ScopeConnections}, faults.Spec{Fault: faults.Stall}); err != nil {
 		t.Fatal(err)
 	}
-	xfail(t, "ingest has no read deadline (Plan 2)", func() error {
+	if err := func() error {
 		if !within(12*time.Second, func() bool { return pl.h.Fake.TotalDials() > pl.baseDials }) {
 			return errorf("no redial within 12s of a silent connection (dials=%d)", pl.h.Fake.TotalDials())
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPipelineDialHangFailsFast(t *testing.T) {
