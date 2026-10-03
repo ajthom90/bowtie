@@ -63,10 +63,10 @@
             />
             <Label
                 id="qualityHint"
-                translation="[1400, 52]"
-                width="440"
+                translation="[1000, 52]"
+                width="840"
                 height="40"
-                text="OK play/pause · * quality"
+                text="OK play/pause · ▶ quality"
                 horizAlign="right"
                 color="0x9BA5AEFF"
                 font="font:SmallSystemFont"

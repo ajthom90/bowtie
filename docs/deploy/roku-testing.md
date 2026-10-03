@@ -70,7 +70,7 @@ Each step lists **do**, **expect**, and **report if not**.
 
 | | |
 |---|---|
-| **Do** | Press `*` / Options to open the quality dialog. Switch profile (e.g. Auto → medium → Auto). |
+| **Do** | Press **Right** to open the quality dialog (`*` also works on streaming sticks; Roku TVs keep `*` for their picture menu during playback). Switch profile (e.g. Auto → medium → Auto). |
 | **Expect** | Dialog lists only profiles allowed by `user.maxQuality`. Playback restarts on the new profile without error; chrome shows the selected quality. |
 | **Report** | Profiles above maxQuality appearing; 422 loops; black screen after change. |
 
