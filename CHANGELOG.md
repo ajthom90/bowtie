@@ -5,6 +5,15 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **iPhone/iPad: live rewind controls were unreachable.** Bowtie's own player
+  chrome caught every tap, so the system scrubber, ±10 s skip and jump-to-live
+  never appeared. Taps now reach the system controls, and Bowtie's quality,
+  stats and Done buttons sit in the top row (AirPlay uses the system button).
+
 ## [0.7.0] — 2026-10-03
 
 ### Added

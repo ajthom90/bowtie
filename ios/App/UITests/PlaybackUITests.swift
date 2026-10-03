@@ -49,6 +49,11 @@ final class PlaybackUITests: XCTestCase {
 
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", channel)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15), "no channel row matching \"\(channel)\"")
+        // Right after sign-in the list is still transitioning in and not hittable.
+        let hittableBy = Date().addingTimeInterval(5)
+        while !row.isHittable && Date() < hittableBy {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
         row.tap()
 
         // Give the session time to start and the first segments to play.
@@ -69,6 +74,24 @@ final class PlaybackUITests: XCTestCase {
             app.tap()
         }
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3), "not on the player screen; screen shows: \(shown)")
+    }
+
+    /// Live rewind: once the buffer has some history, the system scrubber must
+    /// be reachable — a tap on the video shows it, not only Bowtie's chrome.
+    func testLiveRewindScrubberReachable() throws {
+        try testPlayChannel()
+        // Let the DVR window grow past AVKit's minimum for showing a scrubber.
+        RunLoop.current.run(until: Date().addingTimeInterval(40))
+        attach("before-tap")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let tree = app.debugDescription
+        attach("after-tap")
+        let treeAttachment = XCTAttachment(string: tree)
+        treeAttachment.name = "after-tap-tree"
+        treeAttachment.lifetime = .keepAlways
+        add(treeAttachment)
+        let scrubber = app.sliders.firstMatch
+        XCTAssertTrue(scrubber.exists && scrubber.isHittable, "no reachable scrubber; tree:\n\(tree)")
     }
 
     func testSwitchToSavedServerKeepsLogin() throws {
