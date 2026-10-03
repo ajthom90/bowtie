@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,24 +13,42 @@ import (
 	"time"
 )
 
-// HTTPDial is the production DialFunc: GET url and return the response body +
-// status. A non-2xx response is an error (never a stream), classified by the
-// device's X-HDHomeRun-Error header: see DeviceError.
-func HTTPDial(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, 0, err
+const (
+	deviceConnectTimeout = 5 * time.Second
+	// deviceHeaderTimeout bounds the wait for the device's response headers.
+	// The HDHomeRun answers 806/807 after ~10s, so this must stay above that;
+	// it must also stay under the 15s "hung device fails fast" bound.
+	deviceHeaderTimeout = 12 * time.Second
+)
+
+// NewHTTPDial returns a DialFunc with connect and response-header timeouts and
+// no overall timeout (the body is a live stream). A non-2xx response is an
+// error, classified by X-HDHomeRun-Error (see DeviceError).
+func NewHTTPDial(connectTimeout, headerTimeout time.Duration) DialFunc {
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: connectTimeout}).DialContext,
+		ResponseHeaderTimeout: headerTimeout,
+	}}
+	return func(ctx context.Context, rawURL string) (io.ReadCloser, int, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			_ = resp.Body.Close()
+			return nil, resp.StatusCode, &DeviceError{Status: resp.StatusCode, Reason: resp.Header.Get("X-HDHomeRun-Error")}
+		}
+		return resp.Body, resp.StatusCode, nil
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_ = resp.Body.Close()
-		return nil, resp.StatusCode, &DeviceError{Status: resp.StatusCode, Reason: resp.Header.Get("X-HDHomeRun-Error")}
-	}
-	return resp.Body, resp.StatusCode, nil
 }
+
+// HTTPDial is the production DialFunc.
+var HTTPDial = NewHTTPDial(deviceConnectTimeout, deviceHeaderTimeout)
 
 // ErrTunersBusy is returned when a device dial reports HTTP 503 (all tuners in
 // use). Handlers map it via errors.Is to the standard tuners-busy 503 payload.
@@ -196,6 +215,19 @@ func (im *IngestManager) removeChannel(channelID int64, ch *channelIngest) {
 	}
 }
 
+// SubCount returns the number of subscribers on a channel (0 if none).
+func (im *IngestManager) SubCount(channelID int64) int {
+	im.mu.Lock()
+	ch := im.channels[channelID]
+	im.mu.Unlock()
+	if ch == nil {
+		return 0
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return len(ch.subs)
+}
+
 // IngestSub is one process's view of a channel ingest.
 // R is the only read handle; Close only via IngestSub.Close (not R.Close alone
 // for lifecycle — R.Close is safe but does not drop the refcount; always call Close).
@@ -305,7 +337,9 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 		return c.addSubLocked(), nil
 	}
 
-	body, status, err := c.im.dial(ctx, url)
+	// The device stream may be shared by other sessions and must not die when
+	// the request that started it returns.
+	body, status, err := c.im.dial(context.WithoutCancel(ctx), url)
 	if err == nil && (status < 200 || status > 299) && status != 0 {
 		err = &DeviceError{Status: status}
 	}

@@ -1489,3 +1489,38 @@ func TestJobSpecStdinSetOnStart(t *testing.T) {
 		t.Fatalf("InputURL=%q, want empty when Stdin set", runner.lastSpec.InputURL)
 	}
 }
+
+// An abandoned start (request cancelled while waiting for the first playlist)
+// leaves no FFmpeg process and no ingest subscriber behind.
+func TestCancelledStartCleansUp(t *testing.T) {
+	st, cfg, clock, _, chID, user := setupEnv(t)
+	runner := &stubRunner{writeM3U: false}
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	if _, err := m.Start(ctx, user, chID, clientCaps("")); err == nil {
+		t.Fatal("want error from cancelled start")
+	}
+	if n := runner.LiveProcs(); n != 0 {
+		t.Fatalf("running ffmpeg processes = %d, want 0", n)
+	}
+	// The 5s tail may keep the device open briefly; no subscriber may remain.
+	if n := im.SubCount(chID); n != 0 {
+		t.Fatalf("ingest subscribers = %d, want 0", n)
+	}
+}
+
+// LiveProcs counts started stub processes that have not been stopped.
+func (r *stubRunner) LiveProcs() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, p := range r.procs {
+		select {
+		case <-p.stopCh:
+		default:
+			n++
+		}
+	}
+	return n
+}

@@ -158,20 +158,22 @@ func TestPipelineDialHangFailsFast(t *testing.T) {
 	if _, err := pl.h.Fake.Apply(faults.Target{Scope: faults.ScopeDevice}, faults.Spec{Fault: faults.Hang}); err != nil {
 		t.Fatal(err)
 	}
-	xfail(t, "device dial has no timeout (Plan 2)", func() error {
+	if err := func() error {
 		start := time.Now()
 		_, err := pl.h.PlayerWith(t, guide, &http.Client{Timeout: 20 * time.Second})
 		if el := time.Since(start); el > 15*time.Second {
 			return errorf("session start took %v against a hung device (err=%v)", el.Round(time.Second), err)
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPipelineStartKeepsFirstDial(t *testing.T) {
 	t.Parallel()
 	pl := newPipeline(t, true)
-	xfail(t, "first device dial is bound to the POST /sessions request context (Plan 2)", func() error {
+	if err := func() error {
 		if pl.baseDials != 1 {
 			var log []string
 			for _, e := range pl.h.Fake.Events() {
@@ -180,5 +182,7 @@ func TestPipelineStartKeepsFirstDial(t *testing.T) {
 			return errorf("session start dialed the device %d times: %v", pl.baseDials, log)
 		}
 		return nil
-	})
+	}(); err != nil {
+		t.Fatal(err)
+	}
 }
