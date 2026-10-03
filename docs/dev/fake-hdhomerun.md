@@ -70,7 +70,7 @@ can still be lost, as it can on a real network.
 
 **`xfail: "<reason>"`** marks expectations that fail today because of a known
 Bowtie gap. The test then *requires* them to fail, so whoever fixes the gap
-must delete the marker. Pipeline tests use the same idea via `xfail(t, …)`.
+must delete the marker.
 
 **`flaky: "<reason>"`** is the non-strict form for a known gap that only shows
 up some of the time (usually under CPU load): violations are logged but the

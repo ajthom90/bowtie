@@ -965,7 +965,7 @@ func TestIdleWatchdogRedialsSilentDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 	go func() { _, _ = first.Write(make([]byte, 188*4)) }() // then silence
 	readN(t, sub.R, 188*4, 2*time.Second)
 

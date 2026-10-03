@@ -1439,21 +1439,6 @@ func TestTunerFreeBudget(t *testing.T) {
 	}
 }
 
-// notifyCloseBody wraps hangBody and signals when Close is called.
-type notifyCloseBody struct {
-	hang    *hangBody
-	onClose func()
-}
-
-func (b *notifyCloseBody) Read(p []byte) (int, error) { return b.hang.Read(p) }
-func (b *notifyCloseBody) Close() error {
-	err := b.hang.Close()
-	if b.onClose != nil {
-		b.onClose()
-	}
-	return err
-}
-
 // TestStartDial503SurfacesTunersBusy: dial 503 → errors.Is ErrTunersBusy.
 func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	st, cfg, clock, runner, chID, user := setupEnv(t)
