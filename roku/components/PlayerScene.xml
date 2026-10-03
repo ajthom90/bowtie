@@ -14,7 +14,7 @@
         <!-- True after createSession 404 — Home should refresh channel list. -->
         <field id="channelsStale" type="boolean" alwaysNotify="true" value="false" />
         <!-- Dev flag: show Video state / errorCode / errorMsg overlay (token-kill capture). -->
-        <field id="showDebug" type="boolean" value="true" />
+        <field id="showDebug" type="boolean" value="false" />
     </interface>
     <script type="text/brightscript" uri="PlayerScene.bs" />
     <children>
