@@ -80,7 +80,7 @@ errors: empty auth allowlist until on-device capture; otherwise bounded retry
 
 ### Debug overlay
 
-Amber strip at the bottom (on by default for sideload validation) shows:
+Amber strip at the bottom (off by default; set `showDebug` to `true` in `components/PlayerScene.xml` for sideload validation) shows:
 
 ```text
 Video state=… errorCode=… errorMsg=…
