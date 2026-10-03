@@ -1,5 +1,6 @@
 package app.bowtie.tv.ui
 
+import app.bowtie.core.TunersBusyCopy
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
@@ -419,11 +420,14 @@ fun TvPlayerScreen(
                 val busy = state as PlayerViewModel.State.TunersBusy
                 TvErrorPanel(
                     title = "All tuners are in use",
-                    detail = busy.sessions.joinToString("\n") { session ->
-                        val watchers = session.viewers.joinToString { it.username }
-                            .ifEmpty { "—" }
-                        "${session.channelName}: $watchers"
-                    },
+                    detail = (
+                        listOfNotNull(TunersBusyCopy.otherAppsLine(busy.otherInUse)) +
+                            busy.sessions.map { session ->
+                                val watchers = session.viewers.joinToString { it.username }
+                                    .ifEmpty { "—" }
+                                "${session.channelName}: $watchers"
+                            }
+                        ).joinToString("\n"),
                     onRetry = { playerViewModel.play(displayChannel) },
                     onBack = { leave() },
                 )

@@ -326,7 +326,7 @@ class BowtieClient(
             503 -> {
                 try {
                     val payload = BowtieJson.decodeFromString<TunersBusyPayload>(body)
-                    BowtieError.TunersBusy(payload.sessions)
+                    BowtieError.TunersBusy(payload.sessions, payload.otherInUse)
                 } catch (_: Exception) {
                     BowtieError.Server(503, extractErrorMessage(body) ?: body)
                 }
@@ -397,4 +397,5 @@ private data class ErrorBody(val error: String)
 private data class TunersBusyPayload(
     val error: String,
     val sessions: List<ActiveSessionSummary> = emptyList(),
+    val otherInUse: Int = 0,
 )
