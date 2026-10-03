@@ -5,6 +5,36 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-10-02
+
+Reliability release: ordinary hiccups no longer freeze or end a stream.
+
+### Fixed
+
+- **Players no longer freeze when FFmpeg restarts.** A restarted FFmpeg
+  continues the playlist's numbering with a discontinuity marker instead of
+  starting over at segment 0, which players treated as going back in time.
+- **A briefly slow FFmpeg is no longer restarted.** Each transcoder gets a
+  16 MiB buffer (about 7 s of 1080i); if it falls further behind, the oldest
+  data is dropped (with the stream tables re-sent so playback resyncs)
+  instead of cutting FFmpeg off after 2 s. It is restarted only if it takes
+  nothing for 30 s.
+- **Dead device connections are detected.** If the tuner sends nothing for
+  8 s, Bowtie reconnects (previously it waited forever).
+- **Weak signal during playback is retried.** A reconnect answered with
+  "no signal" (HDHomeRun 806/807) keeps retrying for up to 60 s instead of
+  ending every viewer's session as if the tuner had been taken.
+- **Device requests time out.** Connecting to the tuner gives up after 5 s
+  and waiting for its answer after 12 s; a hung tuner no longer hangs
+  session start.
+- **The device stream outlives the start request**, so every new session no
+  longer reconnects to the tuner one second in.
+
+### Added
+
+- Server log lines for FFmpeg exits (session, channel, backend, uptime,
+  FFmpeg's error), restarts, dropped data and reconnects.
+
 ## [0.5.5] — 2026-10-02
 
 ### Fixed
