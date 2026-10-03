@@ -4,6 +4,23 @@ info:
   version: 0.1.0
   description: Live TV streaming API for HDHomeRun tuners.
 paths:
+  /api/v1/version:
+    get:
+      summary: Running server version
+      operationId: getVersion
+      tags: [meta]
+      responses:
+        '200':
+          description: Release version of the running server
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    type: string
+                    example: 0.5.3
   /api/v1/auth/login:
     post:
       summary: Log in with username and password
@@ -655,6 +672,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TunersBusyError'
+        '500':
+          description: |
+            The session could not be started. `error` is "failed to start
+            session"; for admins it is followed by ": <cause>" (the same cause
+            is always logged on the server).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: |
+            The tuner could not receive the channel (HDHomeRun 806 Tune Failed
+            or 807 No Video Data): weak or no signal. `error` is "no signal on
+            this channel", followed by ": <cause>" for admins.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/sessions/{viewerId}:
     parameters:
       - name: viewerId

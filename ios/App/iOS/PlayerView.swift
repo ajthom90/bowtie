@@ -624,6 +624,10 @@ final class PlayerBridge {
     private var failedObserver: NSObjectProtocol?
     private var boundaryTimeObserver: Any?
     private var periodicTimeObserver: Any?
+    /// Startup buffering is not a stall; StallGate decides (shared with tvOS).
+    private var stallGate = StallGate()
+    private var stallTicker: Task<Void, Never>?
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     func load(url: URL) {
         let item = AVPlayerItem(url: url)
@@ -636,7 +640,22 @@ final class PlayerBridge {
             player = p
         }
         observe(item: item)
+        stallGate.loaded(at: now)
+        startStallTicker()
         player?.play()
+    }
+
+    private func startStallTicker() {
+        stallTicker?.cancel()
+        stallTicker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                if self.stallGate.check(at: self.now) == .stalled {
+                    self.playerDidStall = true
+                }
+            }
+        }
     }
 
     func replacePlayer(_ newPlayer: AVPlayer?) {
@@ -744,24 +763,25 @@ final class PlayerBridge {
     }
 
     private func handleBufferState(_ item: AVPlayerItem) {
-        if item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp {
-            // Live HLS underrun — surface as stall for bounded retry.
-            if player?.timeControlStatus == .waitingToPlayAtSpecifiedRate {
-                playerDidStall = true
-            }
-        } else if item.isPlaybackLikelyToKeepUp {
-            playerDidRecover = true
+        // Live HLS underrun: StallGate reports a stall only if it outlasts its grace.
+        if item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp,
+           player?.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            stallGate.waiting(at: now)
         }
     }
 
     private func handleTimeControl(_ player: AVPlayer) {
-        if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
-            // WaitingReason may be toMinimizeStalls — treat prolonged wait as stall.
-            if player.reasonForWaitingToPlay == .toMinimizeStalls {
-                playerDidStall = true
+        switch player.timeControlStatus {
+        case .playing:
+            if stallGate.playing(at: now) == .recovered {
+                playerDidRecover = true
             }
-        } else if player.timeControlStatus == .playing {
-            playerDidRecover = true
+        case .waitingToPlayAtSpecifiedRate:
+            stallGate.waiting(at: now)
+        case .paused:
+            stallGate.paused(at: now)
+        @unknown default:
+            break
         }
     }
 
@@ -800,6 +820,8 @@ final class PlayerBridge {
     }
 
     private func tearDownObservers() {
+        stallTicker?.cancel()
+        stallTicker = nil
         itemStatusObs?.invalidate()
         itemKeepUpObs?.invalidate()
         itemEmptyObs?.invalidate()

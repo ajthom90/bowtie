@@ -149,7 +149,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(store.loadRefreshToken())
     }
 
-    func testChangeServerClearsEverything() async {
+    func testChangeServerKeepsSavedServers() async {
         store.save(server: SharedFixtures.baseURL, refreshToken: "r1")
 
         StubURLProtocol.handler = { request in
@@ -170,5 +170,36 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.user)
         XCTAssertNil(store.loadServer())
         XCTAssertNil(store.loadRefreshToken())
+        XCTAssertEqual(model.savedServers.map(\.url), [SharedFixtures.baseURL], "the server stays saved")
+
+        // Picking it again reuses its saved login.
+        model.selectServer(SharedFixtures.baseURL)
+        XCTAssertEqual(model.phase, .checking)
+        await model.start()
+        XCTAssertEqual(model.phase, .ready)
+    }
+
+    func testSelectServerWithoutLoginGoesToLogin() {
+        let other = URL(string: "http://192.168.0.25:8400")!
+        store.save(server: other, refreshToken: nil)
+        store.save(server: SharedFixtures.baseURL, refreshToken: "r1")
+        let model = AppModel(store: store, urlSession: makeSession())
+
+        model.selectServer(other)
+
+        XCTAssertEqual(model.phase, .login)
+        XCTAssertEqual(model.serverURL, other)
+        XCTAssertNotNil(model.client)
+    }
+
+    func testRemoveServerForgetsIt() {
+        store.save(server: SharedFixtures.baseURL, refreshToken: "r1")
+        store.save(server: nil, refreshToken: nil)
+        let model = AppModel(store: store, urlSession: makeSession())
+
+        model.removeServer(SharedFixtures.baseURL)
+
+        XCTAssertTrue(model.savedServers.isEmpty)
+        XCTAssertEqual(model.phase, .connect)
     }
 }

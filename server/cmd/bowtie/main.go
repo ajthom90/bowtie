@@ -139,6 +139,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	go streamMgr.Run(rootCtx)
 
 	apiHandler := api.New(api.Deps{
+		Version:           version,
 		Cfg:               cfg,
 		Store:             st,
 		Auth:              authSvc,

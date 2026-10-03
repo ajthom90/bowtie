@@ -131,7 +131,10 @@ func videoFilter(b Backend, height int) string {
 	case BackendQSV:
 		// No scale_mode: FFmpeg 5.1 (the image's bookworm build) rejects named
 		// values like "hq" and ignores the option entirely under its MSDK.
-		return fmt.Sprintf("vpp_qsv=deinterlace=2:w=-1:h=%d", height)
+		// Width is an explicit even, aspect-preserving expression: 5.1's
+		// vpp_qsv has no "-1 = keep aspect" and turns w=-1 into a 0-wide
+		// frame ("Picture size 0x1088 is invalid").
+		return fmt.Sprintf("vpp_qsv=deinterlace=2:w=trunc(iw*%d/ih/2)*2:h=%d", height, height)
 	case BackendNVENC:
 		return fmt.Sprintf("yadif_cuda=0:-1:0,scale_cuda=-2:%d", height)
 	case BackendVAAPI:
@@ -151,7 +154,10 @@ func encoderExtras(d Decision) []string {
 	case "h264_nvenc":
 		return []string{"-preset", "p4"}
 	case "h264_videotoolbox":
-		return []string{"-realtime", "1", "-profile:v", "high"}
+		// -a53cc 0: VideoToolbox's closed-caption SEI is malformed ("Unexpected
+		// end of SEI NAL Unit") and AVPlayer rejects the whole stream with
+		// CoreMediaErrorDomain -12971. Seen with FFmpeg 8.0.1 on ATSC input.
+		return []string{"-realtime", "1", "-profile:v", "high", "-a53cc", "0"}
 	case "hevc_videotoolbox":
 		// profile:v high is h264-only per plan
 		return []string{"-realtime", "1"}

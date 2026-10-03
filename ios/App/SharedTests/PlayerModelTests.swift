@@ -365,18 +365,24 @@ final class PlayerModelTests: XCTestCase {
 
     /// Wait until ManualClock has a sleeper (heartbeat or debounce), then advance.
     private func advanceClock(_ duration: Duration) async {
-        for _ in 0..<1_000 {
-            if clock.pendingWaiterCount > 0 {
-                clock.advance(by: duration)
-                // Yield so resumed tasks can re-park on the next sleep.
-                await Task.yield()
-                await Task.yield()
-                return
-            }
-            await Task.yield()
-        }
+        await waitUntil { self.clock.pendingWaiterCount > 0 }
         clock.advance(by: duration)
+        // Yield so resumed tasks can re-park on the next sleep.
         await Task.yield()
+        await Task.yield()
+    }
+
+    /// Polls `condition` for up to `timeout` of real time. A fixed number of
+    /// `Task.yield()`s is not enough when the work crosses threads (URLSession
+    /// stub traffic) on a loaded CI runner.
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        _ condition: @escaping () -> Bool
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition() && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     func testHeartbeatCadenceEvery15s() async {
@@ -402,15 +408,11 @@ final class PlayerModelTests: XCTestCase {
 
         await advanceClock(.seconds(15))
         // Drain the heartbeat network call.
-        for _ in 0..<50 where heartbeatRequests().count < 1 {
-            await Task.yield()
-        }
+        await waitUntil { self.heartbeatRequests().count >= 1 }
         XCTAssertEqual(heartbeatRequests().count, 1)
 
         await advanceClock(.seconds(15))
-        for _ in 0..<50 where heartbeatRequests().count < 2 {
-            await Task.yield()
-        }
+        await waitUntil { self.heartbeatRequests().count >= 2 }
         XCTAssertEqual(heartbeatRequests().count, 2)
 
         let beat = heartbeatRequests()[0]
@@ -438,9 +440,7 @@ final class PlayerModelTests: XCTestCase {
         await playThroughDebounce(model)
 
         await advanceClock(.seconds(15))
-        for _ in 0..<50 where heartbeatRequests().count < 1 {
-            await Task.yield()
-        }
+        await waitUntil { self.heartbeatRequests().count >= 1 }
         XCTAssertEqual(heartbeatRequests().count, 1)
 
         // A6: stall mid-interval; beats must continue.
@@ -448,9 +448,7 @@ final class PlayerModelTests: XCTestCase {
         XCTAssertEqual(model.state, .stalled)
 
         await advanceClock(.seconds(15))
-        for _ in 0..<50 where heartbeatRequests().count < 2 {
-            await Task.yield()
-        }
+        await waitUntil { self.heartbeatRequests().count >= 2 }
         XCTAssertEqual(heartbeatRequests().count, 2, "beats continue through .stalled")
 
         await model.stop()

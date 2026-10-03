@@ -444,6 +444,7 @@ func (f *Fake) handleStream(w http.ResponseWriter, r *http.Request) {
 	if tunerIdx < 0 {
 		f.logLocked("reject", guide, "", "all tuners in use")
 		f.mu.Unlock()
+		w.Header().Set("X-HDHomeRun-Error", "805 All Tuners In Use")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, "all tuners in use")
 		return

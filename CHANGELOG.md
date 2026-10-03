@@ -5,6 +5,65 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.5] — 2026-10-02
+
+### Fixed
+
+- QSV: sessions no longer fail with "ffmpeg exited before playlist ready".
+  The `vpp_qsv` scaler was given `w=-1`, which FFmpeg 5.1 (the image's
+  build) doesn't treat as "keep aspect", so it produced a 0-pixel-wide frame
+  ("Picture size 0x1088 is invalid"). The width is now an explicit
+  aspect-preserving expression.
+- When FFmpeg exits during startup, the error now ends with FFmpeg's last
+  error lines, so admins see the actual cause in the app.
+
+### Added
+
+- iOS / tvOS: saved servers. The Connect screen lists every server you've
+  used; tap one to switch, long-press to remove it. Each server keeps its own
+  login, and "Change server" no longer signs you out, so switching between
+  servers doesn't require signing in again. Existing installs keep their
+  server and login.
+
+## [0.5.4] — 2026-10-02
+
+### Fixed
+
+- iOS / tvOS: live channels no longer fail with "Playback stalled" as soon as
+  they start. AVPlayer begins every load waiting to buffer, which the apps
+  treated as a stall; their retries then reloaded the stream before it could
+  start. A stall now needs playback to have started and a wait longer than
+  4 s (or no start within 20 s).
+- VideoToolbox (Mac-hosted servers): H.264 streams play on Apple devices
+  again. The encoder's closed-caption SEI was malformed and AVPlayer
+  rejected the whole stream (CoreMediaErrorDomain -12971); captions are now
+  off for that encoder.
+
+### Added
+
+- iOS UI test that plays a channel end to end against a live server
+  (skipped unless `TEST_RUNNER_BOWTIE_UITEST_URL` is set).
+
+## [0.5.3] — 2026-10-02
+
+### Fixed
+
+- "Failed to start session" now says why. The underlying cause is always
+  logged, and admins see it in the error message (for example in the iOS
+  app), so a failing channel can be diagnosed without digging through logs.
+- A channel the tuner can't receive (HDHomeRun `806 Tune Failed` /
+  `807 No Video Data`, weak or no signal) is reported as "no signal on this
+  channel" (HTTP 502) instead of "all tuners in use".
+- Any other non-2xx device response (for example an unknown channel) is
+  now an error. Previously it was streamed into FFmpeg as if it were video,
+  which surfaced as a generic "failed to start session".
+- The ingest tail and stall timers start when their countdown begins, not
+  when their goroutine is scheduled.
+
+### Added
+
+- `GET /api/v1/version` reports the running server version (public).
+
 ## [0.5.2] — 2026-10-02
 
 ### Fixed
