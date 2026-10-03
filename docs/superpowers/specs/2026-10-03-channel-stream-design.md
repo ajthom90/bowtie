@@ -63,11 +63,11 @@ changes how many rungs and how sessions are keyed:
 | | Switch off (default) | Switch on (`streaming.adaptive`) |
 |---|---|---|
 | Rungs | 1 — the viewer's negotiated profile (as today) | every ladder rung ≤ source height |
-| Session key | `ch|profile` | `ch` |
+| Session key | `ch|codec|profile` | `ch` |
 | Sharing | viewers on the same quality share | every viewer of the channel shares |
 
-In both modes audio and captions are renditions, so AC-3 copy and the
-codec no longer split sessions. Software encoding (libx264) never builds a
+In both modes audio and captions are renditions, so AC-3 copy no longer
+splits sessions. Software encoding (libx264) never builds a
 ladder (one rung). The ladder is H.264 only; when the switch is on the HEVC
 setting is ignored (it is off today).
 
@@ -133,7 +133,7 @@ returns a master built on each fetch:
   group `ac3`; SUBTITLES "English CC" once `v<top>_vtt.m3u8` exists.
 - One `#EXT-X-STREAM-INF` per rung **per audio group**: CODECS
   `avc1.640029,mp4a.40.2` + `AUDIO="aac"`, and `avc1.640029,ac-3` +
-  `AUDIO="ac3"`; BANDWIDTH = (maxrate + audio) × 1.1; RESOLUTION; SUBTITLES
+  `AUDIO="ac3"` (an HEVC single-rung session uses its `hvc1` string); BANDWIDTH = (maxrate + audio) × 1.1; RESOLUTION; SUBTITLES
   when present; `#EXT-X-INDEPENDENT-SEGMENTS`. Players that can't decode
   AC-3 skip those variants; AVPlayer picks 5.1 on a surround route.
 - **Per-viewer ceiling**: rungs above min(user `max_quality`,
