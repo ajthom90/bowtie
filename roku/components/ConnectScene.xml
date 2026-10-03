@@ -15,7 +15,7 @@
         />
         <LayoutGroup
             id="layout"
-            translation="[460, 280]"
+            translation="[960, 280]"
             layoutDirection="vert"
             horizAlignment="center"
             itemSpacings="[16, 12, 32, 16, 24]"

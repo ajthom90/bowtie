@@ -6,7 +6,8 @@
   "scripts": {
     "build": "bsc",
     "lint": "bslint --severity error",
-    "package": "bsc && rm -f out/bowtie-roku.zip && cd out/staging && zip -r ../bowtie-roku.zip ."
+    "package": "bsc && rm -f out/bowtie-roku.zip && cd out/staging && zip -r ../bowtie-roku.zip .",
+    "test": "bsc && node --test \"test/*.test.mjs\""
   },
   "devDependencies": {
     "@rokucommunity/bslint": "0.8.44",

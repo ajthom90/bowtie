@@ -67,7 +67,7 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 | OK / Play | Play / pause |
 | Back | Stop session (DELETE) and return to rail |
 | Up / Down | Zap previous / next channel (400 ms debounce, session-replace) |
-| `*` / Options | Quality dialog (profiles filtered by `user.maxQuality`) |
+| Right (or `*` / Options on streaming sticks) | Quality dialog (profiles filtered by `user.maxQuality`). Roku TVs open their own picture menu on `*` during playback. |
 | Info / Display | Toggle debug overlay |
 
 ### Session lifecycle (A3)

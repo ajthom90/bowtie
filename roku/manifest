@@ -3,7 +3,6 @@ subtitle=HDHomeRun live TV streaming
 major_version=0
 minor_version=1
 build_version=0
-bs_const=true
 ui_resolutions=fhd
 mm_icon_focus_hd=pkg:/images/mm_icon_focus_hd.png
 mm_icon_focus_sd=pkg:/images/mm_icon_focus_sd.png

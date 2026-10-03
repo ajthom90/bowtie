@@ -25,9 +25,9 @@ sub init()
 
     ' Long-lived ApiTask — sole HTTP + token holder.
     m.apiTask = CreateObject("roSGNode", "ApiTask")
-    m.apiTask.observeField("ready", "onApiReady")
-    m.apiTask.observeField("response", "onApiResponse")
-    m.apiTask.observeField("authEvent", "onAuthEvent")
+    m.apiTask.observeFieldScoped("ready", "onApiReady")
+    m.apiTask.observeFieldScoped("response", "onApiResponse")
+    m.apiTask.observeFieldScoped("authEvent", "onAuthEvent")
     m.apiTask.control = "RUN"
 
     m.connectScene.apiTask = m.apiTask

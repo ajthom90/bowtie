@@ -43,7 +43,7 @@ sub observeApi()
     unobserveApi()
     task = m.top.apiTask
     if task <> invalid
-        task.observeField("response", "onApiResponse")
+        task.observeFieldScoped("response", "onApiResponse")
         m.observing = true
     end if
 end sub
@@ -52,7 +52,7 @@ sub unobserveApi()
     if m.observing = true
         task = m.top.apiTask
         if task <> invalid
-            task.unobserveField("response")
+            task.unobserveFieldScoped("response")
         end if
         m.observing = false
     end if
@@ -321,9 +321,7 @@ end function
 
 function guideWindow() as object
     dt = CreateObject("roDateTime")
-    dt.MarkTime()
-    ' Force UTC for ISO strings.
-    dt.ToUTC()
+    dt.Mark() ' roDateTime stays UTC unless ToLocalTime() is called
     startIso = dt.ToISOString()
     secs = dt.AsSeconds() + GUIDE_WINDOW_SECS
     dt.FromSeconds(secs)
@@ -333,8 +331,7 @@ end function
 
 function isoNow() as string
     dt = CreateObject("roDateTime")
-    dt.MarkTime()
-    dt.ToUTC()
+    dt.Mark()
     return dt.ToISOString()
 end function
 
@@ -347,7 +344,7 @@ end function
 
 function nowAsSeconds() as integer
     dt = CreateObject("roDateTime")
-    dt.MarkTime()
+    dt.Mark()
     return dt.AsSeconds()
 end function
 

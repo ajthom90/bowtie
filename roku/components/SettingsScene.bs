@@ -40,7 +40,7 @@ sub observeApi()
     unobserveApi()
     task = m.top.apiTask
     if task <> invalid
-        task.observeField("response", "onApiResponse")
+        task.observeFieldScoped("response", "onApiResponse")
         m.observing = true
     end if
 end sub
@@ -49,7 +49,7 @@ sub unobserveApi()
     if m.observing = true
         task = m.top.apiTask
         if task <> invalid
-            task.unobserveField("response")
+            task.unobserveFieldScoped("response")
         end if
         m.observing = false
     end if
