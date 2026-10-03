@@ -34,6 +34,8 @@ type StreamController interface {
 	SessionInfoOf(viewerID string) (stream.SessionInfo, bool)
 	// IngestChannels returns channel IDs with an open device ingest (admin tuners payload).
 	IngestChannels() []int64
+	// ChannelReception returns a channel's last tune outcome; false if never tuned.
+	ChannelReception(channelID int64) (stream.Reception, bool)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

@@ -410,6 +410,14 @@ func (m *Manager) removeViewerLocked(viewerID string) {
 	}
 }
 
+// ChannelReception returns a channel's last tune outcome (see Reception).
+func (m *Manager) ChannelReception(channelID int64) (Reception, bool) {
+	if m.ingest == nil {
+		return Reception{}, false
+	}
+	return m.ingest.Reception(channelID)
+}
+
 // Sessions returns snapshots of all live sessions.
 func (m *Manager) Sessions() []SessionInfo {
 	m.mu.Lock()

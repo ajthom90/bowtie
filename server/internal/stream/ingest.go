@@ -119,6 +119,19 @@ const (
 	tsPIDPAT              = 0
 )
 
+// Reception states, learned from real tunes (the HDHomeRun reports signal only
+// for a channel it is tuned to, so Bowtie remembers each channel's last result).
+const (
+	ReceptionOK       = "ok"
+	ReceptionNoSignal = "noSignal"
+)
+
+// Reception is a channel's last tune outcome.
+type Reception struct {
+	State     string
+	CheckedAt time.Time
+}
+
 // IngestManager owns per-channel device streams and fans MPEG-TS out to
 // process-scoped IngestSubs. One device dial per channel (single-flight).
 type IngestManager struct {
@@ -131,6 +144,9 @@ type IngestManager struct {
 	mu       sync.Mutex
 	channels map[int64]*channelIngest
 	stopped  bool
+
+	recMu     sync.Mutex
+	reception map[int64]Reception
 }
 
 // IngestOption configures NewIngestManager.
@@ -152,15 +168,30 @@ func WithIngestClock(now func() time.Time, after func(time.Duration) <-chan time
 // NewIngestManager constructs an IngestManager. dial is required.
 func NewIngestManager(dial DialFunc, opts ...IngestOption) *IngestManager {
 	im := &IngestManager{
-		dial:     dial,
-		now:      func() time.Time { return time.Now().UTC() },
-		after:    time.After,
-		channels: make(map[int64]*channelIngest),
+		dial:      dial,
+		now:       func() time.Time { return time.Now().UTC() },
+		after:     time.After,
+		channels:  make(map[int64]*channelIngest),
+		reception: make(map[int64]Reception),
 	}
 	for _, opt := range opts {
 		opt(im)
 	}
 	return im
+}
+
+// Reception returns a channel's last tune outcome; false if never tuned.
+func (im *IngestManager) Reception(channelID int64) (Reception, bool) {
+	im.recMu.Lock()
+	defer im.recMu.Unlock()
+	r, ok := im.reception[channelID]
+	return r, ok
+}
+
+func (im *IngestManager) noteReception(channelID int64, state string) {
+	im.recMu.Lock()
+	defer im.recMu.Unlock()
+	im.reception[channelID] = Reception{State: state, CheckedAt: im.now()}
 }
 
 // AttachCalls returns how many times Attach has been entered (test instrumentation).
@@ -392,6 +423,9 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 		if body != nil {
 			_ = body.Close()
 		}
+		if errors.Is(err, ErrNoSignal) {
+			c.im.noteReception(c.channelID, ReceptionNoSignal)
+		}
 		if status == http.StatusServiceUnavailable && !errors.Is(err, ErrNoSignal) && !errors.Is(err, ErrTunersBusy) {
 			return nil, fmt.Errorf("ingest dial: %w (%v)", ErrTunersBusy, err)
 		}
@@ -400,6 +434,7 @@ func (c *channelIngest) attach(ctx context.Context, url string) (*IngestSub, err
 	if body == nil {
 		return nil, errors.New("ingest dial: nil body")
 	}
+	c.im.noteReception(c.channelID, ReceptionOK)
 
 	c.url = url
 	c.body = body
@@ -697,9 +732,11 @@ func (c *channelIngest) pump() {
 				return
 			}
 			if errors.Is(dialErr, ErrNoSignal) {
+				c.im.noteReception(c.channelID, ReceptionNoSignal)
 				log.Printf("ingest: channel %d: no signal on reconnect, retrying", c.channelID)
 			}
 			if dialErr == nil && body != nil {
+				c.im.noteReception(c.channelID, ReceptionOK)
 				c.mu.Lock()
 				if !c.running {
 					c.mu.Unlock()

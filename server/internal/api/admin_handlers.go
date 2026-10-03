@@ -229,14 +229,14 @@ type deviceJSON struct {
 }
 
 type tunerStatusJSON struct {
-	Resource               string `json:"resource"`
-	VctNumber              string `json:"vctNumber"`
-	VctName                string `json:"vctName"`
-	Frequency              int64  `json:"frequency"`
-	SignalStrengthPercent  int    `json:"signalStrengthPercent"`
-	SignalQualityPercent   int    `json:"signalQualityPercent"`
-	SymbolQualityPercent   int    `json:"symbolQualityPercent"`
-	TargetIP               string `json:"targetIp"`
+	Resource              string `json:"resource"`
+	VctNumber             string `json:"vctNumber"`
+	VctName               string `json:"vctName"`
+	Frequency             int64  `json:"frequency"`
+	SignalStrengthPercent int    `json:"signalStrengthPercent"`
+	SignalQualityPercent  int    `json:"signalQualityPercent"`
+	SymbolQualityPercent  int    `json:"symbolQualityPercent"`
+	TargetIP              string `json:"targetIp"`
 }
 
 type deviceStatusJSON struct {
@@ -259,6 +259,10 @@ type viewerChannelJSON struct {
 	GuideNumber string `json:"guideNumber"`
 	Name        string `json:"name"`
 	LogoURL     string `json:"logoUrl"`
+	// Reception is the channel's last tune outcome: "ok", "noSignal", or
+	// "unknown" (never tuned since the server started).
+	Reception          string     `json:"reception"`
+	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
 }
 
 func deviceToJSON(d store.Device) deviceJSON {
@@ -519,12 +523,21 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 		if c.EPGChannelID != "" {
 			logo = epgIcons[c.EPGChannelID]
 		}
-		out = append(out, viewerChannelJSON{
+		vc := viewerChannelJSON{
 			ID:          c.ID,
 			GuideNumber: c.GuideNumber,
 			Name:        c.Name,
 			LogoURL:     logo,
-		})
+			Reception:   "unknown",
+		}
+		if s.deps.Streams != nil {
+			if r, ok := s.deps.Streams.ChannelReception(c.ID); ok {
+				at := r.CheckedAt.UTC()
+				vc.Reception = r.State
+				vc.ReceptionCheckedAt = &at
+			}
+		}
+		out = append(out, vc)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

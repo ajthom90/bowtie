@@ -14,6 +14,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
+	"github.com/ajthom90/bowtie/server/internal/stream"
 )
 
 func testAPIWithEPG(t *testing.T, cfg config.Config) (http.Handler, *store.Store, *epg.Service) {
@@ -254,5 +255,58 @@ func TestAdminEPGStatusAndChannels(t *testing.T) {
 	rr = doJSON(t, h, "GET", "/api/v1/admin/epg/status", nil, viewerAuth)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("viewer status = %d, want 403", rr.Code)
+	}
+}
+
+// The guide carries each channel's last known reception too (the web app
+// renders channel rows from the guide).
+func TestGuideIncludesReception(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	prov := settings.NewProvider(st)
+	if err := prov.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	ss := newStubStreams()
+	h := api.New(api.Deps{
+		Cfg: config.Config{}, Store: st,
+		Auth:    &auth.Auth{Secret: []byte("0123456789abcdef0123456789abcdef"), Store: st},
+		EPG:     epg.NewService(st, prov),
+		Streams: ss,
+	})
+	seedUser(t, st, "viewer", "viewerpass", "viewer")
+	if err := st.UpsertDevice(store.Device{DeviceID: "dev1", IP: "1.2.3.4", Model: "X", TunerCount: 1, StreamPort: 5004,
+		LastSeen: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SyncLineup("dev1", []store.Channel{{DeviceID: "dev1", GuideNumber: "11.1", Name: "KARE"}}); err != nil {
+		t.Fatal(err)
+	}
+	chans, _ := st.ListChannels(false)
+	if err := st.UpdateChannel(chans[0].ID, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	ss.reception = map[int64]stream.Reception{chans[0].ID: {State: stream.ReceptionNoSignal, CheckedAt: at}}
+
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": "viewer", "password": "viewerpass"}, nil)
+	authH := map[string]string{"Authorization": "Bearer " + decodeLogin(t, rr).AccessToken}
+	q := url.Values{"start": {at.Format(time.RFC3339)}, "stop": {at.Add(2 * time.Hour).Format(time.RFC3339)}}
+	rr = doJSON(t, h, "GET", "/api/v1/guide?"+q.Encode(), nil, authH)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got []struct {
+		Reception          string  `json:"reception"`
+		ReceptionCheckedAt *string `json:"receptionCheckedAt"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil || len(got) != 1 {
+		t.Fatalf("decode: %v len=%d", err, len(got))
+	}
+	if got[0].Reception != "noSignal" || got[0].ReceptionCheckedAt == nil {
+		t.Fatalf("guide channel = %+v, want noSignal with timestamp", got[0])
 	}
 }

@@ -89,6 +89,10 @@ type GuideChannel struct {
 	Name        string         `json:"name"`
 	LogoURL     string         `json:"logoUrl"`
 	Programs    []GuideProgram `json:"programs"`
+	// Reception is filled by the API layer from the stream manager: "ok",
+	// "noSignal" or "unknown" (see stream.Reception).
+	Reception          string     `json:"reception"`
+	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
 }
 
 // GuideProgram is a single programme block for the guide grid.
