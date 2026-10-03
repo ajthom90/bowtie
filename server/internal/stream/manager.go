@@ -589,7 +589,9 @@ func (m *Manager) restartSessionLocked(sess *session) {
 
 	procCtx, procCancel := context.WithCancel(context.Background())
 	// Buffer window is fixed at session start (not live-mutable mid-session).
-	spec := transcode.JobSpec{Stdin: sub.R, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize}
+	// Append: continue the existing playlist instead of restarting at seg00000.
+	spec := transcode.JobSpec{Stdin: sub.R, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize, Append: true}
+	log.Printf("stream: session %s: restarting ffmpeg (append to playlist)", sess.id)
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
 		_ = sub.Close()

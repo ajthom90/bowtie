@@ -140,6 +140,15 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 				gate.Resume()
 			}()
 		}
+		if sc.Bowtie != nil && sc.Bowtie.KillTranscoderAt > 0 {
+			go func() {
+				select {
+				case <-ctx.Done():
+				case <-time.After(sc.Bowtie.KillTranscoderAt):
+					count.KillCurrent()
+				}
+			}()
+		}
 		go func() {
 			if err := rest.Run(ctx, h.Fake, tsloop.RealClock()); err != nil && ctx.Err() == nil {
 				t.Errorf("scenario run: %v", err)

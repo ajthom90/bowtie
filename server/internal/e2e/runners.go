@@ -23,8 +23,9 @@ type CountingRunner struct {
 	Inner  stream.Runner
 	starts atomic.Int64
 
-	mu  sync.Mutex
-	log []string
+	mu      sync.Mutex
+	log     []string
+	current stream.Process // newest started process (for KillCurrent)
 }
 
 func (r *CountingRunner) logf(format string, a ...any) {
@@ -53,12 +54,29 @@ func (r *CountingRunner) Start(ctx context.Context, spec transcode.JobSpec) (str
 	}
 	r.logf("proc %d: started", n)
 	w := &watchProc{inner: p, done: make(chan error, 1)}
+	r.mu.Lock()
+	r.current = w
+	r.mu.Unlock()
 	go func() {
 		err := <-p.Done()
 		r.logf("proc %d: exited: %v", n, err)
 		w.done <- err
 	}()
 	return w, nil
+}
+
+// KillCurrent stops the newest transcoder (scenario fault). Reports whether
+// one was running.
+func (r *CountingRunner) KillCurrent() bool {
+	r.mu.Lock()
+	p := r.current
+	r.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	r.logf("killing current transcoder (scenario)")
+	p.Stop()
+	return true
 }
 
 // Starts returns how many processes were started.

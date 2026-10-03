@@ -23,6 +23,10 @@ type JobSpec struct {
 	// BuildArgs emits -fflags +discardcorrupt -i pipe:0; Command wires cmd.Stdin.
 	// Used by the per-channel ingest fan-out so FFmpeg does not dial the device.
 	Stdin io.Reader
+	// Append marks a restart into an existing session dir: FFmpeg continues the
+	// playlist's numbering and marks a discontinuity instead of starting over at
+	// seg00000 (which freezes players). Verified on FFmpeg 5.1.9 and 8.0.1.
+	Append bool
 }
 
 // DefaultHLSListSize is used when JobSpec.HLSListSize is 0 (legacy / unset).
@@ -31,6 +35,10 @@ const DefaultHLSListSize = 30
 // BuildArgs returns the full FFmpeg argv for s (excluding the binary path).
 // Argument order is part of the contract; see plan Task 13.
 func BuildArgs(s JobSpec) []string {
+	hlsFlags := "delete_segments+temp_file"
+	if s.Append {
+		hlsFlags += "+append_list+discont_start"
+	}
 	args := []string{"-hide_banner", "-loglevel", "warning", "-nostats"}
 
 	args = append(args, inputHWAccel(s.D.Backend)...)
@@ -79,7 +87,7 @@ func BuildArgs(s JobSpec) []string {
 		"-f", "hls",
 		"-hls_time", "4",
 		"-hls_list_size", fmt.Sprintf("%d", listSize),
-		"-hls_flags", "delete_segments+temp_file",
+		"-hls_flags", hlsFlags,
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", segPattern,
 		playlist,

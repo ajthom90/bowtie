@@ -40,6 +40,9 @@ type Step struct {
 type BowtieSpec struct {
 	// SlowConsumer pauses FFmpeg's stdin reads for the window.
 	SlowConsumer *Window `yaml:"slowConsumer"`
+	// KillTranscoderAt stops the running FFmpeg at this point in the scenario,
+	// so Bowtie restarts it into the same session.
+	KillTranscoderAt time.Duration `yaml:"killTranscoderAt"`
 }
 
 // Window is a span of scenario time.
@@ -120,6 +123,10 @@ func (s *Scenario) validate() error {
 				return fmt.Errorf("scenario %s: steps %d and %d: overlapping %s", s.Name, j, i, st.Fault)
 			}
 		}
+	}
+	if s.Bowtie != nil && s.Bowtie.KillTranscoderAt != 0 &&
+		(s.Bowtie.KillTranscoderAt < 0 || s.Bowtie.KillTranscoderAt >= s.Duration) {
+		return fmt.Errorf("scenario %s: killTranscoderAt %v outside 0..%v", s.Name, s.Bowtie.KillTranscoderAt, s.Duration)
 	}
 	if s.Bowtie != nil && s.Bowtie.SlowConsumer != nil {
 		w := s.Bowtie.SlowConsumer

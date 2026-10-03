@@ -640,3 +640,27 @@ func assertArgs(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+func TestBuildArgsAppendOnRestart(t *testing.T) {
+	s := transcode.JobSpec{OutDir: "/tmp/out", Stdin: strings.NewReader(""), D: transcode.Decision{
+		VideoCodec: "h264", VideoEncoder: "libx264", AudioCopy: false,
+		Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96},
+		Backend: transcode.BackendSoftware,
+	}}
+	if got := flagValue(transcode.BuildArgs(s), "-hls_flags"); got != "delete_segments+temp_file" {
+		t.Fatalf("first start -hls_flags = %q", got)
+	}
+	s.Append = true
+	if got := flagValue(transcode.BuildArgs(s), "-hls_flags"); got != "delete_segments+temp_file+append_list+discont_start" {
+		t.Fatalf("restart -hls_flags = %q", got)
+	}
+}
+
+func flagValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}

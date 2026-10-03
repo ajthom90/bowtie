@@ -63,6 +63,8 @@ type stubRunner struct {
 	startErr error
 	// lastSpec is the most recent JobSpec
 	lastSpec transcode.JobSpec
+	// specs records every JobSpec in start order
+	specs []transcode.JobSpec
 	// onStart optional hook
 	onStart func(spec transcode.JobSpec)
 }
@@ -75,6 +77,7 @@ func (r *stubRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 	}
 	r.starts++
 	r.lastSpec = spec
+	r.specs = append(r.specs, spec)
 	if r.onStart != nil {
 		r.onStart(spec)
 	}
@@ -1558,4 +1561,35 @@ func (b *liveNotifyBody) Close() error {
 		}
 	})
 	return nil
+}
+
+func (r *stubRunner) Specs() []transcode.JobSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]transcode.JobSpec(nil), r.specs...)
+}
+
+// The first FFmpeg for a session starts fresh; a restart appends to the
+// existing playlist.
+func TestRestartAppendsToPlaylist(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	runner.LastProc().Crash(errors.New("boom"))
+	// supervise marks the crash asynchronously; step time until the restart.
+	deadline := time.Now().Add(3 * time.Second)
+	for runner.Starts() < 2 && time.Now().Before(deadline) {
+		clock.Advance(time.Second)
+		m.maintain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	specs := runner.Specs()
+	if len(specs) != 2 {
+		t.Fatalf("starts = %d, want 2", len(specs))
+	}
+	if specs[0].Append || !specs[1].Append {
+		t.Fatalf("Append = %v then %v, want false then true", specs[0].Append, specs[1].Append)
+	}
 }
