@@ -1411,6 +1411,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SessionInfo'
+        otherInUse:
+          type: integer
+          description: |
+            Tuners busy for something other than Bowtie (for example Plex):
+            tuners the HDHomeRun reports streaming minus the ones Bowtie's own
+            streams hold.
   responses:
     BadRequest:
       description: Invalid request body

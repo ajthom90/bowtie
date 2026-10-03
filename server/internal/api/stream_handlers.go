@@ -112,8 +112,9 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.Us
 			sessions = filterSessionsEnabledOnly(sessions, s.enabledChannelIDs())
 		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error":    "all tuners in use",
-			"sessions": sessions,
+			"error":      "all tuners in use",
+			"sessions":   sessions,
+			"otherInUse": s.otherTunersInUse(),
 		})
 	case strings.Contains(msg, "unknown channel"),
 		strings.Contains(msg, "is disabled"),
@@ -137,6 +138,31 @@ func startErrorMessage(msg string, err error, user store.User) string {
 		return msg
 	}
 	return msg + ": " + err.Error()
+}
+
+// otherTunersInUse counts tuners busy for something other than Bowtie (e.g.
+// Plex): tuners the devices report streaming, minus one per channel Bowtie
+// itself is streaming. IPs can't tell them apart (Bowtie and Plex often share
+// a host), so the count is by difference.
+func (s *Server) otherTunersInUse() int {
+	if s.deps.Tuners == nil {
+		return 0
+	}
+	busy := 0
+	for _, d := range s.deps.Tuners.Devices() {
+		for _, t := range d.Tuners {
+			if t.TargetIP != "" || t.VctNumber != "" {
+				busy++
+			}
+		}
+	}
+	if s.deps.Streams != nil {
+		busy -= len(s.deps.Streams.IngestChannels())
+	}
+	if busy < 0 {
+		return 0
+	}
+	return busy
 }
 
 // enabledChannelIDs returns the set of currently enabled channel IDs (one store

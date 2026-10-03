@@ -1360,8 +1360,9 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 		t.Fatalf("status=%d body=%q, want 503", rr.Code, rr.Body.String())
 	}
 	var body struct {
-		Error    string               `json:"error"`
-		Sessions []stream.SessionInfo `json:"sessions"`
+		Error      string               `json:"error"`
+		Sessions   []stream.SessionInfo `json:"sessions"`
+		OtherInUse *int                 `json:"otherInUse"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -1372,6 +1373,10 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	// sessions field present (may be empty — no bowtie sessions holding tuners).
 	if body.Sessions == nil {
 		t.Fatal("sessions field missing")
+	}
+	// The one tuner is held by something other than Bowtie (e.g. Plex).
+	if body.OtherInUse == nil || *body.OtherInUse != 1 {
+		t.Fatalf("otherInUse = %v, want 1", body.OtherInUse)
 	}
 }
 
