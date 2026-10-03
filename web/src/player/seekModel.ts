@@ -147,3 +147,12 @@ export function createHeartbeatController(deps: HeartbeatDeps): HeartbeatControl
     isRunning: () => timer != null,
   }
 }
+
+/** Tuners-busy copy; names other apps (e.g. Plex) when the server reports them. */
+export function tunerBusyMessage(otherInUse: number | undefined): string {
+  if (otherInUse && otherInUse > 0) {
+    const tuners = otherInUse === 1 ? '1 tuner is' : `${otherInUse} tuners are`
+    return `All tuners are in use — ${tuners} in use by another app (like Plex). Try again in a few minutes.`
+  }
+  return 'All tuners are in use — someone else is watching. Try again in a few minutes.'
+}

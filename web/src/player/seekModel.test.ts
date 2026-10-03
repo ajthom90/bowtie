@@ -9,6 +9,7 @@ import {
   isAtLiveEdge,
   skipBack,
   type LiveWindow,
+  tunerBusyMessage,
 } from './seekModel'
 
 function window(partial: Partial<LiveWindow> & Pick<LiveWindow, 'start' | 'end' | 'liveEdge' | 'current'>): LiveWindow {
@@ -169,5 +170,24 @@ describe('createHeartbeatController', () => {
     expect(send).toHaveBeenCalledTimes(1)
     ctrl.stop()
     ctrl.stop()
+  })
+})
+
+describe('tunerBusyMessage', () => {
+  it('names other apps when they hold tuners', () => {
+    expect(tunerBusyMessage(1)).toBe(
+      'All tuners are in use — 1 tuner is in use by another app (like Plex). Try again in a few minutes.',
+    )
+    expect(tunerBusyMessage(2)).toBe(
+      'All tuners are in use — 2 tuners are in use by another app (like Plex). Try again in a few minutes.',
+    )
+  })
+  it('keeps the generic message when only Bowtie viewers hold tuners', () => {
+    expect(tunerBusyMessage(0)).toBe(
+      'All tuners are in use — someone else is watching. Try again in a few minutes.',
+    )
+    expect(tunerBusyMessage(undefined)).toBe(
+      'All tuners are in use — someone else is watching. Try again in a few minutes.',
+    )
   })
 })

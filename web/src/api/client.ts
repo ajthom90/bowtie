@@ -505,7 +505,7 @@ export class ApiClient {
         data && typeof data === 'object' && data !== null && 'error' in data
           ? String((data as { error: unknown }).error)
           : res.statusText
-      throw new ApiError(res.status, msg)
+      throw new ApiError(res.status, msg, data)
     }
     return data as T
   }
@@ -513,10 +513,13 @@ export class ApiClient {
 
 export class ApiError extends Error {
   status: number
+  /** Parsed JSON error body, when the server sent one. */
+  body?: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.body = body
   }
 }
