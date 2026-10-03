@@ -162,4 +162,12 @@ final class ModelsTests: XCTestCase {
             BowtieError.tunersBusy([])
         )
     }
+
+    func testDecodeChannelReception() throws {
+        let json = #"[{"id":18,"guideNumber":"11.1","name":"KARE-HD","logoUrl":"","reception":"noSignal","receptionCheckedAt":"2026-10-03T13:18:49Z"},{"id":14,"guideNumber":"9.1","name":"FOX 9","logoUrl":"","reception":"ok"},{"id":2,"guideNumber":"5.1","name":"KSTP","logoUrl":""}]"#
+        let channels = try decoder.decode([Channel].self, from: Data(json.utf8))
+        XCTAssertTrue(channels[0].hasNoSignal)
+        XCTAssertFalse(channels[1].hasNoSignal)
+        XCTAssertFalse(channels[2].hasNoSignal, "an older server sends no reception field")
+    }
 }
