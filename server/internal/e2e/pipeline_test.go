@@ -108,19 +108,18 @@ func TestPipelineSignalFadeKeepsSession(t *testing.T) {
 	}
 }
 
-func TestPipelineSlowConsumerRestarts(t *testing.T) {
+func TestPipelineSlowConsumerKeepsProcess(t *testing.T) {
 	t.Parallel()
 	pl := newPipeline(t, true)
-	// Documents current behavior: a transcoder that stops reading for longer
-	// than the ingest queue + stall timeout is cut off and restarted.
+	// A transcoder that stops reading for 8s loses old data but is not restarted.
 	pl.gate.Pause()
 	time.Sleep(8 * time.Second)
 	pl.gate.Resume()
-	if !within(10*time.Second, func() bool { return pl.count.Starts() == 2 }) {
-		t.Fatalf("transcoder starts = %d, want 2 after a slow-consumer cutoff", pl.count.Starts())
-	}
 	if !pl.bytesGrow(5 * time.Second) {
-		t.Fatal("restarted transcoder gets no bytes")
+		t.Fatal("transcoder gets no bytes after resuming")
+	}
+	if n := pl.count.Starts(); n != 1 {
+		t.Fatalf("transcoder starts = %d, want 1 (slowness must not restart FFmpeg)", n)
 	}
 }
 

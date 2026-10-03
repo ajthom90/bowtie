@@ -180,11 +180,18 @@ func (c *ingestClock) Advance(d time.Duration) {
 	}
 }
 
-// Pending returns how many timers are armed (tests wait on it before Advance).
-func (c *ingestClock) Pending() int {
+// HasTimerIn reports whether a timer is armed to fire exactly d from now.
+// Tests wait on it before Advance so they never race a timer's registration
+// (Pending alone can be satisfied by an unrelated timer, e.g. the watchdog).
+func (c *ingestClock) HasTimerIn(d time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return len(c.timers)
+	for _, t := range c.timers {
+		if t.when.Equal(c.current.Add(d)) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- counting dial (A3) ------------------------------------------------------
@@ -533,85 +540,61 @@ func TestJoinBufferGivesLateSubTables(t *testing.T) {
 	_ = early.Close()
 }
 
-func TestStalledSubForceClosedOthersFlow(t *testing.T) {
-	clock := newIngestClock(time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC))
+func TestSlowSubDropsInsteadOfClosing(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
 	pb := newPipeBody()
-	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
-		return pb, 200, nil
-	}, clock)
-
-	// Stalled sub: never reads.
-	stalled, err := im.Attach(context.Background(), 1, "u")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Healthy sub: drains continuously so its channel never fills.
-	healthy, err := im.Attach(context.Background(), 1, "u")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var healthyAcc bytes.Buffer
-	var healthyMu sync.Mutex
-	healthyErr := make(chan error, 1)
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	slow, _ := im.Attach(context.Background(), 1, "u") // never reads
+	fast, _ := im.Attach(context.Background(), 1, "u")
+	var fastBytes atomic.Int64
 	go func() {
 		buf := make([]byte, 64*1024)
 		for {
-			n, err := healthy.R.Read(buf)
-			if n > 0 {
-				healthyMu.Lock()
-				_, _ = healthyAcc.Write(buf[:n])
-				healthyMu.Unlock()
-			}
+			n, err := fast.R.Read(buf)
+			fastBytes.Add(int64(n))
 			if err != nil {
-				healthyErr <- err
 				return
 			}
 		}
 	}()
+	chunk := make([]byte, 188*348) // ≈64 KiB, packet aligned
+	for i := 0; i < (ingestSubQueueMax/len(chunk))+20; i++ {
+		_, _ = pb.Write(chunk)
+	}
+	// 10s of a live stream: well past the old 2s cutoff, under the 30s rule.
+	feedAndStep(pb, clock, chunk, 10)
+	if slow.isClosed() {
+		t.Fatal("slow subscriber was closed after 10s; want drops instead")
+	}
+	before := fastBytes.Load()
+	feedAndStep(pb, clock, chunk, 1)
+	waitFor(t, 2*time.Second, func() bool { return fastBytes.Load() > before })
+	_ = slow.Close()
+	_ = fast.Close()
+}
 
-	// Flood until stalled sub's chan (64 × 64KB ≈ 4MB) fills.
-	// Write enough that pump marks stall, then Advance 2s for force-close.
-	big := make([]byte, ingestChunkSize)
-	for i := range big {
-		big[i] = byte(i)
+// A reader stuck for ingestSubStuckTimeout with data queued is closed.
+func TestStuckSubClosedAfter30s(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
+	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)-2)
+	if stuck.isClosed() {
+		t.Fatal("closed before the 30s stuck timeout")
 	}
-	// 64 buffered chunks fill the stalled sub; write more to keep pump going.
-	for i := 0; i < ingestSubChanCap+8; i++ {
-		if _, err := pb.Write(big); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Allow pump to fill channels.
-	time.Sleep(30 * time.Millisecond)
-	// Stall timeout via fake clock.
-	clock.Advance(ingestStallTimeout + time.Millisecond)
-	// Stalled sub's R should EOF / error after force-close.
-	waitCond(t, 2*time.Second, func() bool {
-		return stalled.isClosed()
-	})
+	feedAndStep(pb, clock, make([]byte, 188*10), 4)
+	waitFor(t, 2*time.Second, stuck.isClosed)
+}
 
-	// Healthy continues: write a marker chunk and ensure it arrives.
-	marker := []byte("HEALTHY-MARKER-BYTES-PADDED-TO-SOMETHING-UNIQUE!!")
-	if _, err := pb.Write(marker); err != nil {
-		t.Fatal(err)
+// feedAndStep plays a live device: write chunk, then advance the clock 1s,
+// steps times (a single big jump would look like silence to the watchdog).
+func feedAndStep(pb *pipeBody, clock *ingestClock, chunk []byte, steps int) {
+	for i := 0; i < steps; i++ {
+		_, _ = pb.Write(chunk)
+		time.Sleep(2 * time.Millisecond)
+		clock.Advance(time.Second)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-healthyErr:
-			t.Fatalf("healthy sub died: %v", err)
-		default:
-		}
-		healthyMu.Lock()
-		ok := bytes.Contains(healthyAcc.Bytes(), marker)
-		healthyMu.Unlock()
-		if ok {
-			_ = healthy.Close()
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("healthy sub did not receive marker after stalled force-close")
 }
 
 func TestLastCloseTailThenDialClosed(t *testing.T) {
@@ -864,16 +847,13 @@ func TestConcurrentCloseVsForceClose(t *testing.T) {
 		return pb, 200, nil
 	}, clock)
 
-	sub, err := im.Attach(context.Background(), 1, "u")
+	sub, err := im.Attach(context.Background(), 1, "u") // never reads
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fill channel to stall.
-	big := make([]byte, ingestChunkSize)
-	for i := 0; i < ingestSubChanCap+4; i++ {
-		_, _ = pb.Write(big)
-	}
-	time.Sleep(20 * time.Millisecond)
+	// Bring the sub to the edge of the stuck timeout.
+	chunk := make([]byte, 188*10)
+	feedAndStep(pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)-1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -883,7 +863,7 @@ func TestConcurrentCloseVsForceClose(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		clock.Advance(ingestStallTimeout + time.Millisecond)
+		feedAndStep(pb, clock, chunk, 2) // force-close path
 	}()
 	wg.Wait()
 	// No panic / race — second path is safe.
@@ -969,11 +949,11 @@ func TestIdleWatchdogRedialsSilentDevice(t *testing.T) {
 	go func() { _, _ = first.Write(make([]byte, 188*4)) }() // then silence
 	readN(t, sub.R, 188*4, 2*time.Second)
 
-	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 }) // watchdog armed
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestIdleTimeout) }) // watchdog armed
 	clock.Advance(ingestIdleTimeout)
 	waitFor(t, 3*time.Second, func() bool { return first.closed.Load() })
 	// Reconnect backoff (1s) then redial.
-	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestReconnectMin) })
 	clock.Advance(ingestReconnectMin)
 	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 2 })
 	go func() { _, _ = second.Write(make([]byte, 188*4)) }()
@@ -1003,10 +983,10 @@ func TestReconnectNoSignalKeepsSubs(t *testing.T) {
 	}
 	defer func() { _ = sub.Close() }()
 	_ = first.Close() // connection lost
-	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestReconnectMin) })
 	clock.Advance(ingestReconnectMin) // dial 2 → 807
 	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 2 })
-	waitFor(t, 3*time.Second, func() bool { return clock.Pending() > 0 })
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(2 * ingestReconnectMin) })
 	clock.Advance(2 * ingestReconnectMin) // backoff doubled → dial 3
 	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 3 })
 	if sub.isClosed() {

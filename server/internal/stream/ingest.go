@@ -96,17 +96,21 @@ func (e *DeviceError) Is(target error) bool {
 type DialFunc func(ctx context.Context, url string) (io.ReadCloser, int, error)
 
 const (
-	ingestChunkSize     = 64 * 1024
-	ingestSubChanCap    = 64
-	ingestJoinBufMax    = 1 * 1024 * 1024
-	ingestStallTimeout  = 2 * time.Second
-	ingestTailDuration  = 5 * time.Second
-	ingestReconnectMin  = 1 * time.Second
-	ingestReconnectMax  = 30 * time.Second
-	ingestGiveUpAfter   = 60 * time.Second
-	tsPacketSize        = 188
-	tsSyncByte          = 0x47
-	tsPIDPAT            = 0
+	ingestChunkSize  = 64 * 1024
+	ingestJoinBufMax = 1 * 1024 * 1024
+	// ingestSubQueueMax bounds each transcoder's backlog (≈7s at 19 Mbps);
+	// beyond it the oldest data is dropped instead of cutting FFmpeg off.
+	ingestSubQueueMax = 16 << 20
+	// ingestSubStuckTimeout: a transcoder that takes nothing for this long is
+	// hung and its input is closed so the manager restarts it.
+	ingestSubStuckTimeout = 30 * time.Second
+	ingestTailDuration    = 5 * time.Second
+	ingestReconnectMin    = 1 * time.Second
+	ingestReconnectMax    = 30 * time.Second
+	ingestGiveUpAfter     = 60 * time.Second
+	tsPacketSize          = 188
+	tsSyncByte            = 0x47
+	tsPIDPAT              = 0
 )
 
 // IngestManager owns per-channel device streams and fans MPEG-TS out to
@@ -126,7 +130,7 @@ type IngestManager struct {
 // IngestOption configures NewIngestManager.
 type IngestOption func(*IngestManager)
 
-// WithIngestClock injects now/after for tests. ALL ingest timing (stall, tail,
+// WithIngestClock injects now/after for tests. ALL ingest timing (idle watchdog, stuck rule, tail,
 // reconnect backoff, give-up) must use these — never wall time.
 func WithIngestClock(now func() time.Time, after func(time.Duration) <-chan time.Time) IngestOption {
 	return func(im *IngestManager) {
@@ -242,16 +246,15 @@ type IngestSub struct {
 
 	pr *io.PipeReader
 	pw *io.PipeWriter
-	ch chan []byte
+	q  *subQueue
 
 	ci *channelIngest
 
 	closeOnce sync.Once
 	closed    atomic.Bool
 
-	// stall tracking (written under channelIngest.mu)
-	stalled    bool
-	stallTimerCancel chan struct{}
+	// lastDropLog rate-limits the "transcoder behind" log (under channelIngest.mu).
+	lastDropLog time.Time
 }
 
 // Close detaches this sub. Double-Close is safe. Last Close on a channel starts
@@ -281,7 +284,11 @@ func (s *IngestSub) drain(join []byte) {
 			return
 		}
 	}
-	for chunk := range s.ch {
+	for {
+		chunk, ok := s.q.pop()
+		if !ok {
+			return
+		}
 		if _, err := s.pw.Write(chunk); err != nil {
 			return
 		}
@@ -378,7 +385,7 @@ func (c *channelIngest) addSubLocked() *IngestSub {
 		R:  pr,
 		pr: pr,
 		pw: pw,
-		ch: make(chan []byte, ingestSubChanCap),
+		q:  newSubQueue(ingestSubQueueMax, c.im.now),
 		ci: c,
 	}
 	join := c.joinSnapshotLocked()
@@ -403,9 +410,8 @@ func (c *channelIngest) removeSub(s *IngestSub) {
 	c.mu.Lock()
 	if _, ok := c.subs[s]; ok {
 		delete(c.subs, s)
-		// Close send side; drain ranges until closed.
-		close(s.ch)
-		c.cancelSubStallLocked(s)
+		// Wakes drain, which exits.
+		s.q.close()
 	}
 	n := len(c.subs)
 	running := c.running
@@ -451,14 +457,6 @@ func (c *channelIngest) cancelTailLocked() {
 	}
 }
 
-func (c *channelIngest) cancelSubStallLocked(s *IngestSub) {
-	if s.stallTimerCancel != nil {
-		close(s.stallTimerCancel)
-		s.stallTimerCancel = nil
-	}
-	s.stalled = false
-}
-
 // teardownLocked closes the device body and stops the pump. Caller holds c.mu.
 func (c *channelIngest) teardownLocked() {
 	c.cancelTailLocked()
@@ -489,17 +487,7 @@ func (c *channelIngest) shutdown() {
 	// Drop subs under lock so removeSub sees them gone / ch already closed carefully
 	for s := range c.subs {
 		delete(c.subs, s)
-		// ch may still be open
-		select {
-		case <-s.ch:
-		default:
-		}
-		// close ch if not already
-		func(ch chan []byte) {
-			defer func() { _ = recover() }()
-			close(ch)
-		}(s.ch)
-		c.cancelSubStallLocked(s)
+		s.q.close()
 	}
 	c.mu.Unlock()
 
@@ -563,6 +551,7 @@ func (c *channelIngest) pump() {
 
 	var lastRead atomic.Int64
 	var watched io.ReadCloser
+	var carry []byte // partial TS packet from the previous read
 	stopWatch := func() {}
 	defer func() { stopWatch() }()
 
@@ -577,6 +566,7 @@ func (c *channelIngest) pump() {
 			return
 		}
 		if body != watched {
+			carry = nil
 			stopWatch()
 			lastRead.Store(c.im.now().UnixNano())
 			watched = body
@@ -598,9 +588,11 @@ func (c *channelIngest) pump() {
 		if n > 0 {
 			failStart = time.Time{}
 			backoff = ingestReconnectMin
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			c.ingestChunk(chunk)
+			var whole []byte
+			whole, carry = alignTS(carry, buf[:n])
+			if len(whole) > 0 {
+				c.ingestChunk(whole)
+			}
 		}
 
 		if err == nil {
@@ -703,39 +695,36 @@ func (c *channelIngest) pump() {
 func (c *channelIngest) ingestChunk(chunk []byte) {
 	c.mu.Lock()
 	c.updateJoinLocked(chunk)
+	tables := c.tablesLocked()
+	now := c.im.now()
+	var stuck []*IngestSub
 	for s := range c.subs {
 		if s.isClosed() {
 			continue
 		}
-		select {
-		case s.ch <- chunk:
-			if s.stalled {
-				c.cancelSubStallLocked(s)
-			}
-		default:
-			// Channel full → mark stalled; force-Close after 2s if still stalled.
-			if !s.stalled {
-				s.stalled = true
-				cancel := make(chan struct{})
-				s.stallTimerCancel = cancel
-				sub := s
-				expired := c.im.after(ingestStallTimeout)
-				go func() {
-					select {
-					case <-expired:
-						c.mu.Lock()
-						still := sub.stalled && !sub.isClosed()
-						c.mu.Unlock()
-						if still {
-							_ = sub.Close()
-						}
-					case <-cancel:
-					}
-				}()
-			}
+		if n := s.q.push(chunk, tables); n > 0 && now.Sub(s.lastDropLog) >= 10*time.Second {
+			s.lastDropLog = now
+			log.Printf("ingest: channel %d: transcoder behind, dropped %d KiB of old data", c.channelID, n>>10)
+		}
+		if s.q.idleFor(now) >= ingestSubStuckTimeout {
+			stuck = append(stuck, s)
 		}
 	}
 	c.mu.Unlock()
+	for _, s := range stuck {
+		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout)
+		_ = s.Close()
+	}
+}
+
+// tablesLocked returns a fresh copy of the current PAT+PMT (nil if unknown).
+func (c *channelIngest) tablesLocked() []byte {
+	if len(c.lastPAT)+len(c.lastPMT) == 0 {
+		return nil
+	}
+	out := make([]byte, 0, len(c.lastPAT)+len(c.lastPMT))
+	out = append(out, c.lastPAT...)
+	return append(out, c.lastPMT...)
 }
 
 func (c *channelIngest) updateJoinLocked(chunk []byte) {
