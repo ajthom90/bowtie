@@ -26,11 +26,16 @@ production's QSV.
    encoder.
 2. **Players can't switch audio tracks muxed into one stream**, so each
    extra audio track must be its own HLS audio rendition.
-3. **One FFmpeg 5.1 process can do it from stdin.** Verified:
-   `-f lavfi -i "movie='pipe\:0':s=dv+da+da[out0+subcc][out1][out2]"` with
-   `-var_stream_map "v:0,a:0,s:0,agroup:aud,sgroup:subs,… a:1,agroup:aud,…"`
-   and `-master_pl_name` produced video+English TS segments, a Spanish
-   audio-only rendition and WebVTT caption segments.
+3. **One FFmpeg 5.1 process can do it.** Verified two ways:
+   - all-lavfi: `-f lavfi -i "movie='pipe\:0':s=dv+da+da[out0+subcc][out1][out2]"`
+     produced the renditions, but AVPlayer never became ready on `main`
+     (audio muxed via the lavfi path stalls it — bisected: the same master
+     became ready once English audio came from its own playlist);
+   - **two inputs (chosen, §1)**: `-i pipe:0` plus
+     `-f lavfi -i "movie='pipe\:3'[out0+subcc]"` with `-map 1:s` and
+     `-var_stream_map "v:0,a:0,s:0,agroup:aud,sgroup:subs,name:main a:1,agroup:aud,name:spa"`.
+     AVPlayer: status ready, audible ["English", "Spanish"], legible
+     ["English"], on a Bowtie-written master.
 4. **FFmpeg's own master playlist is wrong for us** (makes Spanish the
    default audio, adds an audio-only variant). AVPlayer, given a Bowtie-
    written master, lists audio "English"/"Spanish" and legible "English".
@@ -49,9 +54,9 @@ FFmpeg reads it with `-f lavfi -i "movie='pipe\:3'[out0+subcc]"` and maps
 only the `subcc` stream. Both subscribers receive identical bytes from the
 fan-out, so caption and video timestamps share one origin.
 
-Rejected: a single lavfi input for everything (simpler, but loses hardware
-decode and changes the QSV filter chain, which can only be tested on the
-production box).
+Rejected: a single lavfi input for everything (loses hardware decode,
+changes the QSV filter chain, and its muxed audio stalls AVPlayer — see
+constraint 3).
 
 ### 2. Which tracks exist
 Ingest already parses PAT/PMT for the join buffer. Extend the PMT parse to
@@ -68,8 +73,9 @@ spa → Español, fra → Français; unknown → the code). A track with the
   audio stream as an audio-only rendition in group `aud`; the caption stream
   as subtitle group `subs` (`-c:s webvtt`).
 - Extra audio is transcoded to AAC stereo (hls.js/Chrome can't play AC-3).
-- Per-rendition playlists `main.m3u8`, `aud1.m3u8`, `subs.m3u8`; segment
-  names `main_%05d.ts`, `aud1_%05d.ts`, `main%d.vtt` (FFmpeg's pattern).
+- Variant names `main`, `aud1`, `aud2`. FFmpeg derives the files from them:
+  playlists `main.m3u8`, `aud1.m3u8`, `main_vtt.m3u8` (captions ride the
+  `main` variant), segments `main_%05d.ts`, `aud1_%05d.ts`, `main%d.vtt`.
 - `-master_pl_name` is not used; Bowtie writes the master (below).
 - Restarts keep `append_list+discont_start+omit_endlist` (0.6.0), now per
   rendition — **must be verified** with `var_stream_map` (risk 3).
@@ -81,15 +87,19 @@ spa → Español, fra → Français; unknown → the code). A track with the
 #EXT-X-VERSION:6
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES
 #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Español",LANGUAGE="es",DEFAULT=NO,AUTOSELECT=YES,URI="aud1.m3u8?token=…"
-#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English CC",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,URI="subs.m3u8?token=…"
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English CC",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,URI="main_vtt.m3u8?token=…"
 #EXT-X-STREAM-INF:BANDWIDTH=…,RESOLUTION=…,CODECS="…",AUDIO="aud",SUBTITLES="subs"
 main.m3u8?token=…
 ```
 Each media playlist is served through today's rewrite (token-signed segment
 URLs, DVR window, `Touch` on fetch); the rewrite generalizes from
-`live.m3u8` to any rendition playlist in the session dir. WebVTT segments
-get an `X-TIMESTAMP-MAP` header injected when served if FFmpeg omits it
-(risk 2). Clients that can't use renditions keep working: they play `main`
+`live.m3u8` to any rendition playlist in the session dir. FFmpeg 5.1 writes
+WebVTT segments without `X-TIMESTAMP-MAP`; cue times start at 0 while the
+video's first PTS is 1.4 s (the mpegts muxer's start offset; measured
+1.421 s vs first cue 0.022 s). When serving a `.vtt`, Bowtie inserts
+`X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000` after the `WEBVTT` line.
+Each FFmpeg restart begins a new discontinuity with the same offsets, so the
+constant holds across restarts. On-screen sync is checked in the plan. Clients that can't use renditions keep working: they play `main`
 with its muxed primary audio.
 
 ### 5. Apps
@@ -115,17 +125,20 @@ The last choice (audio language, captions on/off) is remembered per device.
   user-run check on the TrueNAS box after release (I can't run QSV).
 
 ## Risks (resolved in the plan's first tasks)
-1. **AVPlayer readiness**: in the spike AVPlayer reported "not ready" after
-   12 s on the VOD clip (even plain `main.m3u8`). Likely clip-specific;
-   verify on live output before building on it.
-2. **Caption timing/quality**: FFmpeg's WebVTT segments had no
-   `X-TIMESTAMP-MAP`, and mid-stream extraction produced control-code
-   garbage ("atH@Fox News Update"). Needs the right cc_dec options and/or a
-   header rewrite.
+1. **Live (not VOD) behavior** of the two-input output is only verified on
+   a 20 s clip with `#EXT-X-ENDLIST`; the plan's first task runs it live on 9.1.
+2. **Caption quality and sync**: mid-stream extraction produced control-code
+   garbage in the first cue ("atH@Fox News Update"); needs cc_dec options
+   (e.g. `real_time`, `data_field`) tested on a longer capture. Sync of the
+   126000 constant is unconfirmed on screen.
 3. **Restart continuity per rendition**: `append_list` with `var_stream_map`
    is unverified.
 4. **CPU**: the caption tap decodes MPEG-2 in software (cheap; one extra
    decode per session) plus AAC for each extra audio track.
+5. **Channels with no 608 data** get a caption playlist that never gains
+   segments. Check what AVPlayer and hls.js do when CC is selected there;
+   if either stalls, Bowtie omits the SUBTITLES rendition until the first
+   cue file exists (the master is rebuilt on each fetch).
 
 ## Out of scope
 ABR ladder (this master playlist is its foundation), CEA-708, burned-in
