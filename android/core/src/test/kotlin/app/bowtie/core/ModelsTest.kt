@@ -212,6 +212,15 @@ class ModelsTest {
         assertEquals(500, (server as BowtieError.Server).status)
         assertNotNull((network as BowtieError.Network).cause2)
     }
+
+    @Test
+    fun decode_channel_reception() {
+        val json = """[{"id":18,"guideNumber":"11.1","name":"KARE-HD","logoUrl":"","reception":"noSignal","receptionCheckedAt":"2026-10-03T13:18:49Z"},{"id":14,"guideNumber":"9.1","name":"FOX 9","logoUrl":"","reception":"ok"},{"id":2,"guideNumber":"5.1","name":"KSTP","logoUrl":""}]"""
+        val channels = BowtieJson.decodeFromString<List<Channel>>(json)
+        assertTrue(channels[0].hasNoSignal)
+        assertEquals(false, channels[1].hasNoSignal)
+        assertEquals("an older server sends no reception field", false, channels[2].hasNoSignal)
+    }
 }
 
 /** Wire envelope for 503 tuners-busy; kept here so Models stays viewer-DTO focused. */
