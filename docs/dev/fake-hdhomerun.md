@@ -47,6 +47,7 @@ timeline:                   # times are from the moment playback starts;
   - {at: 10s, fault: drop, mode: reset, scope: connections}   # at: 0s happens before tuning
 bowtie:
   slowConsumer: {at: 10s, for: 10s}   # pause FFmpeg's input reads
+  killTranscoderAt: 15s                # kill FFmpeg; Bowtie restarts it
 expect:
   sequenceMonotonic: true   # playlist never goes backwards
   maxGapSeconds: 12         # longest wait for a new segment
@@ -61,6 +62,10 @@ Faults: `signal` (strength/quality/symbol), `stall` (for, burst), `drop`
 (to), `busy`, `hang`. Scope: `channel` (default; everyone on the channel, now
 and later), `connections` (only connections open when it fires), `device`.
 
+While a channel's signal quality is below 30 (loss of lock), open
+connections go silent and new tunes get `503` with `X-HDHomeRun-Error: 807
+No Video Data`, as on a real HDHomeRun.
+
 `drop` with `mode: reset` stops writing and waits up to 1s for the client to
 take in-flight data before sending the RST. A RST that lands while data is
 still in flight carries a sequence number the client hasn't reached, and the
@@ -70,7 +75,7 @@ can still be lost, as it can on a real network.
 
 **`xfail: "<reason>"`** marks expectations that fail today because of a known
 Bowtie gap. The test then *requires* them to fail, so whoever fixes the gap
-must delete the marker. Pipeline tests use the same idea via `xfail(t, …)`.
+must delete the marker.
 
 **`flaky: "<reason>"`** is the non-strict form for a known gap that only shows
 up some of the time (usually under CPU load): violations are logged but the
@@ -80,3 +85,13 @@ scenario never fails. Prefer `xfail` whenever the failure is deterministic.
 
 Real broadcasts can't be committed. Keep local captures in `captures/`
 (gitignored) and point `BOWTIE_FAKE_SOURCE` at them.
+
+## Reliability scenarios (Plan 2)
+
+| Scenario | What it proves |
+|---|---|
+| `transcoder-restart` | FFmpeg killed mid-session; the restarted process continues the playlist (no backward jump, ≤ 14 s gap). |
+| `slow-consumer-drops` | FFmpeg stops reading for 10 s; its queue drops old data and it is not restarted. |
+| `half-open-stall` | The device goes silent without closing; Bowtie reconnects after 8 s. |
+| `nosignal-reconnect` | 12 s loss of lock; reconnects get 807 and keep retrying until the signal returns. |
+| `baseline-1080i` | No faults at 1080i: no restart even on a loaded machine. |

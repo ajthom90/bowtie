@@ -297,3 +297,19 @@ func TestFakeEventsRecorded(t *testing.T) {
 		}
 	}
 }
+
+// A new tune while the channel has lost lock gets 503 + 807, like a real
+// HDHomeRun, instead of an empty stream.
+func TestDialDuringLossOfLockGets807(t *testing.T) {
+	f := oneChannel(t) // channel "90.1"
+	q := 10
+	apply(t, f, faults.Target{Channel: "90.1"}, faults.Spec{Fault: faults.Signal, Quality: &q})
+	resp, err := http.Get(f.URL + "/auto/v90.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("X-HDHomeRun-Error") != "807 No Video Data" {
+		t.Fatalf("got %d %q, want 503 807", resp.StatusCode, resp.Header.Get("X-HDHomeRun-Error"))
+	}
+}

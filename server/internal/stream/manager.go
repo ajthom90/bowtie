@@ -261,6 +261,8 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		_ = os.RemoveAll(dir)
 		return ViewerHandle{}, err, false
 	}
+	// If ingest gives up on this transcoder, stop it even if it ignores EOF.
+	sub.OnForceClose(proc.Stop)
 
 	if err := m.waitPlaylist(ctx, dir, proc); err != nil {
 		proc.Stop()
@@ -519,7 +521,6 @@ func (m *Manager) Run(ctx context.Context) {
 // invoke it directly after advancing the fake clock.
 func (m *Manager) maintain() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := m.now()
 
 	// Reap idle viewers (>viewerIdleTimeout since last heartbeat/playlist Touch).
@@ -539,6 +540,7 @@ func (m *Manager) maintain() {
 		sessions = append(sessions, sess)
 	}
 
+	var due []*session
 	for _, sess := range sessions {
 		if sess.terminated {
 			continue
@@ -549,24 +551,35 @@ func (m *Manager) maintain() {
 				continue
 			}
 		}
-		if sess.crashed && !sess.restartAfter.IsZero() && !now.Before(sess.restartAfter) {
-			m.restartSessionLocked(sess)
+		if sess.crashed && !sess.restarting && !sess.restartAfter.IsZero() && !now.Before(sess.restartAfter) {
+			if m.prepareRestartLocked(sess) {
+				due = append(due, sess)
+			}
 		}
+	}
+	m.mu.Unlock()
+
+	// Device attach and FFmpeg start can block (a slow tuner answers 807
+	// after ~10s), so they run without m.mu; viewers keep being served.
+	for _, sess := range due {
+		m.restartSession(sess)
 	}
 }
 
-func (m *Manager) restartSessionLocked(sess *session) {
+// prepareRestartLocked does the in-lock part of a restart: cancel the old
+// process context, make sure the dir exists, drop the old sub, and mark the
+// session as restarting. It reports false (with backoff applied) on failure.
+func (m *Manager) prepareRestartLocked(sess *session) bool {
 	if sess.procCancel != nil {
 		sess.procCancel()
+		sess.procCancel = nil
 	}
 	// Defensive: ensure the segment dir exists (e.g. was removed by a failed race path).
 	if err := os.MkdirAll(sess.dir, 0o755); err != nil {
-		log.Printf("stream: mkdir session dir %s for restart: %v", sess.dir, err)
-		sess.backoff = nextBackoff(sess.backoff)
-		sess.restartAfter = m.now().Add(sess.backoff)
-		return
+		log.Printf("stream: session %s: mkdir session dir %s for restart: %v", sess.id, sess.dir, err)
+		m.restartFailedLocked(sess)
+		return false
 	}
-
 	// Ordered contract: Close(old sub) → Attach → Stdin → Start.
 	// Proc-death already Closes; Close again is safe (double-Close).
 	if sess.sub != nil {
@@ -575,37 +588,65 @@ func (m *Manager) restartSessionLocked(sess *session) {
 	}
 	if m.ingest == nil {
 		log.Printf("stream: restart %s: ingest not configured", sess.id)
-		sess.backoff = nextBackoff(sess.backoff)
-		sess.restartAfter = m.now().Add(sess.backoff)
-		return
+		m.restartFailedLocked(sess)
+		return false
 	}
+	sess.restarting = true
+	return true
+}
+
+// restartSession attaches to the device and starts FFmpeg without m.mu, then
+// commits under m.mu. A session torn down meanwhile discards the new process.
+func (m *Manager) restartSession(sess *session) {
 	sub, err := m.ingest.Attach(context.Background(), sess.channelID, sess.inputURL)
 	if err != nil {
-		log.Printf("stream: re-Attach channel %d for restart: %v", sess.channelID, err)
-		sess.backoff = nextBackoff(sess.backoff)
-		sess.restartAfter = m.now().Add(sess.backoff)
+		log.Printf("stream: session %s: re-Attach channel %d for restart: %v", sess.id, sess.channelID, err)
+		m.mu.Lock()
+		sess.restarting = false
+		m.restartFailedLocked(sess)
+		m.mu.Unlock()
 		return
 	}
 
 	procCtx, procCancel := context.WithCancel(context.Background())
 	// Buffer window is fixed at session start (not live-mutable mid-session).
-	spec := transcode.JobSpec{Stdin: sub.R, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize}
+	// Append: continue the existing playlist instead of restarting at seg00000.
+	spec := transcode.JobSpec{Stdin: sub.R, OutDir: sess.dir, D: sess.decision, HLSListSize: sess.hlsListSize, Append: true}
+	log.Printf("stream: session %s: restarting ffmpeg (append to playlist)", sess.id)
 	proc, err := m.runner.Start(procCtx, spec)
 	if err != nil {
+		log.Printf("stream: session %s: ffmpeg restart failed: %v", sess.id, err)
 		_ = sub.Close()
 		procCancel()
-		sess.procCancel = nil
-		sess.backoff = nextBackoff(sess.backoff)
-		sess.restartAfter = m.now().Add(sess.backoff)
+		m.mu.Lock()
+		sess.restarting = false
+		m.restartFailedLocked(sess)
+		m.mu.Unlock()
 		return
 	}
-	now := m.now()
+	sub.OnForceClose(proc.Stop)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess.restarting = false
+	if sess.terminated {
+		proc.Stop()
+		procCancel()
+		_ = sub.Close()
+		return
+	}
+	log.Printf("stream: session %s channel %d: ffmpeg restarted", sess.id, sess.channelID)
 	sess.sub = sub
 	sess.proc = proc
 	sess.procCancel = procCancel
-	sess.procStart = now
+	sess.procStart = m.now()
 	sess.crashed = false
 	sess.restartAfter = time.Time{}
+}
+
+func (m *Manager) restartFailedLocked(sess *session) {
+	sess.backoff = nextBackoff(sess.backoff)
+	sess.restartAfter = m.now().Add(sess.backoff)
 }
 
 // nextBackoff doubles previous (or starts at 1s), capped at 30s.
@@ -667,10 +708,11 @@ func (m *Manager) supervise(sess *session) {
 			sess.sub = nil
 		}
 		now := m.now()
+		log.Printf("stream: session %s channel %d (%s): ffmpeg exited after %v: %v",
+			sess.id, sess.channelID, sess.decision.Backend, now.Sub(sess.procStart).Round(time.Second), err)
 		sess.backoff = computeCrashBackoff(sess.backoff, sess.procStart, now)
 		sess.crashed = true
 		sess.restartAfter = now.Add(sess.backoff)
-		_ = err
 		m.mu.Unlock()
 	}
 }

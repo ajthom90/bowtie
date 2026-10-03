@@ -1,0 +1,9 @@
+name: transcoder-restart
+duration: 45s
+bowtie:
+  # Kill FFmpeg mid-session; Bowtie restarts it into the same session dir.
+  killTranscoderAt: 15s
+expect:
+  sequenceMonotonic: true
+  sessionSurvives: true
+  maxGapSeconds: 14

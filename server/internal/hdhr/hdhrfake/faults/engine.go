@@ -43,6 +43,9 @@ type Decision struct {
 // Levels is a tuner's reported signal.
 type Levels struct{ Strength, Quality, Symbol int }
 
+// Locked reports whether the tuner holds lock at these levels.
+func (l Levels) Locked() bool { return l.Quality >= lockQuality }
+
 // ActiveFault describes a fault currently in effect.
 type ActiveFault struct {
 	ID     string    `json:"id"`

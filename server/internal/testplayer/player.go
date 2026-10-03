@@ -55,6 +55,9 @@ type Report struct {
 	// stretch from the last new segment to the end of the run.
 	MaxGap      time.Duration
 	SessionGone bool
+	// EndList: a polled playlist contained #EXT-X-ENDLIST, which tells a real
+	// player the stream is over (it stops reloading).
+	EndList bool
 	Errors      []string
 }
 
@@ -238,6 +241,11 @@ func (p *Player) poll(ctx context.Context) bool {
 	if status != http.StatusOK {
 		p.errorf("playlist: HTTP %d", status)
 		return false
+	}
+	if bytes.Contains(body, []byte("#EXT-X-ENDLIST")) {
+		p.mu.Lock()
+		p.report.EndList = true
+		p.mu.Unlock()
 	}
 	entries := parsePlaylist(body)
 	if len(entries) == 0 {
