@@ -1053,3 +1053,39 @@ func TestStuckSubRunsForceCloseHook(t *testing.T) {
 	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)+2)
 	waitFor(t, 2*time.Second, stopped.Load)
 }
+
+// While the tuner keeps answering "no signal", retries stay at most
+// ingestNoSignalRetry apart instead of doubling toward ingestReconnectMax, so
+// playback resumes soon after the signal returns.
+func TestNoSignalRetriesStayFrequent(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC))
+	first, last := newPipeBody(), newPipeBody()
+	var dials atomic.Int64
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		switch n := dials.Add(1); {
+		case n == 1:
+			return first, 200, nil
+		case n <= 6:
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		default:
+			return last, 200, nil
+		}
+	}, clock)
+	sub, err := im.Attach(context.Background(), 1, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sub.Close() }()
+	_ = first.Close() // connection lost; reconnect starts at the 1s minimum
+	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestReconnectMin) })
+	clock.Advance(ingestReconnectMin)
+	// Five 807 answers in a row: each next retry must be ≤ ingestNoSignalRetry away.
+	for want := int64(2); want <= 6; want++ {
+		waitFor(t, 3*time.Second, func() bool { return dials.Load() == want })
+		waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestNoSignalRetry) })
+		clock.Advance(ingestNoSignalRetry)
+	}
+	waitFor(t, 3*time.Second, func() bool { return dials.Load() == 7 })
+	go func() { _, _ = last.Write(make([]byte, 188*4)) }()
+	readN(t, sub.R, 188*4, 2*time.Second)
+}

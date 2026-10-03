@@ -5,6 +5,21 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] — 2026-10-03
+
+### Fixed
+
+- **Playback resumes within about 2 seconds of the signal coming back.**
+  While the tuner keeps answering "no signal", Bowtie now retries at most
+  every 2 seconds instead of backing off toward 30 seconds. After a
+  40-second loss of signal, playback resumed 22 seconds sooner (45 s gap
+  instead of 67 s).
+- **A long loss of signal no longer restarts FFmpeg when the signal
+  returns.** The 30-second "stuck transcoder" rule counted the quiet time
+  with no input as FFmpeg being stuck, so the first data after an outage
+  longer than 30 seconds cut FFmpeg off. It now counts only time that data
+  actually waited.
+
 ## [0.6.1] — 2026-10-03
 
 Roku release: first build verified on a real Roku TV against production.

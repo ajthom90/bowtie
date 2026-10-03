@@ -1,0 +1,12 @@
+name: nosignal-long
+duration: 75s
+timeline:
+  # 40s loss of lock: many 807s in a row. Retries must stay ~2s apart so
+  # playback resumes soon after the signal returns (a doubling backoff would
+  # sleep up to 16-30s past it, or run into the 60s give-up).
+  - {at: 10s, fault: signal, quality: 10, for: 40s}
+expect:
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxGapSeconds: 50
