@@ -160,9 +160,9 @@ namespace bowtie.fixtures.guide
         return cases
     end function
 
-    function titleOrInvalid(prog as dynamic) as dynamic
-        if prog = invalid then return invalid
-        return prog.title
+    function titleOrInvalid(p as dynamic) as dynamic
+        if p = invalid then return invalid
+        return p.title
     end function
 
     function stringArraysEqual(a as object, b as object) as boolean

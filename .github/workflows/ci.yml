@@ -182,6 +182,9 @@ jobs:
       - name: lint
         run: npx bslint --severity error
 
+      - name: test
+        run: npm test
+
       - name: package
         run: npm run package
 
