@@ -431,9 +431,22 @@ public final class PlayerModel {
                 // A6: keyed on session open — continue while this viewer is still active
                 // (playing or stalled). Stop only when replaced or stop() clears it.
                 guard self.activeViewerId == viewerId else { return }
-                await self.client.heartbeat(viewerId: viewerId, token: token)
+                let refusal = await self.client.heartbeat(viewerId: viewerId, token: token)
+                if case .parental(let message)? = refusal {
+                    self.parentalStop(viewerId: viewerId, message: message)
+                    return
+                }
             }
         }
+    }
+
+    /// The server stopped this viewer for parental controls (e.g. the next
+    /// program is rated above the limit): end playback and say why.
+    private func parentalStop(viewerId: String, message: String) {
+        guard activeViewerId == viewerId else { return }
+        activeViewerId = nil
+        heartbeatTask = nil
+        state = .failed(message)
     }
 
     private func stopHeartbeat() {
@@ -479,6 +492,10 @@ public final class PlayerModel {
 
         case .unauthorized:
             state = .failed("Signed out")
+
+        case .parental(let message):
+            // 403 code "parental": the server's message says what's blocked.
+            state = .failed(message)
 
         case .server(_, let message), .recordingConflict(_, _, let message):
             state = .failed(message)

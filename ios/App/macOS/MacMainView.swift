@@ -7,6 +7,8 @@ import BowtieKit
 enum SidebarItem: Hashable {
     case recordings
     case channel(Int64, ChannelSection)
+    /// A guide search result (`GuideSearchResult.id`).
+    case search(String)
 }
 
 enum ChannelSection: Hashable {
@@ -23,6 +25,9 @@ struct MacMainView: View {
 
     @State private var listModel: ChannelListModel?
     @State private var recordFlow: RecordFlow?
+    @State private var searchModel: GuideSearchModel?
+    @State private var searchText = ""
+    @State private var now = Date()
     @State private var selection: SidebarItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     /// Live AVPlayer owner; lives here so the commands and PiP-end stop work
@@ -129,12 +134,27 @@ struct MacMainView: View {
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .empty, .loaded:
-                    channelList(listModel)
+                    if isSearching, let searchModel {
+                        searchList(searchModel)
+                    } else {
+                        channelList(listModel)
+                    }
                 }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search the guide")
+        // Debounced: search once typing pauses.
+        .task(id: searchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            now = Date()
+            await searchModel?.search(searchText)
         }
         .navigationTitle("Bowtie")
         .toolbar {
@@ -196,6 +216,62 @@ struct MacMainView: View {
         .bowtieToast(model.actionError) {
             model.dismissActionError()
         }
+    }
+
+    // MARK: - Search
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func searchList(_ model: GuideSearchModel) -> some View {
+        List(selection: $selection) {
+            Section("Search Results") {
+                searchSectionContent(model)
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    @ViewBuilder
+    private func searchSectionContent(_ model: GuideSearchModel) -> some View {
+        switch model.state {
+        case .idle, .searching:
+            ProgressView()
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
+        case .empty:
+            Text("Nothing in the guide matches \u{201C}\(model.query)\u{201D}.")
+                .font(Theme.body(12))
+                .foregroundStyle(Theme.dim)
+        case .failed(let message):
+            Text(message)
+                .font(Theme.body(12))
+                .foregroundStyle(Theme.alert)
+        case .results(let results):
+            ForEach(results) { result in
+                MacSearchResultRow(result: result, now: now)
+                    .tag(SidebarItem.search(result.id))
+                    .contextMenu {
+                        SearchResultActions(
+                            result: result,
+                            now: now,
+                            flow: recordFlow,
+                            onWatch: { watch($0) },
+                            openRecordings: { selection = .recordings }
+                        )
+                    }
+            }
+        }
+    }
+
+    /// "Watch" from search: select the channel like a sidebar click.
+    private func watch(_ channel: Channel) {
+        selection = .channel(channel.id, channel.isFavorite ? .favorites : .all)
+    }
+
+    private func searchResult(id: String) -> GuideSearchResult? {
+        searchModel?.results.first { $0.id == id }
     }
 
     private func rowWithMenu(_ row: ChannelListModel.Row, section: ChannelSection, model: ChannelListModel) -> some View {
@@ -263,6 +339,9 @@ struct MacMainView: View {
                         if now.recording != nil {
                             RecordingMarkDot(size: 8)
                         }
+                        if now.isLocked {
+                            ParentalLockMark(rating: now.rating ?? "", size: 9)
+                        }
                     }
                 }
             }
@@ -282,6 +361,21 @@ struct MacMainView: View {
         case .recordings:
             if let client = appModel.client {
                 MacRecordingsView(client: client, playerModel: playerModel, activeRecording: $activeRecording)
+            }
+        case .search(let id):
+            if let result = searchResult(id: id) {
+                MacSearchResultDetail(
+                    result: result,
+                    now: now,
+                    flow: recordFlow,
+                    onWatch: { watch($0) },
+                    openRecordings: { selection = .recordings }
+                )
+            } else {
+                Text("No longer in the results")
+                    .font(Theme.body(14))
+                    .foregroundStyle(Theme.dim)
+                    .bowtieScreenBackground()
             }
         case .channel:
             if let serverURL = appModel.serverURL {
@@ -327,6 +421,7 @@ struct MacMainView: View {
         guard case .channel(let id, _) = new,
               let channel = listModel?.rows.first(where: { $0.channel.id == id })?.channel
                 ?? listModel?.recentChannels.first(where: { $0.id == id })
+                ?? searchModel?.results.first(where: { $0.channelId == id })?.channel
         else {
             return
         }
@@ -385,9 +480,18 @@ struct MacMainView: View {
     private func ensureListModel() async {
         guard listModel == nil, let client = appModel.client else { return }
         let model = ChannelListModel(client: client)
+        let search = GuideSearchModel(client: client)
         listModel = model
+        searchModel = search
         // Reload after scheduling so the program shows its REC mark.
-        recordFlow = RecordFlow(client: client) { Task { await model.load() } }
+        recordFlow = RecordFlow(client: client) {
+            Task {
+                await model.load()
+                if !search.query.isEmpty {
+                    await search.refresh()
+                }
+            }
+        }
     }
 
     private func nowNext(for channelId: Int64) -> GuideLogic.NowNext? {
@@ -397,7 +501,7 @@ struct MacMainView: View {
     private func helpText(channel: Channel, nowNext: GuideLogic.NowNext?) -> String {
         var lines = ["\(channel.guideNumber) \(channel.name)"]
         if let now = nowNext?.now, !now.title.isEmpty {
-            lines.append("Now: \(now.title)")
+            lines.append("Now: \(now.title)" + (now.isLocked ? " (locked by parental controls)" : ""))
         }
         if let next = nowNext?.next, !next.title.isEmpty {
             lines.append("Next: \(next.title)")
@@ -418,6 +522,9 @@ struct MacMainView: View {
         }
         if nowNext?.now?.recording != nil {
             parts.append("Set to record")
+        }
+        if let now = nowNext?.now, now.isLocked {
+            parts.append(ParentalLockMark.accessibilityText(rating: now.rating ?? ""))
         }
         if let title = nowNext?.next?.title, !title.isEmpty {
             parts.append("Next \(title)")

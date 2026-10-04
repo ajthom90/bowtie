@@ -12,6 +12,7 @@ struct RecordingsView: View {
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var activePlayback: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
+    @State private var confirmStopRule: RecordingRule?
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -134,37 +135,110 @@ struct RecordingsView: View {
 
     @ViewBuilder
     private func content(_ model: RecordingsModel) -> some View {
+        if model.tab == .shows {
+            showsContent(model)
+        } else {
+            recordingsContent(model)
+        }
+    }
+
+    private func emptyView(_ message: String) -> some View {
+        Text(message)
+            .font(Theme.body())
+            .foregroundStyle(Theme.dim)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func failedView(_ message: String, model: RecordingsModel) -> some View {
+        VStack(spacing: 16) {
+            Text(message)
+                .font(Theme.body())
+                .foregroundStyle(Theme.alert)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button {
+                Task { await model.load() }
+            } label: {
+                Text("Try again")
+                    .font(Theme.label(16))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Theme.raised)
+                    .foregroundStyle(Theme.text)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Shows
+
+    @ViewBuilder
+    private func showsContent(_ model: RecordingsModel) -> some View {
+        switch model.rulesState {
+        case .loading:
+            loadingView
+        case .empty:
+            emptyView(RecordingsTab.shows.emptyMessage)
+        case .failed(let message):
+            failedView(message, model: model)
+        case .loaded(let rules):
+            List {
+                ForEach(rules) { rule in
+                    ruleRow(rule)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .refreshable { await model.load() }
+            .stopShowDialog(rule: $confirmStopRule) { rule in
+                Task { await model.deleteRule(rule) }
+            }
+        }
+    }
+
+    private func ruleRow(_ rule: RecordingRule) -> some View {
+        let rowView = RecordingRuleRowView(rule: rule)
+        return rowView
+            .listRowBackground(Theme.bg)
+            .listRowSeparatorTint(Theme.line)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(rowView.accessibilityText)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if rule.canManage {
+                    Button {
+                        confirmStopRule = rule
+                    } label: {
+                        Label("Stop Recording This Show", systemImage: "stop.circle")
+                    }
+                    .tint(Theme.alert)
+                }
+            }
+            .contextMenu {
+                if rule.canManage {
+                    Button(role: .destructive) {
+                        confirmStopRule = rule
+                    } label: {
+                        Label("Stop Recording This Show", systemImage: "stop.circle")
+                    }
+                }
+            }
+    }
+
+    // MARK: - Recordings
+
+    @ViewBuilder
+    private func recordingsContent(_ model: RecordingsModel) -> some View {
         switch model.state {
         case .loading:
             loadingView
         case .empty:
-            Text(model.tab.emptyMessage)
-                .font(Theme.body())
-                .foregroundStyle(Theme.dim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            emptyView(model.tab.emptyMessage)
         case .failed(let message):
-            VStack(spacing: 16) {
-                Text(message)
-                    .font(Theme.body())
-                    .foregroundStyle(Theme.alert)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                Button {
-                    Task { await model.load() }
-                } label: {
-                    Text("Try again")
-                        .font(Theme.label(16))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Theme.raised)
-                        .foregroundStyle(Theme.text)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            failedView(message, model: model)
         case .loaded(let rows):
             List {
                 ForEach(rows) { recording in

@@ -17,12 +17,7 @@ struct RecordingRowView: View {
                         .font(Theme.label(17 * scale))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
-                    if recording.protected {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 12 * scale))
-                            .foregroundStyle(Theme.amber)
-                            .accessibilityLabel("Kept")
-                    }
+                    marks
                 }
 
                 if !recording.subtitle.isEmpty {
@@ -58,6 +53,23 @@ struct RecordingRowView: View {
         .contentShape(Rectangle())
     }
 
+    /// Kept pin, series tag and parental lock after the title.
+    @ViewBuilder
+    private var marks: some View {
+        if recording.protected {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 12 * scale))
+                .foregroundStyle(Theme.amber)
+                .accessibilityLabel("Kept")
+        }
+        if recording.isSeries {
+            SeriesTag(size: 10 * scale)
+        }
+        if recording.locked {
+            ParentalLockMark(rating: recording.rating, size: 12 * scale)
+        }
+    }
+
     /// "5.1 KSTP · Sun, Oct 5, 7:00 PM · 33 min · 3.8 GB"
     private var whenLine: String {
         var parts = [recording.channelName, recording.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())]
@@ -89,6 +101,12 @@ struct RecordingRowView: View {
         }
         if recording.protected {
             parts.append("Kept")
+        }
+        if recording.isSeries {
+            parts.append("Series")
+        }
+        if recording.locked {
+            parts.append(ParentalLockMark.accessibilityText(rating: recording.rating))
         }
         return parts.joined(separator: ", ")
     }
