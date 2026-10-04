@@ -11,13 +11,22 @@
 ' RecordingsScene plays it from its saved position, then comes back here,
 ' which reloads everything); * offers Remove from Continue watching
 ' (PUT position 0).
-' Focus: [Recordings | Settings] <-> continueList <-> recentList <-> rail
-' (hidden rows are skipped). Row placement: bowtie.continueWatching.homeLayout.
+' Guide filter chips (filterList: All · Sports · Movies · News · Kids · New,
+' bowtie.guideFilter) sit directly above the rail: the rail (m.railChannels)
+' keeps only the channels whose now/next matches; when none do, "No sports
+' on right now" and Show all take its place. The chip is kept in the
+' registry (bowtie.registry guideFilter). The player still zaps the full
+' rail (m.channels).
+' Focus: [Recordings | Settings] <-> continueList <-> recentList <->
+' filterList <-> rail | Show all (hidden rows are skipped). Row placement:
+' bowtie.continueWatching.homeLayout.
 
 import "pkg:/source/lib/GuideLogic.bs"
+import "pkg:/source/lib/GuideFilter.bs"
 import "pkg:/source/lib/Favorites.bs"
 import "pkg:/source/lib/Recordings.bs"
 import "pkg:/source/lib/ContinueWatching.bs"
+import "pkg:/source/lib/Registry.bs"
 
 const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 const GUIDE_WINDOW_SECS = 4 * 3600
@@ -39,6 +48,10 @@ sub init()
     m.recentList = m.top.findNode("recentList")
     m.continueLabel = m.top.findNode("continueLabel")
     m.continueList = m.top.findNode("continueList")
+    m.filterList = m.top.findNode("filterList")
+    m.filterEmptyGroup = m.top.findNode("filterEmptyGroup")
+    m.filterEmptyLabel = m.top.findNode("filterEmptyLabel")
+    m.showAllButton = m.top.findNode("showAllButton")
     m.refreshTimer = m.top.findNode("refreshTimer")
 
     m.observing = false
@@ -50,9 +63,20 @@ sub init()
     ' In-flight star toggles: request id -> {channelId, on}.
     m.pendingFavs = {}
     m.favSeq = 0
-    ' bowtie.favorites state; m.channels is always m.fav.channels (the rail).
+    ' bowtie.favorites state; m.channels is always m.fav.channels (every
+    ' channel, favorites first: the player zaps through it).
     m.fav = invalid
     m.channels = []
+    ' What the rail shows: m.channels the guide filter keeps (channelList
+    ' indexes into this).
+    m.railChannels = []
+    ' Guide filter chip ("all", "sports", …), remembered on this device.
+    m.filter = bowtie.guideFilter.parse(bowtie.registry.loadGuideFilter())
+    ' True while the channel list (chips + rail or the filter's empty
+    ' state) is shown: not loading, empty or failed.
+    m.listShown = false
+    ' Focus the chips when the list next shows (a timed refresh while on them).
+    m.focusFiltersOnShow = false
     m.guideById = {}
     m.recents = []
     ' Continue watching items (normalized recordings, display order).
@@ -86,7 +110,10 @@ sub init()
     m.channelList.observeField("itemSelected", "onItemSelected")
     m.recentList.observeField("itemSelected", "onRecentSelected")
     m.continueList.observeField("rowItemSelected", "onContinueSelected")
+    m.filterList.observeField("itemSelected", "onFilterSelected")
+    m.showAllButton.observeField("buttonSelected", "onShowAll")
     m.refreshTimer.observeField("fire", "onRefreshTimer")
+    renderFilters()
     m.top.observeField("visible", "onVisible")
     m.top.observeField("apiTask", "onApiTaskSet")
 end sub
@@ -178,7 +205,10 @@ sub onRetryButton()
 end sub
 
 sub onItemSelected()
-    selectChannelAt(m.channelList.itemSelected)
+    idx = m.channelList.itemSelected
+    if idx = invalid or idx < 0 or idx >= m.railChannels.count() then return
+    ' The rail may be filtered; play the channel from the full rail.
+    selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.railChannels[idx].id))
 end sub
 
 sub onRecentSelected()
@@ -186,6 +216,41 @@ sub onRecentSelected()
     if idx = invalid or idx < 0 or idx >= m.recents.count() then return
     ' Play from the rail so up/down zapping continues in rail order.
     selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.recents[idx].channelId))
+end sub
+
+' OK on a filter chip: show that filter's channels and remember it.
+sub onFilterSelected()
+    idx = m.filterList.itemSelected
+    list = bowtie.guideFilter.filters()
+    if idx = invalid or idx < 0 or idx >= list.count() then return
+    setFilter(list[idx])
+end sub
+
+' Show all (the filter matched nothing): back to All, focus on its chip.
+sub onShowAll()
+    setFilter("all")
+    if m.filterList.visible = true then m.filterList.setFocus(true)
+end sub
+
+sub setFilter(filter as string)
+    f = bowtie.guideFilter.parse(filter)
+    if f = m.filter then return
+    m.filter = f
+    bowtie.registry.saveGuideFilter(f)
+    renderFilters()
+    renderRail(invalid)
+end sub
+
+' Rebuild the chips with the chosen one marked, focus kept on it.
+sub renderFilters()
+    root = CreateObject("roSGNode", "ContentNode")
+    for each f in bowtie.guideFilter.filters()
+        item = root.createChild("ContentNode")
+        item.title = bowtie.guideFilter.label(f)
+        item.addFields({ filterId: f, selected: (f = m.filter) })
+    end for
+    m.filterList.content = root
+    m.filterList.jumpToItem = bowtie.guideFilter.indexOf(m.filter)
 end sub
 
 ' OK on a Continue watching item: resume it (RecordingsScene plays it from
@@ -229,10 +294,10 @@ sub selectChannelAt(idx as dynamic)
     }
 end sub
 
-' Focus chain [Recordings | Settings] <-> continueList <-> recentList <-> rail
-' (hidden rows skipped), and * for the focused rail item's or Continue item's
-' dialog. PlayerScene is a sibling, so its keys (where * belongs to the
-' system menu) never reach here.
+' Focus chain [Recordings | Settings] <-> continueList <-> recentList <->
+' filterList <-> rail | Show all (hidden rows skipped), and * for the focused
+' rail item's or Continue item's dialog. PlayerScene is a sibling, so its
+' keys (where * belongs to the system menu) never reach here.
 function onKeyEvent(key as string, press as boolean) as boolean
     if press <> true then return false
 
@@ -240,24 +305,59 @@ function onKeyEvent(key as string, press as boolean) as boolean
         if key = "options"
             return openChannelOptions()
         end if
-        ' MarkupList lets "up" through only from its first item.
+        ' MarkupList lets "up" through only from its first item; the chips
+        ' are always right above a shown rail.
         if key = "up"
-            if m.recentList.visible = true
-                m.recentList.setFocus(true)
-            else if m.continueList.visible = true
-                m.continueList.setFocus(true)
+            if m.filterList.visible = true
+                m.filterList.setFocus(true)
             else
-                focusHeader()
+                focusAboveFilters()
             end if
             return true
         end if
         return false
     end if
 
-    if m.recentList.hasFocus()
-        if key = "down" and m.channelList.visible = true
-            m.channelList.setFocus(true)
+    ' Filter chips: the one-row MarkupGrid moves Left/Right itself (OK is
+    ' itemSelected) and lets Up/Down through.
+    if m.filterList.hasFocus()
+        if key = "down"
+            if m.channelList.visible = true
+                m.channelList.setFocus(true)
+                return true
+            end if
+            if m.filterEmptyGroup.visible = true
+                m.showAllButton.setFocus(true)
+                return true
+            end if
+            return false
+        end if
+        if key = "up"
+            focusAboveFilters()
             return true
+        end if
+        return false
+    end if
+
+    if m.showAllButton.hasFocus()
+        if key = "up"
+            m.filterList.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+
+    if m.recentList.hasFocus()
+        if key = "down"
+            if m.filterList.visible = true
+                m.filterList.setFocus(true)
+                return true
+            end if
+            if m.channelList.visible = true
+                m.channelList.setFocus(true)
+                return true
+            end if
+            return false
         end if
         if key = "up"
             if m.continueList.visible = true
@@ -279,6 +379,10 @@ function onKeyEvent(key as string, press as boolean) as boolean
         if key = "down"
             if m.recentList.visible = true
                 m.recentList.setFocus(true)
+                return true
+            end if
+            if m.filterList.visible = true
+                m.filterList.setFocus(true)
                 return true
             end if
             if m.channelList.visible = true
@@ -315,6 +419,10 @@ function onKeyEvent(key as string, press as boolean) as boolean
                 m.recentList.setFocus(true)
                 return true
             end if
+            if m.filterList.visible = true
+                m.filterList.setFocus(true)
+                return true
+            end if
             if m.channelList.visible = true
                 m.channelList.setFocus(true)
                 return true
@@ -331,6 +439,17 @@ sub focusHeader()
     m.headerButton.setFocus(true)
 end sub
 
+' Up from the chips: Recent, else Continue watching, else the header.
+sub focusAboveFilters()
+    if m.recentList.visible = true
+        m.recentList.setFocus(true)
+    else if m.continueList.visible = true
+        m.continueList.setFocus(true)
+    else
+        focusHeader()
+    end if
+end sub
+
 ' ── * dialog ─────────────────────────────────────────────────────────────────
 
 ' Favorite/Unfavorite, Record this program (only with a current program in
@@ -338,8 +457,8 @@ end sub
 ' now: the dialog takes focus and the rail may re-sort under it.
 function openChannelOptions() as boolean
     idx = m.channelList.itemFocused
-    if m.fav = invalid or idx = invalid or idx < 0 or idx >= m.channels.count() then return false
-    ch = m.channels[idx]
+    if m.fav = invalid or idx = invalid or idx < 0 or idx >= m.railChannels.count() then return false
+    ch = m.railChannels[idx]
     programs = m.guideById[ch.id.toStr()]
     if programs = invalid then programs = []
     nowProgram = bowtie.guide.nowNext(programs, isoNow()).now
@@ -552,6 +671,8 @@ sub restoreRailFocus()
         target.setFocus(true)
     else if m.channelList.visible = true
         m.channelList.setFocus(true)
+    else if m.filterEmptyGroup.visible = true
+        m.showAllButton.setFocus(true)
     else
         focusHeader()
     end if
@@ -583,7 +704,7 @@ sub handleFavoriteResponse(resp as object)
     ' Remember the focused channel; a revert can move it.
     focusedId = invalid
     idx = m.channelList.itemFocused
-    if idx <> invalid and idx >= 0 and idx < m.channels.count() then focusedId = m.channels[idx].id
+    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx].id
     if bowtie.favorites.resolve(m.fav, pending.channelId, pending.on, resp.ok = true)
         m.channels = m.fav.channels
         renderRail(focusedId)
@@ -603,8 +724,9 @@ sub loadChannels()
     m.pendingContinueId = ""
     ' The reload is queued behind any PUT/DELETE, so it returns server truth.
     m.pendingFavs = {}
-    ' A timed refresh while on the Continue row lands back on it.
+    ' A timed refresh while on the Continue row (or the chips) lands back on it.
     if m.continueList.hasFocus() then m.focusContinueOnShow = true
+    if m.filterList.hasFocus() then m.focusFiltersOnShow = true
     showLoading()
 
     task.request = {
@@ -707,6 +829,7 @@ sub handleChannelsResponse(resp as object)
     ' API may return a bare array or {channels: [...]}; favorites first.
     m.fav = bowtie.favorites.newState(resp.data)
     m.channels = m.fav.channels
+    m.railChannels = []
     m.recents = []
     m.continueItems = []
     renderContinue(-1)
@@ -753,6 +876,7 @@ sub handleRecentsResponse(resp as object)
         end for
     end if
     m.recents = recents
+    renderRecents()
     updateRows()
 end sub
 
@@ -791,61 +915,87 @@ sub renderContinue(focusIdx as integer)
     end if
 end sub
 
-' Rebuild the rail from m.channels and the last guide; keep focus on
-' focusChannelId when given (its index changes when favorites re-sort).
+' Rebuild the rail from m.channels, the guide filter and the last guide;
+' keep focus on focusChannelId when given (its index changes when favorites
+' re-sort).
 sub renderRail(focusChannelId as dynamic)
-    m.channelList.content = buildListContent(m.channels, m.guideById, isoNow())
+    atIso = isoNow()
+    m.railChannels = bowtie.guideFilter.channelsMatching(m.channels, m.guideById, m.filter, atIso)
+    m.channelList.content = buildListContent(m.railChannels, m.guideById, atIso)
     if focusChannelId <> invalid
-        idx = bowtie.favorites.indexOfChannel(m.channels, focusChannelId)
+        idx = bowtie.favorites.indexOfChannel(m.railChannels, focusChannelId)
         if idx >= 0 then m.channelList.jumpToItem = idx
     end if
+    updateRows()
 end sub
 
-' Show the Continue and Recent rows only beside a visible rail, each when it
-' has items; the rows below shift down and the rail loses rows to make room
-' (bowtie.continueWatching.homeLayout). Focus on a row being hidden moves
-' down to the next shown row.
+' While the list is shown: the chips always, the rail when the filter keeps
+' a channel (else the filter's empty copy + Show all), and the Continue and
+' Recent rows each when it has items; the rows below shift down and the rail
+' loses rows to make room (bowtie.continueWatching.homeLayout). Focus on a
+' row being hidden moves down to the next shown row.
 sub updateRows()
-    showContinue = (m.channelList.visible = true and m.continueItems.count() > 0)
-    showRecent = (m.channelList.visible = true and m.recents.count() > 0)
-    if showRecent
-        root = CreateObject("roSGNode", "ContentNode")
-        for each r in m.recents
-            item = root.createChild("ContentNode")
-            item.title = r.name
-            item.addFields({ guideNumber: r.guideNumber, channelId: r.channelId })
-        end for
-        m.recentList.content = root
-    end if
-
-    if not showContinue and m.continueList.hasFocus()
-        if showRecent
-            m.recentList.setFocus(true)
-        else if m.channelList.visible = true
-            m.channelList.setFocus(true)
-        else
-            focusHeader()
-        end if
-    end if
-    if not showRecent and m.recentList.hasFocus()
-        if m.channelList.visible = true
-            m.channelList.setFocus(true)
-        else
-            focusHeader()
-        end if
-    end if
+    listShown = (m.listShown = true)
+    showContinue = (listShown and m.continueItems.count() > 0)
+    showRecent = (listShown and m.recents.count() > 0)
+    showRail = (listShown and m.railChannels.count() > 0)
+    showFilterEmpty = (listShown and not showRail)
+    if showFilterEmpty then m.filterEmptyLabel.text = bowtie.guideFilter.emptyCopy(m.filter)
 
     layout = bowtie.continueWatching.homeLayout(showContinue, showRecent)
     m.continueLabel.translation = [80, layout.continueLabelY]
     m.continueList.translation = [80, layout.continueY]
     m.recentLabel.translation = [80, layout.recentLabelY]
     m.recentList.translation = [80, layout.recentY]
+    m.filterList.translation = [80, layout.filtersY]
     m.channelList.translation = [80, layout.railY]
     m.channelList.numRows = layout.railRows
+    m.filterEmptyGroup.translation = [0, layout.railY]
     m.continueLabel.visible = showContinue
     m.continueList.visible = showContinue
     m.recentLabel.visible = showRecent
     m.recentList.visible = showRecent
+    m.filterList.visible = listShown
+    m.channelList.visible = showRail
+    m.filterEmptyGroup.visible = showFilterEmpty
+
+    ' Focus on something that went moves down: Continue → Recent → the rail
+    ' (or Show all), else the chips, else the header.
+    if not showContinue and m.continueList.hasFocus()
+        if showRecent
+            m.recentList.setFocus(true)
+        else
+            focusRailArea()
+        end if
+    end if
+    if not showRecent and m.recentList.hasFocus() then focusRailArea()
+    if not showRail and m.channelList.hasFocus() then focusRailArea()
+    if not showFilterEmpty and m.showAllButton.hasFocus() then focusRailArea()
+    if not listShown and m.filterList.hasFocus() then focusHeader()
+end sub
+
+' The rail if shown, else Show all if shown, else the chips, else the header.
+sub focusRailArea()
+    if m.channelList.visible = true
+        m.channelList.setFocus(true)
+    else if m.filterEmptyGroup.visible = true
+        m.showAllButton.setFocus(true)
+    else if m.filterList.visible = true
+        m.filterList.setFocus(true)
+    else
+        focusHeader()
+    end if
+end sub
+
+' The Recent row's cards from m.recents.
+sub renderRecents()
+    root = CreateObject("roSGNode", "ContentNode")
+    for each r in m.recents
+        item = root.createChild("ContentNode")
+        item.title = r.name
+        item.addFields({ guideNumber: r.guideNumber, channelId: r.channelId })
+    end for
+    m.recentList.content = root
 end sub
 
 function indexGuide(data as object) as object
@@ -962,7 +1112,7 @@ sub showLoading()
     end if
     m.emptyLabel.visible = false
     m.errorGroup.visible = false
-    m.channelList.visible = false
+    m.listShown = false
     m.settingsButton.setFocus(true)
     updateRows()
 end sub
@@ -972,9 +1122,10 @@ sub showEmpty()
     m.emptyLabel.text = EMPTY_COPY
     m.emptyLabel.visible = true
     m.errorGroup.visible = false
-    m.channelList.visible = false
+    m.listShown = false
     m.settingsButton.setFocus(true)
     m.focusContinueOnShow = false
+    m.focusFiltersOnShow = false
     updateRows()
 end sub
 
@@ -983,9 +1134,10 @@ sub showError(message as string)
     m.emptyLabel.visible = false
     m.errorGroup.visible = true
     m.errorLabel.text = message
-    m.channelList.visible = false
+    m.listShown = false
     m.retryButton.setFocus(true)
     m.focusContinueOnShow = false
+    m.focusFiltersOnShow = false
     updateRows()
 end sub
 
@@ -993,17 +1145,24 @@ sub showList()
     setLoading(false)
     m.emptyLabel.visible = false
     m.errorGroup.visible = false
-    m.channelList.visible = true
+    m.listShown = true
     updateRows()
     ' Back from resuming a Continue item: land on that row (its first card
-    ' is the one just watched) if it's still there; else the rail.
+    ' is the one just watched) if it's still there; a timed refresh while on
+    ' the chips stays there; else the rail (Show all when the filter left it
+    ' empty).
     if m.focusContinueOnShow = true and m.continueList.visible = true
         m.continueList.jumpToRowItem = [0, 0]
         m.continueList.setFocus(true)
-    else
+    else if m.focusFiltersOnShow = true
+        m.filterList.setFocus(true)
+    else if m.channelList.visible = true
         m.channelList.setFocus(true)
+    else
+        m.showAllButton.setFocus(true)
     end if
     m.focusContinueOnShow = false
+    m.focusFiltersOnShow = false
 end sub
 
 sub setLoading(on as boolean)
