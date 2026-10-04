@@ -19,6 +19,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/api"
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -147,6 +148,27 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	})
 	go streamMgr.Run(rootCtx)
 
+	// DVR: records from the shared ingest into RecordingsDir, converts with
+	// the configured encoder (720p H.264, like a "high" live viewer).
+	if err := os.MkdirAll(cfg.RecordingsDir, 0o755); err != nil {
+		log.Printf("dvr: recordings dir %s: %v", cfg.RecordingsDir, err)
+	}
+	dvrSvc := dvr.New(dvr.Deps{
+		Store:  st,
+		Source: dvr.IngestSource{Ingest: ingest, StreamURL: tuners.StreamURL},
+		Converter: dvr.FFmpegConverter{FFmpegPath: cfg.FFmpegPath, Decide: func() (transcode.Decision, error) {
+			encoder := cfg.Encoder
+			if t, err := settingsProv.Transcode(); err == nil {
+				encoder = t.Encoder
+			}
+			return transcode.Negotiate(transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: "high"},
+				"", caps, encoder, false, transcode.DefaultProfiles())
+		}},
+		Dir:          cfg.RecordingsDir,
+		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,
+	})
+	go dvrSvc.Run(rootCtx)
+
 	apiHandler := api.New(api.Deps{
 		Version:           version,
 		Cfg:               cfg,
@@ -158,6 +180,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Streams:           streamMgr,
 		StreamTokenSecret: streamSecret,
 		Settings:          settingsProv,
+		DVR:               dvrSvc,
 	})
 
 	mux := http.NewServeMux()
@@ -196,6 +219,10 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 			if err := srv.Shutdown(httpCtx); err != nil {
 				log.Printf("shutdown: http.Server.Shutdown: %v", err)
 			}
+
+			// Before the store closes: captures record where they stopped.
+			log.Printf("shutdown: stopping DVR")
+			dvrSvc.Shutdown()
 
 			log.Printf("shutdown: cancelling root context (sessions, tuners, epg)")
 			rootCancel()

@@ -33,6 +33,11 @@ type JobSpec struct {
 	// CaptionInput is fed to FFmpeg on fd 3 by the runner when Layout.Captions
 	// is set: a second ingest subscriber of the same channel.
 	CaptionInput io.Reader
+	// VOD converts a finished DVR recording: InputURL is an FFmpeg concat
+	// list of its capture parts (the concat demuxer offsets each part's
+	// timestamps, so a restarted stream joins cleanly). Every segment is kept,
+	// segments are 6 s, and the playlist gets an end marker.
+	VOD bool
 }
 
 // DefaultHLSListSize is used when JobSpec.HLSListSize is 0 (legacy / unset).
@@ -45,6 +50,9 @@ func BuildArgs(s JobSpec) []string {
 	// restart Bowtie triggers); its trailer must not tell players the stream
 	// is over, because the restarted process continues the same playlist.
 	hlsFlags := "delete_segments+temp_file+omit_endlist"
+	if s.VOD {
+		hlsFlags = "temp_file"
+	}
 	if s.Append {
 		hlsFlags += "+append_list+discont_start"
 	}
@@ -54,6 +62,9 @@ func BuildArgs(s JobSpec) []string {
 	if s.Stdin != nil {
 		// Pipe input from ingest fan-out; discardcorrupt hardens dirty ATSC TS.
 		args = append(args, "-fflags", "+discardcorrupt", "-i", "pipe:0")
+	} else if s.VOD {
+		// Capture parts can start mid-GOP and carry gaps; regenerate PTS.
+		args = append(args, "-fflags", "+discardcorrupt+genpts", "-f", "concat", "-safe", "0", "-i", s.InputURL)
 	} else {
 		args = append(args, "-i", s.InputURL)
 	}
@@ -143,10 +154,13 @@ func BuildArgs(s JobSpec) []string {
 		listSize = DefaultHLSListSize
 	}
 
+	segSec, playlistType := "4", []string{}
+	if s.VOD {
+		segSec, listSize, playlistType = "6", 0, []string{"-hls_playlist_type", "vod"}
+	}
+	args = append(args, "-f", "hls", "-hls_time", segSec, "-hls_list_size", fmt.Sprintf("%d", listSize))
+	args = append(args, playlistType...)
 	args = append(args,
-		"-f", "hls",
-		"-hls_time", "4",
-		"-hls_list_size", fmt.Sprintf("%d", listSize),
 		"-hls_flags", hlsFlags,
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", filepath.Join(s.OutDir, "%v_%05d.ts"),

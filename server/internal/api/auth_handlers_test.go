@@ -189,12 +189,14 @@ func TestRefreshRotation(t *testing.T) {
 		t.Fatal("refresh token was not rotated")
 	}
 
-	// Old refresh token must no longer work.
+	// A repeat with the old token moments later (another tab) gets the same
+	// new refresh token, not a sign-out; after 30 s the old token is dead
+	// (auth.TestRefreshReuseWindow).
 	rr = doJSON(t, h, "POST", "/api/v1/auth/refresh", map[string]string{
 		"refreshToken": first.RefreshToken,
 	}, nil)
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("old refresh status = %d, want 401", rr.Code)
+	if rr.Code != http.StatusOK || decodeLogin(t, rr).RefreshToken != second.RefreshToken {
+		t.Fatalf("repeat refresh status = %d, want 200 with the same new token", rr.Code)
 	}
 
 	// New refresh token works.

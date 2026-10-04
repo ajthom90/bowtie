@@ -4,6 +4,8 @@
         <field id="apiTask" type="node" />
         <!-- True when user opens Settings. -->
         <field id="openSettings" type="boolean" alwaysNotify="true" value="false" />
+        <!-- True when user opens Recordings. -->
+        <field id="openRecordings" type="boolean" alwaysNotify="true" value="false" />
         <!-- Channel AA selected for play: {id, guideNumber, name, index, channels}. -->
         <field id="selectedChannel" type="assocarray" alwaysNotify="true" />
     </interface>
@@ -38,6 +40,14 @@
             vertAlign="center"
             color="0x9BA5AEFF"
             font="font:SmallSystemFont"
+        />
+        <Button
+            id="recordingsButton"
+            translation="[1260, 48]"
+            text="Recordings"
+            minWidth="240"
+            maxWidth="296"
+            height="56"
         />
         <Button
             id="settingsButton"

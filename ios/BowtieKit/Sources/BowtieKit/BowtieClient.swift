@@ -21,6 +21,28 @@ private struct CreateSessionBody: Encodable {
     let caps: ClientCaps
 }
 
+private struct ScheduleRecordingBody: Encodable {
+    let channelId: Int64
+    /// RFC 3339, whole seconds: the guide program's exact start.
+    let programStart: String
+    /// Omitted unless true.
+    let force: Bool?
+}
+
+private struct ProtectRecordingBody: Encodable {
+    let protected: Bool
+}
+
+private struct RecordingPositionBody: Encodable {
+    let positionSec: Int
+}
+
+private struct RecordingConflictBody: Decodable {
+    let error: String
+    let tunerCount: Int
+    let conflicts: [Recording]
+}
+
 private struct ErrorBody: Decodable {
     let error: String
 }
@@ -40,6 +62,9 @@ private struct TunersBusyBody: Decodable {
 /// token is persisted before any 401-retry fires.
 public actor BowtieClient {
     private let server: URL
+
+    /// Server base URL; resolves server-relative URLs such as recording playlists.
+    public nonisolated var serverURL: URL { server }
     private let store: SessionStore
     private let urlSession: URLSession
 
@@ -259,6 +284,103 @@ public actor BowtieClient {
             path: "/api/v1/me/recents",
             method: "DELETE",
             body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    // MARK: - DVR recordings
+
+    /// `GET /recordings`, optionally filtered by `?state=`.
+    public func recordings(filter: RecordingsFilter?) async throws -> [Recording] {
+        var components = URLComponents(
+            url: ServerURL.resolve(path: "/api/v1/recordings", against: server),
+            resolvingAgainstBaseURL: false
+        )!
+        if let filter {
+            components.queryItems = [URLQueryItem(name: "state", value: filter.rawValue)]
+        }
+        guard let url = components.url else {
+            throw BowtieError.invalidServerURL
+        }
+        return try await sendURL(
+            url: url,
+            method: "GET",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Schedules the guide program on `channelId` that starts exactly at `programStart`.
+    /// Throws `.recordingConflict` on a tuner conflict unless `force`.
+    public func scheduleRecording(
+        channelId: Int64,
+        programStart: Date,
+        force: Bool = false
+    ) async throws -> ScheduledRecording {
+        try await send(
+            path: "/api/v1/recordings",
+            method: "POST",
+            body: ScheduleRecordingBody(
+                channelId: channelId,
+                programStart: isoFormatter.string(from: programStart),
+                force: force ? true : nil
+            ),
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Cancels a scheduled recording, or deletes a recording and its files.
+    public func deleteRecording(id: Int64) async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/recordings/\(id)",
+            method: "DELETE",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Stops a recording now and keeps what was recorded.
+    public func stopRecording(id: Int64) async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/recordings/\(id)/stop",
+            method: "POST",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Keeps (or stops keeping) a recording from automatic deletion.
+    public func setRecordingProtected(id: Int64, protected: Bool) async throws -> Recording {
+        try await send(
+            path: "/api/v1/recordings/\(id)",
+            method: "PATCH",
+            body: ProtectRecordingBody(protected: protected),
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Token-signed HLS VOD URL plus the caller's resume position.
+    public func playRecording(id: Int64) async throws -> RecordingPlayback {
+        try await send(
+            path: "/api/v1/recordings/\(id)/play",
+            method: "POST",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    public func saveRecordingPosition(id: Int64, positionSec: Int) async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/recordings/\(id)/position",
+            method: "PUT",
+            body: RecordingPositionBody(positionSec: max(0, positionSec)),
             authorize: true,
             retryOn401: true
         )
@@ -491,6 +613,17 @@ public actor BowtieClient {
             throw BowtieError.unauthorized
         case 404:
             throw BowtieError.notFound
+        case 409:
+            if let conflict = try? decoder.decode(RecordingConflictBody.self, from: data) {
+                throw BowtieError.recordingConflict(
+                    tunerCount: conflict.tunerCount,
+                    conflicts: conflict.conflicts,
+                    message: conflict.error
+                )
+            }
+            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error
+                ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            throw BowtieError.server(status: status, message: message)
         case 422:
             let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? "negotiation failed"
             throw BowtieError.negotiationFailed(message)

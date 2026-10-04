@@ -769,3 +769,18 @@ func TestBuildArgsPassesNoLevel(t *testing.T) {
 		}
 	}
 }
+
+// VOD (DVR recordings): the whole file, kept, with an end marker.
+func TestBuildArgsVOD(t *testing.T) {
+	s := transcode.JobSpec{InputURL: "/r/parts.txt", OutDir: "/r/hls", VOD: true,
+		D:      transcode.Decision{VideoCodec: "h264", VideoEncoder: "libx264", Backend: transcode.BackendSoftware, Profile: transcode.Profile{Height: 720, VideoKbps: 4000, AudioKbps: 160}},
+		Layout: transcode.Layout{Rungs: []transcode.Rung{{720, 4000}}, VideoCodec: "h264"}}
+	got := transcode.BuildArgs(s)
+	mustContainSeq(t, got, "-fflags", "+discardcorrupt+genpts", "-f", "concat", "-safe", "0", "-i", "/r/parts.txt")
+	mustContainSeq(t, got, "-hls_time", "6", "-hls_list_size", "0", "-hls_playlist_type", "vod", "-hls_flags", "temp_file")
+	for _, a := range got {
+		if strings.Contains(a, "delete_segments") || strings.Contains(a, "omit_endlist") {
+			t.Fatalf("VOD must keep segments and end the playlist: %v", got)
+		}
+	}
+}

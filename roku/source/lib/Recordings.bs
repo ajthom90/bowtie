@@ -1,0 +1,442 @@
+' Pure DVR recordings logic for RecordingsScene and HomeScene's * menu
+' (no I/O, no nodes). Strings mirror web/src/recordings/recordingsModel.ts.
+'
+' Tabs: upcoming (scheduled/waiting/recording), recorded (converting/ready),
+' missed (failed; the server's state=failed).
+' Times: the server sends UTC ISO strings; formatting takes the local offset
+' from UTC in seconds (local = utc + utcOffsetSec) so it is testable. The
+' scene passes -roDateTime.GetTimeZoneOffset() * 60.
+'
+' Camel-case keys in returned AAs are quoted so they keep their case.
+
+namespace bowtie.recordings
+
+    ' ── Tabs ─────────────────────────────────────────────────────────────────
+
+    function tabIds() as object
+        return ["upcoming", "recorded", "missed"]
+    end function
+
+    function tabLabel(tabId as string) as string
+        if tabId = "upcoming" then return "Upcoming"
+        if tabId = "recorded" then return "Recorded"
+        if tabId = "missed" then return "Missed"
+        return ""
+    end function
+
+    ' GET /recordings?state= value for a tab.
+    function tabQuery(tabId as string) as string
+        if tabId = "missed" then return "failed"
+        return tabId
+    end function
+
+    function emptyText(tabId as string) as string
+        if tabId = "upcoming" then return "Nothing scheduled. Press * on a channel and choose Record."
+        if tabId = "recorded" then return "No recordings yet."
+        if tabId = "missed" then return "No missed recordings."
+        return ""
+    end function
+
+    ' Which tab a recording state belongs to ("" for cancelled / unknown).
+    function tabOf(state as dynamic) as string
+        s = bowtie.recordings.asString(state)
+        if s = "scheduled" or s = "waiting" or s = "recording" then return "upcoming"
+        if s = "converting" or s = "ready" then return "recorded"
+        if s = "failed" then return "missed"
+        return ""
+    end function
+
+    ' The server already filters by state; this guards against a server that
+    ' ignores the query, keeping the server's order.
+    function filterForTab(list as dynamic, tabId as string) as object
+        kept = []
+        if list = invalid or Type(list) <> "roArray" then return kept
+        for each r in list
+            if r <> invalid and bowtie.recordings.tabOf(r.state) = tabId then kept.push(r)
+        end for
+        return kept
+    end function
+
+    ' raw GET /recordings body → normalized recordings; entries without an id dropped.
+    function parseList(raw as dynamic) as object
+        list = []
+        if raw = invalid or Type(raw) <> "roArray" then return list
+        for each r in raw
+            if r <> invalid and Type(r) = "roAssociativeArray" and r.id <> invalid
+                list.push(bowtie.recordings.normalize(r))
+            end if
+        end for
+        return list
+    end function
+
+    function normalize(r as object) as object
+        return {
+            "id": r.id
+            "title": bowtie.recordings.asString(r.title)
+            "subtitle": bowtie.recordings.asString(r.subtitle)
+            "channelId": bowtie.recordings.asNumber(r.channelId)
+            "channelName": bowtie.recordings.asString(r.channelName)
+            "start": bowtie.recordings.asString(r.start)
+            "stop": bowtie.recordings.asString(r.stop)
+            "state": bowtie.recordings.asString(r.state)
+            "partial": (r.partial = true)
+            "failure": bowtie.recordings.asString(r.failure)
+            "failureDetail": bowtie.recordings.asString(r.failureDetail)
+            "durationSec": bowtie.recordings.asNumber(r.durationSec)
+            "sizeBytes": bowtie.recordings.asNumber(r.sizeBytes)
+            "protected": (r.protected = true)
+            "positionSec": bowtie.recordings.asNumber(r.positionSec)
+            "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
+            "canManage": (r.canManage = true)
+        }
+    end function
+
+    ' ── Labels ───────────────────────────────────────────────────────────────
+
+    ' Why a recording failed, in plain words.
+    function failureText(failure as dynamic, detail as dynamic) as string
+        f = bowtie.recordings.asString(failure)
+        if f = "noTuner" then return "No tuner was free"
+        if f = "noSignal" then return "No signal"
+        if f = "diskFull" then return "Disk full"
+        if f = "error"
+            d = bowtie.recordings.asString(detail).Trim()
+            if d <> "" then return d
+            return "Something went wrong"
+        end if
+        return ""
+    end function
+
+    ' A row's state in words: "" for a plain ready recording.
+    function statusText(r as object) as string
+        state = bowtie.recordings.asString(r.state)
+        if state = "failed"
+            why = bowtie.recordings.failureText(r.failure, r.failureDetail)
+            if why = "" then return "Missed"
+            return "Missed: " + why
+        end if
+        parts = []
+        if state = "scheduled" then parts.push("Scheduled")
+        if state = "waiting" then parts.push("Waiting for a tuner")
+        if state = "recording" then parts.push("Recording now")
+        if state = "converting" then parts.push("Converting")
+        if r.partial = true and (state = "ready" or state = "converting") then parts.push("Partial")
+        return bowtie.recordings.joinParts(parts, " · ")
+    end function
+
+    ' A guide program's recording mark in words.
+    function guideMarkText(state as dynamic) as string
+        s = bowtie.recordings.asString(state)
+        if s = "scheduled" then return "Recording scheduled"
+        if s = "waiting" then return "Waiting for a tuner"
+        if s = "recording" then return "Recording now"
+        if s = "converting" or s = "ready" then return "Recorded"
+        return ""
+    end function
+
+    ' "Jeopardy! — Teen Tournament", with " · Kept" when protected.
+    function titleLine(r as object) as string
+        text = bowtie.recordings.asString(r.title)
+        subtitle = bowtie.recordings.asString(r.subtitle)
+        if subtitle <> "" then text = text + " — " + subtitle
+        if r.protected = true then text = text + " · Kept"
+        return text
+    end function
+
+    ' "Today 7:00–7:30 PM · 5.1 KSTP · 33 min · 3.8 GB · Partial"
+    function detailLine(r as object, nowIso as string, utcOffsetSec as integer) as string
+        parts = []
+        parts.push(bowtie.recordings.formatWhen(bowtie.recordings.asString(r.start), bowtie.recordings.asString(r.stop), nowIso, utcOffsetSec))
+        channelName = bowtie.recordings.asString(r.channelName)
+        if channelName <> "" then parts.push(channelName)
+        state = bowtie.recordings.asString(r.state)
+        if state = "ready" or state = "converting"
+            if bowtie.recordings.asNumber(r.durationSec) > 0 then parts.push(bowtie.recordings.formatDuration(r.durationSec))
+            if bowtie.recordings.asNumber(r.sizeBytes) > 0 then parts.push(bowtie.recordings.formatSize(r.sizeBytes))
+        end if
+        status = bowtie.recordings.statusText(r)
+        if status <> "" then parts.push(status)
+        return bowtie.recordings.joinParts(parts, " · ")
+    end function
+
+    ' ── Playback ─────────────────────────────────────────────────────────────
+
+    ' Offer Resume only past the first 10 s and before the last 30 s. With an
+    ' unknown duration (0), any position past 10 s is offered.
+    ' → { kind: "ask" | "start", positionSec }
+    function resumeDecision(positionSec as dynamic, durationSec as dynamic) as object
+        p = bowtie.recordings.asNumber(positionSec)
+        d = bowtie.recordings.asNumber(durationSec)
+        if p > 10 and (d <= 0 or p < d - 30)
+            return { "kind": "ask", "positionSec": Int(p) }
+        end if
+        return { "kind": "start", "positionSec": 0 }
+    end function
+
+    ' ── Formatting ───────────────────────────────────────────────────────────
+
+    ' "33 min", "1 h 30 min"; "—" when unknown.
+    function formatDuration(sec as dynamic) as string
+        s = bowtie.recordings.asNumber(sec)
+        if s <= 0 then return "—"
+        if s < 60 then return "<1 min"
+        totalMin = Int(s / 60 + 0.5)
+        h = totalMin \ 60
+        mins = totalMin mod 60
+        if h = 0 then return mins.toStr() + " min"
+        if mins = 0 then return h.toStr() + " h"
+        return h.toStr() + " h " + mins.toStr() + " min"
+    end function
+
+    ' Decimal units ("3.8 GB"); one decimal below 10; "—" when unknown.
+    function formatSize(bytes as dynamic) as string
+        v = bowtie.recordings.asNumber(bytes) * 1.0#
+        if v <= 0 then return "—"
+        units = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        while v >= 1000 and i < units.count() - 1
+            v = v / 1000
+            i = i + 1
+        end while
+        if i = 0 then return Int(v + 0.5).toStr() + " B"
+        if v < 10
+            tenths = Int(v * 10 + 0.5)
+            whole = tenths \ 10
+            frac = tenths mod 10
+            if frac = 0 then return whole.toStr() + " " + units[i]
+            return whole.toStr() + "." + frac.toStr() + " " + units[i]
+        end if
+        return Int(v + 0.5).toStr() + " " + units[i]
+    end function
+
+    ' Playback clock: "0:05", "12:34", "1:02:03".
+    function formatClock(sec as dynamic) as string
+        s = Int(bowtie.recordings.asNumber(sec))
+        if s < 0 then s = 0
+        h = s \ 3600
+        mins = (s mod 3600) \ 60
+        secs = s mod 60
+        if h > 0 then return h.toStr() + ":" + bowtie.recordings.pad2(mins) + ":" + bowtie.recordings.pad2(secs)
+        return mins.toStr() + ":" + bowtie.recordings.pad2(secs)
+    end function
+
+    ' "7:00–7:30 PM", "11:30 AM–12:30 PM" in local time.
+    function formatTimeRange(startIso as string, stopIso as string, utcOffsetSec as integer) as string
+        a = bowtie.recordings.localParts(startIso, utcOffsetSec)
+        b = bowtie.recordings.localParts(stopIso, utcOffsetSec)
+        if a.ampm = b.ampm then return a.clock + "–" + b.clock + " " + b.ampm
+        return a.clock + " " + a.ampm + "–" + b.clock + " " + b.ampm
+    end function
+
+    ' "Today 7:00–7:30 PM", "Tomorrow …", "Yesterday …", else "Wed Oct 7 …".
+    function formatWhen(startIso as string, stopIso as string, nowIso as string, utcOffsetSec as integer) as string
+        if startIso = "" then return ""
+        a = bowtie.recordings.localParts(startIso, utcOffsetSec)
+        today = bowtie.recordings.localParts(nowIso, utcOffsetSec)
+        diff = a.day - today.day
+        label = ""
+        if diff = 0
+            label = "Today"
+        else if diff = 1
+            label = "Tomorrow"
+        else if diff = -1
+            label = "Yesterday"
+        else
+            months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            label = Left(a.weekday, 3) + " " + months[a.month - 1] + " " + a.dayOfMonth.toStr()
+            if a.year <> today.year then label = label + " " + a.year.toStr()
+        end if
+        return label + " " + bowtie.recordings.formatTimeRange(startIso, stopIso, utcOffsetSec)
+    end function
+
+    ' ISO instant → local { clock "7:00", ampm, day (days since epoch), weekday, month, dayOfMonth, year }.
+    function localParts(iso as string, utcOffsetSec as integer) as object
+        dt = CreateObject("roDateTime")
+        dt.FromISO8601String(iso)
+        localSecs = dt.AsSeconds() + utcOffsetSec
+        dt.FromSeconds(localSecs)
+        h = dt.GetHours()
+        ampm = "AM"
+        if h >= 12 then ampm = "PM"
+        h12 = h mod 12
+        if h12 = 0 then h12 = 12
+        dayNum = localSecs \ 86400
+        if localSecs < 0 and localSecs mod 86400 <> 0 then dayNum = dayNum - 1
+        return {
+            clock: h12.toStr() + ":" + bowtie.recordings.pad2(dt.GetMinutes())
+            ampm: ampm
+            day: dayNum
+            weekday: dt.GetWeekday()
+            month: dt.GetMonth()
+            dayOfMonth: dt.GetDayOfMonth()
+            year: dt.GetYear()
+        }
+    end function
+
+    ' ── Row actions (the * menu) ─────────────────────────────────────────────
+
+    ' → { play, stop, remove: "cancel" | "delete" | "", keep }
+    function rowActions(r as object) as object
+        manage = (r.canManage = true)
+        state = bowtie.recordings.asString(r.state)
+        upcoming = (state = "scheduled" or state = "waiting")
+        remove = ""
+        if manage
+            remove = "delete"
+            if upcoming then remove = "cancel"
+        end if
+        return {
+            "play": (state = "ready")
+            "stop": (manage and state = "recording")
+            "remove": remove
+            "keep": (manage and (state = "ready" or state = "converting"))
+        }
+    end function
+
+    ' [{id, label}] for a recording's * dialog; [] when the caller can't manage it.
+    ' ids: stop, keep, unkeep, cancel, delete, close.
+    function optionButtons(r as object) as object
+        menu = []
+        if r.canManage <> true then return menu
+        can = bowtie.recordings.rowActions(r)
+        if can.stop then menu.push({ id: "stop", label: "Stop recording" })
+        if can.keep
+            if r.protected = true
+                menu.push({ id: "unkeep", label: "Don't keep" })
+            else
+                menu.push({ id: "keep", label: "Keep" })
+            end if
+        end if
+        if can.remove = "cancel" then menu.push({ id: "cancel", label: "Cancel recording" })
+        if can.remove = "delete" then menu.push({ id: "delete", label: "Delete" })
+        menu.push({ id: "close", label: "Close" })
+        return menu
+    end function
+
+    function buttonLabels(menu as object) as object
+        names = []
+        if menu = invalid then return names
+        for each b in menu
+            names.push(b.label)
+        end for
+        return names
+    end function
+
+    ' Dialog buttonSelected index → menu id ("" when out of range).
+    function buttonId(menu as object, index as dynamic) as string
+        if menu = invalid or index = invalid then return ""
+        if index < 0 or index >= menu.count() then return ""
+        return menu[index].id
+    end function
+
+    function deleteConfirmText(title as dynamic) as string
+        return "Delete “" + bowtie.recordings.asString(title) + "”? This removes the recording for everyone."
+    end function
+
+    ' ── Scheduling from Home ─────────────────────────────────────────────────
+
+    ' HomeScene's * dialog for a channel. favoritesSupported: the server sends
+    ' "favorite" on channels. nowProgram: the channel's current guide program,
+    ' or invalid. → { buttons: [{id, label}], note }
+    ' ids: favorite, record, cancel.
+    function homeOptions(favoritesSupported as boolean, isFavorite as boolean, nowProgram as dynamic) as object
+        menu = []
+        note = ""
+        if favoritesSupported
+            if isFavorite
+                menu.push({ id: "favorite", label: "Unfavorite" })
+            else
+                menu.push({ id: "favorite", label: "Favorite" })
+            end if
+        end if
+        if nowProgram <> invalid and Type(nowProgram) = "roAssociativeArray" and nowProgram.start <> invalid
+            note = "Now: " + bowtie.recordings.asString(nowProgram.title)
+            mark = nowProgram.recording
+            if mark = invalid
+                menu.push({ id: "record", label: "Record this program" })
+            else
+                markText = bowtie.recordings.guideMarkText(mark.state)
+                if markText <> "" then note = note + " · " + markText
+            end if
+        end if
+        menu.push({ id: "cancel", label: "Cancel" })
+        return { buttons: menu, note: note }
+    end function
+
+    ' 201 {recording, warnings} → dialog lines.
+    function scheduledMessage(data as dynamic) as object
+        lines = []
+        title = ""
+        if data <> invalid and data.recording <> invalid then title = bowtie.recordings.asString(data.recording.title)
+        if title = ""
+            lines.push("Recording scheduled.")
+        else
+            lines.push("Recording “" + title + "”.")
+        end if
+        if data <> invalid and data.warnings <> invalid and Type(data.warnings) = "roArray"
+            for each w in data.warnings
+                if w <> invalid and w.message <> invalid and w.message <> "" then lines.push(w.message)
+            end for
+        end if
+        return lines
+    end function
+
+    function conflictHeading(tunerCount as dynamic) as string
+        n = Int(bowtie.recordings.asNumber(tunerCount))
+        if n = 1 then return "Only 1 tuner — these recordings already need it:"
+        return "Only " + n.toStr() + " tuners — these recordings already need them:"
+    end function
+
+    ' 409 error {message, tunerCount, conflicts} → dialog lines: the server's
+    ' message (or a heading), then "Title · Channel · 7:00–7:30 PM" per conflict.
+    function conflictMessage(err as dynamic, utcOffsetSec as integer) as object
+        lines = []
+        if err = invalid then err = {}
+        message = bowtie.recordings.asString(err.message)
+        if message = "" then message = bowtie.recordings.conflictHeading(err.tunerCount)
+        lines.push(message)
+        if err.conflicts <> invalid and Type(err.conflicts) = "roArray"
+            for each c in err.conflicts
+                if c <> invalid
+                    parts = [bowtie.recordings.asString(c.title)]
+                    channelName = bowtie.recordings.asString(c.channelName)
+                    if channelName <> "" then parts.push(channelName)
+                    if c.start <> invalid and c.stop <> invalid then parts.push(bowtie.recordings.formatTimeRange(c.start, c.stop, utcOffsetSec))
+                    lines.push(bowtie.recordings.joinParts(parts, " · "))
+                end if
+            end for
+        end if
+        return lines
+    end function
+
+    ' ── helpers ──────────────────────────────────────────────────────────────
+
+    function asString(v as dynamic) as string
+        if v = invalid then return ""
+        t = Type(v)
+        if t = "String" or t = "roString" then return v
+        return v.toStr()
+    end function
+
+    function asNumber(v as dynamic) as dynamic
+        if v = invalid then return 0
+        t = Type(v)
+        if t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" then return v
+        return 0
+    end function
+
+    function pad2(n as integer) as string
+        if n < 10 then return "0" + n.toStr()
+        return n.toStr()
+    end function
+
+    function joinParts(parts as object, sep as string) as string
+        text = ""
+        for i = 0 to parts.count() - 1
+            if i > 0 then text = text + sep
+            text = text + parts[i]
+        end for
+        return text
+    end function
+
+end namespace

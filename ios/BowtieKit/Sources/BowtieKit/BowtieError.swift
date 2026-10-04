@@ -8,6 +8,9 @@ public enum BowtieError: Error, Equatable {
     case tunersBusy([ActiveSessionSummary], otherInUse: Int)
     /// 422 negotiation / validation message.
     case negotiationFailed(String)
+    /// 409 on `POST /recordings`: more distinct channels than tuners at that
+    /// time. `message` is the server's copy; retry with `force` to record anyway.
+    case recordingConflict(tunerCount: Int, conflicts: [Recording], message: String)
     case notFound
     case server(status: Int, message: String)
     case network(String)

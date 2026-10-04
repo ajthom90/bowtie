@@ -17,7 +17,7 @@ function onKeyEvent(src) {
     return src.slice(start, src.indexOf('end function', start));
 }
 
-test('* (options) toggles a favorite only while the rail has focus', () => {
+test('* (options) opens the channel dialog only while the rail has focus', () => {
     const handler = onKeyEvent(home);
     const opt = handler.indexOf('key = "options"');
     assert.ok(opt >= 0, 'options is not handled');
@@ -25,7 +25,13 @@ test('* (options) toggles a favorite only while the rail has focus', () => {
     const gate = handler.lastIndexOf('m.channelList.hasFocus()', opt);
     assert.ok(gate >= 0, 'options is not gated on channelList focus');
     assert.doesNotMatch(handler.slice(gate, opt), /\n\s*else\b|\n\s*end if/, 'options escapes the channelList gate');
-    assert.match(handler.slice(opt, opt + 200), /toggleFocusedFavorite\(\)/);
+    assert.match(handler.slice(opt, opt + 200), /openChannelOptions\(\)/);
+});
+
+test('the dialog\'s Favorite button toggles the channel captured when it opened', () => {
+    const start = home.indexOf('sub onDialogButton');
+    const body = home.slice(start, home.indexOf('end sub', start));
+    assert.match(body, /choice = "favorite"[\s\S]*?toggleFavorite\(m\.optionsChannelId\)/);
 });
 
 test('up/down hand focus between settings, recentList and the rail', () => {
@@ -37,7 +43,7 @@ test('up/down hand focus between settings, recentList and the rail', () => {
 });
 
 test('a toggle re-renders in place instead of reloading (no spinner, focus kept)', () => {
-    const start = home.indexOf('function toggleFocusedFavorite');
+    const start = home.indexOf('function toggleFavorite');
     assert.ok(start >= 0);
     const body = home.slice(start, home.indexOf('end function', start));
     assert.doesNotMatch(body, /loadChannels\(\)/);

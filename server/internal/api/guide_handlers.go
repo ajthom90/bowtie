@@ -52,6 +52,7 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load guide")
 		return
 	}
+	s.markRecordings(guide)
 	favs := s.callerFavorites(r)
 	for i := range guide {
 		guide[i].Favorite = favs[guide[i].ChannelID]

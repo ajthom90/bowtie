@@ -1,6 +1,7 @@
 package app.bowtie.core
 
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
@@ -85,6 +86,15 @@ data class GuideProgram(
     val subtitle: String,
     val description: String,
     val category: String,
+    /** Present when this program is scheduled or recorded (servers with the DVR). */
+    val recording: GuideRecordingMark? = null,
+)
+
+/** A guide program's DVR mark: which recording covers it, and its state. */
+@Serializable
+data class GuideRecordingMark(
+    val id: Long,
+    val state: String,
 )
 
 @Serializable
@@ -135,3 +145,66 @@ data class ActiveSessionSummary(
         val username: String,
     )
 }
+
+/** A DVR recording (OpenAPI `Recording`): scheduled, in progress, recorded or missed. */
+@Serializable
+data class Recording(
+    val id: Long,
+    val title: String,
+    val subtitle: String = "",
+    val description: String = "",
+    val category: String = "",
+    val channelId: Long,
+    val channelName: String = "",
+    @Serializable(with = InstantIso8601Serializer::class)
+    val start: Instant,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val stop: Instant,
+    /** scheduled, waiting, recording, converting, ready or failed. */
+    val state: String,
+    /** More than a minute is missing (late start, dropped stream, or a restart). */
+    val partial: Boolean = false,
+    /** "", noTuner, noSignal, diskFull or error. */
+    val failure: String = "",
+    val failureDetail: String = "",
+    val durationSec: Int = 0,
+    val sizeBytes: Long = 0,
+    /** Kept: never deleted automatically when space runs low. */
+    @SerialName("protected")
+    val isProtected: Boolean = false,
+    /** The caller's resume position. */
+    val positionSec: Int = 0,
+    val scheduledBy: String = "",
+    /** The caller may stop, delete or keep it (scheduler or admin). */
+    val canManage: Boolean = false,
+) {
+    companion object {
+        const val SCHEDULED = "scheduled"
+        const val WAITING = "waiting"
+        const val RECORDING = "recording"
+        const val CONVERTING = "converting"
+        const val READY = "ready"
+        const val FAILED = "failed"
+    }
+}
+
+@Serializable
+data class RecordingWarning(
+    val code: String,
+    val message: String,
+)
+
+/** 201 body of `POST /recordings`. */
+@Serializable
+data class ScheduledRecording(
+    val recording: Recording,
+    val warnings: List<RecordingWarning> = emptyList(),
+)
+
+/** `POST /recordings/{id}/play`: server-relative, token-signed VOD playlist. */
+@Serializable
+data class RecordingPlayback(
+    val playlistUrl: String,
+    val positionSec: Int,
+    val durationSec: Int,
+)
