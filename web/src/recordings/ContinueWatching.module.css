@@ -108,6 +108,11 @@
   font-size: 0.92rem;
 }
 
+.inlineSub {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
 .sub {
   font-size: 0.82rem;
   color: var(--text);

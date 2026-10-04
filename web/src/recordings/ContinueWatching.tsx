@@ -62,7 +62,12 @@ export function ContinueWatching({ items, compact = false, onPlay, onRemove, bus
                 onClick={() => onPlay(rec)}
                 aria-label={resumeLabel(rec)}
               >
-                <span className={styles.title}>{rec.title}</span>
+                <span className={styles.title}>
+                  {rec.title}
+                  {rec.subtitle && compact ? (
+                    <span className={styles.inlineSub}> · {rec.subtitle}</span>
+                  ) : null}
+                </span>
                 {rec.subtitle && !compact ? <span className={styles.sub}>{rec.subtitle}</span> : null}
                 <span className={styles.meta}>
                   {compact ? `${rec.channelName} · ${left}` : rec.channelName}
