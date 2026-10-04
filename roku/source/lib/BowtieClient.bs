@@ -2,10 +2,12 @@
 ' Transport (roUrlTransfer) lives in ApiTask — this module has no I/O.
 '
 ' buildRequest kinds: healthz, login, refresh, logout, me, changePassword,
-'   channels, guide, createSession, deleteSession, heartbeat
+'   channels, guide, createSession, deleteSession, heartbeat, setFavorite, recents
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
 ' heartbeat: stream-token query only (no Bearer); 204 success.
+' setFavorite: params {channelId, on} → PUT (on) / DELETE (off); 204 success.
+' recents: GET /me/recents?limit=n; 404 (older server) → notFound.
 
 namespace bowtie.client
 
@@ -70,6 +72,19 @@ namespace bowtie.client
             startIso = params.start
             stopIso = params.stop
             url = base + "/api/v1/guide?start=" + startIso + "&stop=" + stopIso
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "setFavorite"
+            url = base + "/api/v1/me/favorites/" + bowtie.client.idString(params.channelId)
+            method = "DELETE"
+            if params.on = true then method = "PUT"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "recents"
+            limit = params.limit
+            if limit = invalid then limit = 8
+            url = base + "/api/v1/me/recents?limit=" + bowtie.client.idString(limit)
             method = "GET"
             headers = bowtie.client.authHeaders(accessToken)
 
@@ -140,7 +155,7 @@ namespace bowtie.client
             return { ok: false, error: { code: httpCode, message: "healthz failed" } }
         end if
 
-        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat"
+        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite"
             ' Best-effort: 2xx and empty bodies are success; delete swallows errors at ApiTask.
             if httpCode >= 200 and httpCode < 300
                 return { ok: true, data: true }
@@ -197,7 +212,7 @@ namespace bowtie.client
             return bowtie.client.parseUser(body)
         end if
 
-        if kind = "channels" or kind = "guide"
+        if kind = "channels" or kind = "guide" or kind = "recents"
             parsed = ParseJson(body)
             if parsed = invalid
                 return { ok: false, error: { code: httpCode, message: "invalid json" } }
@@ -328,6 +343,14 @@ namespace bowtie.client
             return parsed.error
         end if
         return body
+    end function
+
+    ' Integer/LongInteger/string id → path segment.
+    function idString(v as dynamic) as string
+        if v = invalid then return ""
+        t = Type(v)
+        if t = "String" or t = "roString" then return v
+        return v.toStr()
     end function
 
     function authHeaders(accessToken as string) as object
