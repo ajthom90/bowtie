@@ -210,6 +210,12 @@ export function receptionNote(reception: string | undefined): string | null {
   return reception === 'noSignal' ? GUIDE_COPY.noSignal : null
 }
 
+/** Title of the program on air at `now`, if any. */
+export function currentProgramTitle(programs: GuideProgram[], now: Date): string | undefined {
+  const n = now.getTime()
+  return programs.find((p) => n >= Date.parse(p.start) && n < Date.parse(p.stop))?.title
+}
+
 // ── Favorites ─────────────────────────────────────────────────────────────
 
 /** Compare guide numbers ("9.1", "11.2", "5.10") part by part, numerically. */

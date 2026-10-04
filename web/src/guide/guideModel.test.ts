@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   compareGuideNumber,
+  currentProgramTitle,
   formatGuideTime,
   sortFavoritesFirst,
   supportsFavorites,
@@ -338,6 +339,21 @@ describe('supportsFavorites', () => {
   it('is false for an older server or an empty guide', () => {
     expect(supportsFavorites([ch(1, '2.1')])).toBe(false)
     expect(supportsFavorites([])).toBe(false)
+  })
+})
+
+describe('currentProgramTitle', () => {
+  const programs = [
+    prog('2026-08-04T12:00:00.000Z', '2026-08-04T13:00:00.000Z', 'Noon News'),
+    prog('2026-08-04T13:00:00.000Z', '2026-08-04T14:00:00.000Z', 'Afternoon'),
+  ]
+  it('returns the title on air now (start inclusive, stop exclusive)', () => {
+    expect(currentProgramTitle(programs, utc('2026-08-04T12:30:00.000Z'))).toBe('Noon News')
+    expect(currentProgramTitle(programs, utc('2026-08-04T13:00:00.000Z'))).toBe('Afternoon')
+  })
+  it('returns undefined when nothing is on air', () => {
+    expect(currentProgramTitle(programs, utc('2026-08-04T15:00:00.000Z'))).toBeUndefined()
+    expect(currentProgramTitle([], utc('2026-08-04T12:30:00.000Z'))).toBeUndefined()
   })
 })
 
