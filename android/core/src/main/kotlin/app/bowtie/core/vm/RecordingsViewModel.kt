@@ -55,6 +55,12 @@ class RecordingsViewModel(
         val offerResume: Boolean,
     )
 
+    /** "Try again" in the player: a fresh playlist, or why there isn't one. */
+    sealed class Retry {
+        data class Ready(val playlistUrl: String) : Retry()
+        data class Failed(val message: String) : Retry()
+    }
+
     private val workScope: CoroutineScope = scope ?: viewModelScope
 
     private val _state = MutableStateFlow(UiState())
@@ -124,6 +130,19 @@ class RecordingsViewModel(
             _state.update { it.copy(message = RecordingLogic.errorMessage(e)) }
             null
         }
+    }
+
+    /**
+     * "Try again" after a playback error: asks `/play` again for a freshly
+     * signed playlist (the old token expires after 12 h, and the recording may
+     * be gone). The player shows a failure itself, so [UiState.message] is untouched.
+     */
+    suspend fun retryPlayback(r: Recording): Retry = try {
+        Retry.Ready(client.playRecording(r.id).playlistUrl)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Retry.Failed(RecordingLogic.errorMessage(e))
     }
 
     /** Save the resume position (best-effort, in order, never blocks the caller). */

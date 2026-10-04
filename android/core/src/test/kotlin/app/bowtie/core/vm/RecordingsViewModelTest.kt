@@ -4,6 +4,7 @@ import app.bowtie.core.BowtieClient
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.TOKEN_PAIR
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.recordingJson
 import app.bowtie.core.InMemoryTokenStore
+import app.bowtie.core.RecordingLogic
 import app.bowtie.core.RecordingLogic.Tab
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -215,6 +216,60 @@ class RecordingsViewModelTest {
         }
         assertNull(m.play(rec))
         assertEquals("this recording isn't ready to play yet", m.state.value.message)
+    }
+
+    @Test
+    fun retryPlayback_fetchesAFreshPlaylist() = runBlocking {
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+        m.play(rec)
+        playBody = """{"playlistUrl":"/api/v1/recordings/2/hls/index.m3u8?token=fresh","positionSec":95,"durationSec":1800}"""
+
+        val retry = m.retryPlayback(rec)
+
+        assertEquals(
+            RecordingsViewModel.Retry.Ready("/api/v1/recordings/2/hls/index.m3u8?token=fresh"),
+            retry,
+        )
+        assertEquals(2, requests.count { it.method == "POST" && it.path == "/api/v1/recordings/2/play" })
+        assertNull("the player shows retry errors itself", m.state.value.message)
+    }
+
+    @Test
+    fun retryPlayback_gone_isPlainWords() = runBlocking {
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) =
+                MockResponse().setResponseCode(404).setBody("""{"error":"recording not found"}""")
+        }
+        assertEquals(RecordingsViewModel.Retry.Failed("That recording is gone."), m.retryPlayback(rec))
+        assertNull(m.state.value.message)
+    }
+
+    @Test
+    fun retryPlayback_parental_showsTheReason() = runBlocking {
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) =
+                MockResponse().setResponseCode(403)
+                    .setBody("""{"error":"Blocked by parental controls (rated R)","code":"parental"}""")
+        }
+        assertEquals(
+            RecordingsViewModel.Retry.Failed("Blocked by parental controls (rated R)"),
+            m.retryPlayback(rec),
+        )
+    }
+
+    @Test
+    fun retryStartSec_resumesWhereItStopped() {
+        assertEquals(754, RecordingLogic.retryStartSec(currentPositionMs = 754_900, fallbackSec = 95))
+        // Failed before the first frame: start where it was asked to.
+        assertEquals(95, RecordingLogic.retryStartSec(currentPositionMs = 0, fallbackSec = 95))
     }
 
     @Test

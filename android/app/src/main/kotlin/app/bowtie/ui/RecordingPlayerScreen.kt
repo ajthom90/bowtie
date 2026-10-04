@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +42,7 @@ import app.bowtie.core.player.VodPlayer
 import app.bowtie.core.vm.RecordingsViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 
 /**
@@ -66,6 +68,26 @@ fun RecordingPlayerScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var chromeVisible by remember { mutableStateOf(true) }
     var lastSavedMs by remember { mutableStateOf(-1L) }
+    var retrying by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    /** Ask for a fresh playlist (tokens expire) and pick up where playback stopped. */
+    fun retry() {
+        if (retrying) return
+        val atSec = RecordingLogic.retryStartSec(player.currentPosition, startAtSec)
+        retrying = true
+        error = null
+        scope.launch {
+            try {
+                when (val r = viewModel.retryPlayback(start.recording)) {
+                    is RecordingsViewModel.Retry.Ready -> VodPlayer.load(player, r.playlistUrl, server, atSec)
+                    is RecordingsViewModel.Retry.Failed -> error = r.message
+                }
+            } finally {
+                retrying = false
+            }
+        }
+    }
 
     fun save() {
         // Before the first frame the position is 0: don't wipe a saved resume point.
@@ -183,11 +205,9 @@ fun RecordingPlayerScreen(
             ) {
                 Text(msg, style = BowtieType.body, color = BowtieColors.alert)
                 Spacer(Modifier.height(12.dp))
-                TextButton(onClick = {
-                    error = null
-                    player.prepare()
-                    player.play()
-                }) { Text("Try again", color = BowtieColors.amber) }
+                TextButton(onClick = { retry() }, enabled = !retrying) {
+                    Text("Try again", color = BowtieColors.amber)
+                }
             }
         }
     }

@@ -134,6 +134,13 @@ object RecordingLogic {
     fun shouldOfferResume(positionSec: Int, durationSec: Int): Boolean =
         positionSec > RESUME_MIN_SEC && positionSec < durationSec - RESUME_END_MARGIN_SEC
 
+    /**
+     * Where "Try again" restarts: the player's position, or [fallbackSec]
+     * (where it was asked to start) when it failed before the first frame.
+     */
+    fun retryStartSec(currentPositionMs: Long, fallbackSec: Int): Int =
+        if (currentPositionMs > 0) (currentPositionMs / 1000).toInt() else fallbackSec
+
     /** "0:05", "12:34", "1:02:03". */
     fun formatClock(sec: Int): String {
         val s = sec.coerceAtLeast(0)
