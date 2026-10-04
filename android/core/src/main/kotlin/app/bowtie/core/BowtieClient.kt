@@ -220,6 +220,41 @@ class BowtieClient(
         BowtieJson.decodeFromString(body)
     }
 
+    // ── Series rules ────────────────────────────────────────────────────────
+
+    /** Everyone's series recording rules. */
+    suspend fun recordingRules(): List<RecordingRule> = withContext(Dispatchers.IO) {
+        BowtieJson.decodeFromString(authed("GET", "/api/v1/recording-rules"))
+    }
+
+    /**
+     * Record the show of the guide program on [channelId] at [programStart]:
+     * new episodes only by default, on that channel ([anyChannel] false),
+     * keeping all ([keepLatest] 0). Upcoming airings are scheduled at once.
+     */
+    suspend fun createRecordingRule(
+        channelId: Long,
+        programStart: Instant,
+        anyChannel: Boolean = false,
+        newOnly: Boolean = true,
+        keepLatest: Int = 0,
+    ): CreatedRecordingRule = withContext(Dispatchers.IO) {
+        val body = authed(
+            method = "POST",
+            path = "/api/v1/recording-rules",
+            bodyJson = BowtieJson.encodeToString(
+                CreateRuleRequest(channelId, programStart, anyChannel, newOnly, keepLatest),
+            ),
+        )
+        BowtieJson.decodeFromString(body)
+    }
+
+    /** Stop recording a show: cancels its upcoming recordings; recorded ones stay. */
+    suspend fun deleteRecordingRule(id: Long): Unit = withContext(Dispatchers.IO) {
+        authed("DELETE", "/api/v1/recording-rules/$id")
+        Unit
+    }
+
     /** Cancel a scheduled recording, or delete a recording and its files. */
     suspend fun deleteRecording(id: Long): Unit = withContext(Dispatchers.IO) {
         authed("DELETE", "/api/v1/recordings/$id")
@@ -458,7 +493,7 @@ class BowtieClient(
             )
             503 -> {
                 // A recordings 503 means the DVR is off, not that tuners are busy.
-                if (path.startsWith("/api/v1/recordings")) {
+                if (path.startsWith("/api/v1/recordings") || path.startsWith("/api/v1/recording-rules")) {
                     return BowtieError.Server(503, extractErrorMessage(body) ?: "HTTP 503")
                 }
                 try {
@@ -549,6 +584,17 @@ private data class ScheduleRecordingRequest(
     @Serializable(with = InstantIso8601Serializer::class)
     val programStart: Instant,
     val force: Boolean = false,
+)
+
+/** No defaults: every option is sent explicitly (BowtieJson omits defaults). */
+@Serializable
+private data class CreateRuleRequest(
+    val channelId: Long,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val programStart: Instant,
+    val anyChannel: Boolean,
+    val newOnly: Boolean,
+    val keepLatest: Int,
 )
 
 /** No default: positionSec 0 (start over) must be sent. */

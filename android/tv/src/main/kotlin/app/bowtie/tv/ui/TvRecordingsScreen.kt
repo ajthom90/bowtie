@@ -43,6 +43,7 @@ import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
 import app.bowtie.core.RecordingLogic.Action
 import app.bowtie.core.RecordingLogic.Tab
+import app.bowtie.core.RecordingRule
 import app.bowtie.core.vm.RecordingsViewModel
 import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieDimens
@@ -143,6 +144,32 @@ fun TvRecordingsScreen(
         )
     }
 
+    fun openShow(rule: RecordingRule) {
+        val stop = if (rule.canManage) {
+            listOf(
+                "Stop recording this show" to {
+                    panel = null
+                    scope.launch { viewModel.stopShow(rule) }
+                    Unit
+                },
+            )
+        } else {
+            emptyList()
+        }
+        panel = Panel(
+            title = rule.title,
+            body = listOfNotNull(
+                RecordingLogic.ruleDetail(rule),
+                if (rule.canManage) {
+                    "Stopping cancels upcoming episodes. Recorded episodes stay."
+                } else {
+                    "Only the person who set it up or an admin can stop it."
+                },
+            ).joinToString("\n"),
+            choices = stop + ("Close" to { panel = null }),
+        )
+    }
+
     fun openOptions(r: Recording) {
         val actions = RecordingLogic.actions(r)
         val choices = actions.map { action ->
@@ -218,6 +245,22 @@ fun TvRecordingsScreen(
             when (val load = state.load) {
                 is RecordingsViewModel.Load.Loading -> CenterText("Loading…", BowtieColors.dim)
                 is RecordingsViewModel.Load.Failed -> CenterText(load.message, BowtieColors.alert)
+                is RecordingsViewModel.Load.Shows -> {
+                    if (load.rules.isEmpty()) {
+                        CenterText(emptyCopy(state.tab), BowtieColors.dim)
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(load.rules, key = { it.id }) { rule ->
+                                TvRuleRow(rule = rule, onClick = { openShow(rule) })
+                            }
+                        }
+                    }
+                }
                 is RecordingsViewModel.Load.Loaded -> {
                     if (load.items.isEmpty()) {
                         CenterText(emptyCopy(state.tab), BowtieColors.dim)
@@ -272,6 +315,30 @@ private fun emptyCopy(tab: Tab): String = when (tab) {
     Tab.Upcoming -> "Nothing set to record. Press and hold OK on a channel to record what's on."
     Tab.Recorded -> "No recordings yet."
     Tab.Missed -> "No missed recordings."
+    Tab.Shows -> "No shows set to record. Press and hold OK on a channel and choose Record series."
+}
+
+@Composable
+private fun TvRuleRow(rule: RecordingRule, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = BowtieColors.surface,
+            contentColor = BowtieColors.text,
+            focusedContainerColor = BowtieColors.raised,
+            focusedContentColor = BowtieColors.text,
+            pressedContainerColor = BowtieColors.raised,
+            pressedContentColor = BowtieColors.text,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(BowtieDimens.cornerRadius)),
+    ) {
+        Column(modifier = Modifier.padding(BowtieDimens.rowPadding)) {
+            Text(rule.title, style = BowtieType.body, color = BowtieColors.text, maxLines = 1)
+            Spacer(Modifier.height(4.dp))
+            Text(RecordingLogic.ruleDetail(rule), style = BowtieType.label, color = BowtieColors.dim)
+        }
+    }
 }
 
 @Composable
@@ -386,7 +453,11 @@ internal fun ChoicePanel(panel: Panel, onDismiss: () -> Unit) {
                     Text(
                         text = label,
                         style = BowtieType.body,
-                        color = if (label == "Delete") BowtieColors.alert else BowtieColors.text,
+                        color = if (label == "Delete" || label == "Stop recording this show") {
+                            BowtieColors.alert
+                        } else {
+                            BowtieColors.text
+                        },
                     )
                 }
             }

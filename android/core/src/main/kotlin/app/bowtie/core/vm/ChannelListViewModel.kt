@@ -94,8 +94,14 @@ class ChannelListViewModel(
      * Fetches channels + guide(now..now+4h) and joins via [GuideLogic.nowNext],
      * then the Recent row (when the server supports it).
      */
-    suspend fun refresh() {
-        _state.value = LoadState.Loading
+    suspend fun refresh() = refresh(showLoading = true)
+
+    /**
+     * [showLoading] false keeps the current rows on screen while reloading
+     * (e.g. after "Record series" marks new episodes).
+     */
+    private suspend fun refresh(showLoading: Boolean) {
+        if (showLoading) _state.value = LoadState.Loading
         val at = now()
         val stop = at.plus(GUIDE_WINDOW)
 
@@ -126,8 +132,13 @@ class ChannelListViewModel(
                 favoritesSupported = supported,
             )
             lastLoadedAt = at
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            _state.value = LoadState.Failed(messageFor(e))
+            // A quiet reload keeps what's shown rather than replacing it with an error.
+            if (showLoading || _state.value !is LoadState.Loaded) {
+                _state.value = LoadState.Failed(messageFor(e))
+            }
             return
         }
         loadRecents(supported)
@@ -285,6 +296,16 @@ class ChannelListViewModel(
             )
         }
         return ScheduleResult.Scheduled(created.recording, created.warnings.firstOrNull()?.message)
+    }
+
+    /**
+     * "Record series": records every new episode of [program]'s show on
+     * [channelId], then quietly reloads so the scheduled episodes are marked.
+     */
+    suspend fun recordSeries(channelId: Long, program: GuideProgram): SeriesResult {
+        val result = createSeriesRule(client, channelId, program.start)
+        if (result is SeriesResult.Scheduled) refresh(showLoading = false)
+        return result
     }
 
     companion object {

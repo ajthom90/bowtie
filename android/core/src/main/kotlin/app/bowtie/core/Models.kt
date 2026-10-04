@@ -204,6 +204,32 @@ data class Recording(
     }
 }
 
+/** A series recording rule (OpenAPI `RecordingRule`): record every (new) episode of a show. */
+@Serializable
+data class RecordingRule(
+    val id: Long,
+    val title: String,
+    val seriesId: String = "",
+    /** 0 = any channel. */
+    val channelId: Long = 0,
+    val channelName: String = "",
+    val newOnly: Boolean = true,
+    /** Keep only this many recordings of the show (0 = all). */
+    val keepLatest: Int = 0,
+    val scheduledBy: String = "",
+    /** The caller may delete it (who made it, or an admin). */
+    val canManage: Boolean = false,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val createdAt: Instant? = null,
+)
+
+/** 201 body of `POST /recording-rules`: the rule and how many airings it scheduled now. */
+@Serializable
+data class CreatedRecordingRule(
+    val rule: RecordingRule,
+    val scheduled: Int = 0,
+)
+
 @Serializable
 data class RecordingWarning(
     val code: String,

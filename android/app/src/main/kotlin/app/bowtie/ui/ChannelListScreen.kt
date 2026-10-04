@@ -59,6 +59,7 @@ import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
+import app.bowtie.core.vm.SeriesResult
 import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
 import app.bowtie.core.GuideProgram
@@ -139,6 +140,15 @@ fun ChannelListScreen(
                 is ChannelListViewModel.ScheduleResult.Conflict ->
                     conflict = PendingConflict(channelId, program, result.error)
                 is ChannelListViewModel.ScheduleResult.Failed -> snackbar.showSnackbar(result.message)
+            }
+        }
+    }
+
+    fun recordSeries(channelId: Long, program: GuideProgram) {
+        scope.launch {
+            when (val result = channelListViewModel.recordSeries(channelId, program)) {
+                is SeriesResult.Scheduled -> snackbar.showSnackbar("${program.title}: ${result.message}")
+                is SeriesResult.Failed -> snackbar.showSnackbar(result.message)
             }
         }
     }
@@ -308,6 +318,10 @@ fun ChannelListScreen(
                     actionSheetId = null
                     record(row.channel.id, program, force = false)
                 },
+                onRecordSeries = { program ->
+                    actionSheetId = null
+                    recordSeries(row.channel.id, program)
+                },
             )
         }
     }
@@ -351,6 +365,7 @@ private fun ChannelActionSheet(
     onWatch: () -> Unit,
     onToggleFavorite: () -> Unit,
     onRecord: (GuideProgram) -> Unit,
+    onRecordSeries: (GuideProgram) -> Unit,
 ) {
     Column(modifier = Modifier.padding(bottom = 24.dp)) {
         Text(
@@ -393,6 +408,11 @@ private fun ChannelActionSheet(
                     onClick = { onRecord(program) },
                 )
             }
+            SheetItem(
+                text = "Record series \"${program.title}\"",
+                detail = "Every new episode on ${row.channel.guideNumber} ${row.channel.name}",
+                onClick = { onRecordSeries(program) },
+            )
         }
     }
 }

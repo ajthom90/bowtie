@@ -50,7 +50,7 @@ class RecordingLogicTest {
         assertEquals("recorded", RecordingLogic.Tab.Recorded.query)
         assertEquals("failed", RecordingLogic.Tab.Missed.query)
         assertEquals(
-            listOf("Upcoming", "Recorded", "Missed"),
+            listOf("Upcoming", "Recorded", "Missed", "Shows"),
             RecordingLogic.Tab.entries.map { it.title },
         )
     }

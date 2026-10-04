@@ -16,11 +16,18 @@ import java.util.Locale
  */
 object RecordingLogic {
 
-    /** Recordings screen tabs and their `GET /recordings?state=` filter. */
+    /**
+     * Recordings screen tabs and their `GET /recordings?state=` filter.
+     * [Shows] lists series rules (`GET /recording-rules`) instead; [isShows] tells them apart.
+     */
     enum class Tab(val query: String, val title: String) {
         Upcoming("upcoming", "Upcoming"),
         Recorded("recorded", "Recorded"),
         Missed("failed", "Missed"),
+        Shows("", "Shows"),
+        ;
+
+        val isShows: Boolean get() = this == Shows
     }
 
     enum class Tone { Neutral, Live, Warn, Alert, Good }
@@ -44,8 +51,12 @@ object RecordingLogic {
         "noTuner" -> "No tuner was free"
         "noSignal" -> "The channel had no signal"
         "diskFull" -> "The recordings disk was full"
+        "skipped" -> "Skipped"
         else -> "Something went wrong"
     }
+
+    /** A series episode someone deleted before it aired: not recorded on purpose. */
+    fun isSkipped(r: Recording): Boolean = r.state == Recording.FAILED && r.failure == "skipped"
 
     /** State badges for a row; a ready recording shows none unless partial or kept. */
     fun badges(r: Recording): List<Badge> {
@@ -55,8 +66,10 @@ object RecordingLogic {
             Recording.WAITING -> out += Badge("Waiting for a tuner", Tone.Warn)
             Recording.RECORDING -> out += Badge("Recording", Tone.Live)
             Recording.CONVERTING -> out += Badge("Processing", Tone.Neutral)
-            Recording.FAILED -> out += Badge("Missed", Tone.Alert)
+            Recording.FAILED ->
+                out += if (isSkipped(r)) Badge("Skipped", Tone.Neutral) else Badge("Missed", Tone.Alert)
         }
+        if (r.ruleId > 0) out += Badge("Series", Tone.Neutral)
         if (r.partial) out += Badge("Partial", Tone.Warn)
         if (r.isProtected) out += Badge("Kept", Tone.Good)
         return out
@@ -64,7 +77,8 @@ object RecordingLogic {
 
     /** A sentence explaining a missed, waiting or partial recording; null otherwise. */
     fun statusLine(r: Recording): String? = when (r.state) {
-        Recording.FAILED -> "Missed: " + (failureLabel(r.failure) ?: "Something went wrong")
+        Recording.FAILED ->
+            if (isSkipped(r)) "Skipped" else "Missed: " + (failureLabel(r.failure) ?: "Something went wrong")
         Recording.WAITING -> when (r.failure) {
             "noTuner" -> "No tuner is free yet. Still trying."
             "noSignal" -> "No signal yet. Still trying."
@@ -190,6 +204,20 @@ object RecordingLogic {
         }
         return "$head already set to record then:\n$lines\n" +
             "If you record anyway, this only records if a tuner is free then."
+    }
+
+    /** Confirmation after "Record series": "Scheduled 1 episode", "Scheduled 6 episodes". */
+    fun seriesScheduledMessage(count: Int): String =
+        if (count == 1) "Scheduled 1 episode" else "Scheduled $count episodes"
+
+    /** A Shows row's detail: channel, which episodes, how many it keeps, and who made it when it isn't yours. */
+    fun ruleDetail(rule: RecordingRule): String {
+        val parts = mutableListOf<String>()
+        parts += if (rule.channelId == 0L) "Any channel" else rule.channelName.ifEmpty { "One channel" }
+        parts += if (rule.newOnly) "New episodes only" else "All episodes"
+        if (rule.keepLatest > 0) parts += "Keeps the latest ${rule.keepLatest}"
+        if (!rule.canManage && rule.scheduledBy.isNotEmpty()) parts += "by ${rule.scheduledBy}"
+        return parts.joinToString(" · ")
     }
 
     /** Plain-words error for a failed "Record this program". */
