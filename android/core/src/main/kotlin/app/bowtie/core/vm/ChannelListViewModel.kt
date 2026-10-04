@@ -6,9 +6,14 @@ import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.GuideProgram
+import app.bowtie.core.GuideRecordingMark
+import app.bowtie.core.Recording
+import app.bowtie.core.RecordingLogic
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.time.Duration
 import java.time.Instant
 
@@ -93,6 +98,49 @@ class ChannelListViewModel(
         }
     }
 
+    sealed class ScheduleResult {
+        /** Scheduled; [warning] is e.g. "uses all tuners" copy to show, or null. */
+        data class Scheduled(val recording: Recording, val warning: String?) : ScheduleResult()
+
+        /** 409: the tuners are booked; offer "Record anyway" (force). */
+        data class Conflict(val error: BowtieError.RecordingConflict) : ScheduleResult()
+
+        data class Failed(val message: String) : ScheduleResult()
+    }
+
+    /**
+     * "Record this program": schedules [program] on [channelId] by its exact start,
+     * then marks it in the loaded rows so the list shows it's set to record.
+     */
+    suspend fun record(
+        channelId: Long,
+        program: GuideProgram,
+        force: Boolean = false,
+    ): ScheduleResult {
+        val created = try {
+            client.scheduleRecording(channelId, program.start, force)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: BowtieError.RecordingConflict) {
+            return ScheduleResult.Conflict(e)
+        } catch (e: Exception) {
+            return ScheduleResult.Failed(RecordingLogic.scheduleErrorMessage(e))
+        }
+        val mark = GuideRecordingMark(id = created.recording.id, state = created.recording.state)
+        _state.update { s ->
+            if (s !is LoadState.Loaded) return@update s
+            LoadState.Loaded(
+                s.rows.map { row ->
+                    if (row.channel.id != channelId) return@map row
+                    fun GuideProgram?.marked() =
+                        if (this != null && start == program.start) copy(recording = mark) else this
+                    row.copy(nowNext = GuideLogic.NowNext(row.nowNext.now.marked(), row.nowNext.next.marked()))
+                },
+            )
+        }
+        return ScheduleResult.Scheduled(created.recording, created.warnings.firstOrNull()?.message)
+    }
+
     companion object {
         /** Guide request window length: now … now+4h. */
         val GUIDE_WINDOW: Duration = Duration.ofHours(4)
@@ -116,6 +164,7 @@ class ChannelListViewModel(
             return when (error) {
                 is BowtieError.Unauthorized -> "Unauthorized"
                 is BowtieError.TunersBusy -> "All tuners are in use"
+                is BowtieError.RecordingConflict -> "Not enough tuners then"
                 is BowtieError.NegotiationFailed -> error.message ?: "Negotiation failed"
                 is BowtieError.NotFound -> "Not found"
                 is BowtieError.Server -> error.message

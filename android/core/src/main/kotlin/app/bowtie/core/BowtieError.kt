@@ -15,6 +15,16 @@ sealed class BowtieError : Exception() {
     /** 422 — codec/profile negotiation failed. */
     data class NegotiationFailed(override val message: String) : BowtieError()
 
+    /**
+     * 409 from scheduling a recording: more distinct channels than tuners.
+     * [conflicts] are the recordings already holding the tuners then.
+     */
+    data class RecordingConflict(
+        override val message: String,
+        val tunerCount: Int,
+        val conflicts: List<Recording>,
+    ) : BowtieError()
+
     /** 404 — unknown or disabled channel / resource. */
     data object NotFound : BowtieError()
 
