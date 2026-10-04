@@ -47,6 +47,9 @@ type recordingJSON struct {
 	RuleID    int64  `json:"ruleId"` // series rule that scheduled it (0 = one-off)
 	// Locked: parental controls block it for the caller (no description, no play).
 	Locked bool `json:"locked"`
+	// Commercials: breaks found by commercial detection (seconds on the
+	// playback timeline, sorted); omitted when none were found or it hasn't run.
+	Commercials []store.Commercial `json:"commercials,omitempty"`
 }
 
 func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names map[int64]string) recordingJSON {
@@ -57,7 +60,7 @@ func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names ma
 		State: r.State, Partial: r.Partial, Failure: r.Failure, FailureDetail: r.FailureDetail,
 		DurationSec: r.DurationSec, SizeBytes: r.SizeBytes, Protected: r.Protected, PositionSec: pos,
 		ScheduledBy: names[r.UserID], CanManage: claims.Role == "admin" || claims.UserID == r.UserID,
-		Rating: r.Rating, RuleID: r.RuleID,
+		Rating: r.Rating, RuleID: r.RuleID, Commercials: r.Commercials,
 	}
 }
 

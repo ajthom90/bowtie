@@ -2184,6 +2184,27 @@ components:
         locked:
           type: boolean
           description: Parental controls block it for the caller (no description; play is 403)
+        commercials:
+          type: array
+          description: >-
+            Commercial breaks found by commercial detection (Comskip, when the
+            server has it), as offsets in seconds on the recording's playback
+            (HLS VOD) timeline; sorted and non-overlapping. Omitted when none
+            were found, detection hasn't run yet, or it isn't available.
+          items:
+            $ref: '#/components/schemas/CommercialBreak'
+    CommercialBreak:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: number
+          format: double
+          description: Seconds from the start of playback
+        end:
+          type: number
+          format: double
+          description: Seconds from the start of playback (after start)
     RecentChannel:
       type: object
       required: [channelId, guideNumber, name, logoUrl, watchedAt]

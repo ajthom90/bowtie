@@ -72,6 +72,8 @@ type Deps struct {
 	Store     *store.Store
 	Source    Source
 	Converter Converter
+	// Detector finds commercial breaks in ready recordings (nil = off).
+	Detector Detector
 	// Dir holds one folder per recording (never the segment tmpfs).
 	Dir   string
 	Clock func() time.Time
@@ -131,6 +133,8 @@ type Service struct {
 	converting map[int64]context.CancelFunc // running conversions (Delete stops them)
 	convQueue  chan int64
 	queued     map[int64]bool
+	detecting  map[int64]context.CancelFunc // running commercial detection (Delete stops it)
+	detectPoke chan struct{}
 	lastSweep  time.Time
 	stopped    bool
 	onDeleted  func() // test hook: after the sweep deletes a recording
@@ -178,11 +182,18 @@ func New(deps Deps) *Service {
 		converting: map[int64]context.CancelFunc{},
 		convQueue:  make(chan int64, 256),
 		queued:     map[int64]bool{},
+		detecting:  map[int64]context.CancelFunc{},
+		detectPoke: make(chan struct{}, 1),
 		ctx:        ctx,
 		cancel:     cancel,
 	}
 	s.wg.Add(1)
 	go s.convertWorker()
+	if deps.Detector != nil {
+		s.wg.Add(1)
+		go s.detectWorker()
+		s.pokeDetect() // recordings made before detection was available
+	}
 	return s
 }
 
@@ -478,6 +489,9 @@ func (s *Service) delete(id int64, allowSkip bool) error {
 	c := s.captures[id]
 	if stopConvert := s.converting[id]; stopConvert != nil {
 		stopConvert() // FFmpeg would only write into a folder that's going away
+	}
+	if stopDetect := s.detecting[id]; stopDetect != nil {
+		stopDetect()
 	}
 	s.mu.Unlock()
 	defer func() {
@@ -854,6 +868,7 @@ func (s *Service) convert(id int64) {
 	for _, p := range parts {
 		_ = os.Remove(p)
 	}
+	s.pokeDetect()
 	s.pruneRule(r.RuleID)
 }
 
