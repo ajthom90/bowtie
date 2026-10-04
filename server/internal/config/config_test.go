@@ -73,3 +73,23 @@ func TestMultitrackKillSwitchEnv(t *testing.T) {
 		t.Error("unset: DisableMultitrack=true")
 	}
 }
+
+func TestRecordingsDirAndMinFree(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RecordingsDir != filepath.Join(dir, "recordings") || cfg.DVRMinFreeGB != 20 {
+		t.Fatalf("defaults: %q %d", cfg.RecordingsDir, cfg.DVRMinFreeGB)
+	}
+	t.Setenv("BOWTIE_RECORDINGS_DIR", "/recordings")
+	t.Setenv("BOWTIE_DVR_MIN_FREE_GB", "50")
+	cfg, err = config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RecordingsDir != "/recordings" || cfg.DVRMinFreeGB != 50 {
+		t.Fatalf("env: %q %d", cfg.RecordingsDir, cfg.DVRMinFreeGB)
+	}
+}
