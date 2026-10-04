@@ -31,11 +31,13 @@ type Props = {
   onRecordings?: () => void
   /** Opens the Account page. */
   onAccount?: () => void
+  /** The section shown first (default Tuners). */
+  initialTab?: AdminTab
 }
 
-export function Admin({ onBack, onPreview, onRecordings, onAccount }: Props) {
+export function Admin({ onBack, onPreview, onRecordings, onAccount, initialTab = 'tuners' }: Props) {
   const { user, logout } = useAuth()
-  const [tab, setTab] = useState<AdminTab>('tuners')
+  const [tab, setTab] = useState<AdminTab>(initialTab)
 
   // Defense in depth — App already gates on role.
   if (user?.role !== 'admin') {

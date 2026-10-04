@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, type GuideSearchResult } from '../api/client'
+import { ApiError, type GuideChannel, type GuideSearchResult } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { formatWhen } from '../recordings/recordingsModel'
 import type { WatchTarget } from './Guide'
+import { currentProgramTitle } from './guideModel'
 import { isConflict, type SheetChannel, type SheetConflict } from './ProgramSheet'
 import {
   SEARCH_DEBOUNCE_MS,
   SEARCH_LIMIT,
   createDebouncer,
   lockText,
+  matchChannels,
   normalizeQuery,
   resultActions,
   searchStatusText,
@@ -34,6 +36,8 @@ type Props = {
   refreshKey: number
   /** A sheet is open over the panel: ignore outside clicks and Escape. */
   suspended: boolean
+  /** The guide's channels, matched by name or number ("FOX", "9.1"). */
+  channels?: readonly GuideChannel[]
 }
 
 function sheetChannel(r: GuideSearchResult): SheetChannel {
@@ -41,7 +45,15 @@ function sheetChannel(r: GuideSearchResult): SheetChannel {
 }
 
 /** Search box in the guide header with a results panel. */
-export function GuideSearch({ onWatch, onOpenSheet, onNotice, onChanged, refreshKey, suspended }: Props) {
+export function GuideSearch({
+  onWatch,
+  onOpenSheet,
+  onNotice,
+  onChanged,
+  refreshKey,
+  suspended,
+  channels,
+}: Props) {
   const { client } = useAuth()
   const [text, setText] = useState('')
   const [query, setQuery] = useState<string | null>(null)
@@ -142,7 +154,14 @@ export function GuideSearch({ onWatch, onOpenSheet, onNotice, onChanged, refresh
   }
 
   const now = new Date()
-  const status = searchStatusText({ query, loading, error, count: results?.length ?? 0 })
+  const channelHits = query && channels ? matchChannels(channels, query) : []
+  const status = searchStatusText({
+    query,
+    loading,
+    error,
+    count: results?.length ?? 0,
+    channelCount: channelHits.length,
+  })
   const showPanel = open && query !== null
 
   return (
@@ -197,6 +216,37 @@ export function GuideSearch({ onWatch, onOpenSheet, onNotice, onChanged, refresh
             <p className={styles.statusError} role="alert">
               {rowError}
             </p>
+          ) : null}
+          {channelHits.length > 0 ? (
+            <ul className={styles.list} aria-label="Channels">
+              {channelHits.map((c) => {
+                const title = currentProgramTitle(c.programs, now)
+                return (
+                  <li key={`ch-${c.channelId}`} className={`${styles.item} ${styles.channelItem}`}>
+                    <span className={styles.itemMeta}>
+                      <span className={styles.chNum}>{c.guideNumber}</span>
+                      <span className={styles.chName}>{c.name}</span>
+                      {title ? <span className={styles.when}>{title}</span> : null}
+                    </span>
+                    <button
+                      type="button"
+                      className={`${styles.btn} ${styles.btnPrimary}`}
+                      aria-label={`Watch channel ${c.guideNumber} ${c.name}`}
+                      onClick={() =>
+                        onWatch({
+                          channelId: c.channelId,
+                          guideNumber: c.guideNumber,
+                          name: c.name,
+                          programTitle: title,
+                        })
+                      }
+                    >
+                      Watch
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
           ) : null}
           {results && results.length > 0 ? (
             <ul className={styles.list}>

@@ -5,6 +5,7 @@ import {
   createDebouncer,
   isOnNow,
   lockText,
+  matchChannels,
   normalizeQuery,
   resultActions,
   searchStatusText,
@@ -103,6 +104,40 @@ describe('searchStatusText', () => {
     )
     expect(searchStatusText({ query: 'news', loading: false, error: null, count: 1 })).toBe('1 program')
     expect(searchStatusText({ query: 'news', loading: false, error: null, count: 12 })).toBe('12 programs')
+  })
+  it('counts channel matches too', () => {
+    const base = { query: 'fox', loading: false, error: null }
+    expect(searchStatusText({ ...base, count: 0, channelCount: 1 })).toBe('1 channel')
+    expect(searchStatusText({ ...base, count: 3, channelCount: 2 })).toBe('2 channels · 3 programs')
+    // Channels show even while programs are still loading.
+    expect(searchStatusText({ ...base, loading: true, count: 0, channelCount: 1 })).toBe('Searching…')
+  })
+})
+
+describe('matchChannels', () => {
+  const chans = [
+    { channelId: 1, guideNumber: '9.1', name: 'FOX 9' },
+    { channelId: 2, guideNumber: '9.2', name: 'Movies!' },
+    { channelId: 3, guideNumber: '19.1', name: 'KFOX' },
+    { channelId: 4, guideNumber: '5.1', name: 'KSTP' },
+    { channelId: 5, guideNumber: '11.1', name: 'KARE' },
+  ]
+  const ids = (q: string) => matchChannels(chans, q).map((c) => c.channelId)
+
+  it('matches names case-insensitively', () => {
+    expect(ids('fox')).toEqual([1, 3])
+    expect(ids('FOX 9')).toEqual([1])
+  })
+
+  it('matches guide numbers from the start, exact number first', () => {
+    expect(ids('9.1')).toEqual([1])
+    expect(ids('9.')).toEqual([1, 2])
+    expect(ids('11')).toEqual([5])
+  })
+
+  it('finds nothing for an unrelated query, and caps the list', () => {
+    expect(ids('jeopardy')).toEqual([])
+    expect(matchChannels(chans, 'k', 2)).toHaveLength(2)
   })
 })
 

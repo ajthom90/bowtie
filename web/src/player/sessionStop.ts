@@ -7,30 +7,30 @@ export function streamTokenFromPlaylist(playlistUrl: string): string | null {
   }
 }
 
-/** Best-effort session stop when the page is unloading (DELETE cannot use sendBeacon). */
-export function bestEffortDelete(viewerId: string, accessToken: string | null, streamToken: string | null) {
+/**
+ * Stop a viewer with one keepalive DELETE, so it survives navigation and tab
+ * close. (sendBeacon can only POST, and the server has no POST stop route.)
+ * Resolves when the request settles; never rejects.
+ */
+export function bestEffortDelete(
+  viewerId: string,
+  accessToken: string | null,
+  streamToken: string | null,
+): Promise<void> {
   let url = `/api/v1/sessions/${encodeURIComponent(viewerId)}`
   if (streamToken) {
     url += `?token=${encodeURIComponent(streamToken)}`
   }
   try {
-    void fetch(url, {
+    return fetch(url, {
       method: 'DELETE',
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
       keepalive: true,
-    })
+    }).then(
+      () => undefined,
+      () => undefined,
+    )
   } catch {
-    // ignore
-  }
-  // sendBeacon is POST-only; some browsers still fire it as a secondary signal
-  // when a stream token is present (server ignores unknown methods). Prefer keepalive DELETE.
-  if (streamToken && typeof navigator.sendBeacon === 'function') {
-    try {
-      navigator.sendBeacon(
-        `/api/v1/sessions/${encodeURIComponent(viewerId)}?token=${encodeURIComponent(streamToken)}`,
-      )
-    } catch {
-      // ignore
-    }
+    return Promise.resolve()
   }
 }

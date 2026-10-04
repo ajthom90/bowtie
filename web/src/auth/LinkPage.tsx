@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { BowtieMark } from '../BowtieMark'
 import { useAuth } from './AuthContext'
+import { linkErrorText as errorText } from './authErrors'
 import {
   codeFromSearch,
   deviceLabel,
@@ -22,10 +23,6 @@ type Step =
 type Props = {
   /** Leave /link for the guide. */
   onDone: () => void
-}
-
-function errorText(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.message ? err.message : fallback
 }
 
 /** /link?code=…: approve a TV's quick sign-in from a phone or browser. */

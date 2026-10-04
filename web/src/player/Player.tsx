@@ -16,6 +16,7 @@ import { QUALITY_HINT, QualitySheet, useIsNarrow } from './QualitySheet'
 import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from './tracksModel'
 import { SeekBar } from './SeekBar'
 import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
+import { createSessionAttempt, type SessionAttempt, type SessionHandle } from './sessionLifecycle'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -111,11 +112,24 @@ function buildLiveWindow(hls: Hls | null, video: HTMLVideoElement): LiveWindow |
   return null
 }
 
+/** Stop a viewer with one keepalive DELETE (survives navigation and tab close). */
+function stopViewer(h: SessionHandle): Promise<void> {
+  return bestEffortDelete(
+    h.viewerId,
+    localStorage.getItem('bowtie.accessToken'),
+    streamTokenFromPlaylist(h.playlistUrl),
+  )
+}
+
 export function Player({ target, onBack }: Props) {
   const { client } = useAuth()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
   const viewerIdRef = useRef<string | null>(null)
+  /** The current try at opening a viewer; released on cleanup. */
+  const attemptRef = useRef<SessionAttempt | null>(null)
+  /** The last stop request, awaited before asking for a new viewer. */
+  const pendingStopRef = useRef<Promise<void>>(Promise.resolve())
   const playlistUrlRef = useRef<string | null>(null)
   const hideTimerRef = useRef<number | null>(null)
   const noticeTimerRef = useRef<number | null>(null)
@@ -189,21 +203,6 @@ export function Player({ target, onBack }: Props) {
       video.load()
     }
   }
-
-  const stopSession = useCallback(async () => {
-    heartbeatRef.current?.stop()
-    const id = viewerIdRef.current
-    viewerIdRef.current = null
-    playlistUrlRef.current = null
-    setLiveWindow(null)
-    destroyHls()
-    if (!id) return
-    try {
-      await client.deleteSession(id)
-    } catch {
-      // best-effort
-    }
-  }, [client])
 
   const seekTo = useCallback(
     (pos: number, opts?: { fromOutOfWindow?: boolean }) => {
@@ -333,49 +332,54 @@ export function Player({ target, onBack }: Props) {
     saveTrackPrefs({ ...loadTrackPrefs(), captions: next })
   }, [])
 
-  const startSession = useCallback(async () => {
+  // Open the viewer for this channel and quality (again on Try again). Starting
+  // can take 10–20 s: whichever of "created" and "cleanup" (Back, a new quality,
+  // StrictMode's dev remount) comes second stops the viewer, so leaving while
+  // "Starting stream…" never strands a tuner until the server's reaper.
+  useEffect(() => {
+    const attempt = createSessionAttempt((h) => {
+      pendingStopRef.current = stopViewer(h)
+    })
+    attemptRef.current = attempt
+    // The previous viewer (quality change) is stopped before the new one is
+    // asked for, so the two never hold two tuners at once.
+    const prevStop = pendingStopRef.current
     setLoading(true)
     setError(null)
     setSessionMeta(null)
 
-    // Tear down prior viewer if recreating (quality change).
-    if (viewerIdRef.current) {
-      const prev = viewerIdRef.current
-      viewerIdRef.current = null
+    void (async () => {
+      await prevStop
+      if (attempt.released) return
+      let res: CreateSessionResponse
       try {
-        await client.deleteSession(prev)
-      } catch {
-        // ignore
+        res = await client.createSession(target.channelId, detectCaps(profile))
+      } catch (err) {
+        if (attempt.released) return
+        setLoading(false)
+        // 403 code "parental": the server's message, without Try again.
+        setError(startErrorFrom(err))
+        return
       }
-    }
-    destroyHls()
-
-    try {
-      const caps = detectCaps(profile)
-      const res: CreateSessionResponse = await client.createSession(target.channelId, caps)
+      if (!attempt.resolve({ viewerId: res.viewerId, playlistUrl: res.playlistUrl })) return
       viewerIdRef.current = res.viewerId
       playlistUrlRef.current = res.playlistUrl
       setSessionMeta(res.session ?? null)
       attachPlayback(res.playlistUrl)
       setLoading(false)
       bumpOverlay()
-    } catch (err) {
-      setLoading(false)
-      // 403 code "parental": the server's message, without Try again.
-      setError(startErrorFrom(err))
-    }
-  }, [attachPlayback, bumpOverlay, client, profile, target.channelId])
+    })()
 
-  // Create / recreate session when channel or quality changes.
-  useEffect(() => {
-    void startSession()
     return () => {
-      // Cleanup on unmount only handled below; quality change reuses startSession cleanup.
+      heartbeatRef.current?.stop()
+      attempt.release()
+      viewerIdRef.current = null
+      playlistUrlRef.current = null
+      destroyHls()
     }
-    // sessionEpoch forces retry
-  }, [startSession, sessionEpoch])
+  }, [attachPlayback, bumpOverlay, client, profile, target.channelId, sessionEpoch])
 
-  // Unmount: stop session.
+  // Unmount: timers and heartbeats (the viewer is stopped by the effect above).
   useEffect(() => {
     return () => {
       clearHideTimer()
@@ -384,45 +388,27 @@ export function Player({ target, onBack }: Props) {
       }
       heartbeatRef.current?.stop()
       heartbeatRef.current = null
-      const id = viewerIdRef.current
-      const playlist = playlistUrlRef.current
-      viewerIdRef.current = null
-      playlistUrlRef.current = null
-      if (hlsRef.current) {
-        hlsRef.current.destroy()
-        hlsRef.current = null
-      }
-      if (id) {
-        const access = localStorage.getItem('bowtie.accessToken')
-        const token = playlist ? streamTokenFromPlaylist(playlist) : null
-        // Prefer keepalive when unmounting (component teardown may race with navigation).
-        bestEffortDelete(id, access, token)
-        void client.deleteSession(id).catch(() => {
-          /* ignore */
-        })
-      }
     }
-  }, [client])
+  }, [])
 
-  // beforeunload / pagehide best-effort stop (fetch keepalive; sendBeacon is POST-only).
-  // pagehide covers mobile background-kill / unload. visibilitychange is used only for
+  // pagehide / beforeunload: stop the viewer (keepalive DELETE). Back from the
+  // back/forward cache starts a new one. visibilitychange is used only for
   // heartbeats (A6) — never tears down the session.
   useEffect(() => {
-    const onUnload = () => {
+    const onHide = () => {
       heartbeatRef.current?.stop()
-      const id = viewerIdRef.current
-      if (!id) return
-      const access = localStorage.getItem('bowtie.accessToken')
-      const token = playlistUrlRef.current
-        ? streamTokenFromPlaylist(playlistUrlRef.current)
-        : null
-      bestEffortDelete(id, access, token)
+      attemptRef.current?.release()
     }
-    window.addEventListener('beforeunload', onUnload)
-    window.addEventListener('pagehide', onUnload)
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted && attemptRef.current?.released) setSessionEpoch((n) => n + 1)
+    }
+    window.addEventListener('beforeunload', onHide)
+    window.addEventListener('pagehide', onHide)
+    window.addEventListener('pageshow', onShow)
     return () => {
-      window.removeEventListener('beforeunload', onUnload)
-      window.removeEventListener('pagehide', onUnload)
+      window.removeEventListener('beforeunload', onHide)
+      window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('pageshow', onShow)
     }
   }, [])
 
@@ -444,6 +430,8 @@ export function Player({ target, onBack }: Props) {
         // Parental controls stopped the stream (the program changed to a
         // blocked one): show why. Other failures are best-effort.
         if (isParentalBlock(err)) {
+          // The server already ended this viewer: nothing to stop on leave.
+          attemptRef.current?.forget()
           viewerIdRef.current = null
           destroyHls()
           setError(startErrorFrom(err))
@@ -608,8 +596,9 @@ export function Player({ target, onBack }: Props) {
     bumpOverlay()
   }
 
-  const onBackClick = async () => {
-    await stopSession()
+  const onBackClick = () => {
+    // Stop now (even mid-start); don't wait on the network to go back.
+    attemptRef.current?.release()
     onBack()
   }
 
@@ -656,7 +645,7 @@ export function Player({ target, onBack }: Props) {
                   Try again
                 </button>
               ) : null}
-              <button type="button" className={styles.btn} onClick={() => void onBackClick()}>
+              <button type="button" className={styles.btn} onClick={onBackClick}>
                 Back to guide
               </button>
             </div>
@@ -735,7 +724,7 @@ export function Player({ target, onBack }: Props) {
               />
             </div>
             <div className={styles.controlRow}>
-              <button type="button" className={styles.btn} onClick={() => void onBackClick()}>
+              <button type="button" className={styles.btn} onClick={onBackClick}>
                 Back to guide
               </button>
               <button

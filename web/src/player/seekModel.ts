@@ -88,6 +88,16 @@ export function formatBehind(seconds: number): string {
   return `-${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`
 }
 
+/** The LIVE badge's distance behind, for screen readers: "4 seconds behind live". */
+export function behindLabel(seconds: number): string {
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`
+  const parts = m > 0 ? [plural(m, 'minute'), ...(rem > 0 ? [plural(rem, 'second')] : [])] : [plural(rem, 'second')]
+  return `${parts.join(' ')} behind live`
+}
+
 // ── Heartbeat scheduling (testable; A6) ────────────────────────────────────
 
 export type HeartbeatController = {

@@ -202,7 +202,7 @@ export function Multiview({ onGuide }: Props) {
             </button>
             {count === 0 ? (
               <p className={styles.emptyHint}>
-                Watch up to {MAX_TILES} channels at once. Each channel uses a tuner.
+                Watch up to {MAX_TILES} channels at once — each different channel uses one of your tuners.
               </p>
             ) : null}
           </div>
