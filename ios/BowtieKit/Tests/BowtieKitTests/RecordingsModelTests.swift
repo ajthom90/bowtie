@@ -210,6 +210,36 @@ final class RecordingsModelTests: XCTestCase {
         XCTAssertEqual(model.actionError, "Recording is not ready yet")
     }
 
+    func testPlayFailureDoesNotRunBeforeStart() async {
+        StubURLProtocol.handler = { _ in (404, Data(#"{"error":"not found"}"#.utf8), [:]) }
+        let model = RecordingsModel(client: await makeClient())
+        var stoppedLive = false
+
+        let playback = await model.play(RecordingFixtures.recording()) {
+            stoppedLive = true
+        }
+
+        XCTAssertNil(playback)
+        XCTAssertFalse(stoppedLive, "live TV keeps playing when /play fails")
+        XCTAssertEqual(model.actionError, "That recording is gone.")
+    }
+
+    func testPlaySuccessRunsBeforeStartAfterPlayCall() async throws {
+        StubURLProtocol.handler = { _ in
+            (200, Data(#"{"playlistUrl":"/x.m3u8?token=t","positionSec":0,"durationSec":1980}"#.utf8), [:])
+        }
+        let model = RecordingsModel(client: await makeClient())
+        var requestsWhenStopped: Int?
+
+        let maybe = await model.play(RecordingFixtures.recording(id: 7)) {
+            requestsWhenStopped = StubURLProtocol.recorded.count
+        }
+
+        _ = try XCTUnwrap(maybe)
+        XCTAssertEqual(requestsWhenStopped, 1, "live stops only after /play answered")
+        XCTAssertEqual(StubURLProtocol.recorded.first?.url?.path, "/api/v1/recordings/7/play")
+    }
+
     func testSavePositionFloorsSeconds() async throws {
         StubURLProtocol.handler = { _ in (204, Data(), [:]) }
         let model = RecordingsModel(client: await makeClient())
