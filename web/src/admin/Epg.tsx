@@ -26,7 +26,11 @@ function SourceCard({ name, note, state }: { name: string; note?: string; state:
       <div className={styles.cardMeta}>
         {state.configured ? 'Configured' : 'Not configured'}
       </div>
-      {note ? <div className={styles.dim}>{note}</div> : null}
+      {note ? (
+        <div className={styles.dim} style={{ fontSize: '0.82rem' }}>
+          {note}
+        </div>
+      ) : null}
       <div>
         <span className={styles.dim}>Last success </span>
         <span className={styles.mono}>{lastSuccess}</span>

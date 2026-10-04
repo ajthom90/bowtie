@@ -173,10 +173,10 @@ export function Settings() {
           <div className={styles.sectionHead}>
             <h3 className={styles.cardTitle}>HDHomeRun guide</h3>
           </div>
-          <div className={styles.settingsFields}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '40rem' }}>
             <label
               className={styles.label}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}
             >
               <input
                 className={styles.toggle}

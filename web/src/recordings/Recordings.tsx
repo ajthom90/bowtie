@@ -382,7 +382,7 @@ function RecordingRow({
             disabled={actions.playLocked}
             title={actions.playLocked ? 'Blocked by parental controls' : undefined}
           >
-            {actions.playLocked ? '🔒 Play' : 'Play'}
+            Play
           </button>
         ) : null}
         {actions.stop ? (
