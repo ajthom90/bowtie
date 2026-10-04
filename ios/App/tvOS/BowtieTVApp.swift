@@ -27,7 +27,7 @@ struct TVRootView: View {
             case .connect:
                 ConnectView(appModel: appModel)
             case .login:
-                LoginView(appModel: appModel)
+                TVSignInView(appModel: appModel)
             case .checking:
                 TVCheckingView()
             case .ready:

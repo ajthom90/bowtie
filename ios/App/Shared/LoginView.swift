@@ -4,6 +4,8 @@ import BowtieKit
 /// Username / password sign-in against the connected server.
 struct LoginView: View {
     @Bindable var appModel: AppModel
+    /// Apple TV: back to "Sign in with your phone". Nil hides the button.
+    var onUsePhone: (() -> Void)? = nil
 
     @State private var username = ""
     @State private var password = ""
@@ -90,6 +92,23 @@ struct LoginView: View {
                 .accessibilityLabel("Sign in")
                 .accessibilityHint("Sign in with your Bowtie account")
                 .accessibilityAddTraits(.isButton)
+
+                if let onUsePhone {
+                    Button {
+                        onUsePhone()
+                    } label: {
+                        Label("Sign in with your phone", systemImage: "qrcode")
+                            .font(Theme.label(17))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Theme.raised)
+                            .foregroundStyle(Theme.text)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                    }
+                    .buttonStyle(BowtiePlainButtonStyle())
+                    .accessibilityHint("Show a code to scan with a signed-in phone")
+                    .disabled(isSigningIn)
+                }
 
                 if appModel.serverURL != nil {
                     Button("Change server") {

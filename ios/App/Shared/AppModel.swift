@@ -95,6 +95,14 @@ public final class AppModel {
         self.phase = .ready
     }
 
+    /// Quick sign-in (TV): a phone approved the code and `client` already holds
+    /// the tokens, exactly as after `signIn`.
+    public func completeDeviceSignIn(user: User) {
+        guard phase == .login, client != nil else { return }
+        self.user = user
+        self.phase = .ready
+    }
+
     /// Sign out → `.login`, keeping the server URL for reconnect.
     public func signOut() async {
         await client?.logout()

@@ -117,7 +117,8 @@ public final class DeviceSignInModel {
 
     /// Gets a fresh code and polls until done. Returns when the run ends
     /// (signed in, expired, failed or cancelled). A new start replaces a
-    /// running one.
+    /// running one. Cancelling the caller (e.g. a view's `.task` going away)
+    /// stops polling.
     public func start() async {
         runTask?.cancel()
         generation &+= 1
@@ -126,7 +127,11 @@ public final class DeviceSignInModel {
             await self.run(generation: gen)
         }
         runTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     /// Stops polling (e.g. the person chose to type a password instead).

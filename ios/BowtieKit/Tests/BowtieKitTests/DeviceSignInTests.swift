@@ -224,6 +224,23 @@ final class DeviceSignInTests: XCTestCase {
         XCTAssertEqual(sleeps.durations, [.seconds(5)])
     }
 
+    func testCancellingTheCallerStopsPolling() async {
+        script(polls: [(428, Self.pending)])
+        let sleeps = SleepLog()
+        let model = makeModel(client: makeClient(), sleeps: sleeps)
+        var outer: Task<Void, Never>?
+        sleeps.onSleep = { count in
+            if count == 2 { outer?.cancel() }
+            if count == 50 { model.cancel() } // safety net: never spin forever
+        }
+
+        outer = Task { await model.start() }
+        await outer?.value
+
+        XCTAssertLessThan(sleeps.durations.count, 50)
+        XCTAssertLessThanOrEqual(pollRequests().count, 2)
+    }
+
     func testCancelStopsPollingAndReturnsToIdle() async {
         script(polls: [(428, Self.pending)])
         let sleeps = SleepLog()
