@@ -3,6 +3,10 @@ export interface User {
   username: string
   role: 'admin' | 'viewer'
   maxQuality: string
+  /** Concurrent streams allowed; 0 = no limit. */
+  maxStreams: number
+  /** Tuners the account may use alone; 0 = no limit. */
+  maxTuners: number
 }
 
 export interface LoginResponse {
@@ -159,11 +163,15 @@ export interface CreateUserRequest {
   password: string
   role: UserRole
   maxQuality?: string
+  maxStreams?: number
+  maxTuners?: number
 }
 
 export interface PatchUserRequest {
   role?: UserRole
   maxQuality?: string
+  maxStreams?: number
+  maxTuners?: number
   password?: string
 }
 
