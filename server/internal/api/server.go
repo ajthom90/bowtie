@@ -108,6 +108,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 
 	// Viewer guide (Task 10).
 	handle("GET /api/v1/guide", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleGuide)))
+	handle("GET /api/v1/guide/search", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleGuideSearch)))
 
 	// Admin user management (Task 5).
 	admin := auth.RequireAdmin(s.deps.Auth)

@@ -208,24 +208,14 @@ func (s *Server) findProgram(r *http.Request, channelID int64, start time.Time) 
 // markRecordings sets GuideProgram.Recording for scheduled/in-progress/ready
 // recordings that match a program's channel and start.
 func (s *Server) markRecordings(guide []epg.GuideChannel) {
-	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording, store.RecConverting, store.RecReady)
-	if err != nil || len(rows) == 0 {
+	recs := s.recordingsByProgram()
+	if len(recs) == 0 {
 		return
-	}
-	type key struct {
-		ch    int64
-		start int64
-	}
-	byKey := map[key]store.Recording{}
-	for _, rec := range rows {
-		byKey[key{rec.ChannelID, rec.Start.Unix()}] = rec
 	}
 	for i := range guide {
 		for j := range guide[i].Programs {
 			p := &guide[i].Programs[j]
-			if rec, ok := byKey[key{guide[i].ChannelID, p.Start.Unix()}]; ok {
-				p.Recording = &epg.GuideRecording{ID: rec.ID, State: rec.State}
-			}
+			p.Recording = recs[programKey{guide[i].ChannelID, p.Start.Unix()}]
 		}
 	}
 }
