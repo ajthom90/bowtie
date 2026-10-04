@@ -243,7 +243,13 @@ struct ChannelListView: View {
     }
 
     private func listView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
-        List {
+        let visible = model.filteredRows(at: now)
+        return List {
+            GuideFilterBar(selection: Bindable(model).filter)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Theme.bg)
+                .listRowSeparator(.hidden)
+
             if model.showsRecents {
                 Section {
                     RecentChipRow(
@@ -260,9 +266,14 @@ struct ChannelListView: View {
                 }
             }
 
-            let favorites = model.favoriteRows
-            if favorites.isEmpty {
-                ForEach(rows) { row in
+            let favorites = visible.filter { $0.channel.isFavorite }
+            let others = visible.filter { !$0.channel.isFavorite }
+            if visible.isEmpty, model.filter != .all {
+                GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
+                    .listRowBackground(Theme.bg)
+                    .listRowSeparator(.hidden)
+            } else if favorites.isEmpty {
+                ForEach(visible) { row in
                     channelRow(row, model: model)
                 }
             } else {
@@ -273,12 +284,14 @@ struct ChannelListView: View {
                 } header: {
                     sectionHeader("Favorites")
                 }
-                Section {
-                    ForEach(model.otherRows) { row in
-                        channelRow(row, model: model)
+                if !others.isEmpty {
+                    Section {
+                        ForEach(others) { row in
+                            channelRow(row, model: model)
+                        }
+                    } header: {
+                        sectionHeader("Channels")
                     }
-                } header: {
-                    sectionHeader("Channels")
                 }
             }
         }
@@ -301,13 +314,16 @@ struct ChannelListView: View {
     }
 
     private func channelRow(_ row: ChannelListModel.Row, model: ChannelListModel) -> some View {
-        Button {
+        // Once per row: the view and its VoiceOver label read the same answer.
+        let highlight = model.highlight(for: row, at: now)
+        return Button {
             open(channel: row.channel)
         } label: {
             ChannelRowView(
                 row: row,
                 now: now,
-                isPlaying: playerModel.currentChannel?.id == row.channel.id
+                isPlaying: playerModel.currentChannel?.id == row.channel.id,
+                highlight: highlight
             )
             .opacity(row.channel.hasNoSignal ? 0.55 : 1)
         }
@@ -332,7 +348,7 @@ struct ChannelListView: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel(for: row))
+        .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
         .accessibilityHint("Play this channel")
         .accessibilityAddTraits(.isButton)
         .accessibilityActions {
@@ -399,7 +415,7 @@ struct ChannelListView: View {
         return rows.first(where: { $0.channel.id == channel.id })?.nowNext.now?.stop
     }
 
-    private func accessibilityLabel(for row: ChannelListModel.Row) -> String {
+    private func accessibilityLabel(for row: ChannelListModel.Row, highlight: GuideFilter.RowHighlight) -> String {
         var parts = [
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
@@ -422,6 +438,9 @@ struct ChannelListView: View {
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
         }
+        if let later = highlight.later {
+            parts.append(GuideFilterLaterLine.accessibilityText(later))
+        }
         if playerModel.currentChannel?.id == row.channel.id {
             parts.append("Playing")
         }
@@ -435,6 +454,8 @@ private struct ChannelRowView: View {
     let row: ChannelListModel.Row
     let now: Date
     let isPlaying: Bool
+    /// Category filter: lines outside it are dimmed; a later match may show.
+    var highlight = GuideFilter.RowHighlight(nowMatches: true, nextMatches: true, later: nil)
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -486,6 +507,7 @@ private struct ChannelRowView: View {
                         ProgressCapsule(progress: Self.progress(for: program, at: now))
                             .frame(maxWidth: 180)
                     }
+                    .opacity(highlight.nowMatches ? 1 : 0.4)
                 } else {
                     Text("No guide data")
                         .font(Theme.body(14))
@@ -498,6 +520,11 @@ private struct ChannelRowView: View {
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.dim)
                         .lineLimit(1)
+                        .opacity(highlight.nextMatches ? 1 : 0.4)
+                }
+
+                if let later = highlight.later {
+                    GuideFilterLaterLine(program: later, size: 13)
                 }
             }
 

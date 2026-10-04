@@ -1,7 +1,11 @@
 package settings_test
 
 import (
+	"bytes"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,6 +189,7 @@ func TestDefaultsSeeded(t *testing.T) {
 		settings.KeyStreamingBufferMinutes,
 		settings.KeyDVRPadStartSeconds,
 		settings.KeyDVRPadEndSeconds,
+		settings.KeyDVRQuality,
 	} {
 		has, err := st.HasSetting(key)
 		if err != nil {
@@ -383,6 +388,65 @@ func TestDVRPaddingDurations(t *testing.T) {
 	}
 }
 
+// Recording quality: absent reads as 720p, the seed writes 720p, SetDVR keeps
+// the stored quality when the section leaves it empty, and a bad stored
+// value reads as the default.
+func TestDVRQuality(t *testing.T) {
+	p, st := openProvider(t)
+	if d, err := p.DVR(); err != nil || d.Quality != settings.DVRQuality720p {
+		t.Fatalf("absent = %+v err=%v, want 720p", d, err)
+	}
+	if q, err := p.DVRQuality(); err != nil || q != settings.DVRQuality720p {
+		t.Fatalf("DVRQuality absent = %q %v", q, err)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := st.GetSetting(settings.KeyDVRQuality); raw != "720p" {
+		t.Fatalf("raw quality seed = %q, want 720p", raw)
+	}
+	if err := p.SetDVR(settings.DVR{PadStartSeconds: 60, PadEndSeconds: 180, Quality: settings.DVRQuality1080p}); err != nil {
+		t.Fatal(err)
+	}
+	if q, err := p.DVRQuality(); err != nil || q != settings.DVRQuality1080p {
+		t.Fatalf("DVRQuality = %q %v, want 1080p", q, err)
+	}
+	if err := p.SetDVR(settings.DVR{PadStartSeconds: 30, PadEndSeconds: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := p.DVR(); err != nil || d.Quality != settings.DVRQuality1080p || d.PadStartSeconds != 30 {
+		t.Fatalf("after padding-only SetDVR = %+v err=%v", d, err)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := p.DVRQuality(); q != settings.DVRQuality1080p {
+		t.Fatalf("re-seed changed quality to %q", q)
+	}
+	if err := st.SetSetting(settings.KeyDVRQuality, "8k"); err != nil {
+		t.Fatal(err)
+	}
+	if q, err := p.DVRQuality(); err != nil || q != settings.DVRQuality720p {
+		t.Fatalf("bad stored value = %q %v, want 720p", q, err)
+	}
+}
+
+func TestValidDVRQuality(t *testing.T) {
+	for _, q := range settings.DVRQualities {
+		if !settings.ValidDVRQuality(q) {
+			t.Errorf("%q invalid", q)
+		}
+	}
+	for _, q := range []string{"", "original", "720", "1080P", "4k"} {
+		if settings.ValidDVRQuality(q) {
+			t.Errorf("%q valid", q)
+		}
+	}
+	if len(settings.DVRQualities) != 2 || settings.DVRQualities[0] != "720p" || settings.DVRQualities[1] != "1080p" {
+		t.Fatalf("DVRQualities = %v", settings.DVRQualities)
+	}
+}
+
 // Values edited straight into the database are kept within the allowed range.
 func TestDVRPaddingClampsStoredValues(t *testing.T) {
 	p, st := openProvider(t)
@@ -395,5 +459,30 @@ func TestDVRPaddingClampsStoredValues(t *testing.T) {
 	start, end, err := p.DVRPadding()
 	if err != nil || start != 0 || end != time.Hour {
 		t.Fatalf("DVRPadding = %v %v %v; want 0 1h", start, end, err)
+	}
+}
+
+// Settings with no config/env source (padding, recording quality, ...) don't
+// log "config/env value ignored" on every start once an admin changes them.
+func TestSeedLogsOnlyKeysWithAConfigSource(t *testing.T) {
+	p, st := openProvider(t)
+	if err := st.SetSetting(settings.KeyDVRQuality, settings.DVRQuality1080p); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(settings.KeyTranscodeEncoder, "software"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	if err := p.SeedFromConfig(config.Config{Encoder: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, settings.KeyDVRQuality) {
+		t.Errorf("logged a key with no config source: %s", out)
+	}
+	if !strings.Contains(out, settings.KeyTranscodeEncoder) {
+		t.Errorf("config-backed key not logged: %q", out)
 	}
 }

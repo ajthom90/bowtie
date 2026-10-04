@@ -144,10 +144,6 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			skipped++
 			continue
 		}
-		category := ""
-		if len(p.Categories) > 0 {
-			category = p.Categories[0]
-		}
 		pid := programID(p)
 		progs = append(progs, store.Program{
 			EPGChannelID: p.Channel,
@@ -156,7 +152,7 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			Title:        p.Title,
 			Subtitle:     p.SubTitle,
 			Description:  p.Desc,
-			Category:     category,
+			Category:     store.JoinCategories(p.Categories),
 			IconURL:      p.Icon.Src,
 			Rating:       rating(p),
 			ProgramID:    pid,

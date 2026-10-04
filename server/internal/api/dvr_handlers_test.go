@@ -292,3 +292,51 @@ func TestPlayReadyRecordingWithResume(t *testing.T) {
 		t.Fatalf("cross-recording token %d", other.Code)
 	}
 }
+
+// A recording converted at the 1080p setting plays the same way: its master
+// names v1080.m3u8 and those files are served.
+func TestPlay1080Recording(t *testing.T) {
+	e := newDVREnv(t)
+	recDir := filepath.Join(e.dir, "2-show")
+	hls := filepath.Join(recDir, "hls")
+	if err := os.MkdirAll(hls, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"index.m3u8":     "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"Audio\",URI=\"aac0.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=9152000,RESOLUTION=1920x1080,AUDIO=\"aac\"\nv1080.m3u8\n",
+		"v1080.m3u8":     "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:6.0,\nv1080_00000.ts\n#EXT-X-ENDLIST\n",
+		"v1080_00000.ts": "TS1080",
+	}
+	for n, b := range files {
+		_ = os.WriteFile(filepath.Join(hls, n), []byte(b), 0o644)
+	}
+	id, _ := e.st.CreateRecording(store.Recording{UserID: e.aliceID, ChannelID: e.ids["9.1"], ChannelName: "9.1 B", Title: "Done",
+		Start: e.showAt.Add(-48 * time.Hour), Stop: e.showAt.Add(-47 * time.Hour), State: store.RecScheduled, CreatedAt: time.Now()})
+	r, _ := e.st.RecordingByID(id)
+	r.State, r.Dir, r.DurationSec = store.RecReady, recDir, 6
+	_ = e.st.UpdateRecording(r)
+
+	rr := doJSON(t, e.h, "POST", fmt.Sprintf("/api/v1/recordings/%d/play", id), nil, e.alice)
+	var play struct {
+		PlaylistURL string `json:"playlistUrl"`
+	}
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &play) != nil {
+		t.Fatalf("play %d %s", rr.Code, rr.Body.String())
+	}
+	tok := play.PlaylistURL[strings.Index(play.PlaylistURL, "token=")+len("token="):]
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec
+	}
+	base := fmt.Sprintf("/api/v1/recordings/%d/hls/", id)
+	if m := get(base + "index.m3u8?token=" + tok); m.Code != http.StatusOK || !strings.Contains(m.Body.String(), "\nv1080.m3u8?token="+tok+"\n") {
+		t.Fatalf("master %d:\n%s", m.Code, m.Body.String())
+	}
+	if v := get(base + "v1080.m3u8?token=" + tok); v.Code != http.StatusOK || !strings.Contains(v.Body.String(), "\nv1080_00000.ts?token="+tok+"\n") {
+		t.Fatalf("media %d:\n%s", v.Code, v.Body.String())
+	}
+	if seg := get(base + "v1080_00000.ts?token=" + tok); seg.Code != http.StatusOK || seg.Body.String() != "TS1080" {
+		t.Fatalf("segment %d", seg.Code)
+	}
+}

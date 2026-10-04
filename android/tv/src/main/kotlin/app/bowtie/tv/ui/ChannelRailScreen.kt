@@ -34,6 +34,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -46,6 +49,7 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import app.bowtie.core.Channel
+import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.RecordingLogic
@@ -81,6 +85,7 @@ fun ChannelRailScreen(
     val channelsStale by playerViewModel.channelsStale.collectAsStateWithLifecycle()
     val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
     val message by channelListViewModel.message.collectAsStateWithLifecycle()
+    val filter by channelListViewModel.filter.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -343,12 +348,21 @@ fun ChannelRailScreen(
                 }
                 is ChannelListViewModel.LoadState.Loaded -> {
                     val supported = s.favoritesSupported
+                    // Worked out when the rows or the chip change, not on every
+                    // recomposition. "Now" is fixed with them; the 5-minute
+                    // reload bounds how stale it gets.
+                    val filtered = remember(s.rows, filter) {
+                        channelListViewModel.filtered(s.rows, filter, Instant.now())
+                    }
+                    val visible = filtered.rows
                     val listState = rememberLazyListState()
+                    // "Show all channels" leaves the screen; focus lands on All, not the top bar.
+                    val allChipFocus = remember { FocusRequester() }
                     // A toggled row moves (favorites first); keep it on screen and focused.
                     var refocusId by remember { mutableStateOf<Long?>(null) }
-                    LaunchedEffect(s.rows, refocusId) {
+                    LaunchedEffect(visible, refocusId) {
                         val id = refocusId ?: return@LaunchedEffect
-                        val index = s.rows.indexOfFirst { it.id == id }
+                        val index = visible.indexOfFirst { it.id == id }
                         if (index < 0) {
                             refocusId = null
                         } else if (listState.layoutInfo.visibleItemsInfo.none { it.key == id }) {
@@ -362,6 +376,19 @@ fun ChannelRailScreen(
                             onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
                         )
                     }
+                    // Directly above the rail so DPAD up from the first row lands here.
+                    GuideFilterChips(
+                        selected = filter,
+                        onSelect = channelListViewModel::setFilter,
+                        allFocusRequester = allChipFocus,
+                    )
+                    if (visible.isEmpty() && filter != GuideFilter.ALL) {
+                        FilterEmpty(filter = filter, onShowAll = {
+                            // Move focus while the button still exists, then drop it.
+                            runCatching { allChipFocus.requestFocus() }
+                            channelListViewModel.setFilter(GuideFilter.ALL)
+                        })
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -369,7 +396,7 @@ fun ChannelRailScreen(
                             .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(s.rows, key = { it.id }) { row ->
+                        items(visible, key = { it.id }) { row ->
                             val focusRequester = remember { FocusRequester() }
                             LaunchedEffect(refocusId == row.id) {
                                 if (refocusId != row.id) return@LaunchedEffect
@@ -389,6 +416,7 @@ fun ChannelRailScreen(
                                 row = row,
                                 isPlaying = playingChannel?.id == row.channel.id,
                                 showStar = supported,
+                                highlight = filtered.highlight(row),
                                 onClick = { onOpenChannel(row.channel) },
                                 onLongClick = { openChannelMenu(row, toggle) },
                                 onToggleFavorite = toggle,
@@ -413,6 +441,59 @@ fun ChannelRailScreen(
             )
         }
         panel?.let { ChoicePanel(it, onDismiss = { panel = null }) }
+    }
+}
+
+/**
+ * Category chips (All · Sports · Movies · News · Kids · New): focusable
+ * buttons, the chosen one amber and announced as selected.
+ */
+@Composable
+private fun GuideFilterChips(
+    selected: GuideFilter,
+    onSelect: (GuideFilter) -> Unit,
+    allFocusRequester: FocusRequester,
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+    ) {
+        items(GuideFilter.entries, key = { it.name }) { f ->
+            val on = f == selected
+            Button(
+                onClick = { onSelect(f) },
+                colors = tvButtonColors(selected = on),
+                modifier = Modifier
+                    .then(if (f == GuideFilter.ALL) Modifier.focusRequester(allFocusRequester) else Modifier)
+                    .semantics {
+                        this.selected = on
+                        stateDescription = if (on) "Selected" else "Not selected"
+                    },
+            ) {
+                Text(
+                    text = f.label,
+                    style = BowtieType.label,
+                    color = if (on) BowtieColors.bg else BowtieColors.text,
+                )
+            }
+        }
+    }
+}
+
+/** "No sports on in this time window" with a focusable way back. */
+@Composable
+private fun FilterEmpty(filter: GuideFilter, onShowAll: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(BowtieDimens.screenPadding),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(text = filter.emptyCopy, style = BowtieType.body, color = BowtieColors.dim)
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onShowAll, colors = tvButtonColors()) {
+            Text(text = "Show all channels", style = BowtieType.body, color = BowtieColors.amber)
+        }
     }
 }
 
@@ -487,6 +568,7 @@ private fun ChannelRailRow(
     row: ChannelListViewModel.Row,
     isPlaying: Boolean,
     showStar: Boolean,
+    highlight: GuideFilter.RowHighlight,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onToggleFavorite: (() -> Unit)?,
@@ -578,6 +660,7 @@ private fun ChannelRailRow(
                         style = BowtieType.body,
                         color = BowtieColors.text,
                         maxLines = 1,
+                        modifier = Modifier.alpha(if (highlight.nowMatches) 1f else 0.4f),
                     )
                     Spacer(Modifier.height(8.dp))
                     ProgressCapsule(progress = progress)
@@ -596,6 +679,16 @@ private fun ChannelRailRow(
                             (RecordingLogic.lockLabel(next)?.let { "   $it" } ?: ""),
                         style = BowtieType.label,
                         color = BowtieColors.dim,
+                        maxLines = 1,
+                        modifier = Modifier.alpha(if (highlight.nextMatches) 1f else 0.4f),
+                    )
+                }
+                highlight.later?.let { later ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = GuideFilter.laterLine(later),
+                        style = BowtieType.label,
+                        color = BowtieColors.amber,
                         maxLines = 1,
                     )
                 }

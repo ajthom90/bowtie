@@ -201,6 +201,67 @@ class ChannelListViewModelTest {
     }
 
     @Test
+    fun rowsKeepProgramsAndCategoryFilterIsRemembered() = runTest {
+        channelsBody = """
+            [
+              {"id":1,"guideNumber":"4.1","name":"WABC","logoUrl":""},
+              {"id":2,"guideNumber":"7.1","name":"WXYZ","logoUrl":""}
+            ]
+        """.trimIndent()
+        guideBody = """
+            [
+              {
+                "channelId":1, "guideNumber":"4.1", "name":"WABC", "logoUrl":"",
+                "programs":[
+                  {"start":"2024-06-15T20:00:00Z","stop":"2024-06-15T21:00:00Z","title":"News",
+                   "subtitle":"","description":"","category":"News"},
+                  {"start":"2024-06-15T22:00:00Z","stop":"2024-06-15T23:30:00Z","title":"Game",
+                   "subtitle":"","description":"","category":"Sports event"}
+                ]
+              },
+              {
+                "channelId":2, "guideNumber":"7.1", "name":"WXYZ", "logoUrl":"",
+                "programs":[
+                  {"start":"2024-06-15T20:00:00Z","stop":"2024-06-15T22:00:00Z","title":"Movie",
+                   "subtitle":"","description":"","category":"Movie"}
+                ]
+              }
+            ]
+        """.trimIndent()
+        val prefs = app.bowtie.core.GuideFilterPrefs.InMemory(app.bowtie.core.GuideFilter.SPORTS)
+        val vm = ChannelListViewModel(client = authedClient(), now = { clock }, filterPrefs = prefs)
+        assertEquals(app.bowtie.core.GuideFilter.SPORTS, vm.filter.value)
+        vm.refresh()
+
+        val rows = (vm.state.value as ChannelListViewModel.LoadState.Loaded).rows
+        assertEquals(listOf("News", "Game"), rows[0].programs.map { it.title })
+        // Each program classified on load; the buckets ride on the row.
+        assertEquals(
+            listOf(setOf(app.bowtie.core.GuideBucket.NEWS), setOf(app.bowtie.core.GuideBucket.SPORTS)),
+            rows[0].programBuckets,
+        )
+        assertEquals(listOf(setOf(app.bowtie.core.GuideBucket.MOVIES)), rows[1].programBuckets)
+        assertEquals(listOf(1L), vm.visibleRows(rows, vm.filter.value, clock).map { it.id })
+        // Now (News) is dimmed; next (Game) matches, so no later line.
+        val h = vm.highlight(rows[0], app.bowtie.core.GuideFilter.SPORTS, clock)
+        assertEquals(false, h.nowMatches)
+        assertEquals(true, h.nextMatches)
+
+        vm.setFilter(app.bowtie.core.GuideFilter.MOVIES)
+        assertEquals(app.bowtie.core.GuideFilter.MOVIES, prefs.filter)
+        assertEquals(listOf(2L), vm.visibleRows(rows, vm.filter.value, clock).map { it.id })
+        assertEquals(emptyList<Long>(), vm.visibleRows(rows, app.bowtie.core.GuideFilter.KIDS, clock).map { it.id })
+        assertEquals(listOf(1L, 2L), vm.visibleRows(rows, app.bowtie.core.GuideFilter.ALL, clock).map { it.id })
+
+        // Rows and highlights together, as the screens remember them.
+        val sports = vm.filtered(rows, app.bowtie.core.GuideFilter.SPORTS, clock)
+        assertEquals(listOf(1L), sports.rows.map { it.id })
+        assertEquals(h, sports.highlight(rows[0]))
+        assertEquals(listOf(1L), sports.others.map { it.id })
+        assertEquals(emptyList<Long>(), sports.favorites.map { it.id })
+    }
+
+    @Test
     fun loadRequestsGuideWindowNowToNowPlus4h() = runTest {
         channelsBody = """
             [{"id":1,"guideNumber":"4.1","name":"WABC","logoUrl":""}]

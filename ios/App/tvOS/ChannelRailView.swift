@@ -228,9 +228,11 @@ struct ChannelRailView: View {
         .focusSection()
     }
 
-    /// Recent cards (own focus section) above the rail; favorites lead the rail.
+    /// Recent cards, then the category chips (each its own focus section, so
+    /// Up from the rail lands on the chips), then the rail; favorites lead it.
     private func railView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let visible = model.filteredRows(at: now)
+        return VStack(alignment: .leading, spacing: 8) {
             if model.showsRecents {
                 RecentCardRow(
                     channels: model.recentChannels,
@@ -241,44 +243,56 @@ struct ChannelRailView: View {
                 .focusSection()
             }
 
-            List {
-                ForEach(rows) { row in
-                    Button {
-                        open(channel: row.channel)
-                    } label: {
-                        RailRowView(
-                            row: row,
-                            now: now,
-                            isPlaying: playerModel.currentChannel?.id == row.channel.id
-                        )
-                        .opacity(row.channel.hasNoSignal ? 0.55 : 1)
-                    }
-                    // Default button style → system focus scale / highlight.
-                    // Click-and-hold Select opens the menu.
-                    .contextMenu {
-                        if model.supportsFavorites {
-                            favoriteButton(for: row.channel, model: model)
+            GuideFilterBar(selection: Bindable(model).filter)
+                .focusSection()
+
+            if visible.isEmpty, model.filter != .all {
+                GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
+                    .frame(maxHeight: .infinity)
+                    .focusSection()
+            } else {
+                List {
+                    ForEach(visible) { row in
+                        // Once per row: the view and its VoiceOver label read the same answer.
+                        let highlight = model.highlight(for: row, at: now)
+                        Button {
+                            open(channel: row.channel)
+                        } label: {
+                            RailRowView(
+                                row: row,
+                                now: now,
+                                isPlaying: playerModel.currentChannel?.id == row.channel.id,
+                                highlight: highlight
+                            )
+                            .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                         }
-                        RecordMenuItems(
-                            channel: row.channel,
-                            nowNext: row.nowNext,
-                            flow: recordFlow,
-                            openRecordings: { showRecordings = true }
-                        )
-                    }
-                    .listRowBackground(Theme.bg)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(accessibilityLabel(for: row))
-                    .accessibilityHint("Play this channel. Press and hold to favorite or record.")
-                    .accessibilityActions {
-                        if model.supportsFavorites {
-                            favoriteButton(for: row.channel, model: model)
+                        // Default button style → system focus scale / highlight.
+                        // Click-and-hold Select opens the menu.
+                        .contextMenu {
+                            if model.supportsFavorites {
+                                favoriteButton(for: row.channel, model: model)
+                            }
+                            RecordMenuItems(
+                                channel: row.channel,
+                                nowNext: row.nowNext,
+                                flow: recordFlow,
+                                openRecordings: { showRecordings = true }
+                            )
+                        }
+                        .listRowBackground(Theme.bg)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
+                        .accessibilityHint("Play this channel. Press and hold to favorite or record.")
+                        .accessibilityActions {
+                            if model.supportsFavorites {
+                                favoriteButton(for: row.channel, model: model)
+                            }
                         }
                     }
                 }
+                .listStyle(.plain)
+                .focusSection()
             }
-            .listStyle(.plain)
-            .focusSection()
         }
         .bowtieToast(model.actionError) {
             model.dismissActionError()
@@ -332,7 +346,7 @@ struct ChannelRailView: View {
         return rows.first(where: { $0.channel.id == channel.id })?.nowNext.now?.stop
     }
 
-    private func accessibilityLabel(for row: ChannelListModel.Row) -> String {
+    private func accessibilityLabel(for row: ChannelListModel.Row, highlight: GuideFilter.RowHighlight) -> String {
         var parts = [
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
@@ -355,6 +369,9 @@ struct ChannelRailView: View {
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
         }
+        if let later = highlight.later {
+            parts.append(GuideFilterLaterLine.accessibilityText(later))
+        }
         if playerModel.currentChannel?.id == row.channel.id {
             parts.append("Playing")
         }
@@ -368,6 +385,8 @@ private struct RailRowView: View {
     let row: ChannelListModel.Row
     let now: Date
     let isPlaying: Bool
+    /// Category filter: lines outside it are dimmed; a later match may show.
+    var highlight = GuideFilter.RowHighlight(nowMatches: true, nextMatches: true, later: nil)
 
     var body: some View {
         HStack(alignment: .center, spacing: 28) {
@@ -407,6 +426,7 @@ private struct RailRowView: View {
                             .font(Theme.body(20))
                             .foregroundStyle(Theme.text.opacity(0.92))
                             .lineLimit(1)
+                            .opacity(highlight.nowMatches ? 1 : 0.4)
 
                         if program.recording != nil {
                             RecordingMarkDot(size: 16)
@@ -439,7 +459,12 @@ private struct RailRowView: View {
                             .font(Theme.body(18))
                             .foregroundStyle(Theme.dim)
                             .lineLimit(1)
+                            .opacity(highlight.nextMatches ? 1 : 0.4)
                     }
+                }
+
+                if let later = highlight.later {
+                    GuideFilterLaterLine(program: later, size: 18)
                 }
             }
 
