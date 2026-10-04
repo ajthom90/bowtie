@@ -405,7 +405,15 @@ export interface SettingsDVR {
   padStartSeconds: number
   /** Keep recording this many seconds after (0–3600). */
   padEndSeconds: number
+  /**
+   * Resolution recordings are converted to (applies to ones converted
+   * afterwards). Absent on servers older than the setting; optional in PUT.
+   */
+  quality?: RecordingQuality
 }
+
+/** dvr.quality: 720p for every channel, or up to 1080p (1080i deinterlaced). */
+export type RecordingQuality = '720p' | '1080p'
 
 /** GET /api/v1/admin/settings */
 export interface Settings {

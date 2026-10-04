@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { DVRStorage } from '../api/client'
+import type { DVRStorage, SettingsDVR } from '../api/client'
 import {
   DISK_FULL_WARNING,
+  RECORDING_QUALITIES,
   buildPaddingPayload,
+  bytesPerHour,
   formatBytes,
   gaugeSegments,
   minutesToSeconds,
   paddingToForm,
+  qualitySizeHint,
   secondsToMinutes,
   storageWarning,
 } from './dvrModel'
@@ -106,39 +109,75 @@ describe('padding minutes ↔ seconds', () => {
   })
 
   it('seeds the form from settings, defaulting when absent', () => {
-    expect(paddingToForm({ padStartSeconds: 60, padEndSeconds: 180 })).toEqual({ start: '1', end: '3' })
-    expect(paddingToForm(undefined)).toEqual({ start: '1', end: '3' })
+    expect(paddingToForm({ padStartSeconds: 60, padEndSeconds: 180, quality: '1080p' })).toEqual({
+      start: '1',
+      end: '3',
+      quality: '1080p',
+    })
+    expect(paddingToForm(undefined)).toEqual({ start: '1', end: '3', quality: null })
+  })
+
+  it('leaves quality out for a server without the setting', () => {
+    expect(paddingToForm({ padStartSeconds: 60, padEndSeconds: 180 }).quality).toBeNull()
+    expect(buildPaddingPayload({ start: '1', end: '3', quality: null })).toEqual({
+      ok: true,
+      dvr: { padStartSeconds: 60, padEndSeconds: 180 },
+    })
+  })
+
+  it('reads an unknown quality as the default', () => {
+    const dvr = { padStartSeconds: 60, padEndSeconds: 180, quality: 'original' } as unknown as SettingsDVR
+    expect(paddingToForm(dvr).quality).toBe('720p')
   })
 
   it('builds the payload in seconds', () => {
-    expect(buildPaddingPayload({ start: '2', end: '10' })).toEqual({
+    expect(buildPaddingPayload({ start: '2', end: '10', quality: '720p' })).toEqual({
       ok: true,
-      dvr: { padStartSeconds: 120, padEndSeconds: 600 },
+      dvr: { padStartSeconds: 120, padEndSeconds: 600, quality: '720p' },
     })
-    expect(buildPaddingPayload({ start: ' 0 ', end: '1.5' })).toEqual({
+    expect(buildPaddingPayload({ start: ' 0 ', end: '1.5', quality: '1080p' })).toEqual({
       ok: true,
-      dvr: { padStartSeconds: 0, padEndSeconds: 90 },
+      dvr: { padStartSeconds: 0, padEndSeconds: 90, quality: '1080p' },
     })
-    expect(buildPaddingPayload({ start: '30', end: '60' })).toEqual({
+    expect(buildPaddingPayload({ start: '30', end: '60', quality: '720p' })).toEqual({
       ok: true,
-      dvr: { padStartSeconds: 1800, padEndSeconds: 3600 },
+      dvr: { padStartSeconds: 1800, padEndSeconds: 3600, quality: '720p' },
     })
   })
 
   it('rejects bad values', () => {
-    expect(buildPaddingPayload({ start: '', end: '3' })).toEqual({
+    expect(buildPaddingPayload({ start: '', end: '3', quality: '720p' })).toEqual({
       ok: false,
       error: 'Start early must be a number of minutes',
     })
-    expect(buildPaddingPayload({ start: 'x', end: '3' }).ok).toBe(false)
-    expect(buildPaddingPayload({ start: '-1', end: '3' })).toEqual({
+    expect(buildPaddingPayload({ start: 'x', end: '3', quality: '720p' }).ok).toBe(false)
+    expect(buildPaddingPayload({ start: '-1', end: '3', quality: '720p' })).toEqual({
       ok: false,
       error: 'Start early must be between 0 and 30 minutes',
     })
-    expect(buildPaddingPayload({ start: '31', end: '3' }).ok).toBe(false)
-    expect(buildPaddingPayload({ start: '1', end: '61' })).toEqual({
+    expect(buildPaddingPayload({ start: '31', end: '3', quality: '720p' }).ok).toBe(false)
+    expect(buildPaddingPayload({ start: '1', end: '61', quality: '720p' })).toEqual({
       ok: false,
       error: 'Keep recording after must be between 0 and 60 minutes',
     })
+  })
+})
+
+describe('recording quality', () => {
+  it('offers 720p (default) then 1080p', () => {
+    expect(RECORDING_QUALITIES.map((q) => q.value)).toEqual(['720p', '1080p'])
+  })
+
+  it('estimates bytes per hour from the bitrates', () => {
+    // (4000 + 160) kb/s × 3600 s ÷ 8 = 1.872 GB (decimal).
+    expect(bytesPerHour(4000, 160)).toBe(1_872_000_000)
+    expect(bytesPerHour(8000, 160)).toBe(3_672_000_000)
+  })
+
+  it('explains the size of each choice in one line', () => {
+    expect(qualitySizeHint('720p')).toBe('About 1.7 GB per hour of recording.')
+    expect(qualitySizeHint('1080p')).toBe(
+      'Up to about 3.4 GB per hour — 1080i channels keep full resolution; 720p channels stay 720p.',
+    )
   })
 })

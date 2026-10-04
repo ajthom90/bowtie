@@ -1,8 +1,8 @@
 /**
- * Admin → Recordings: storage gauge and padding form logic.
+ * Admin → Recordings: storage gauge, padding and quality form logic.
  * Server is authority for validation; client hints are advisory only.
  */
-import type { DVRStorage, SettingsDVR } from '../api/client'
+import type { DVRStorage, RecordingQuality, SettingsDVR } from '../api/client'
 
 const MB = 1024 ** 2
 const GB = 1024 ** 3
@@ -69,27 +69,70 @@ export function minutesToSeconds(min: number): number {
   return Math.round(min * 60)
 }
 
+export const DEFAULT_RECORDING_QUALITY: RecordingQuality = '720p'
+
+export interface RecordingQualityOption {
+  value: RecordingQuality
+  label: string
+  /** Target bitrates the server converts at (H.264 video + AAC audio). */
+  videoKbps: number
+  audioKbps: number
+}
+
+/**
+ * dvr.quality choices, default first. Bitrates match the server's VOD
+ * conversion; 1080p is the most a recording can take (1080i channels).
+ */
+export const RECORDING_QUALITIES: readonly RecordingQualityOption[] = [
+  { value: '720p', label: '720p', videoKbps: 4000, audioKbps: 160 },
+  { value: '1080p', label: 'Up to 1080p', videoKbps: 8000, audioKbps: 160 },
+]
+
+/** Bytes an hour of recording takes at the given bitrates (kb/s). */
+export function bytesPerHour(videoKbps: number, audioKbps: number): number {
+  return ((videoKbps + audioKbps) * 1000 * 3600) / 8
+}
+
+/** One-line size explanation for a quality choice. */
+export function qualitySizeHint(q: RecordingQuality): string {
+  const opt = RECORDING_QUALITIES.find((o) => o.value === q) ?? RECORDING_QUALITIES[0]
+  const size = formatBytes(bytesPerHour(opt.videoKbps, opt.audioKbps))
+  if (opt.value === '1080p') {
+    return `Up to about ${size} per hour — 1080i channels keep full resolution; 720p channels stay 720p.`
+  }
+  return `About ${size} per hour of recording.`
+}
+
+function toQuality(q: unknown): RecordingQuality {
+  return RECORDING_QUALITIES.some((o) => o.value === q) ? (q as RecordingQuality) : DEFAULT_RECORDING_QUALITY
+}
+
 export interface PaddingForm {
   start: string
   end: string
+  /** null: the server has no quality setting (don't send one). */
+  quality: RecordingQuality | null
 }
 
 export function paddingToForm(dvr: SettingsDVR | undefined): PaddingForm {
   return {
     start: String(secondsToMinutes(dvr?.padStartSeconds ?? DEFAULT_PAD_START_SECONDS)),
     end: String(secondsToMinutes(dvr?.padEndSeconds ?? DEFAULT_PAD_END_SECONDS)),
+    quality: dvr?.quality === undefined ? null : toQuality(dvr.quality),
   }
 }
 
 export type PaddingPayload = { ok: true; dvr: SettingsDVR } | { ok: false; error: string }
 
-/** Validates the minute inputs and converts them to the settings section. */
+/** Validates the minute inputs and converts the form to the settings section. */
 export function buildPaddingPayload(form: PaddingForm): PaddingPayload {
   const start = parseMinutes(form.start, 'Start early', MAX_PAD_START_MINUTES)
   if (typeof start === 'string') return { ok: false, error: start }
   const end = parseMinutes(form.end, 'Keep recording after', MAX_PAD_END_MINUTES)
   if (typeof end === 'string') return { ok: false, error: end }
-  return { ok: true, dvr: { padStartSeconds: minutesToSeconds(start), padEndSeconds: minutesToSeconds(end) } }
+  const dvr: SettingsDVR = { padStartSeconds: minutesToSeconds(start), padEndSeconds: minutesToSeconds(end) }
+  if (form.quality !== null) dvr.quality = form.quality
+  return { ok: true, dvr }
 }
 
 function parseMinutes(raw: string, label: string, max: number): number | string {
