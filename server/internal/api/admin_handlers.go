@@ -283,6 +283,8 @@ type viewerChannelJSON struct {
 	// "unknown" (never tuned since the server started).
 	Reception          string     `json:"reception"`
 	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
+	// Favorite: the caller has starred this channel.
+	Favorite bool `json:"favorite"`
 }
 
 func deviceToJSON(d store.Device) deviceJSON {
@@ -537,6 +539,7 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load epg icons")
 		return
 	}
+	favs := s.callerFavorites(r)
 	out := make([]viewerChannelJSON, 0, len(chans))
 	for _, c := range chans {
 		logo := ""
@@ -549,6 +552,7 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 			Name:        c.Name,
 			LogoURL:     logo,
 			Reception:   "unknown",
+			Favorite:    favs[c.ID],
 		}
 		if s.deps.Streams != nil {
 			if r, ok := s.deps.Streams.ChannelReception(c.ID); ok {

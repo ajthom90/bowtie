@@ -16,6 +16,9 @@ type Viewer struct {
 	// MaxHeight is the viewer's quality ceiling (negotiated profile height);
 	// the master playlist omits rungs above it.
 	MaxHeight int
+	// JoinedAt is when the viewer started; watched is set once OnWatched fired.
+	JoinedAt time.Time
+	watched  bool
 }
 
 // SessionInfo is the admin-facing snapshot of an active session.

@@ -83,6 +83,10 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 
 	handle("GET /api/v1/me", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleMe)))
 	handle("POST /api/v1/me/password", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
+	handle("PUT /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(true)))
+	handle("DELETE /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(false)))
+	handle("GET /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecents)))
+	handle("DELETE /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleClearRecents)))
 
 	// Viewer channel list (enabled only).
 	handle("GET /api/v1/channels", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListChannels)))

@@ -67,7 +67,14 @@ type ManagerDeps struct {
 	Multitrack bool
 	// TrackProbeTimeout bounds the wait for the channel's PMT; 0 → 3s.
 	TrackProbeTimeout time.Duration
+	// OnWatched is called once per viewer after watchedAfter of watching
+	// (recently watched channels); nil = no-op. Called without m.mu held.
+	OnWatched func(userID, channelID int64, at time.Time)
 }
+
+// watchedAfter: a channel counts as watched (recents) after this long, so
+// zapping through channels doesn't fill the Recent row.
+const watchedAfter = 30 * time.Second
 
 // Manager owns shared HLS transcode sessions and their viewers.
 type Manager struct {
@@ -83,6 +90,7 @@ type Manager struct {
 
 	multitrack bool
 	trackProbe time.Duration
+	onWatched  func(userID, channelID int64, at time.Time)
 
 	mu       sync.Mutex
 	sessions map[string]*session       // by session ID
@@ -111,6 +119,7 @@ func NewManager(deps ManagerDeps) *Manager {
 	}
 	return &Manager{
 		multitrack: deps.Multitrack,
+		onWatched:  deps.OnWatched,
 		trackProbe: trackProbe,
 		cfg:        deps.Cfg,
 		store:      deps.Store,
@@ -407,6 +416,7 @@ func (m *Manager) addViewerLocked(sess *session, user store.User, res *reservati
 		UserID:    user.ID,
 		Username:  user.Username,
 		LastSeen:  now,
+		JoinedAt:  now,
 		MaxHeight: maxHeight,
 	}
 	sess.viewers[viewerID] = v
@@ -449,12 +459,25 @@ func (m *Manager) waitPlaylist(ctx context.Context, dir, name string, proc Proce
 // Touch records a heartbeat for viewerID. Returns false if unknown.
 func (m *Manager) Touch(viewerID string) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	v, ok := m.viewers[viewerID]
 	if !ok {
+		m.mu.Unlock()
 		return false
 	}
-	v.LastSeen = m.now()
+	now := m.now()
+	v.LastSeen = now
+	var watchedCh int64
+	if !v.watched && now.Sub(v.JoinedAt) >= watchedAfter {
+		if sess, ok := m.sessions[v.SessionID]; ok {
+			v.watched = true
+			watchedCh = sess.channelID
+		}
+	}
+	userID, onWatched := v.UserID, m.onWatched
+	m.mu.Unlock()
+	if watchedCh != 0 && onWatched != nil {
+		onWatched(userID, watchedCh, now)
+	}
 	return true
 }
 
