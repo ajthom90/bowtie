@@ -444,8 +444,19 @@ func (s *Server) handleRecordingPosition(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if _, err := s.deps.Store.RecordingByID(id); err != nil {
+	rec, err := s.deps.Store.RecordingByID(id)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "recording not found")
+		return
+	}
+	// Same access as playing it (a saved position also keeps a recording
+	// from being cleaned up while it's being watched).
+	if rec.State != store.RecReady {
+		writeError(w, http.StatusConflict, "this recording isn't ready to play yet")
+		return
+	}
+	if p := s.callerPolicy(r); !p.ChannelAllowed(rec.ChannelID) || !p.ProgramAllowed(rec.Rating) {
+		writeParentalBlock(w, "Blocked by parental controls")
 		return
 	}
 	if err := s.deps.Store.SetRecordingPosition(id, claims.UserID, req.PositionSec); err != nil {

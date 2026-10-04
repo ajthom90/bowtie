@@ -493,3 +493,76 @@ func TestEndPaddingYieldsToWaitingRecording(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 }
+
+// Back-to-back shows on one channel share its tuner: ending the first one's
+// padding frees nothing, so it isn't cut.
+func TestEndPaddingDoesNotYieldWhenTheChannelStaysBusy(t *testing.T) {
+	e := newEnv(t)
+	a := e.schedule(t, "5.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	b := e.schedule(t, "5.1", t0.Add(30*time.Minute), t0.Add(60*time.Minute))
+	c := e.schedule(t, "9.1", t0.Add(31*time.Minute), t0.Add(60*time.Minute))
+	e.clock.Set(a.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, a.ID, store.RecRecording)
+	e.clock.Set(b.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, b.ID, store.RecRecording)
+	e.src.mu.Lock()
+	e.src.busy = 1 << 20
+	e.src.mu.Unlock()
+	e.clock.Set(c.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, c.ID, store.RecWaiting)
+	e.clock.Set(c.Start)
+	e.svc.Tick()
+	time.Sleep(30 * time.Millisecond)
+	if r, _ := e.st.RecordingByID(a.ID); r.State != store.RecRecording {
+		t.Fatalf("A's padding was cut though B keeps 5.1's tuner: %q", r.State)
+	}
+}
+
+// One waiting recording makes one capture yield, then gives it time to take
+// the tuner before another is cut.
+func TestEndPaddingYieldsOncePerRetry(t *testing.T) {
+	e := newEnv(t)
+	a := e.schedule(t, "5.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	b := e.schedule(t, "11.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	c := e.schedule(t, "9.1", t0.Add(30*time.Minute), t0.Add(60*time.Minute))
+	e.clock.Set(a.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, a.ID, store.RecRecording)
+	waitState(t, e.st, b.ID, store.RecRecording)
+	e.src.mu.Lock()
+	e.src.busy = 1 << 20
+	e.src.mu.Unlock()
+	e.clock.Set(c.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, c.ID, store.RecWaiting)
+	e.clock.Set(c.Start)
+	e.svc.Tick()
+	// Let the cut capture finish, so the next Tick could pick the other one.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		ra, _ := e.st.RecordingByID(a.ID)
+		rb, _ := e.st.RecordingByID(b.ID)
+		if ra.State != store.RecRecording || rb.State != store.RecRecording {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no capture yielded")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	e.clock.Set(c.Start.Add(5 * time.Second))
+	e.svc.Tick()
+	time.Sleep(50 * time.Millisecond)
+	stopped := 0
+	for _, id := range []int64{a.ID, b.ID} {
+		if r, _ := e.st.RecordingByID(id); r.State != store.RecRecording {
+			stopped++
+		}
+	}
+	if stopped != 1 {
+		t.Fatalf("%d captures cut for one waiting recording, want 1", stopped)
+	}
+}

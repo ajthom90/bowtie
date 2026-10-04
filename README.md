@@ -338,7 +338,7 @@ cd windows && dotnet test Bowtie.Core.Tests   # Windows app's client + view mode
 - **Windows** — native WinUI 3 app for Windows 10 (1809+) and 11 on x64 and ARM64: see [`windows/README.md`](windows/README.md) (install the `.msixbundle` from a release, or unzip and run; build with Visual Studio 2022).
 - **Xbox** — no native app; install Kodi from the Microsoft Store and add your M3U/XMLTV feed (web app → Account → “Use Bowtie in other apps”).
 - **PlayStation** — no way to install third-party apps; not supported.
-- **Any other device** — the web app works in any modern browser, including smart-TV browsers.
+- **Any other device** — the web app works in any modern browser, including smart-TV browsers. On a phone, tablet or computer you can install it (**Add to Home Screen** / **Install app**) to get its own icon and window; browsers offer that over HTTPS (see [Remote access](#remote-access)) or on `localhost`.
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestHandlerServesIndex(t *testing.T) {
@@ -59,5 +60,19 @@ func TestHandlerRejectsAPIPrefix(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 for /api paths", rec.Code)
+	}
+}
+
+// The web app manifest is served as application/manifest+json (browsers
+// ignore an install manifest served as text/plain or octet-stream).
+func TestManifestContentType(t *testing.T) {
+	root := fstest.MapFS{
+		"index.html":           {Data: []byte("<!doctype html>")},
+		"manifest.webmanifest": {Data: []byte(`{"name":"Bowtie"}`)},
+	}
+	rec := httptest.NewRecorder()
+	handlerFor(root).ServeHTTP(rec, httptest.NewRequest("GET", "/manifest.webmanifest", nil))
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/manifest+json" {
+		t.Fatalf("status %d, Content-Type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }

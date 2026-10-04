@@ -166,7 +166,8 @@ var ErrDetectionOff = errors.New("commercial detection isn't available")
 var ErrNotReady = errors.New("this recording isn't ready yet")
 
 // Redetect runs commercial detection on a ready recording again (say after
-// comskip.ini was edited). A run already in progress just finishes.
+// comskip.ini was edited). A run already in progress is stopped and started
+// over.
 func (s *Service) Redetect(id int64) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil {
@@ -174,7 +175,6 @@ func (s *Service) Redetect(id int64) error {
 	}
 	s.mu.Lock()
 	off := s.deps.Detector == nil || s.detectOff
-	_, running := s.detecting[id]
 	s.mu.Unlock()
 	if off {
 		return ErrDetectionOff
@@ -182,9 +182,11 @@ func (s *Service) Redetect(id int64) error {
 	if r.State != store.RecReady {
 		return ErrNotReady
 	}
-	if running {
-		return nil
+	s.mu.Lock()
+	if stop := s.detecting[id]; stop != nil {
+		stop() // its result would come from the old settings
 	}
+	s.mu.Unlock()
 	if err := s.deps.Store.ClearRecordingCommercials(id); err != nil {
 		return err
 	}
@@ -241,6 +243,9 @@ func (d ComskipDetector) Detect(ctx context.Context, playlist, workDir string) (
 		return nil, fmt.Errorf("comskip: %w: %s", err, strings.TrimSpace(out.String()))
 	}
 	edls, _ := filepath.Glob(filepath.Join(workDir, "*.edl"))
+	if len(edls) == 0 && noneFound {
+		return nil, nil // nothing found and nothing written
+	}
 	if len(edls) == 0 {
 		// It ran but wrote no EDL: the ini has output_edl off.
 		return nil, fmt.Errorf("%w: comskip wrote no .edl (output_edl=1 in the ini?): %s", ErrDetectorSetup, strings.TrimSpace(out.String()))
@@ -298,13 +303,31 @@ func (s *Service) pokeDetect() {
 func (s *Service) detectWorker() {
 	defer s.wg.Done()
 	tried := map[int64]bool{}
+	var forced []int64 // Redetect asked: run even if a result is stored meanwhile
 	for {
 		s.mu.Lock()
 		for id := range s.detectRetry {
 			delete(tried, id)
+			forced = append(forced, id)
 		}
 		clear(s.detectRetry)
 		s.mu.Unlock()
+		if len(forced) > 0 {
+			id := forced[0]
+			forced = forced[1:]
+			tried[id] = true
+			if err := s.detect(id, true); errors.Is(err, ErrDetectorSetup) {
+				log.Printf("dvr: commercial detection off until restart: %v", err)
+				s.mu.Lock()
+				s.detectOff = true
+				s.mu.Unlock()
+				return
+			}
+			if s.ctx.Err() != nil {
+				return
+			}
+			continue
+		}
 		id, ok := s.nextDetect(tried)
 		if !ok {
 			select {
@@ -316,7 +339,7 @@ func (s *Service) detectWorker() {
 			continue
 		}
 		tried[id] = true
-		if err := s.detect(id); errors.Is(err, ErrDetectorSetup) {
+		if err := s.detect(id, false); errors.Is(err, ErrDetectorSetup) {
 			log.Printf("dvr: commercial detection off until restart: %v", err)
 			s.mu.Lock()
 			s.detectOff = true
@@ -350,9 +373,9 @@ func (s *Service) nextDetect(tried map[int64]bool) (int64, bool) {
 // detect runs the detector on one ready recording and stores the cleaned
 // breaks. A failure, delete or shutdown stores nothing (a restart runs it
 // again); it returns the detector's error.
-func (s *Service) detect(id int64) error {
+func (s *Service) detect(id int64, force bool) error {
 	r, err := s.deps.Store.RecordingByID(id)
-	if err != nil || r.State != store.RecReady || r.CommercialsDetected || r.Dir == "" {
+	if err != nil || r.State != store.RecReady || (r.CommercialsDetected && !force) || r.Dir == "" {
 		return nil
 	}
 	dur := vodDuration(r)
@@ -386,7 +409,7 @@ func (s *Service) detect(id int64) error {
 	delete(s.detecting, id)
 	s.mu.Unlock()
 	if s.ctx.Err() != nil || errors.Is(ctx.Err(), context.Canceled) {
-		return nil // shutting down, or deleted
+		return nil // shutting down, deleted, or restarted by Redetect
 	}
 	if err != nil {
 		if !errors.Is(err, ErrDetectorSetup) {

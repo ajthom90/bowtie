@@ -52,7 +52,9 @@ function keepaliveSavePosition(id: number, positionSec: number) {
  */
 export function RecordingPlayer({ recording, onBack, autoResume = false }: Props) {
   const { client, user } = useAuth()
-  const [redetect, setRedetect] = useState<'idle' | 'busy' | 'queued' | 'error'>('idle')
+  const [redetect, setRedetect] = useState<'idle' | 'busy' | 'queued' | 'done' | 'error'>('idle')
+  /** Breaks from a re-run of detection while this player is open. */
+  const [freshBreaks, setFreshBreaks] = useState<CommercialBreak[] | null>(null)
   const [redetectError, setRedetectError] = useState('')
   const findAdsAgain = async () => {
     setRedetect('busy')
@@ -79,7 +81,39 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
   // (each break once; seeking back into one doesn't skip it again).
   // Keyed on the breaks' content, so a re-fetched copy of the same recording
   // keeps the auto-skip memory.
-  const breaksKey = JSON.stringify(recording.commercials ?? [])
+  const breaksKey = JSON.stringify(freshBreaks ?? recording.commercials ?? [])
+
+  // After "Find ads again", check the recording every 10 s (for up to 10
+  // minutes) and use its new breaks once they differ from what's playing.
+  useEffect(() => {
+    if (redetect !== 'queued') return
+    let stopped = false
+    const started = Date.now()
+    const id = window.setInterval(() => {
+      if (Date.now() - started > 10 * 60_000) {
+        // Nothing changed (or it found the same breaks): stop asking.
+        window.clearInterval(id)
+        setRedetect('idle')
+        return
+      }
+      void client
+        .listRecordings('recorded')
+        .then((list) => {
+          if (stopped) return
+          const found = list.find((r) => r.id === recording.id)
+          const next = JSON.stringify(found?.commercials ?? [])
+          if (found && next !== breaksKey) {
+            setFreshBreaks(found.commercials ?? [])
+            setRedetect('done')
+          }
+        })
+        .catch(() => {})
+    }, 10_000)
+    return () => {
+      stopped = true
+      window.clearInterval(id)
+    }
+  }, [redetect, client, recording.id, breaksKey])
   const skipper = useMemo(
     () => createCommercialSkipper(JSON.parse(breaksKey) as CommercialBreak[]),
     [breaksKey],
@@ -314,12 +348,14 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
             type="button"
             className={playerStyles.btn}
             onClick={() => void findAdsAgain()}
-            disabled={redetect === 'busy' || redetect === 'queued'}
+            disabled={redetect === 'busy' || redetect === 'queued' || redetect === 'done'}
             title="Run commercial detection on this recording again"
           >
             {redetect === 'queued'
-              ? 'Finding ads… reopen in a few minutes'
-              : redetect === 'error'
+              ? 'Finding ads…'
+              : redetect === 'done'
+                ? 'Ads updated'
+                : redetect === 'error'
                 ? redetectError
                 : 'Find ads again'}
           </button>

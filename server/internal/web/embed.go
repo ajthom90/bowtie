@@ -30,6 +30,11 @@ func Handler() http.Handler {
 	if err != nil {
 		return notBuiltHandler()
 	}
+	return handlerFor(root)
+}
+
+// handlerFor serves the SPA from root (the embedded dist, or a test FS).
+func handlerFor(root fs.FS) http.Handler {
 	if !hasIndex(root) {
 		return notBuiltHandler()
 	}
@@ -54,6 +59,10 @@ func Handler() http.Handler {
 			stat, statErr := f.Stat()
 			_ = f.Close()
 			if statErr == nil && !stat.IsDir() {
+				if strings.HasSuffix(rel, ".webmanifest") {
+					// Not in every OS's MIME table; browsers want this exact type.
+					w.Header().Set("Content-Type", "application/manifest+json")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}

@@ -154,8 +154,8 @@
         />
 
         <!-- Recent row (GET /me/recents). Shown only when non-empty; while it is,
-             HomeScene moves the rail to y=280 and drops it to 6 rows (both rows:
-             Recent at y=336, rail at y=444 with 5 rows).
+             HomeScene moves the chips to y=280 and the rail to y=352 with 5 rows
+             (both rows: Recent at y=336, chips at y=444, rail at y=516 with 4).
              Horizontal, so a one-row MarkupGrid (MarkupList is vertical-only). -->
         <Label
             id="recentLabel"
@@ -183,14 +183,55 @@
             visible="false"
         />
 
-        <!-- Channel rail -->
+        <!-- Guide filter chips (All · Sports · Movies · News · Kids · New,
+             bowtie.guideFilter), directly above the rail and shown with it.
+             A one-row MarkupGrid: Left/Right move, OK picks; Up/Down reach
+             HomeScene. The chosen chip is remembered in the registry. -->
+        <MarkupGrid
+            id="filterList"
+            translation="[80, 136]"
+            itemComponentName="FilterChip"
+            itemSize="[160, 56]"
+            itemSpacing="[16, 0]"
+            numColumns="6"
+            numRows="1"
+            drawFocusFeedback="true"
+            drawFocusFeedbackOnTop="true"
+            focusBitmapUri="pkg:/images/focus_amber.9.png"
+            visible="false"
+        />
+
+        <!-- A filter with no matching channels: the rail is hidden and this
+             shows in its place, with Show all (focusable) back to All. -->
+        <Group id="filterEmptyGroup" translation="[0, 208]" visible="false">
+            <Label
+                id="filterEmptyLabel"
+                translation="[200, 120]"
+                width="1520"
+                height="60"
+                text=""
+                horizAlign="center"
+                vertAlign="center"
+                color="0x9BA5AEFF"
+                font="font:MediumSystemFont"
+            />
+            <Button
+                id="showAllButton"
+                translation="[760, 220]"
+                text="Show all"
+                minWidth="400"
+                height="56"
+            />
+        </Group>
+
+        <!-- Channel rail (only the channels the filter keeps) -->
         <MarkupList
             id="channelList"
-            translation="[80, 160]"
+            translation="[80, 208]"
             itemComponentName="ChannelRailItem"
             itemSize="[1760, 120]"
             itemSpacing="[0, 8]"
-            numRows="7"
+            numRows="6"
             drawFocusFeedback="true"
             drawFocusFeedbackOnTop="true"
             focusBitmapUri="pkg:/images/focus_amber.9.png"
