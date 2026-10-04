@@ -1,0 +1,139 @@
+' Skip ad: commercial segments on a recording's playback timeline.
+'
+' The server may send `"commercials": [{"start": s, "end": s}]` (float
+' seconds) on a recording; missing or empty means nothing to skip. A segment
+' covers start <= position < end. Pure: the player feeds in its position and
+' a memory AA from newMemory() (one per playback) and acts on the answer:
+'   "hint" → show "Skip ad ▸ (OK)"; OK seeks to target.
+'   "skip" → auto-skip (setting on): seek to target now, say "Skipped ad".
+'   "none" → hide the hint.
+' Each segment auto-skips once per playback: seeking back into one that was
+' already skipped shows the hint instead.
+
+namespace bowtie.ads
+
+    ' A seek lands on a keyframe, often a little short of the target. Inside
+    ' this many seconds before the end we just skipped to, stay quiet.
+    function landingGraceSec() as float
+        return 2.0
+    end function
+
+    function hintText() as string
+        return "Skip ad ▸ (OK)"
+    end function
+
+    function skippedText() as string
+        return "Skipped ad"
+    end function
+
+    ' Valid segments sorted by start, overlapping or touching ones merged.
+    ' Drops non-numbers and empty/backwards ranges; a negative start is 0.
+    function normalize(raw as dynamic) as object
+        segs = []
+        if raw = invalid or Type(raw) <> "roArray" then return segs
+        for each item in raw
+            if item <> invalid and Type(item) = "roAssociativeArray"
+                s = item.start
+                e = item["end"]
+                if bowtie.ads.isNumber(s) and bowtie.ads.isNumber(e)
+                    s = s * 1.0
+                    e = e * 1.0
+                    if s < 0 then s = 0.0
+                    if e > s then bowtie.ads.insertSorted(segs, { "start": s, "end": e })
+                end if
+            end if
+        end for
+
+        merged = []
+        for each seg in segs
+            n = merged.count()
+            if n > 0 and seg.start <= merged[n - 1]["end"]
+                if seg["end"] > merged[n - 1]["end"] then merged[n - 1]["end"] = seg["end"]
+            else
+                merged.push(seg)
+            end if
+        end for
+        return merged
+    end function
+
+    ' Index of the segment holding positionSec (start inclusive, end
+    ' exclusive), or -1.
+    function segmentAt(segs as object, positionSec as dynamic) as integer
+        if segs = invalid or positionSec = invalid then return -1
+        for i = 0 to segs.count() - 1
+            seg = segs[i]
+            if positionSec >= seg.start and positionSec < seg["end"] then return i
+            if positionSec < seg.start then return -1
+        end for
+        return -1
+    end function
+
+    function newMemory() as object
+        ' skipped: index string → true once auto-skipped this playback.
+        ' lastTarget: the end most recently skipped to (-1 none).
+        ' dismissedIndex: hint put away for this segment until we leave it.
+        return { skipped: {}, lastTarget: -1.0, dismissedIndex: -1 }
+    end function
+
+    ' What to do at positionSec: {action: "none"|"hint"|"skip", index, target}.
+    ' A "skip" is recorded in memory before it is returned, so it happens once.
+    function decide(segs as object, positionSec as dynamic, autoSkip as boolean, memory as object) as object
+        idx = bowtie.ads.segmentAt(segs, positionSec)
+        if idx <> memory.dismissedIndex then memory.dismissedIndex = -1
+        if idx < 0 then return { action: "none", index: -1, target: -1.0 }
+
+        seg = segs[idx]
+        target = seg["end"]
+        key = idx.toStr()
+        if autoSkip and memory.skipped[key] <> true
+            memory.skipped[key] = true
+            memory.lastTarget = target
+            return { action: "skip", index: idx, target: target }
+        end if
+        ' Just skipped here and the seek landed short of the end.
+        if memory.lastTarget = target and positionSec >= target - bowtie.ads.landingGraceSec()
+            return { action: "none", index: idx, target: target }
+        end if
+        if idx = memory.dismissedIndex then return { action: "none", index: idx, target: target }
+        return { action: "hint", index: idx, target: target }
+    end function
+
+    ' A manual skip (OK on the hint): remember where it went.
+    function noteSkip(memory as object, target as dynamic) as void
+        memory.lastTarget = target
+    end function
+
+    ' The viewer reached for the transport keys instead: hide the hint until
+    ' playback leaves this segment.
+    function dismiss(memory as object, index as integer) as void
+        memory.dismissedIndex = index
+    end function
+
+    function isNumber(v as dynamic) as boolean
+        if v = invalid then return false
+        t = Type(v)
+        return t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble"
+    end function
+
+    function insertSorted(segs as object, seg as object) as void
+        at = segs.count()
+        for i = 0 to segs.count() - 1
+            if seg.start < segs[i].start
+                at = i
+                exit for
+            end if
+        end for
+        if at = segs.count()
+            segs.push(seg)
+            return
+        end if
+        rebuilt = []
+        for i = 0 to segs.count() - 1
+            if i = at then rebuilt.push(seg)
+            rebuilt.push(segs[i])
+        end for
+        segs.clear()
+        segs.append(rebuilt)
+    end function
+
+end namespace

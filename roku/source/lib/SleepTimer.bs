@@ -1,0 +1,181 @@
+' Player sleep timer: stops playback after a chosen time, or when the live
+' program ends. One per player screen: it survives channel changes there and
+' goes away with the player. Never persisted. Mirrors the Android/iOS
+' SleepTimer (same options, labels, warning and extend rules).
+'
+' Pure: the clock is injected. Every call that needs the time takes `atSec`
+' (whole seconds; the scenes pass roDateTime.AsSeconds()), so tests drive it
+' with plain numbers. State is a plain AA from newState(), mutated in place.
+' The player calls tick() about once a second: it reports the time left, the
+' "Still watching?" warning in the last minute, and fired = true exactly once.
+
+namespace bowtie.sleep
+
+    ' The "Still watching?" prompt shows for this long before the timer fires.
+    function warningLeadSec() as integer
+        return 60
+    end function
+
+    ' Keep watching after "End of this program" adds this much.
+    function endOfProgramExtensionSec() as integer
+        return 30 * 60
+    end function
+
+    ' Every option, in menu order: {id, label, minutes} (minutes 0 for off/end).
+    function allOptions() as object
+        return [
+            { id: "off", label: "Off", minutes: 0 }
+            { id: "15", label: "15 minutes", minutes: 15 }
+            { id: "30", label: "30 minutes", minutes: 30 }
+            { id: "45", label: "45 minutes", minutes: 45 }
+            { id: "60", label: "60 minutes", minutes: 60 }
+            { id: "90", label: "90 minutes", minutes: 90 }
+            { id: "120", label: "2 hours", minutes: 120 }
+            { id: "end", label: "End of this program", minutes: 0 }
+        ]
+    end function
+
+    ' Choices to offer: End of this program only when its end is known
+    ' (programEndSec > 0) and still ahead. Recordings pass 0.
+    function options(programEndSec as dynamic, atSec as dynamic) as object
+        endKnown = bowtie.sleep.endAhead(programEndSec, atSec)
+        list = []
+        for each o in bowtie.sleep.allOptions()
+            if o.id <> "end" or endKnown then list.push(o)
+        end for
+        return list
+    end function
+
+    function optionById(id as dynamic) as dynamic
+        for each o in bowtie.sleep.allOptions()
+            if o.id = id then return o
+        end for
+        return invalid
+    end function
+
+    function newState() as object
+        return { option: "off", deadline: 0, active: false }
+    end function
+
+    ' Start (or restart) with an option id. "off" cancels. Returns false, and
+    ' leaves the timer off, for "end" without a future program end.
+    function start(state as object, optionId as string, atSec as dynamic, programEndSec as dynamic) as boolean
+        if optionId = "off"
+            bowtie.sleep.cancel(state)
+            return true
+        end if
+        if optionId = "end"
+            if not bowtie.sleep.endAhead(programEndSec, atSec)
+                bowtie.sleep.cancel(state)
+                return false
+            end if
+            state.option = "end"
+            state.deadline = programEndSec
+            state.active = true
+            return true
+        end if
+        opt = bowtie.sleep.optionById(optionId)
+        if opt = invalid or opt.minutes <= 0
+            bowtie.sleep.cancel(state)
+            return false
+        end if
+        state.option = optionId
+        state.deadline = atSec + opt.minutes * 60
+        state.active = true
+        return true
+    end function
+
+    ' Keep watching: push the end out by the chosen duration (30 minutes for
+    ' End of this program). Added to the deadline, as the other apps do.
+    function extend(state as object) as void
+        if state.active <> true then return
+        if state.option = "end"
+            state.deadline = state.deadline + bowtie.sleep.endOfProgramExtensionSec()
+            return
+        end if
+        opt = bowtie.sleep.optionById(state.option)
+        if opt = invalid or opt.minutes <= 0 then return
+        state.deadline = state.deadline + opt.minutes * 60
+    end function
+
+    function cancel(state as object) as void
+        state.option = "off"
+        state.deadline = 0
+        state.active = false
+    end function
+
+    ' Seconds left, or -1 when off. Never below 0.
+    function secondsLeft(state as object, atSec as dynamic) as integer
+        if state.active <> true then return -1
+        remain = state.deadline - atSec
+        if remain < 0 then remain = 0
+        return Int(remain)
+    end function
+
+    ' In the last minute: show "Still watching?".
+    function isWarning(state as object, atSec as dynamic) as boolean
+        remain = bowtie.sleep.secondsLeft(state, atSec)
+        return remain >= 0 and remain <= bowtie.sleep.warningLeadSec()
+    end function
+
+    ' Advance to atSec: {fired, warning, remaining}. Fires once: the timer
+    ' turns itself off as it fires, so the next tick reports nothing.
+    function tick(state as object, atSec as dynamic) as object
+        if state.active <> true then return { fired: false, warning: false, remaining: -1 }
+        remain = bowtie.sleep.secondsLeft(state, atSec)
+        if remain <= 0
+            bowtie.sleep.cancel(state)
+            return { fired: true, warning: false, remaining: -1 }
+        end if
+        return { fired: false, warning: (remain <= bowtie.sleep.warningLeadSec()), remaining: remain }
+    end function
+
+    ' "1:00", "29:41", "1:05:00".
+    function format(sec as dynamic) as string
+        total = Int(sec)
+        if total < 0 then total = 0
+        hours = total \ 3600
+        mins = (total mod 3600) \ 60
+        secs = total mod 60
+        if hours > 0 then return hours.toStr() + ":" + bowtie.sleep.pad2(mins) + ":" + bowtie.sleep.pad2(secs)
+        return mins.toStr() + ":" + bowtie.sleep.pad2(secs)
+    end function
+
+    function promptText(sec as dynamic) as string
+        return "Still watching? Sleeping in " + bowtie.sleep.format(sec) + " — OK to keep watching"
+    end function
+
+    ' The menu line: "Sleep timer: Off" / "Sleep timer: sleeping in 29:41".
+    function statusText(state as object, atSec as dynamic) as string
+        remain = bowtie.sleep.secondsLeft(state, atSec)
+        if remain < 0 then return "Sleep timer: Off"
+        return "Sleep timer: sleeping in " + bowtie.sleep.format(remain)
+    end function
+
+    ' Menu button labels for the given options; the current one is ticked.
+    function buttonLabels(opts as object, state as object) as object
+        labels = []
+        current = state.option
+        for each o in opts
+            if o.id = current
+                labels.push("✓ " + o.label)
+            else
+                labels.push(o.label)
+            end if
+        end for
+        return labels
+    end function
+
+    function endAhead(programEndSec as dynamic, atSec as dynamic) as boolean
+        if programEndSec = invalid or atSec = invalid then return false
+        t = Type(programEndSec)
+        if t <> "Integer" and t <> "roInteger" and t <> "LongInteger" and t <> "roLongInteger" and t <> "Float" and t <> "roFloat" and t <> "Double" and t <> "roDouble" then return false
+        return programEndSec > 0 and programEndSec > atSec
+    end function
+
+    function pad2(n as integer) as string
+        if n < 10 then return "0" + n.toStr()
+        return n.toStr()
+    end function
+
+end namespace

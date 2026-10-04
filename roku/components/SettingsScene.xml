@@ -21,7 +21,7 @@
             translation="[360, 80]"
             layoutDirection="vert"
             horizAlignment="left"
-            itemSpacings="[12, 20, 8, 8, 16, 24, 8, 8, 16, 12, 20, 12, 16]"
+            itemSpacings="[12, 20, 8, 8, 16, 24, 8, 8, 16, 32, 8, 8, 16]"
         >
             <Button
                 id="backButton"
@@ -104,6 +104,32 @@
                 text="Sign out"
                 minWidth="400"
                 height="56"
+            />
+
+            <!-- Playback (this device; registry "bowtie" autoSkipAds) -->
+            <Label
+                id="playbackHeader"
+                width="1200"
+                height="32"
+                text="Playback"
+                horizAlign="left"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Button
+                id="autoSkipButton"
+                text="Skip ads automatically: Off"
+                minWidth="560"
+                height="56"
+            />
+            <Label
+                id="autoSkipNote"
+                width="1200"
+                height="40"
+                text="In recordings, jump past the ads the server found. Off: press OK on Skip ad."
+                horizAlign="left"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
             />
         </LayoutGroup>
     </children>

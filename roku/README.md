@@ -141,6 +141,31 @@ UI (OK pause/play, Left/Right and FF/RW to seek, the progress bar; there are no
 BIF thumbnails). The position is saved (`PUT …/position`) every 15 s, when the
 recording ends, and on Back, which returns to the list.
 
+| Key | Action |
+|-----|--------|
+| OK / Play | Play / pause (the Video's trick-play UI) |
+| Left / Right, FF / RW | Seek |
+| OK on **Skip ad ▸ (OK)** | Jump to the end of the ad |
+| Left / Right / FF / RW / Replay on **Skip ad** | Put Skip ad away for this ad; the next press seeks |
+| Play on **Skip ad** | Play / pause |
+| Down | **Sleep timer** menu |
+| OK on **Still watching?** | Keep watching (same duration again) |
+| Back | Save the position and return to the list |
+
+**Skip ad.** A recording may carry `commercials: [{start, end}]` (seconds on
+its timeline; missing or empty means none). While the position is inside one
+(start inclusive, end exclusive) a **Skip ad ▸ (OK)** button appears bottom
+right and takes focus, so OK reaches it rather than the Video. With
+**Settings → Skip ads automatically** on, each ad is skipped once per playback
+and **Skipped ad** shows briefly; seeking back into a skipped ad shows the
+button instead of skipping again. Logic: `source/lib/Commercials.bs`.
+
+**Sleep timer** (Down): Off, 15 / 30 / 45 / 60 / 90 minutes, 2 hours, with the
+time left in the menu. A minute before it runs out, **Still watching? Sleeping
+in 1:00 — OK to keep watching** takes focus; OK adds the same duration again.
+When it runs out, playback stops as Back does. Reset when playback ends; never
+saved. "Down: sleep timer" shows for a few seconds when playback starts.
+
 ## Player controls
 
 | Key | Action |
@@ -148,8 +173,21 @@ recording ends, and on Back, which returns to the list.
 | OK / Play | Play / pause |
 | Back | Stop session (DELETE) and return to rail |
 | Up / Down | Zap previous / next channel (400 ms debounce, session-replace) |
-| Right (or `*` / Options on streaming sticks) | Quality dialog (profiles filtered by `user.maxQuality`). Roku TVs open their own picture menu on `*` during playback. |
+| Right | **Options** dialog: quality (profiles filtered by `user.maxQuality`) and **Sleep timer**. `*` is left to the system menu (audio tracks, closed captioning; Roku TVs add picture settings). |
+| OK while **Still watching?** shows | Keep watching (instead of pausing) |
 | Info / Display | Toggle debug overlay |
+
+### Sleep timer
+
+Right → **Sleep timer**: Off, 15 / 30 / 45 / 60 / 90 minutes, 2 hours, and
+**End of this program** when the guide (from the channel rail) knows when the
+program on now ends; the menu shows the time left. A minute before it runs
+out, **Still watching? Sleeping in 1:00 — OK to keep watching** appears; OK adds
+the same duration again (30 minutes for End of this program). When it runs
+out the player leaves exactly as Back does: the viewer is DELETEd (tuner
+freed) and the rail comes back. It survives zapping, resets when the player is
+left, and is never saved. Logic: `source/lib/SleepTimer.bs` (clock injected,
+tested under brs).
 
 ### Session lifecycle (A3)
 
@@ -181,6 +219,17 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
 | Mid-play failure | Bounded retry, then error + Try again |
 
+## Settings
+
+| Key | Action |
+|-----|--------|
+| Up / Down | Move between **Back**, **Change server**, **Change password**, **Sign out**, **Skip ads automatically** |
+| OK | Press the focused button (**Skip ads automatically** toggles On / Off) |
+| Back | Return to the channel rail |
+
+**Skip ads automatically** (default Off) is kept on this device (registry
+section `bowtie`, key `autoSkipAds`) and survives sign-out and change server.
+
 ## Design tokens
 
 | Role | Value |
@@ -200,7 +249,7 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, DeviceAuth, Favorites, GuideLogic, Recordings, Registry
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, DeviceAuth, Favorites, GuideLogic, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)

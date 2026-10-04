@@ -1,4 +1,4 @@
-' Persistence for server URL + refresh token via roRegistrySection "bowtie".
+' Persistence for server URL, refresh token and device prefs via roRegistrySection "bowtie".
 ' Thin I/O wrappers — not pure; AuthState never calls these.
 
 namespace bowtie.registry
@@ -67,6 +67,26 @@ namespace bowtie.registry
         if sec = invalid then return
         if sec.Exists("server") then sec.Delete("server")
         if sec.Exists("refreshToken") then sec.Delete("refreshToken")
+        sec.Flush()
+    end function
+
+    ' Device preference: skip ads in recordings automatically (default off).
+    ' Kept through sign-out and change-server (clearAll leaves it).
+    function loadAutoSkipAds() as boolean
+        sec = bowtie.registry.section()
+        if sec = invalid then return false
+        if sec.Exists("autoSkipAds") then return sec.Read("autoSkipAds") = "true"
+        return false
+    end function
+
+    function saveAutoSkipAds(isOn as boolean) as void
+        sec = bowtie.registry.section()
+        if sec = invalid then return
+        if isOn
+            sec.Write("autoSkipAds", "true")
+        else
+            sec.Write("autoSkipAds", "false")
+        end if
         sec.Flush()
     end function
 
