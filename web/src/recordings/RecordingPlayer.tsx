@@ -63,9 +63,12 @@ export function RecordingPlayer({ recording, onBack }: Props) {
 
   // Commercial breaks: a Skip button while inside one, and optional auto-skip
   // (each break once; seeking back into one doesn't skip it again).
+  // Keyed on the breaks' content, so a re-fetched copy of the same recording
+  // keeps the auto-skip memory.
+  const breaksKey = JSON.stringify(recording.commercials ?? [])
   const skipper = useMemo(
-    () => createCommercialSkipper(recording.commercials),
-    [recording.commercials],
+    () => createCommercialSkipper(JSON.parse(breaksKey) as CommercialBreak[]),
+    [breaksKey],
   )
   const [autoSkip, setAutoSkip] = useState(() => loadAutoSkip())
   const autoSkipRef = useRef(autoSkip)
