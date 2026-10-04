@@ -603,3 +603,26 @@ func TestSetSettingsAtomicUpsert(t *testing.T) {
 		t.Fatalf("SetSettings empty map: %v", err)
 	}
 }
+
+func TestUserLimitsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	id, err := s.CreateUser(store.User{
+		Username: "friend", PasswordHash: "h", Role: "viewer",
+		MaxStreams: 2, MaxTuners: 1, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.UserByID(id)
+	if err != nil || u.MaxStreams != 2 || u.MaxTuners != 1 {
+		t.Fatalf("created: %+v err=%v", u, err)
+	}
+	u.MaxStreams, u.MaxTuners = 0, 3
+	if err := s.UpdateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	users, err := s.ListUsers()
+	if err != nil || len(users) != 1 || users[0].MaxStreams != 0 || users[0].MaxTuners != 3 {
+		t.Fatalf("updated: %+v err=%v", users, err)
+	}
+}
