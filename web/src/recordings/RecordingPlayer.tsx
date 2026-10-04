@@ -17,6 +17,8 @@ import styles from './RecordingPlayer.module.css'
 type Props = {
   recording: Recording
   onBack: () => void
+  /** Resume from the saved position without asking (Continue watching). */
+  autoResume?: boolean
 }
 
 type Phase =
@@ -48,7 +50,7 @@ function keepaliveSavePosition(id: number, positionSec: number) {
  * browser's own seekable controls, resume from the saved position, and the
  * position saved every 15 s and on close. No live edge, no heartbeat.
  */
-export function RecordingPlayer({ recording, onBack }: Props) {
+export function RecordingPlayer({ recording, onBack, autoResume = false }: Props) {
   const { client, user } = useAuth()
   const [redetect, setRedetect] = useState<'idle' | 'busy' | 'queued' | 'error'>('idle')
   const [redetectError, setRedetectError] = useState('')
@@ -225,7 +227,9 @@ export function RecordingPlayer({ recording, onBack }: Props) {
       .then((res) => {
         if (cancelled) return
         const d = resumeDecision(res.positionSec, res.durationSec || recording.durationSec)
-        if (d.kind === 'ask') {
+        if (d.kind === 'ask' && autoResume) {
+          attach(res.playlistUrl, d.positionSec)
+        } else if (d.kind === 'ask') {
           setPhase({ kind: 'ask', playlistUrl: res.playlistUrl, positionSec: d.positionSec })
         } else {
           attach(res.playlistUrl, 0)
@@ -242,7 +246,7 @@ export function RecordingPlayer({ recording, onBack }: Props) {
     return () => {
       cancelled = true
     }
-  }, [attach, client, recording.id, recording.durationSec, epoch])
+  }, [attach, autoResume, client, recording.id, recording.durationSec, epoch])
 
   // Page hide / unload: save where we are without waiting.
   useEffect(() => {

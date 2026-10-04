@@ -113,6 +113,8 @@ export interface Recording {
   protected: boolean
   /** The caller's resume position. */
   positionSec: number
+  /** When the caller last saved a position (RFC 3339); absent if never (or an older server). */
+  positionUpdatedAt?: string
   scheduledBy: string
   /** The caller may stop, delete or protect it (scheduler or admin). */
   canManage: boolean
@@ -412,6 +414,30 @@ export interface SettingsDVR {
   quality?: RecordingQuality
 }
 
+/** Which admin notifications are sent. */
+export interface NotificationEvents {
+  recordingFailed: boolean
+  diskLow: boolean
+  recordingReady: boolean
+  guideFailed: boolean
+}
+
+/** Admin notifications: ntfy, a Discord webhook, or any JSON-accepting URL. */
+export interface SettingsNotifications {
+  /** Empty = off. */
+  url: string
+  events: NotificationEvents
+}
+
+/** POST /api/v1/admin/notifications/test result (200 even when delivery failed). */
+export interface NotificationTestResult {
+  target: 'ntfy' | 'discord' | 'webhook'
+  ok: boolean
+  /** HTTP status the target answered (absent when it didn't answer). */
+  status?: number
+  error?: string
+}
+
 /** dvr.quality: 720p for every channel, or up to 1080p (1080i deinterlaced). */
 export type RecordingQuality = '720p' | '1080p'
 
@@ -425,6 +451,8 @@ export interface Settings {
   hdhomerun?: SettingsHDHomeRun
   /** Absent on servers older than recording padding settings. */
   dvr?: SettingsDVR
+  /** Absent on servers older than notifications. */
+  notifications?: SettingsNotifications
 }
 
 /** PUT /api/v1/admin/settings — section merge; omit sections to leave untouched. */
@@ -435,6 +463,8 @@ export interface PutSettingsRequest {
   streaming?: { bufferMinutes: number; adaptive?: boolean }
   hdhomerun?: SettingsHDHomeRun
   dvr?: SettingsDVR
+  /** url is required; events (and each event) are optional. */
+  notifications?: { url: string; events?: Partial<NotificationEvents> }
 }
 
 /** GET /api/v1/admin/dvr/storage (503 when recording isn't available). */
@@ -715,6 +745,18 @@ export class ApiClient {
 
   async putSettings(body: PutSettingsRequest): Promise<Settings> {
     return this.request<Settings>('PUT', '/api/v1/admin/settings', body)
+  }
+
+  /**
+   * Admin: send a test notification to `url`, or to the saved URL when
+   * omitted. Resolves with the delivery result (ok=false when it failed).
+   */
+  async testNotification(url?: string): Promise<NotificationTestResult> {
+    return this.request<NotificationTestResult>(
+      'POST',
+      '/api/v1/admin/notifications/test',
+      url ? { url } : {},
+    )
   }
 
   /** Admin: run commercial detection on a recording again. */

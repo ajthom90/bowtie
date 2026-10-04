@@ -7,17 +7,29 @@
 
 **Open-source HDHomeRun live TV streaming with hardware transcoding** — share your antenna with your family.
 
-Bowtie is a single Go binary (with an embedded React web viewer) that:
+Bowtie is a single Go binary (with an embedded React web app) plus native apps
+for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
-- Discovers Silicondust HDHomeRun tuners on your LAN
-- Transcodes over-the-air channels to HLS with hardware acceleration when available
-- Serves a TV guide (free from your HDHomeRun, plus optional XMLTV and/or Schedules Direct)
-- Lets an admin manage users, devices, channels, and active sessions
-- Live pause/rewind within a settings-backed buffer, with one tuner per channel
-  shared across quality variants
+- Finds your HDHomeRun tuners and streams over-the-air channels to every
+  screen as HLS, with hardware transcoding (Quick Sync, NVENC, VAAPI,
+  VideoToolbox) when available, captions, every broadcast audio track and 5.1
+- Shows a TV guide — free from your HDHomeRun, or XMLTV / Schedules Direct —
+  with search, favorites, recents and **All · Sports · Movies · News · Kids ·
+  New** filters
+- Pauses and rewinds live TV, and plays up to four channels at once in the
+  web app's **Multiview**
+- **Records** shows and whole series (new episodes only, keep the latest N),
+  finds and **skips commercials** with Comskip, and picks up where you left
+  off with **Continue watching**
+- Signs TVs in by **scanning a QR code** with your phone; supports **parental
+  controls**, per-account stream limits, a **sleep timer**, SharePlay on Apple
+  devices, and a personal **M3U/XMLTV feed** for Kodi, TiviMate and friends
+- Gives the admin users, tuners, channels, sessions, a storage gauge,
+  recording quality, **notifications** (ntfy, Discord, webhook) and
+  **backup**
 
-**Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
-Admin → Settings) plus iOS/tvOS/macOS, Android/Fire TV, and Roku clients.
+**Project status:** see [CHANGELOG.md](CHANGELOG.md) for the latest release
+and [docs/roadmap.md](docs/roadmap.md) for what's next.
 
 ---
 
@@ -255,6 +267,28 @@ run at all (missing library, an ini without `output_edl=1`), detection stops
 until the next restart and nothing is marked; a recording it fails on is
 tried again after a restart.
 
+## Notifications
+
+Bowtie can tell you when something needs attention, on your phone or in a
+chat, without any app-store push setup. In **Admin → Settings →
+Notifications**, paste a URL, pick the events, **Save**, and **Send test**:
+
+- **ntfy** (free phone app): `https://ntfy.sh/your-topic` (pick a hard-to-guess
+  topic), or your own ntfy server — any host with `ntfy` in its name. For a
+  protected topic use `https://user:pass@ntfy.example.com/topic`.
+- **Discord**: a channel webhook URL (`https://discord.com/api/webhooks/…`).
+- **Anything else** gets a JSON POST:
+  `{"event": "recordingFailed", "title": "…", "message": "…", "recordingId": 42, "time": "2026-10-04T18:30:00Z"}`
+  (Home Assistant, n8n, your own script, …).
+
+Events: a recording failed (with the reason — no tuner, no signal, disk
+full…; skipped episodes don't count), disk space is low (checked hourly after
+old recordings are cleaned up), guide data hasn't updated for a day, and
+(off by default) a recording is ready to watch. Each event is sent at most
+once every 6 hours (a failed recording once), with one retry 30 s later if
+the server didn't answer. The URL can contain a secret, so Bowtie only ever
+logs its host name.
+
 ## Backup and restore
 
 **Admin → Settings → Download backup** (or `GET /api/v1/admin/backup` with an
@@ -262,8 +296,8 @@ admin token) saves a snapshot of the database: accounts, channels, guide
 mappings, series rules, the recording list and settings. It is taken safely
 while Bowtie runs. Recorded video is not included — back up
 `<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
-The file holds password hashes and the Schedules Direct password; keep it
-private. Token-signing keys and sign-in sessions are left out, so a restored
+The file holds password hashes, the Schedules Direct password and the
+notification URL; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
 server makes new keys and everyone signs in again.
 
 The snapshot is written next to `bowtie.db` while the download is prepared
@@ -302,6 +336,9 @@ cd windows && dotnet test Bowtie.Core.Tests   # Windows app's client + view mode
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 - **Windows** — native WinUI 3 app for Windows 10 (1809+) and 11 on x64 and ARM64: see [`windows/README.md`](windows/README.md) (install the `.msixbundle` from a release, or unzip and run; build with Visual Studio 2022).
+- **Xbox** — no native app; install Kodi from the Microsoft Store and add your M3U/XMLTV feed (web app → Account → “Use Bowtie in other apps”).
+- **PlayStation** — no way to install third-party apps; not supported.
+- **Any other device** — the web app works in any modern browser, including smart-TV browsers.
 
 ---
 

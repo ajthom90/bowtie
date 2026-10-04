@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runBrs } from './brs-run.mjs';
 
 const read = (p) => readFileSync(new URL(`../components/${p}`, import.meta.url), 'utf8');
 const home = read('HomeScene.bs');
@@ -64,13 +65,19 @@ test('recentList sits above the rail and starts hidden', () => {
     assert.match(tag, /visible="false"/);
     const recentY = Number(/translation="\[\s*\d+\s*,\s*(\d+)\s*\]"/.exec(tag)[1]);
     const recentH = Number(/itemSize="\[\s*\d+\s*,\s*(\d+)\s*\]"/.exec(tag)[1]);
-    // While the row shows, HomeScene moves the rail down below it.
-    const railY = Number(/const RAIL_Y_WITH_RECENTS = (\d+)/.exec(home)[1]);
-    const railRows = Number(/const RAIL_ROWS_WITH_RECENTS = (\d+)/.exec(home)[1]);
+    // While the row shows, HomeScene moves the rail down below it
+    // (bowtie.continueWatching.homeLayout; every combination is checked in
+    // continue-watching.test.mjs).
+    const layout = runBrs(['source/lib/Recordings.brs', 'source/lib/ContinueWatching.brs'], `
+        out.l = snapshot(bowtie_continueWatching_homeLayout(false, true))
+    `).l;
+    assert.equal(layout.recentY, recentY, 'XML start position differs from the layout');
     assert.ok(recentY >= 128, 'recentList overlaps the header');
-    assert.ok(recentY + recentH < railY, 'recentList must be above channelList');
-    assert.ok(railY + railRows * 128 - 8 <= 1080, 'shifted rail runs off the 1080 canvas');
-    assert.match(home, /m\.channelList\.translation = \[80, RAIL_Y_WITH_RECENTS\]/);
+    assert.ok(recentY + recentH < layout.railY, 'recentList must be above channelList');
+    assert.ok(layout.railY + layout.railRows * 128 - 8 <= 1080, 'shifted rail runs off the 1080 canvas');
+    assert.match(home, /layout = bowtie\.continueWatching\.homeLayout\(showContinue, showRecent\)/);
+    assert.match(home, /m\.channelList\.translation = \[80, layout\.railY\]/);
+    assert.match(home, /m\.channelList\.numRows = layout\.railRows/);
 });
 
 test('rail items show a star for favorites', () => {

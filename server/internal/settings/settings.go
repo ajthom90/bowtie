@@ -39,6 +39,14 @@ const (
 	// KeyDVRQuality is the resolution recordings are converted at (applies
 	// to recordings converted afterwards).
 	KeyDVRQuality = "dvr.quality"
+	// Admin notifications (ntfy, Discord or a webhook). Never seeded: an
+	// absent key reads as its default, and the URL (which may carry a token)
+	// never reaches the seed's override log.
+	KeyNotifyURL             = "notifications.url"
+	KeyNotifyRecordingFailed = "notifications.recordingFailed"
+	KeyNotifyDiskLow         = "notifications.diskLow"
+	KeyNotifyRecordingReady  = "notifications.recordingReady"
+	KeyNotifyGuideFailed     = "notifications.guideFailed"
 )
 
 // Recording qualities (dvr.quality).
@@ -117,6 +125,67 @@ type DVR struct {
 	PadEndSeconds   int
 	// Quality is one of DVRQualities ("" in SetDVR keeps the stored value).
 	Quality string
+}
+
+// NotificationEvents chooses which events are sent.
+type NotificationEvents struct {
+	RecordingFailed bool
+	DiskLow         bool
+	RecordingReady  bool
+	GuideFailed     bool
+}
+
+// Notifications is the admin notification section. An empty URL is off.
+type Notifications struct {
+	URL    string
+	Events NotificationEvents
+}
+
+// DefaultNotificationEvents: failures and low disk on, ready recordings off.
+var DefaultNotificationEvents = NotificationEvents{RecordingFailed: true, DiskLow: true, GuideFailed: true}
+
+// Notifications returns the notification section; absent keys read as the
+// defaults (no URL; failures, low disk and guide failures on).
+func (p *Provider) Notifications() (Notifications, error) {
+	u, err := p.st.GetSetting(KeyNotifyURL)
+	if err != nil {
+		return Notifications{}, err
+	}
+	out := Notifications{URL: u, Events: DefaultNotificationEvents}
+	for _, f := range []struct {
+		key string
+		dst *bool
+	}{
+		{KeyNotifyRecordingFailed, &out.Events.RecordingFailed},
+		{KeyNotifyDiskLow, &out.Events.DiskLow},
+		{KeyNotifyRecordingReady, &out.Events.RecordingReady},
+		{KeyNotifyGuideFailed, &out.Events.GuideFailed},
+	} {
+		raw, err := p.st.GetSetting(f.key)
+		if err != nil {
+			return Notifications{}, err
+		}
+		if raw == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Notifications{}, fmt.Errorf("%s: %w", f.key, err)
+		}
+		*f.dst = on
+	}
+	return out, nil
+}
+
+// SetNotifications writes the notification section atomically.
+func (p *Provider) SetNotifications(v Notifications) error {
+	return p.st.SetSettings(map[string]string{
+		KeyNotifyURL:             v.URL,
+		KeyNotifyRecordingFailed: strconv.FormatBool(v.Events.RecordingFailed),
+		KeyNotifyDiskLow:         strconv.FormatBool(v.Events.DiskLow),
+		KeyNotifyRecordingReady:  strconv.FormatBool(v.Events.RecordingReady),
+		KeyNotifyGuideFailed:     strconv.FormatBool(v.Events.GuideFailed),
+	})
 }
 
 // DVR returns the recording section. An absent or empty key reads as its

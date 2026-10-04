@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ajthom90/bowtie/server/internal/epg/sd"
+	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
 )
@@ -58,6 +59,20 @@ type settingsResponseJSON struct {
 	Streaming       settingsStreamingJSON `json:"streaming"`
 	HDHomeRun       settingsHDHomeRunJSON `json:"hdhomerun"`
 	DVR             settingsDVRJSON       `json:"dvr"`
+	Notifications   settingsNotifyJSON    `json:"notifications"`
+}
+
+// settingsNotifyJSON is the admin notification section.
+type settingsNotifyJSON struct {
+	URL    string                   `json:"url"`
+	Events settingsNotifyEventsJSON `json:"events"`
+}
+
+type settingsNotifyEventsJSON struct {
+	RecordingFailed bool `json:"recordingFailed"`
+	DiskLow         bool `json:"diskLow"`
+	RecordingReady  bool `json:"recordingReady"`
+	GuideFailed     bool `json:"guideFailed"`
 }
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
@@ -71,6 +86,19 @@ type putSettingsRequest struct {
 	Streaming       *putStreamingSection `json:"streaming"`
 	HDHomeRun       *putHDHomeRunSection `json:"hdhomerun"`
 	DVR             *putDVRSection       `json:"dvr"`
+	Notifications   *putNotifySection    `json:"notifications"`
+}
+
+// putNotifySection: url is required (empty turns notifications off); events
+// and each event are optional (absent keeps the stored choice).
+type putNotifySection struct {
+	URL    *string `json:"url"`
+	Events *struct {
+		RecordingFailed *bool `json:"recordingFailed,omitempty"`
+		DiskLow         *bool `json:"diskLow,omitempty"`
+		RecordingReady  *bool `json:"recordingReady,omitempty"`
+		GuideFailed     *bool `json:"guideFailed,omitempty"`
+	} `json:"events,omitempty"`
 }
 
 type putDVRSection struct {
@@ -245,6 +273,10 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 	if err != nil {
 		return settingsResponseJSON{}, err
 	}
+	notif, err := s.deps.Settings.Notifications()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
 
 	caps := s.probeCaps()
 	available := make([]string, 0, len(caps.Available))
@@ -278,6 +310,12 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 		},
 		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
 		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds, Quality: dvrCfg.Quality},
+		Notifications: settingsNotifyJSON{URL: notif.URL, Events: settingsNotifyEventsJSON{
+			RecordingFailed: notif.Events.RecordingFailed,
+			DiskLow:         notif.Events.DiskLow,
+			RecordingReady:  notif.Events.RecordingReady,
+			GuideFailed:     notif.Events.GuideFailed,
+		}},
 	}, nil
 }
 
@@ -369,6 +407,32 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 		kv[settings.KeyDVRPadEndSeconds] = strconv.Itoa(*end)
 		if req.DVR.Quality != nil {
 			kv[settings.KeyDVRQuality] = *req.DVR.Quality
+		}
+	}
+
+	if req.Notifications != nil {
+		n := req.Notifications
+		if n.URL == nil {
+			return nil, "notifications.url is required"
+		}
+		u := strings.TrimSpace(*n.URL)
+		if u != "" {
+			if err := notify.ValidateURL(u); err != nil {
+				return nil, "notifications.url " + err.Error()
+			}
+		}
+		kv[settings.KeyNotifyURL] = u
+		if e := n.Events; e != nil {
+			for key, v := range map[string]*bool{
+				settings.KeyNotifyRecordingFailed: e.RecordingFailed,
+				settings.KeyNotifyDiskLow:         e.DiskLow,
+				settings.KeyNotifyRecordingReady:  e.RecordingReady,
+				settings.KeyNotifyGuideFailed:     e.GuideFailed,
+			} {
+				if v != nil {
+					kv[key] = strconv.FormatBool(*v)
+				}
+			}
 		}
 	}
 

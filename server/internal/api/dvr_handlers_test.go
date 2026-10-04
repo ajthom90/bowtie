@@ -113,6 +113,8 @@ type recJSON struct {
 	ScheduledBy string    `json:"scheduledBy"`
 	CanManage   bool      `json:"canManage"`
 	PositionSec int       `json:"positionSec"`
+	// Absent (nil) when the caller never saved a position.
+	PositionUpdatedAt *time.Time `json:"positionUpdatedAt"`
 }
 
 func (e *dvrEnv) record(t *testing.T, hdr map[string]string, body map[string]any) (*httptest.ResponseRecorder, recJSON) {
@@ -224,6 +226,78 @@ func TestDeleteOnlyOwnUnlessAdmin(t *testing.T) {
 	}
 	if rr := doJSON(t, e.h, "DELETE", path, nil, e.admin); rr.Code != http.StatusNotFound {
 		t.Fatalf("delete again %d", rr.Code)
+	}
+}
+
+func TestRecordingJSONPositionUpdatedAt(t *testing.T) {
+	e := newDVREnv(t)
+	mk := func(title string, hoursAgo int) int64 {
+		at := e.showAt.Add(-time.Duration(hoursAgo) * time.Hour)
+		id, err := e.st.CreateRecording(store.Recording{UserID: e.aliceID, ChannelID: e.ids["9.1"], ChannelName: "9.1 B",
+			Title: title, Start: at, Stop: at.Add(time.Hour), State: store.RecScheduled, CreatedAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := e.st.RecordingByID(id)
+		r.State, r.DurationSec = store.RecReady, 3600
+		_ = e.st.UpdateRecording(r)
+		return id
+	}
+	watched, untouched := mk("Watched", 48), mk("Untouched", 72)
+
+	before := time.Now().UTC().Add(-time.Second)
+	if rr := doJSON(t, e.h, "PUT", fmt.Sprintf("/api/v1/recordings/%d/position", watched),
+		map[string]any{"positionSec": 900}, e.alice); rr.Code != http.StatusNoContent {
+		t.Fatalf("position %d", rr.Code)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	list := func(hdr map[string]string) map[int64]recJSON {
+		t.Helper()
+		rr := doJSON(t, e.h, "GET", "/api/v1/recordings?state=recorded", nil, hdr)
+		var rows []recJSON
+		if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &rows) != nil {
+			t.Fatalf("list %d %s", rr.Code, rr.Body.String())
+		}
+		out := map[int64]recJSON{}
+		for _, r := range rows {
+			out[r.ID] = r
+		}
+		return out
+	}
+
+	a := list(e.alice)
+	w := a[watched]
+	if w.PositionSec != 900 || w.PositionUpdatedAt == nil || w.PositionUpdatedAt.Before(before) || w.PositionUpdatedAt.After(after) {
+		t.Fatalf("alice watched %+v", w)
+	}
+	if u := a[untouched]; u.PositionSec != 0 || u.PositionUpdatedAt != nil {
+		t.Fatalf("alice untouched %+v", u)
+	}
+	// Omitted entirely (not null / zero time) when never saved.
+	rr := doJSON(t, e.h, "GET", "/api/v1/recordings?state=recorded", nil, e.bob)
+	if strings.Contains(rr.Body.String(), "positionUpdatedAt") {
+		t.Fatalf("bob sees a position time: %s", rr.Body.String())
+	}
+	if b := list(e.bob)[watched]; b.PositionSec != 0 || b.PositionUpdatedAt != nil {
+		t.Fatalf("bob watched %+v", b)
+	}
+
+	// Single-recording responses carry it too.
+	prr := doJSON(t, e.h, "PATCH", fmt.Sprintf("/api/v1/recordings/%d", watched), map[string]any{"protected": true}, e.alice)
+	var patched recJSON
+	if prr.Code != http.StatusOK || json.Unmarshal(prr.Body.Bytes(), &patched) != nil ||
+		patched.PositionUpdatedAt == nil || !patched.PositionUpdatedAt.Equal(*w.PositionUpdatedAt) {
+		t.Fatalf("patch %d %s", prr.Code, prr.Body.String())
+	}
+
+	// Resetting to 0 ("remove from Continue watching") is still a saved position.
+	if rr := doJSON(t, e.h, "PUT", fmt.Sprintf("/api/v1/recordings/%d/position", watched),
+		map[string]any{"positionSec": 0}, e.alice); rr.Code != http.StatusNoContent {
+		t.Fatalf("reset %d", rr.Code)
+	}
+	if w := list(e.alice)[watched]; w.PositionSec != 0 || w.PositionUpdatedAt == nil {
+		t.Fatalf("after reset %+v", w)
 	}
 }
 

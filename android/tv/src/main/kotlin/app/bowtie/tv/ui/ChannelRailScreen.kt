@@ -49,12 +49,15 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import app.bowtie.core.Channel
+import app.bowtie.core.ContinueWatching
 import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
+import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
 import app.bowtie.core.User
 import app.bowtie.core.vm.ChannelListViewModel
+import app.bowtie.core.vm.ContinueWatchingViewModel
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.vm.SeriesResult
 import app.bowtie.tv.BowtieColors
@@ -76,7 +79,12 @@ fun ChannelRailScreen(
     onOpenChannel: (Channel) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecordings: () -> Unit,
+    continueWatching: ContinueWatchingViewModel,
+    /** Continue watching: plays the recording; returns why it can't, or null. */
+    onResumeRecording: suspend (Recording) -> String?,
     modifier: Modifier = Modifier,
+    /** Waits for the recording player's last position save (back from it). */
+    awaitRecordingSaves: suspend () -> Unit = {},
 ) {
     var panel by remember { mutableStateOf<Panel?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -86,6 +94,12 @@ fun ChannelRailScreen(
     val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
     val message by channelListViewModel.message.collectAsStateWithLifecycle()
     val filter by channelListViewModel.filter.collectAsStateWithLifecycle()
+    val continueItems by continueWatching.items.collectAsStateWithLifecycle()
+    val continueMessage by continueWatching.message.collectAsStateWithLifecycle()
+    /** A card to focus after its neighbor was removed. */
+    var continueRefocus by remember { mutableStateOf<Long?>(null) }
+    /** The last card was removed: focus moves below the (gone) row. */
+    var continueRowGone by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -93,6 +107,23 @@ fun ChannelRailScreen(
     // Back from the player (a route change, not ON_START): the Recent row may have grown.
     LaunchedEffect(channelListViewModel) {
         channelListViewModel.refreshRecents()
+    }
+
+    // Shown (incl. back from a recording or Recordings) and every return to the
+    // foreground (ON_RESUME): wait for the player's last position save, then
+    // reload the row; a recording moves to the front, or leaves when finished.
+    LaunchedEffect(continueWatching, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            awaitRecordingSaves()
+            continueWatching.refresh()
+        }
+    }
+
+    // A Continue watching remove the server refused.
+    LaunchedEffect(continueMessage) {
+        val text = continueMessage ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        continueWatching.clearMessage()
     }
 
     // A favorite toggle the server refused (already reverted).
@@ -150,6 +181,42 @@ fun ChannelRailScreen(
                 is ChannelListViewModel.ScheduleResult.Failed -> notice = result.message
             }
         }
+    }
+
+    fun resume(r: Recording) {
+        scope.launch {
+            onResumeRecording(r)?.let { notice = it }
+        }
+    }
+
+    /** Resets the saved position; focus moves to a neighbor (or below the row). */
+    fun removeFromContinue(r: Recording) {
+        val ids = continueItems.map { it.id }
+        scope.launch {
+            if (continueWatching.remove(r)) {
+                val next = ContinueFocus.afterRemoval(ids, r.id)
+                if (next != null) continueRefocus = next else continueRowGone = true
+            }
+        }
+    }
+
+    /** Hold OK, or press ☰, on a Continue watching card. */
+    fun openContinueMenu(r: Recording) {
+        panel = Panel(
+            title = r.title.ifEmpty { "Untitled" },
+            body = ContinueWatching.remainingText(r).replaceFirstChar { it.uppercase() },
+            choices = listOf(
+                "Resume" to {
+                    panel = null
+                    resume(r)
+                },
+                REMOVE_FROM_CONTINUE_WATCHING to {
+                    panel = null
+                    removeFromContinue(r)
+                },
+                "Close" to { panel = null },
+            ),
+        )
     }
 
     fun recordSeries(channelId: Long, program: GuideProgram) {
@@ -370,6 +437,22 @@ fun ChannelRailScreen(
                         }
                     }
 
+                    // The last card went: land on the chips rather than nowhere.
+                    LaunchedEffect(continueRowGone) {
+                        if (!continueRowGone) return@LaunchedEffect
+                        withFrameNanos { }
+                        runCatching { allChipFocus.requestFocus() }
+                        continueRowGone = false
+                    }
+                    if (continueItems.isNotEmpty()) {
+                        ContinueRail(
+                            items = continueItems,
+                            refocusId = continueRefocus,
+                            onRefocused = { continueRefocus = null },
+                            onResume = ::resume,
+                            onOptions = ::openContinueMenu,
+                        )
+                    }
                     if (supported && recents.isNotEmpty()) {
                         RecentRail(
                             recents = recents,
@@ -589,7 +672,7 @@ private fun ChannelRailRow(
                 val toggle = onToggleFavorite ?: return@onPreviewKeyEvent false
                 val native = event.nativeKeyEvent
                 when (RailKeys.onKey(native.keyCode, native.action, native.repeatCount)) {
-                    RailKeys.Outcome.ToggleFavorite -> {
+                    RailKeys.Outcome.MenuPress -> {
                         toggle()
                         true
                     }

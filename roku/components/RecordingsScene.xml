@@ -7,6 +7,10 @@
         <field id="apiTask" type="node" />
         <!-- Back to home. -->
         <field id="closed" type="boolean" alwaysNotify="true" value="false" />
+        <!-- Set (with the scene still hidden) to open straight into playback of
+             this recording from its saved position (Home's Continue watching);
+             when playback ends the scene closes back to Home. -->
+        <field id="resumeRecording" type="assocarray" />
     </interface>
     <script type="text/brightscript" uri="RecordingsScene.bs" />
     <children>

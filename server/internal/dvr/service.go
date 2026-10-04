@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/stream"
 )
@@ -87,6 +88,9 @@ type Deps struct {
 	// Padding returns the padding for a recording being scheduled now
 	// (nil or an error: DefaultPadStart / DefaultPadEnd).
 	Padding func() (start, end time.Duration, err error)
+	// Notifier hears about failed and ready recordings and low disk space
+	// (nil = off).
+	Notifier notify.Notifier
 }
 
 // Warning accompanies a successful Schedule.
@@ -405,6 +409,7 @@ func (s *Service) Tick() {
 		s.lastSweep = now
 		s.ApplyRules()
 		s.sweep()
+		s.checkDisk()
 	}
 }
 
@@ -553,7 +558,9 @@ func (s *Service) startCapture(r store.Recording) {
 	fail := func(failure string, err error) {
 		log.Printf("dvr: recording %d: %v", r.ID, err)
 		r.State, r.Failure, r.FailureDetail = store.RecFailed, failure, err.Error()
-		_ = s.deps.Store.UpdateRecording(r)
+		if s.deps.Store.UpdateRecording(r) == nil {
+			s.notifyFailed(r)
+		}
 		s.mu.Lock()
 		delete(s.captures, r.ID)
 		s.mu.Unlock()
@@ -764,7 +771,9 @@ func (s *Service) finishCapture(id int64, now time.Time) {
 			r.Failure = "error"
 			r.FailureDetail = "nothing was recorded (the server was not running during the recording)"
 		}
-		_ = s.deps.Store.UpdateRecording(r)
+		if s.deps.Store.UpdateRecording(r) == nil {
+			s.notifyFailed(r)
+		}
 		return
 	}
 	stopAt := now.UTC()
@@ -823,7 +832,9 @@ func (s *Service) convert(id int64) {
 		video, rerr := os.ReadFile(vodVideoPlaylist(out))
 		if _, merr := os.Stat(filepath.Join(out, MasterName)); rerr != nil || merr != nil || !strings.Contains(string(video), "#EXT-X-ENDLIST") {
 			r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "nothing was recorded"
-			_ = s.deps.Store.UpdateRecording(r)
+			if s.deps.Store.UpdateRecording(r) == nil {
+				s.notifyFailed(r)
+			}
 			return
 		}
 		dur = playlistDuration(video)
@@ -852,7 +863,9 @@ func (s *Service) convert(id int64) {
 			}
 			log.Printf("dvr: convert recording %d: %v", id, err)
 			r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "conversion failed: "+err.Error()
-			_ = s.deps.Store.UpdateRecording(r)
+			if s.deps.Store.UpdateRecording(r) == nil {
+				s.notifyFailed(r)
+			}
 			return
 		}
 	}
@@ -873,6 +886,7 @@ func (s *Service) convert(id int64) {
 	for _, p := range parts {
 		_ = os.Remove(p)
 	}
+	s.notifyReady(r)
 	s.pokeDetect()
 	s.pruneRule(r.RuleID)
 }

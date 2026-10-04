@@ -250,6 +250,9 @@ data class Recording(
      * from older servers and may be `null`; read [commercialSegments].
      */
     val commercials: List<Commercial>? = null,
+    /** When the caller last saved a resume position; null when never (or an older server). */
+    @Serializable(with = InstantIso8601Serializer::class)
+    val positionUpdatedAt: Instant? = null,
 ) {
     /** [commercials], or none. */
     val commercialSegments: List<Commercial> get() = commercials.orEmpty()

@@ -1496,6 +1496,9 @@ paths:
           required when `dvr` is present)
         - `dvr.quality` `"720p"` or `"1080p"` (optional; absent keeps the
           stored value)
+        - `notifications.url` empty (off) or an http(s) URL (required when
+          `notifications` is present); `notifications.events` and each event
+          are optional (absent keeps the stored choice)
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -1513,6 +1516,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Settings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/notifications/test:
+    post:
+      summary: Send a test notification
+      description: |
+        Sends "Bowtie test notification" to `url` from the body, or to the
+        saved `notifications.url` when the body (or its `url`) is absent, and
+        reports how the target answered. The event choices and rate limit
+        don't apply. One attempt, 5 s timeout, no retry. A failed delivery is
+        still `200` with `ok: false`; `error` never contains the URL's path,
+        query or credentials.
+      operationId: adminTestNotification
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: Try this URL instead of the saved one (not saved)
+      responses:
+        '200':
+          description: Delivery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTestResult'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2203,6 +2243,13 @@ components:
         positionSec:
           type: integer
           description: The caller's resume position
+        positionUpdatedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the caller last saved a playback position for this recording
+            (PUT /recordings/{id}/position, including a reset to 0). Omitted
+            when they never did. Clients sort "Continue watching" by it.
         scheduledBy:
           type: string
         canManage:
@@ -2440,6 +2487,83 @@ components:
           $ref: '#/components/schemas/SettingsHDHomeRun'
         dvr:
           $ref: '#/components/schemas/SettingsDVR'
+        notifications:
+          $ref: '#/components/schemas/SettingsNotifications'
+    SettingsNotifications:
+      type: object
+      required: [url, events]
+      description: |
+        Admin notifications. Delivery follows the URL: a host containing
+        "ntfy" (ntfy.sh or self-hosted) gets an ntfy message (plain-text body
+        with `Title`, `Priority` and `Tags` headers; `https://user:pass@host/topic`
+        sends Basic auth); `discord.com`/`discordapp.com` `/api/webhooks/...`
+        gets Discord JSON `{"content": "**title**\nmessage"}`; anything else
+        gets a JSON POST `{event, title, message, recordingId?, time}` (time
+        RFC 3339). 5 s timeout, one retry after 30 s on no answer, 429 or
+        5xx. The same event is sent at most once per 6 hours (a failed
+        recording once per recording).
+      properties:
+        url:
+          type: string
+          description: Empty turns notifications off; otherwise an http(s) URL
+        events:
+          $ref: '#/components/schemas/SettingsNotificationEvents'
+    SettingsNotificationEvents:
+      type: object
+      required: [recordingFailed, diskLow, recordingReady, guideFailed]
+      properties:
+        recordingFailed:
+          type: boolean
+          description: A recording failed (not a skipped episode). Default true.
+        diskLow:
+          type: boolean
+          description: |
+            Free space for recordings is below the capture floor or the
+            retention target after the hourly sweep. Default true.
+        recordingReady:
+          type: boolean
+          description: A recording finished converting. Default false.
+        guideFailed:
+          type: boolean
+          description: |
+            A guide source has failed for more than 24 hours straight.
+            Default true.
+    PutSettingsNotifications:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: Empty turns notifications off; otherwise an http(s) URL
+        events:
+          type: object
+          description: Each event is optional; absent keeps the stored choice.
+          properties:
+            recordingFailed:
+              type: boolean
+            diskLow:
+              type: boolean
+            recordingReady:
+              type: boolean
+            guideFailed:
+              type: boolean
+    NotificationTestResult:
+      type: object
+      required: [target, ok]
+      properties:
+        target:
+          type: string
+          enum: [ntfy, discord, webhook]
+          description: How the message was formatted
+        ok:
+          type: boolean
+          description: The target answered 2xx
+        status:
+          type: integer
+          description: HTTP status the target answered (absent when it didn't answer)
+        error:
+          type: string
+          description: What went wrong (host only; never the URL's path or credentials)
     SettingsDVR:
       type: object
       required: [padStartSeconds, padEndSeconds]
@@ -2598,6 +2722,8 @@ components:
           $ref: '#/components/schemas/SettingsHDHomeRun'
         dvr:
           $ref: '#/components/schemas/SettingsDVR'
+        notifications:
+          $ref: '#/components/schemas/PutSettingsNotifications'
     PutSettingsXMLTV:
       type: object
       required: [source, refreshHours]

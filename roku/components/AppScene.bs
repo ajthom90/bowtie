@@ -3,6 +3,7 @@
 ' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
 ' Refresh ok → Home. Refresh fail → Login (server kept).
 ' Home → Settings / Recordings / Player; Settings change-server → Connect; sign-out → Login.
+' Home's Continue watching → Recordings, playing that recording → Home.
 ' A3: phase changes never orphan a live viewer (PlayerScene teardown on hide).
 
 import "pkg:/source/lib/Registry.bs"
@@ -44,6 +45,7 @@ sub init()
     m.homeScene.observeField("openSettings", "onOpenSettings")
     m.homeScene.observeField("selectedChannel", "onSelectedChannel")
     m.homeScene.observeField("openRecordings", "onOpenRecordings")
+    m.homeScene.observeField("resumeRecording", "onResumeRecording")
     m.recordingsScene.observeField("closed", "onRecordingsClosed")
     m.settingsScene.observeField("closed", "onSettingsClosed")
     m.settingsScene.observeField("changeServer", "onSettingsChangeServer")
@@ -185,6 +187,15 @@ end sub
 
 sub onOpenRecordings()
     if m.homeScene.openRecordings <> true then return
+    setPhase("recordings")
+end sub
+
+' Home's Continue watching: Recordings opens straight into playback of this
+' recording from its saved position, and closes back to Home when it ends.
+sub onResumeRecording()
+    rec = m.homeScene.resumeRecording
+    if rec = invalid or rec.id = invalid then return
+    m.recordingsScene.resumeRecording = rec
     setPhase("recordings")
 end sub
 

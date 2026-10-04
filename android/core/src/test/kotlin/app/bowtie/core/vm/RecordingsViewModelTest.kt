@@ -26,6 +26,7 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** RecordingsViewModel over a real [BowtieClient] and MockWebServer. */
 class RecordingsViewModelTest {
@@ -35,6 +36,8 @@ class RecordingsViewModelTest {
     private lateinit var server: MockWebServer
     private val requests = CopyOnWriteArrayList<Req>()
     private val positionPuts = LinkedBlockingQueue<Req>()
+    private val positionAnswered = AtomicInteger(0)
+    @Volatile private var positionDelayMs = 0L
     private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Response bodies by list filter. */
@@ -63,6 +66,8 @@ class RecordingsViewModelTest {
                         )
                     r.method == "PUT" && p.endsWith("/position") -> {
                         positionPuts += r
+                        if (positionDelayMs > 0) Thread.sleep(positionDelayMs)
+                        positionAnswered.incrementAndGet()
                         MockResponse().setResponseCode(204)
                     }
                     r.method == "POST" && p.endsWith("/play") -> MockResponse().setBody(playBody)
@@ -219,6 +224,42 @@ class RecordingsViewModelTest {
     }
 
     @Test
+    fun resume_startsAtTheSavedPosition_withoutAsking() = runBlocking {
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+
+        val resume = m.resume(rec) as RecordingsViewModel.Resume.Ready
+
+        assertEquals(95, resume.startAtSec)
+        assertEquals("/api/v1/recordings/2/hls/index.m3u8?token=t", resume.start.playlistUrl)
+    }
+
+    @Test
+    fun resume_nearEnd_startsOver() = runBlocking {
+        playBody = """{"playlistUrl":"/x.m3u8?token=t","positionSec":1790,"durationSec":1800}"""
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+
+        assertEquals(0, (m.resume(rec) as RecordingsViewModel.Resume.Ready).startAtSec)
+    }
+
+    @Test
+    fun resume_failure_isReturned_notLeftForTheRecordingsScreen() = runBlocking {
+        val m = vm()
+        m.selectTab(Tab.Recorded)
+        val rec = (m.state.value.load as RecordingsViewModel.Load.Loaded).items.single()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) =
+                MockResponse().setResponseCode(404).setBody("""{"error":"recording not found"}""")
+        }
+
+        assertEquals(RecordingsViewModel.Resume.Failed("That recording is gone."), m.resume(rec))
+        assertNull(m.state.value.message)
+    }
+
+    @Test
     fun retryPlayback_fetchesAFreshPlaylist() = runBlocking {
         val m = vm()
         m.selectTab(Tab.Recorded)
@@ -284,5 +325,27 @@ class RecordingsViewModelTest {
         assertEquals("""{"positionSec":754}""", a.body)
         assertEquals("""{"positionSec":0}""", b.body)
         assertEquals("/api/v1/recordings/2/position", a.path)
+    }
+
+    @Test
+    fun awaitSaves_waitsForTheClosingPlayersSave() = runBlocking {
+        positionDelayMs = 300
+        val m = vm()
+        m.savePosition(recordingId = 2, positionMs = 900_000)
+
+        m.awaitSaves()
+
+        // Already answered: the screen behind the player can reload now.
+        assertEquals(1, positionAnswered.get())
+    }
+
+    @Test
+    fun awaitSaves_returnsAtOnceWhenIdle() = runBlocking {
+        val m = vm()
+        val start = System.nanoTime()
+
+        m.awaitSaves()
+
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 200)
     }
 }
