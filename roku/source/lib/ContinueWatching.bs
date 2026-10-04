@@ -1,0 +1,274 @@
+' "Continue watching" on the home screen: recordings this account started and
+' hasn't finished (no I/O, no nodes). Rules match the other apps
+' (web/src/recordings/continueModel.ts, iOS ContinueWatching.swift):
+' - ready and not parental-locked, with a known duration;
+' - watched at least a minute (positionSec >= 60);
+' - not near the end (positionSec < durationSec - 120);
+' - newest positionUpdatedAt first; recordings without one (older servers,
+'   unparseable) after them; ties by start, newest first, then id;
+' - at most 10.
+' Input is recordings normalized by bowtie.recordings.parseList.
+'
+' Also the home screen's row layout (homeLayout), so the stacking of the
+' Continue, Recent and channel rows is tested here rather than on a device.
+'
+' Camel-case keys in returned AAs are quoted so they keep their case.
+
+import "pkg:/source/lib/Recordings.bs"
+
+namespace bowtie.continueWatching
+
+    function minPositionSec() as integer
+        return 60
+    end function
+
+    function endMarginSec() as integer
+        return 120
+    end function
+
+    function maxItems() as integer
+        return 10
+    end function
+
+    ' ── Selection ────────────────────────────────────────────────────────────
+
+    function isEligible(r as dynamic) as boolean
+        if r = invalid or Type(r) <> "roAssociativeArray" then return false
+        ' Ready and not locked: the same test as the Recordings list's OK.
+        if not bowtie.recordings.rowActions(r).play then return false
+        d = bowtie.recordings.asNumber(r.durationSec)
+        p = bowtie.recordings.asNumber(r.positionSec)
+        if d <= 0 then return false
+        return p >= bowtie.continueWatching.minPositionSec() and p < d - bowtie.continueWatching.endMarginSec()
+    end function
+
+    ' The row's items, in display order (normalized recordings in, same out).
+    function items(list as dynamic) as object
+        entries = []
+        if list = invalid or Type(list) <> "roArray" then return entries
+        for each r in list
+            if bowtie.continueWatching.isEligible(r)
+                at = bowtie.continueWatching.parseTime(r.positionUpdatedAt)
+                start = bowtie.continueWatching.parseTime(r.start)
+                if start = invalid then start = 0#
+                entry = { rec: r, hasAt: (at <> invalid), at: 0#, start: start, id: bowtie.recordings.asNumber(r.id) }
+                if at <> invalid then entry.at = at
+                ' Insertion sort (stable; at most a few hundred recordings).
+                i = entries.count()
+                entries.push(entry)
+                while i > 0 and bowtie.continueWatching.before(entry, entries[i - 1])
+                    entries[i] = entries[i - 1]
+                    i = i - 1
+                end while
+                entries[i] = entry
+            end if
+        end for
+        out = []
+        for each e in entries
+            if out.count() >= bowtie.continueWatching.maxItems() then exit for
+            out.push(e.rec)
+        end for
+        return out
+    end function
+
+    ' Whether entry a sorts strictly before entry b.
+    function before(a as object, b as object) as boolean
+        if a.hasAt and b.hasAt and a.at <> b.at then return a.at > b.at
+        if a.hasAt <> b.hasAt then return a.hasAt
+        if a.start <> b.start then return a.start > b.start
+        return a.id > b.id
+    end function
+
+    ' A raw GET /recordings body → the row's items.
+    function fromResponse(raw as dynamic) as object
+        return bowtie.continueWatching.items(bowtie.recordings.parseList(raw))
+    end function
+
+    ' The list after "Remove from Continue watching" succeeded.
+    function without(list as dynamic, id as dynamic) as object
+        kept = []
+        if list = invalid or Type(list) <> "roArray" then return kept
+        for each r in list
+            if r <> invalid and r.id <> id then kept.push(r)
+        end for
+        return kept
+    end function
+
+    ' ── Labels ───────────────────────────────────────────────────────────────
+
+    ' "less than a minute left", "37 min left", "1 hr left", "1 hr 5 min left".
+    function formatTimeLeft(sec as dynamic) as string
+        s = bowtie.recordings.asNumber(sec)
+        if s < 60 then return "less than a minute left"
+        totalMin = Int(s / 60)
+        h = totalMin \ 60
+        mins = totalMin mod 60
+        if h = 0 then return mins.toStr() + " min left"
+        if mins = 0 then return h.toStr() + " hr left"
+        return h.toStr() + " hr " + mins.toStr() + " min left"
+    end function
+
+    function remainingText(r as object) as string
+        d = bowtie.recordings.asNumber(r.durationSec)
+        p = bowtie.recordings.asNumber(r.positionSec)
+        return bowtie.continueWatching.formatTimeLeft(d - p)
+    end function
+
+    ' 0..1 watched, for the card's progress bar.
+    function progress(r as object) as float
+        d = bowtie.recordings.asNumber(r.durationSec)
+        p = bowtie.recordings.asNumber(r.positionSec)
+        if d <= 0 or p <= 0 then return 0.0
+        f = p / d
+        if f > 1 then f = 1.0
+        return f
+    end function
+
+    ' The card's second line: "Ice · 37 min left", or "37 min left".
+    function cardDetail(r as object) as string
+        remaining = bowtie.continueWatching.remainingText(r)
+        episode = bowtie.recordings.asString(r.subtitle)
+        if episode = "" then return remaining
+        return episode + " · " + remaining
+    end function
+
+    ' [{id, label}] for an item's * dialog. ids: remove, cancel.
+    function optionButtons() as object
+        return [
+            { id: "remove", label: "Remove from Continue watching" }
+            { id: "cancel", label: "Cancel" }
+        ]
+    end function
+
+    ' ── Playback ─────────────────────────────────────────────────────────────
+
+    ' Where OK on an item starts playing: the position POST /play returned
+    ' (the server's latest), else the row's; like the Recordings list, the
+    ' first 10 s and last 30 s play from the start.
+    function startPosition(playPositionSec as dynamic, itemPositionSec as dynamic, durationSec as dynamic) as integer
+        p = bowtie.recordings.asNumber(playPositionSec)
+        if p <= 0 then p = bowtie.recordings.asNumber(itemPositionSec)
+        decision = bowtie.recordings.resumeDecision(p, durationSec)
+        if decision.kind = "ask" then return decision.positionSec
+        return 0
+    end function
+
+    ' ── Time ─────────────────────────────────────────────────────────────────
+
+    ' RFC 3339 ("2026-10-03T12:00:00Z", "…T09:30:00.25+02:00") → seconds since
+    ' the epoch (Double); invalid when missing or not RFC 3339. Parsed by hand
+    ' so it behaves the same under every firmware and the test interpreter.
+    function parseTime(s as dynamic) as dynamic
+        if s = invalid then return invalid
+        t = Type(s)
+        if t <> "String" and t <> "roString" then return invalid
+        n = Len(s)
+        if n < 20 then return invalid
+        if Mid(s, 5, 1) <> "-" or Mid(s, 8, 1) <> "-" then return invalid
+        sep = Mid(s, 11, 1)
+        if sep <> "T" and sep <> "t" and sep <> " " then return invalid
+        if Mid(s, 14, 1) <> ":" or Mid(s, 17, 1) <> ":" then return invalid
+        y = bowtie.continueWatching.digits(s, 1, 4)
+        mo = bowtie.continueWatching.digits(s, 6, 2)
+        d = bowtie.continueWatching.digits(s, 9, 2)
+        h = bowtie.continueWatching.digits(s, 12, 2)
+        mi = bowtie.continueWatching.digits(s, 15, 2)
+        sec = bowtie.continueWatching.digits(s, 18, 2)
+        if y < 0 or mo < 1 or mo > 12 or d < 1 or d > 31 then return invalid
+        if h < 0 or h > 23 or mi < 0 or mi > 59 or sec < 0 or sec > 60 then return invalid
+
+        i = 20
+        frac = 0#
+        if Mid(s, i, 1) = "."
+            i = i + 1
+            scale = 1#
+            count = 0
+            while i <= n and bowtie.continueWatching.digits(s, i, 1) >= 0
+                scale = scale / 10
+                frac = frac + bowtie.continueWatching.digits(s, i, 1) * scale
+                count = count + 1
+                i = i + 1
+            end while
+            if count = 0 then return invalid
+        end if
+
+        zone = Mid(s, i, 1)
+        offset = 0
+        if zone = "Z" or zone = "z"
+            if i <> n then return invalid
+        else if zone = "+" or zone = "-"
+            if n - i <> 5 or Mid(s, i + 3, 1) <> ":" then return invalid
+            oh = bowtie.continueWatching.digits(s, i + 1, 2)
+            om = bowtie.continueWatching.digits(s, i + 4, 2)
+            if oh < 0 or oh > 23 or om < 0 or om > 59 then return invalid
+            offset = oh * 3600 + om * 60
+            if zone = "-" then offset = -offset
+        else
+            return invalid
+        end if
+
+        days = bowtie.continueWatching.daysFromCivil(y, mo, d)
+        return days * 86400# + h * 3600 + mi * 60 + sec + frac - offset
+    end function
+
+    ' The non-negative integer in s[start, start+count), or -1 if any is not a digit.
+    function digits(s as string, start as integer, count as integer) as integer
+        v = 0
+        for k = 0 to count - 1
+            c = Asc(Mid(s, start + k, 1))
+            if c < 48 or c > 57 then return -1
+            v = v * 10 + (c - 48)
+        end for
+        return v
+    end function
+
+    ' Days since 1970-01-01 for a proleptic Gregorian date (year >= 0).
+    ' (`m` is BrightScript's component scope, so the month is `month`.)
+    function daysFromCivil(year as integer, month as integer, day as integer) as integer
+        y = year
+        if month <= 2 then y = y - 1
+        era = y \ 400
+        yoe = y - era * 400
+        mp = month - 3
+        if month <= 2 then mp = month + 9
+        doy = (153 * mp + 2) \ 5 + day - 1
+        doe = yoe * 365 + yoe \ 4 - yoe \ 100 + doy
+        return era * 146097 + doe - 719468
+    end function
+
+    ' ── Home layout ──────────────────────────────────────────────────────────
+
+    ' Where HomeScene puts each row (y on the 1080 canvas) and how many
+    ' channel rows the rail keeps. Below the header (ends at y=128):
+    ' Continue watching (label + 112 px cards), Recent (label + 88 px cards),
+    ' then the rail (120 px rows, 8 apart). Only the shown rows take space.
+    ' (Built as one literal at the end: assigning layout.railY would store
+    ' the key lowercased.)
+    function homeLayout(showContinue as boolean, showRecent as boolean) as object
+        y = 136
+        continueLabelY = y
+        recentLabelY = y
+        railY = 160
+        if showContinue
+            continueLabelY = y
+            y = y + 36 + 112 + 16
+            railY = y
+        end if
+        if showRecent
+            recentLabelY = y
+            y = y + 36 + 88 + 20
+            railY = y
+        end if
+        ' Rows that fit: railY + rows * 128 - 8 <= 1080.
+        railRows = (1080 + 8 - railY) \ 128
+        return {
+            "continueLabelY": continueLabelY
+            "continueY": continueLabelY + 36
+            "recentLabelY": recentLabelY
+            "recentY": recentLabelY + 36
+            "railY": railY
+            "railRows": railRows
+        }
+    end function
+
+end namespace
