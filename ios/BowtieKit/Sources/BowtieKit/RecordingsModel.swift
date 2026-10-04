@@ -153,21 +153,30 @@ public final class RecordingsModel {
     // MARK: - Playback
 
     /// Asks the server for a playback URL; the resume decision uses its fresh position.
-    public func play(_ recording: Recording) async -> Playback? {
+    ///
+    /// `beforeStart` runs only once the server has answered with a playback URL
+    /// (e.g. to stop live TV, one stream at a time). If `/play` fails it never
+    /// runs, so whatever is already playing keeps playing and `actionError` explains.
+    public func play(
+        _ recording: Recording,
+        beforeStart: @MainActor () async -> Void = {}
+    ) async -> Playback? {
+        let play: RecordingPlayback
         do {
-            let play = try await client.playRecording(id: recording.id)
-            let url = ServerURL.resolve(path: play.playlistUrl, against: client.serverURL)
-            let duration = play.durationSec > 0 ? play.durationSec : recording.durationSec
-            return Playback(
-                recording: recording,
-                url: url,
-                durationSec: duration,
-                resumeAt: RecordingLogic.resumePosition(positionSec: play.positionSec, durationSec: duration)
-            )
+            play = try await client.playRecording(id: recording.id)
         } catch {
             actionError = RecordingErrorCopy.message(for: error)
             return nil
         }
+        await beforeStart()
+        let url = ServerURL.resolve(path: play.playlistUrl, against: client.serverURL)
+        let duration = play.durationSec > 0 ? play.durationSec : recording.durationSec
+        return Playback(
+            recording: recording,
+            url: url,
+            durationSec: duration,
+            resumeAt: RecordingLogic.resumePosition(positionSec: play.positionSec, durationSec: duration)
+        )
     }
 
     /// Best-effort save of the player's position (every 15 s and on dismiss).
