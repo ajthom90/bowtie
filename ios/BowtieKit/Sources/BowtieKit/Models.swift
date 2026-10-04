@@ -39,14 +39,28 @@ public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// Last tune outcome learned by the server: "ok", "noSignal" or "unknown".
     /// Absent from servers older than 0.6.3.
     public let reception: String?
+    /// The signed-in user starred this channel. `nil` means the server predates
+    /// favorites, so clients hide stars and the Recent row.
+    public var favorite: Bool?
 
-    public init(id: Int64, guideNumber: String, name: String, logoUrl: String, reception: String? = nil) {
+    public init(
+        id: Int64,
+        guideNumber: String,
+        name: String,
+        logoUrl: String,
+        reception: String? = nil,
+        favorite: Bool? = nil
+    ) {
         self.id = id
         self.guideNumber = guideNumber
         self.name = name
         self.logoUrl = logoUrl
         self.reception = reception
+        self.favorite = favorite
     }
+
+    /// Starred by the signed-in user (false on servers without favorites).
+    public var isFavorite: Bool { favorite == true }
 
     /// The antenna got no signal the last time this channel was tuned.
     public var hasNoSignal: Bool { reception == "noSignal" }
@@ -82,6 +96,8 @@ public struct GuideChannel: Codable, Equatable, Sendable {
     public let guideNumber: String
     public let name: String
     public let logoUrl: String
+    /// Starred by the signed-in user; `nil` from servers without favorites.
+    public let favorite: Bool?
     public let programs: [GuideProgram]
 
     public init(
@@ -89,13 +105,40 @@ public struct GuideChannel: Codable, Equatable, Sendable {
         guideNumber: String,
         name: String,
         logoUrl: String,
+        favorite: Bool? = nil,
         programs: [GuideProgram]
     ) {
         self.channelId = channelId
         self.guideNumber = guideNumber
         self.name = name
         self.logoUrl = logoUrl
+        self.favorite = favorite
         self.programs = programs
+    }
+}
+
+/// A channel the signed-in user recently watched (`RecentChannel` in OpenAPI),
+/// newest first from `GET /api/v1/me/recents`.
+public struct RecentChannel: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public let channelId: Int64
+    public let guideNumber: String
+    public let name: String
+    public let logoUrl: String
+    public let watchedAt: Date
+
+    public var id: Int64 { channelId }
+
+    public init(channelId: Int64, guideNumber: String, name: String, logoUrl: String, watchedAt: Date) {
+        self.channelId = channelId
+        self.guideNumber = guideNumber
+        self.name = name
+        self.logoUrl = logoUrl
+        self.watchedAt = watchedAt
+    }
+
+    /// A playable channel built from the recent entry's own fields.
+    public var channel: Channel {
+        Channel(id: channelId, guideNumber: guideNumber, name: name, logoUrl: logoUrl)
     }
 }
 

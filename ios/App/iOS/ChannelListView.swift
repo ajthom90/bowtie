@@ -111,6 +111,12 @@ struct ChannelListView: View {
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
             Task { await listModel?.load() }
         }
+        // Back from the player: the server may have just recorded a watch.
+        .onChange(of: playingChannel) { old, new in
+            if old != nil, new == nil {
+                Task { await listModel?.refreshRecents() }
+            }
+        }
     }
 
     // MARK: - Content
@@ -190,30 +196,108 @@ struct ChannelListView: View {
 
     private func listView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
         List {
-            ForEach(rows) { row in
-                Button {
-                    open(channel: row.channel)
-                } label: {
-                    ChannelRowView(
-                        row: row,
-                        now: now,
-                        isPlaying: playerModel.currentChannel?.id == row.channel.id
+            if model.showsRecents {
+                Section {
+                    RecentChipRow(
+                        channels: model.recentChannels,
+                        playingID: playerModel.currentChannel?.id,
+                        onSelect: { open(channel: $0) },
+                        onClear: { Task { await model.clearRecents() } }
                     )
-                    .opacity(row.channel.hasNoSignal ? 0.55 : 1)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Theme.bg)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    sectionHeader("Recent")
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(Theme.bg)
-                .listRowSeparatorTint(Theme.line)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(accessibilityLabel(for: row))
-                .accessibilityHint("Play this channel")
-                .accessibilityAddTraits(.isButton)
+            }
+
+            let favorites = model.favoriteRows
+            if favorites.isEmpty {
+                ForEach(rows) { row in
+                    channelRow(row, model: model)
+                }
+            } else {
+                Section {
+                    ForEach(favorites) { row in
+                        channelRow(row, model: model)
+                    }
+                } header: {
+                    sectionHeader("Favorites")
+                }
+                Section {
+                    ForEach(model.otherRows) { row in
+                        channelRow(row, model: model)
+                    }
+                } header: {
+                    sectionHeader("Channels")
+                }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .refreshable {
             await model.load()
+        }
+        .bowtieToast(model.actionError) {
+            model.dismissActionError()
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(Theme.label(13))
+            .foregroundStyle(Theme.dim)
+            .textCase(.uppercase)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func channelRow(_ row: ChannelListModel.Row, model: ChannelListModel) -> some View {
+        Button {
+            open(channel: row.channel)
+        } label: {
+            ChannelRowView(
+                row: row,
+                now: now,
+                isPlaying: playerModel.currentChannel?.id == row.channel.id
+            )
+            .opacity(row.channel.hasNoSignal ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Theme.bg)
+        .listRowSeparatorTint(Theme.line)
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if model.supportsFavorites {
+                favoriteButton(for: row.channel, model: model)
+                    .tint(Theme.amber)
+            }
+        }
+        .contextMenu {
+            if model.supportsFavorites {
+                favoriteButton(for: row.channel, model: model)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel(for: row))
+        .accessibilityHint("Play this channel")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityActions {
+            if model.supportsFavorites {
+                favoriteButton(for: row.channel, model: model)
+            }
+        }
+    }
+
+    /// "Favorite" / "Unfavorite" — shared by the swipe action, context menu and VoiceOver.
+    private func favoriteButton(for channel: Channel, model: ChannelListModel) -> some View {
+        Button {
+            Task { await model.toggleFavorite(channelId: channel.id) }
+        } label: {
+            if channel.isFavorite {
+                Label("Unfavorite", systemImage: "star.slash")
+            } else {
+                Label("Favorite", systemImage: "star")
+            }
         }
     }
 
@@ -248,6 +332,9 @@ struct ChannelListView: View {
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
         ]
+        if row.channel.isFavorite {
+            parts.append("Favorite")
+        }
         if row.channel.hasNoSignal {
             parts.append("No signal last time")
         }
@@ -281,10 +368,19 @@ private struct ChannelRowView: View {
                 .minimumScaleFactor(0.7)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(row.channel.name)
-                    .font(Theme.label(17))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(row.channel.name)
+                        .font(Theme.label(17))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+
+                    if row.channel.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.amber)
+                            .accessibilityHidden(true)
+                    }
+                }
 
                 if row.channel.hasNoSignal {
                     // Last tune got no signal; still tappable (signal may return).
@@ -335,6 +431,67 @@ private struct ChannelRowView: View {
         guard total > 0 else { return 0 }
         let elapsed = date.timeIntervalSince(program.start)
         return min(1, max(0, elapsed / total))
+    }
+}
+
+// MARK: - Recent chips
+
+/// Horizontal strip of recently watched channels; a tap plays like a row tap.
+private struct RecentChipRow: View {
+    let channels: [Channel]
+    let playingID: Int64?
+    let onSelect: (Channel) -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(channels) { channel in
+                    Button {
+                        onSelect(channel)
+                    } label: {
+                        chip(for: channel)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            onClear()
+                        } label: {
+                            Label("Clear Recent", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    .accessibilityLabel(accessibilityLabel(for: channel))
+                    .accessibilityHint("Play this channel")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func chip(for channel: Channel) -> some View {
+        HStack(spacing: 8) {
+            Text(channel.guideNumber)
+                .font(Theme.channelNumber(17))
+                .foregroundStyle(playingID == channel.id ? Theme.amber : Theme.text)
+            Text(channel.name)
+                .font(Theme.label(15))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Theme.raised, in: Capsule())
+        .overlay(Capsule().stroke(Theme.line, lineWidth: 1))
+        .contentShape(Capsule())
+    }
+
+    private func accessibilityLabel(for channel: Channel) -> String {
+        var parts = ["Channel \(channel.guideNumber)", channel.name]
+        if playingID == channel.id {
+            parts.append("Playing")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
