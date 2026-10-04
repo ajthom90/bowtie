@@ -122,6 +122,18 @@ export interface Recording {
   ruleId?: number
   /** Parental controls block it for the caller (no description; play is 403). */
   locked?: boolean
+  /**
+   * Commercial breaks found by the server's commercial detection, in seconds
+   * on the playback timeline (sorted, non-overlapping). Absent when none were
+   * found, detection hasn't run, or the server doesn't have it.
+   */
+  commercials?: CommercialBreak[]
+}
+
+/** One commercial break in a recording (seconds from the start of playback). */
+export interface CommercialBreak {
+  start: number
+  end: number
 }
 
 /** A series recording rule (GET/POST /recording-rules). */
@@ -695,6 +707,11 @@ export class ApiClient {
 
   async putSettings(body: PutSettingsRequest): Promise<Settings> {
     return this.request<Settings>('PUT', '/api/v1/admin/settings', body)
+  }
+
+  /** Admin: run commercial detection on a recording again. */
+  async redetectCommercials(id: number): Promise<void> {
+    await this.request<void>('POST', `/api/v1/recordings/${id}/commercials/detect`)
   }
 
   async getDVRStorage(): Promise<DVRStorage> {

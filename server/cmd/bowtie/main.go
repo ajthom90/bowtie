@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -178,6 +180,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 			return transcode.Negotiate(transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: "high"},
 				"", caps, encoder, false, transcode.DefaultProfiles())
 		}},
+		Detector:     commercialDetector(cfg),
 		Dir:          cfg.RecordingsDir,
 		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,
 		Padding:      settingsProv.DVRPadding,
@@ -368,4 +371,21 @@ func randomPassword(n int) (string, error) {
 		s = s[:n]
 	}
 	return s, nil
+}
+
+// commercialDetector returns the Comskip detector, or nil (detection off)
+// when the binary isn't found or BOWTIE_COMSKIP_PATH is "off".
+func commercialDetector(cfg config.Config) dvr.Detector {
+	switch strings.ToLower(strings.TrimSpace(cfg.ComskipPath)) {
+	case "off", "none", "false", "0":
+		log.Printf("commercial detection off (BOWTIE_COMSKIP_PATH=%s)", cfg.ComskipPath)
+		return nil
+	}
+	path, err := exec.LookPath(cfg.ComskipPath)
+	if err != nil {
+		log.Printf("commercial detection off: comskip not found (%s); set BOWTIE_COMSKIP_PATH to enable it", cfg.ComskipPath)
+		return nil
+	}
+	log.Printf("commercial detection: using %s", path)
+	return dvr.ComskipDetector{Path: path, INI: cfg.ComskipINI, DataDir: cfg.DataDir}
 }

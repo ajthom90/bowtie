@@ -14,24 +14,20 @@ requests that come up most in their forums and subreddits.
 | A real guide without paying | Free HDHomeRun guide (2–3 days), XMLTV, or Schedules Direct (14 days) |
 | Pause and rewind live TV | Yes, up to 60 minutes |
 | Record shows and whole series | Yes — one-off, series ("new episodes only"), keep latest N, padding |
-| Skip commercials | Not yet (see below) |
+| Skip commercials | Yes — Comskip finds the breaks; Skip ad / auto-skip in every app |
 | Easy sign-in on a TV | Yes — scan a QR code with your phone |
 | Several games at once | Multiview on the web (up to 4) |
 | Use it in other apps (Kodi, TiviMate, Xbox via Kodi) | Yes — personal M3U + XMLTV feed |
 | Kids' accounts | Yes — parental ratings, blocked channels, per-account stream limits |
 | Watch together remotely | SharePlay on Apple devices |
-| Fall asleep with the TV on | Sleep timer on Apple and Android apps |
+| Fall asleep with the TV on | Sleep timer in every TV and mobile app |
 | Don't lose my setup | Admin → Settings → Download backup |
 | Know when the disk is filling up | Admin → Recordings storage gauge |
 
 ## Next, in order
 
-1. **Commercial detection.** The most-requested DVR feature everywhere.
-   Plan: run [Comskip](https://github.com/erikkaashoek/Comskip) after a
-   recording converts when it is installed, store the cut list, and show a
-   "Skip" button (and auto-skip option) in every player. Needs Comskip in the
-   Docker image (it isn't packaged by Debian/Alpine, so it would be built from
-   source in the Dockerfile).
+1. **Commercial detection tuning.** Shipped in 0.14.0 with "Find ads
+   again"; next is a way to correct a break by hand.
 2. **Chromecast and AirPlay from the web app.** Send a channel to a TV from a
    phone browser. Chromecast needs the Cast SDK and a device to test on.
 3. **Multiview on TVs.** Apple TV and Android TV, 2–4 tiles; limited by tuner

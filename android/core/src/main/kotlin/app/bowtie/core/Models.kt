@@ -245,7 +245,15 @@ data class Recording(
     val ruleId: Long = 0,
     /** Parental controls block it for the caller (no description; play is 403). */
     val locked: Boolean = false,
+    /**
+     * Detected commercial breaks on the playback timeline (seconds). Absent
+     * from older servers and may be `null`; read [commercialSegments].
+     */
+    val commercials: List<Commercial>? = null,
 ) {
+    /** [commercials], or none. */
+    val commercialSegments: List<Commercial> get() = commercials.orEmpty()
+
     companion object {
         const val SCHEDULED = "scheduled"
         const val WAITING = "waiting"

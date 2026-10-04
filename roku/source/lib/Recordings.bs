@@ -98,6 +98,8 @@ namespace bowtie.recordings
             "canManage": (r.canManage = true)
             "ruleId": bowtie.recordings.asNumber(r.ruleId)
             "locked": bowtie.recordings.isTrue(r.locked)
+            ' Ad segments [{start, end}] (Commercials.bs reads them); [] when absent.
+            "commercials": bowtie.recordings.asArray(r.commercials)
         }
     end function
 
@@ -552,6 +554,11 @@ namespace bowtie.recordings
         t = Type(v)
         if t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" then return v
         return 0
+    end function
+
+    function asArray(v as dynamic) as object
+        if v = invalid or Type(v) <> "roArray" then return []
+        return v
     end function
 
     ' A field that may be missing (older servers): true only for a real true.

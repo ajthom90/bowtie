@@ -335,8 +335,8 @@ struct MacRecordingsView: View {
 
 // MARK: - VOD player
 
-/// One recording: AVKit floating transport with full scrubbing, a title bar
-/// and a Done button. Resume / periodic position saves come from the shared
+/// One recording: AVKit floating transport with full scrubbing, a title bar,
+/// a Done button, and Skip ad (S) in commercial breaks. Resume / periodic position saves come from the shared
 /// `RecordingPlayerController`.
 struct MacRecordingPlayerView: View {
     let controller: RecordingPlayerController
@@ -367,6 +367,9 @@ struct MacRecordingPlayerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
         }
+        // Not part of the auto-hiding chrome: stays up for the whole break.
+        // S (Playback menu) skips too.
+        .skipAdOverlay(controller, bottomInset: 80)
         .drivesSleepTimer(sleepTimer) {
             // Same as Done: stop, save the position, back to the list.
             onDone()

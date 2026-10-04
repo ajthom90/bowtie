@@ -96,6 +96,9 @@ func (c *fakeConverter) Convert(_ context.Context, parts []string, outDir string
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return 0, err
 	}
+	if err := os.WriteFile(filepath.Join(outDir, MasterName), []byte("#EXTM3U\n"), 0o644); err != nil {
+		return 0, err
+	}
 	return 90 * time.Second, os.WriteFile(filepath.Join(outDir, "v720.m3u8"), []byte("#EXTM3U\n#EXT-X-ENDLIST\n"), 0o644)
 }
 

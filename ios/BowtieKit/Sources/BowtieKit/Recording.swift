@@ -36,6 +36,9 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let ruleId: Int64
     /// Parental controls block it for the caller: no description, and play is refused.
     public let locked: Bool
+    /// Detected commercial breaks on the playback timeline (seconds), sorted
+    /// and non-overlapping; empty when none were found or the server is older.
+    public let commercials: [Commercial]
 
     public init(
         id: Int64,
@@ -59,7 +62,8 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
         canManage: Bool = false,
         rating: String = "",
         ruleId: Int64 = 0,
-        locked: Bool = false
+        locked: Bool = false,
+        commercials: [Commercial] = []
     ) {
         self.id = id
         self.title = title
@@ -83,15 +87,16 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.rating = rating
         self.ruleId = ruleId
         self.locked = locked
+        self.commercials = commercials
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, subtitle, description, category, channelId, channelName, start, stop
         case state, partial, failure, failureDetail, durationSec, sizeBytes, protected
-        case positionSec, scheduledBy, canManage, rating, ruleId, locked
+        case positionSec, scheduledBy, canManage, rating, ruleId, locked, commercials
     }
 
-    /// `rating`, `ruleId` and `locked` are absent from older servers.
+    /// `rating`, `ruleId`, `locked` and `commercials` are absent from older servers.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int64.self, forKey: .id)
@@ -116,6 +121,7 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
         rating = try c.decodeIfPresent(String.self, forKey: .rating) ?? ""
         ruleId = try c.decodeIfPresent(Int64.self, forKey: .ruleId) ?? 0
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        commercials = try c.decodeIfPresent([Commercial].self, forKey: .commercials) ?? []
     }
 }
 

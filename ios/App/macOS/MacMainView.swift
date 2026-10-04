@@ -468,6 +468,7 @@ struct MacMainView: View {
         let livePlayer = isLiveSelected ? bridge.player : nil
         let vodPlayer = selection == .recordings ? activeRecording?.player : nil
         let player = livePlayer ?? vodPlayer
+        let skipping = vodPlayer == nil || activeRecording?.activeCommercial == nil ? nil : activeRecording
         return PlaybackActions(
             togglePlay: player.map { player in
                 {
@@ -479,6 +480,7 @@ struct MacMainView: View {
                 }
             },
             goLive: livePlayer == nil ? nil : { bridge.jumpToLive() },
+            skipAd: skipping.map { controller in { controller.skipCommercial() } },
             channelUp: { stepChannel(by: 1) },
             channelDown: { stepChannel(by: -1) },
             toggleFullScreen: {

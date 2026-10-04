@@ -107,6 +107,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("PATCH /api/v1/recordings/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePatchRecording)))
 	handle("DELETE /api/v1/recordings/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeleteRecording)))
 	handle("POST /api/v1/recordings/{id}/stop", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleStopRecording)))
+	handle("POST /api/v1/recordings/{id}/commercials/detect", auth.RequireAdmin(s.deps.Auth)(http.HandlerFunc(s.handleRedetectCommercials)))
 	handle("POST /api/v1/recordings/{id}/play", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePlayRecording)))
 	handle("PUT /api/v1/recordings/{id}/position", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecordingPosition)))
 	handleFunc("GET /api/v1/recordings/{id}/hls/{file}", s.handleRecordingFile)

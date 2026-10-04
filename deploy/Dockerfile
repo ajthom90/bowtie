@@ -37,7 +37,31 @@ ARG VERSION=0.1.0-dev
 RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /bowtie ./cmd/bowtie
 
 # ---------------------------------------------------------------------------
-# Stage 3: Runtime — FFmpeg + VAAPI/QSV drivers + tini
+# Stage 3: Comskip (commercial detection) from a pinned commit, linked against
+# the same Debian FFmpeg libraries the runtime's ffmpeg package installs.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS comskip
+
+ARG COMSKIP_COMMIT=a140b6ac8bc8f596729e9052819affc779c3b377
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates git build-essential autoconf automake libtool pkg-config \
+      libargtable2-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/comskip
+RUN git init -q . \
+ && git remote add origin https://github.com/erikkaashoek/Comskip.git \
+ && git fetch -q --depth 1 origin "$COMSKIP_COMMIT" \
+ && git checkout -q FETCH_HEAD \
+ && ./autogen.sh \
+ && ./configure \
+ && make -j"$(nproc)" comskip \
+ && install -m 0755 comskip /usr/local/bin/comskip
+
+# ---------------------------------------------------------------------------
+# Stage 4: Runtime — FFmpeg + VAAPI/QSV drivers + Comskip + tini
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
@@ -53,6 +77,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       ffmpeg \
+      libargtable2-0 \
       mesa-va-drivers \
       tini \
  && if [ "$TARGETARCH" = "amd64" ]; then \
@@ -67,8 +92,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=server /bowtie /usr/local/bin/bowtie
+COPY --from=comskip /usr/local/bin/comskip /usr/local/bin/comskip
 
 ENV BOWTIE_DATA_DIR=/data
+ENV BOWTIE_COMSKIP_PATH=/usr/local/bin/comskip
 EXPOSE 8400
 VOLUME /data
 

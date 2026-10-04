@@ -18,11 +18,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import app.bowtie.core.User
+import app.bowtie.core.player.AutoSkipAdsStore
 import app.bowtie.core.vm.AppViewModel
 import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieDimens
@@ -48,6 +50,9 @@ fun SettingsScreen(
     var passwordError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val autoSkipStore = remember { AutoSkipAdsStore(context) }
+    var autoSkipAds by remember { mutableStateOf(autoSkipStore.enabled) }
 
     Column(
         modifier = modifier
@@ -102,6 +107,29 @@ fun SettingsScreen(
                     color = BowtieColors.text,
                 )
             }
+
+            Spacer(Modifier.height(32.dp))
+
+            // ── Playback (this device) ──────────────────────────────────────────
+            Text(
+                text = "Playback",
+                style = BowtieType.label,
+                color = BowtieColors.dim,
+            )
+            Spacer(Modifier.height(8.dp))
+            AutoSkipAdsButton(
+                on = autoSkipAds,
+                onToggle = {
+                    autoSkipAds = !autoSkipAds
+                    autoSkipStore.enabled = autoSkipAds
+                },
+            )
+            Text(
+                text = "In recordings, skip each detected commercial break once as it starts.",
+                style = BowtieType.label,
+                color = BowtieColors.dim,
+                modifier = Modifier.padding(top = 8.dp),
+            )
 
             Spacer(Modifier.height(32.dp))
 

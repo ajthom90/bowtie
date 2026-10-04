@@ -1,5 +1,7 @@
 ' Settings: server info, change server (confirm → clear registry),
-' change password via ApiTask, sign out via ApiTask logout (A3: no viewers yet).
+' change password via ApiTask, sign out via ApiTask logout (A3: no viewers yet),
+' and Skip ads automatically (device pref in the registry, default off).
+' Up/Down move between the buttons; Back returns home.
 
 import "pkg:/source/lib/Registry.bs"
 
@@ -14,6 +16,9 @@ sub init()
     m.changePasswordButton = m.top.findNode("changePasswordButton")
     m.passwordMessage = m.top.findNode("passwordMessage")
     m.signOutButton = m.top.findNode("signOutButton")
+    m.autoSkipButton = m.top.findNode("autoSkipButton")
+    ' Up/Down order.
+    m.buttons = [m.backButton, m.changeServerButton, m.changePasswordButton, m.signOutButton, m.autoSkipButton]
 
     m.busy = false
     m.pendingId = ""
@@ -27,6 +32,7 @@ sub init()
     m.changeServerButton.observeField("buttonSelected", "onChangeServerButton")
     m.changePasswordButton.observeField("buttonSelected", "onChangePasswordButton")
     m.signOutButton.observeField("buttonSelected", "onSignOutButton")
+    m.autoSkipButton.observeField("buttonSelected", "onAutoSkipButton")
     m.top.observeField("visible", "onVisible")
     m.top.observeField("serverUrl", "onServerUrl")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -76,6 +82,7 @@ sub onVisible()
         m.passwordMessage.color = "0x9BA5AEFF"
         onServerUrl()
         updateUsername()
+        updateAutoSkip()
         observeApi()
         m.backButton.setFocus(true)
     else
@@ -98,6 +105,38 @@ sub onBackButton()
     closeDialog()
     m.top.closed = true
 end sub
+
+sub onAutoSkipButton()
+    if m.busy = true then return
+    bowtie.registry.saveAutoSkipAds(not bowtie.registry.loadAutoSkipAds())
+    updateAutoSkip()
+end sub
+
+sub updateAutoSkip()
+    label = "Off"
+    if bowtie.registry.loadAutoSkipAds() then label = "On"
+    m.autoSkipButton.text = "Skip ads automatically: " + label
+end sub
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press <> true then return false
+    if key = "back"
+        onBackButton()
+        return true
+    end if
+    if key <> "up" and key <> "down" then return false
+    at = -1
+    for i = 0 to m.buttons.count() - 1
+        if m.buttons[i].hasFocus() then at = i
+    end for
+    if at < 0
+        m.backButton.setFocus(true)
+        return true
+    end if
+    if key = "up" and at > 0 then m.buttons[at - 1].setFocus(true)
+    if key = "down" and at < m.buttons.count() - 1 then m.buttons[at + 1].setFocus(true)
+    return true
+end function
 
 sub onChangeServerButton()
     if m.busy = true then return

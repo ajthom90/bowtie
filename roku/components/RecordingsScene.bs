@@ -7,8 +7,16 @@
 ' Shows tab: series rules (GET /recording-rules); * → Stop recording this
 ' show (DELETE) for whoever set it up or an admin.
 ' Focus: tabs (left/right) <-> list. Back: playback → list → Home.
+' During playback: Skip ad (bowtie.ads) while the position is inside one of
+' the recording's commercial segments — a focused "Skip ad ▸ (OK)" button,
+' or an automatic skip once per segment when Settings → Skip ads
+' automatically is on. Down opens the sleep timer (bowtie.sleep); when it
+' runs out, playback stops as Back does (position saved, back to the list).
 
+import "pkg:/source/lib/Commercials.bs"
 import "pkg:/source/lib/Recordings.bs"
+import "pkg:/source/lib/Registry.bs"
+import "pkg:/source/lib/SleepTimer.bs"
 
 sub init()
     m.upcomingTab = m.top.findNode("upcomingTab")
@@ -23,6 +31,14 @@ sub init()
     m.hintLabel = m.top.findNode("hintLabel")
     m.video = m.top.findNode("video")
     m.positionTimer = m.top.findNode("positionTimer")
+    m.skipAdButton = m.top.findNode("skipAdButton")
+    m.adToast = m.top.findNode("adToast")
+    m.adToastTimer = m.top.findNode("adToastTimer")
+    m.sleepWarning = m.top.findNode("sleepWarning")
+    m.sleepWarningLabel = m.top.findNode("sleepWarningLabel")
+    m.sleepTimer = m.top.findNode("sleepTimer")
+    m.playHint = m.top.findNode("playHint")
+    m.playHintTimer = m.top.findNode("playHintTimer")
 
     m.tabButtons = [m.upcomingTab, m.recordedTab, m.missedTab, m.showsTab]
     m.tabIndex = 0
@@ -45,12 +61,25 @@ sub init()
     m.playing = invalid
     m.lastPosition = 0
     m.lastSaved = -1
+    ' Commercial segments of the playing recording, what was auto-skipped,
+    ' the device setting, and the segment the Skip ad button is for.
+    m.adSegs = []
+    m.adMemory = bowtie.ads.newMemory()
+    m.autoSkip = false
+    m.adHint = invalid
+    ' Sleep timer for this playback (never persisted) and the open menu's options.
+    m.sleep = bowtie.sleep.newState()
+    m.sleepOptions = []
 
     for each b in m.tabButtons
         b.observeField("buttonSelected", "onTabSelected")
     end for
     m.recordingList.observeField("itemSelected", "onItemSelected")
     m.positionTimer.observeField("fire", "onPositionTimer")
+    m.skipAdButton.observeField("buttonSelected", "onSkipAd")
+    m.adToastTimer.observeField("fire", "onAdToastTimer")
+    m.sleepTimer.observeField("fire", "onSleepTick")
+    m.playHintTimer.observeField("fire", "onPlayHintTimer")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("position", "onVideoPosition")
     m.top.observeField("visible", "onVisible")
@@ -320,6 +349,8 @@ sub onDialogButton()
     else if mode = "ruleOptions"
         choice = bowtie.recordings.buttonId(menu, idx)
         if choice = "stopRule" then sendAction("deleteRecordingRule", { id: m.target.id })
+    else if mode = "sleep"
+        chooseSleep(idx)
     else if mode = "resume"
         pb = m.pendingPlayback
         m.pendingPlayback = invalid
@@ -408,18 +439,25 @@ sub startPlayback(r as object, url as string, startSec as integer)
     m.playing = r
     m.lastPosition = startSec
     m.lastSaved = startSec
+    resetPlaybackOverlays()
+    m.adSegs = bowtie.ads.normalize(r.commercials)
+    m.adMemory = bowtie.ads.newMemory()
+    m.autoSkip = bowtie.registry.loadAutoSkipAds()
     m.restoreIndex = m.recordingList.itemFocused
     m.video.content = content
     m.video.visible = true
     m.video.setFocus(true)
     m.video.control = "play"
     m.positionTimer.control = "start"
+    m.playHint.visible = true
+    m.playHintTimer.control = "start"
 end sub
 
 ' Save (if moved), then stop and return to the list.
 sub stopPlayback()
     savePosition()
     m.positionTimer.control = "stop"
+    resetPlaybackOverlays()
     m.playing = invalid
     m.video.control = "stop"
     m.video.content = invalid
@@ -435,6 +473,9 @@ sub onVideoPosition()
     if m.playing = invalid then return
     p = m.video.position
     if p <> invalid and p > 0 then m.lastPosition = Int(p)
+    ' Only while playing: before a resume seek takes effect the position can
+    ' read 0, which would skip a break at the start and lose the resume point.
+    if p <> invalid and m.video.state = "playing" then updateAds(p)
 end sub
 
 sub onPositionTimer()
@@ -472,6 +513,147 @@ sub onVideoState()
         stopPlayback()
         showDialog("error", "Playback failed", [msg], ["OK"])
     end if
+end sub
+
+' ── Skip ad ──────────────────────────────────────────────────────────────────
+
+sub updateAds(positionSec as dynamic)
+    if m.adSegs.count() = 0 then return
+    d = bowtie.ads.decide(m.adSegs, positionSec, m.autoSkip, m.adMemory)
+    if d.action = "skip"
+        hideSkipHint()
+        m.video.seek = d.target
+        m.adToast.visible = true
+        m.adToastTimer.control = "stop"
+        m.adToastTimer.control = "start"
+    else if d.action = "hint"
+        showSkipHint(d.index, d.target)
+    else
+        hideSkipHint()
+    end if
+end sub
+
+sub showSkipHint(index as integer, target as dynamic)
+    m.adHint = { index: index, target: target }
+    if m.skipAdButton.visible = true then return
+    m.skipAdButton.visible = true
+    ' Focus it so OK reaches the button instead of the Video's play/pause.
+    if m.dialog = invalid and m.sleepWarning.visible <> true then m.skipAdButton.setFocus(true)
+end sub
+
+sub hideSkipHint()
+    m.adHint = invalid
+    if m.skipAdButton.visible <> true then return
+    hadFocus = m.skipAdButton.hasFocus()
+    m.skipAdButton.visible = false
+    if hadFocus then playbackFocus()
+end sub
+
+' OK on Skip ad: jump to the end of the segment.
+sub onSkipAd()
+    if m.adHint = invalid or m.playing = invalid then return
+    target = m.adHint.target
+    bowtie.ads.noteSkip(m.adMemory, target)
+    hideSkipHint()
+    m.video.seek = target
+end sub
+
+sub onAdToastTimer()
+    m.adToast.visible = false
+end sub
+
+sub onPlayHintTimer()
+    m.playHint.visible = false
+end sub
+
+' Who holds focus over the playing video: the sleep warning, then Skip ad,
+' else the Video (its trick-play keys).
+sub playbackFocus()
+    if m.sleepWarning.visible = true
+        m.sleepWarning.setFocus(true)
+    else if m.skipAdButton.visible = true
+        m.skipAdButton.setFocus(true)
+    else
+        m.video.setFocus(true)
+    end if
+end sub
+
+sub togglePause()
+    st = m.video.state
+    if st = "playing"
+        m.video.control = "pause"
+    else if st = "paused"
+        m.video.control = "resume"
+    end if
+end sub
+
+' ── Sleep timer ──────────────────────────────────────────────────────────────
+
+sub openSleepDialog()
+    ' No End of this program for a recording (live only).
+    m.sleepOptions = bowtie.sleep.options(0, nowSec())
+    showDialog("sleep", "Sleep timer", [bowtie.sleep.statusText(m.sleep, nowSec())], bowtie.sleep.buttonLabels(m.sleepOptions, m.sleep))
+end sub
+
+sub chooseSleep(idx as dynamic)
+    opts = m.sleepOptions
+    if idx = invalid or idx < 0 or idx >= opts.count() then return
+    bowtie.sleep.start(m.sleep, opts[idx].id, nowSec(), 0)
+    if m.sleep.active = true
+        m.sleepTimer.control = "start"
+    else
+        m.sleepTimer.control = "stop"
+    end if
+    onSleepTick()
+end sub
+
+sub onSleepTick()
+    if m.playing = invalid
+        m.sleepTimer.control = "stop"
+        return
+    end if
+    r = bowtie.sleep.tick(m.sleep, nowSec())
+    if r.fired = true
+        m.sleepTimer.control = "stop"
+        m.sleepWarning.visible = false
+        closeDialog()
+        stopPlayback()
+        return
+    end if
+    if m.sleep.active <> true then m.sleepTimer.control = "stop"
+    if r.warning = true
+        m.sleepWarningLabel.text = bowtie.sleep.promptText(r.remaining)
+        if m.sleepWarning.visible <> true
+            m.sleepWarning.visible = true
+            ' Focus it so OK reaches this screen instead of the Video.
+            if m.dialog = invalid then m.sleepWarning.setFocus(true)
+        end if
+    else if m.sleepWarning.visible = true
+        hadFocus = m.sleepWarning.hasFocus()
+        m.sleepWarning.visible = false
+        if hadFocus then playbackFocus()
+    end if
+end sub
+
+' "Still watching?" → OK: keep watching for the same duration again.
+sub keepWatching()
+    bowtie.sleep.extend(m.sleep)
+    m.sleepWarning.visible = false
+    playbackFocus()
+    onSleepTick()
+end sub
+
+' Playback started or stopped: sleep timer off, overlays hidden.
+sub resetPlaybackOverlays()
+    bowtie.sleep.cancel(m.sleep)
+    m.sleepTimer.control = "stop"
+    m.sleepWarning.visible = false
+    m.adHint = invalid
+    m.skipAdButton.visible = false
+    m.adToast.visible = false
+    m.adToastTimer.control = "stop"
+    m.playHint.visible = false
+    m.playHintTimer.control = "stop"
 end sub
 
 ' ── Dialogs ──────────────────────────────────────────────────────────────────
@@ -513,7 +695,7 @@ end sub
 
 sub restoreFocus()
     if m.video.visible = true
-        m.video.setFocus(true)
+        playbackFocus()
     else if m.recordingList.visible = true
         m.recordingList.setFocus(true)
     else
@@ -545,9 +727,32 @@ function onKeyEvent(key as string, press as boolean) as boolean
 
     ' Playing: the Video node's trick-play UI takes the transport keys; Back
     ' saves the position and returns to the list.
+    ' The sleep warning and Skip ad take focus while shown, so OK reaches
+    ' them; Down (not a transport key) opens the sleep timer.
     if m.video.visible = true
         if key = "back"
             stopPlayback()
+            return true
+        end if
+        if key = "OK" and m.sleepWarning.visible = true
+            keepWatching()
+            return true
+        end if
+        if m.skipAdButton.hasFocus()
+            if key = "play"
+                togglePause()
+                return true
+            end if
+            ' Reaching for the trick-play keys instead: put Skip ad away for
+            ' this ad and hand the keys back to the Video.
+            if key = "left" or key = "right" or key = "fastforward" or key = "rewind" or key = "replay"
+                if m.adHint <> invalid then bowtie.ads.dismiss(m.adMemory, m.adHint.index)
+                hideSkipHint()
+                return true
+            end if
+        end if
+        if key = "down"
+            openSleepDialog()
             return true
         end if
         return false
@@ -602,6 +807,12 @@ function onKeyEvent(key as string, press as boolean) as boolean
 end function
 
 ' ── Time ─────────────────────────────────────────────────────────────────────
+
+function nowSec() as integer
+    dt = CreateObject("roDateTime")
+    dt.Mark()
+    return dt.AsSeconds()
+end function
 
 function isoNow() as string
     dt = CreateObject("roDateTime")

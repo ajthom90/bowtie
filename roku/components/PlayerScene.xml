@@ -9,6 +9,8 @@
         <!-- Array of {id, guideNumber, name} for up/down zap. -->
         <field id="channels" type="array" />
         <field id="channelIndex" type="integer" value="0" />
+        <!-- Home's guide: channelId string → programs [{start, stop, title}] (End of this program). -->
+        <field id="guide" type="assocarray" />
         <!-- True when user presses Back (session DELETE already enqueued). -->
         <field id="closed" type="boolean" alwaysNotify="true" value="false" />
         <!-- True after createSession 404 — Home should refresh channel list. -->
@@ -66,7 +68,7 @@
                 translation="[1000, 52]"
                 width="840"
                 height="40"
-                text="OK play/pause · Right: quality"
+                text="OK play/pause · Right: options"
                 horizAlign="right"
                 color="0x9BA5AEFF"
                 font="font:SmallSystemFont"
@@ -169,6 +171,28 @@
             />
         </Group>
 
+        <!-- Sleep timer: "Still watching?" in the last minute; OK keeps watching. -->
+        <Group id="sleepWarning" visible="false">
+            <Rectangle
+                id="sleepWarningBg"
+                translation="[360, 860]"
+                width="1200"
+                height="96"
+                color="0x101418E6"
+            />
+            <Label
+                id="sleepWarningLabel"
+                translation="[380, 860]"
+                width="1160"
+                height="96"
+                text=""
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+
         <!-- Debug overlay: Video state / errorCode / errorMsg (A5 token-kill capture) -->
         <Group id="debugGroup" visible="false">
             <Rectangle
@@ -199,5 +223,7 @@
         <Timer id="chromeTimer" duration="4" repeat="false" />
         <!-- Spec C: 15s session heartbeat (stream token); gated on ApiTask.queueDepth < 3 -->
         <Timer id="heartbeatTimer" duration="15" repeat="true" />
+        <!-- Sleep timer tick (bowtie.sleep) while it is on -->
+        <Timer id="sleepTimer" duration="1" repeat="true" />
     </children>
 </component>

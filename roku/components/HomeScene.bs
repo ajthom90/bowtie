@@ -180,6 +180,8 @@ sub selectChannelAt(idx as dynamic)
         name: ch.name
         index: idx
         channels: m.channels
+        ' The player's sleep timer offers End of this program from it.
+        guide: m.guideById
     }
 end sub
 

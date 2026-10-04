@@ -526,6 +526,14 @@ describe('ApiClient DVR admin', () => {
     expect((err as ApiError).status).toBe(503)
   })
 
+  it('asks the server to find commercials again', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 202 }))
+    await client.redetectCommercials(42)
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/v1/recordings/42/commercials/detect')
+    expect(init.method).toBe('POST')
+  })
+
   it('downloads a database backup with its file name', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(new Uint8Array([83, 81, 76]), {

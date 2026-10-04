@@ -126,11 +126,95 @@
             visible="false"
         />
 
+        <!-- Over the video while playing. Skip ad: shown (and focused, so OK
+             reaches it rather than the Video) while the position is inside a
+             commercial segment. -->
+        <Button
+            id="skipAdButton"
+            translation="[1400, 820]"
+            text="Skip ad ▸ (OK)"
+            minWidth="420"
+            height="72"
+            visible="false"
+        />
+        <!-- "Skipped ad" after an automatic skip. -->
+        <Group id="adToast" visible="false">
+            <Rectangle
+                id="adToastBg"
+                translation="[1500, 820]"
+                width="320"
+                height="72"
+                color="0x101418E6"
+            />
+            <Label
+                id="adToastLabel"
+                translation="[1500, 820]"
+                width="320"
+                height="72"
+                text="Skipped ad"
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF0A428FF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+        <!-- Sleep timer: "Still watching?" in the last minute. Focused while
+             shown so OK reaches this screen; OK keeps watching. -->
+        <Group id="sleepWarning" visible="false">
+            <Rectangle
+                id="sleepWarningBg"
+                translation="[360, 860]"
+                width="1200"
+                height="96"
+                color="0x101418E6"
+            />
+            <Label
+                id="sleepWarningLabel"
+                translation="[380, 860]"
+                width="1160"
+                height="96"
+                text=""
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+        <!-- Shown briefly when playback starts. -->
+        <Label
+            id="playHint"
+            translation="[1120, 48]"
+            width="720"
+            height="40"
+            text="Down: sleep timer"
+            horizAlign="right"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:SmallSystemFont"
+            visible="false"
+        />
+
         <!-- Save the resume position while playing. -->
         <Timer
             id="positionTimer"
             duration="15"
             repeat="true"
+        />
+        <!-- Sleep timer tick (bowtie.sleep) while it is on. -->
+        <Timer
+            id="sleepTimer"
+            duration="1"
+            repeat="true"
+        />
+        <Timer
+            id="adToastTimer"
+            duration="2.5"
+            repeat="false"
+        />
+        <Timer
+            id="playHintTimer"
+            duration="5"
+            repeat="false"
         />
     </children>
 </component>
