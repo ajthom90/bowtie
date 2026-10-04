@@ -223,6 +223,68 @@ final class ContinueWatchingModelTests: XCTestCase {
         XCTAssertEqual(model.actionError, "That recording is gone.")
     }
 
+    func testRemoveDuringALoadKeepsItRemoved() async throws {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" {
+                return (204, Data(), [:])
+            }
+            return (200, RecordingFixtures.listJSON([
+                RecordingFixtures.json(id: 2, positionSec: 600),
+                RecordingFixtures.json(id: 5, positionSec: 700),
+            ]), [:])
+        }
+        let model = ContinueWatchingModel(client: await makeClient())
+        await model.load()
+        let target = try XCTUnwrap(model.items.first { $0.id == 2 })
+        // A list fetch already under way answers after the remove, with the old position.
+        StubURLProtocol.delay = { request in request.httpMethod == "GET" ? 0.4 : 0 }
+
+        let staleLoad = Task { await model.load() }
+        try? await Task.sleep(for: .milliseconds(50))
+        await model.remove(target)
+        await staleLoad.value
+
+        XCTAssertEqual(model.items.map(\.id), [5])
+    }
+
+    func testRemovedStaysHiddenUntilTheServerConfirms() async throws {
+        let position = LockedPosition(600)
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" {
+                return (204, Data(), [:])
+            }
+            return (200, RecordingFixtures.listJSON([
+                RecordingFixtures.json(id: 2, positionSec: position.value),
+                RecordingFixtures.json(id: 5, positionSec: 700),
+            ]), [:])
+        }
+        let model = ContinueWatchingModel(client: await makeClient())
+        await model.load()
+        await model.remove(try XCTUnwrap(model.items.first { $0.id == 2 }))
+
+        // A list read that hasn't caught up with the reset yet.
+        await model.load()
+        XCTAssertEqual(model.items.map(\.id), [5])
+
+        // The server confirms (position 0); watching it again later brings it back.
+        position.value = 0
+        await model.load()
+        XCTAssertEqual(model.items.map(\.id), [5])
+        position.value = 900
+        await model.load()
+        XCTAssertEqual(Set(model.items.map(\.id)), [2, 5])
+    }
+
+    private final class LockedPosition: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value: Int
+        init(_ value: Int) { _value = value }
+        var value: Int {
+            get { lock.withLock { _value } }
+            set { lock.withLock { _value = newValue } }
+        }
+    }
+
     private static func read(_ stream: InputStream) -> Data {
         stream.open()
         defer { stream.close() }

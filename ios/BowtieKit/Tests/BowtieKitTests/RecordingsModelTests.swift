@@ -257,26 +257,64 @@ final class RecordingsModelTests: XCTestCase {
         StubURLProtocol.handler = { _ in (204, Data(), [:]) }
         StubURLProtocol.delay = { _ in 0.3 }
         let model = RecordingsModel(client: await makeClient())
-        var saved = false
+        let start = ContinuousClock.now
 
-        // The player queues its last save the way `saveNow` does, then the
-        // screen behind it reloads.
-        Task {
-            await model.savePosition(recordingId: 7, seconds: 900)
-            saved = true
-        }
-        await model.waitForSaves()
+        // The real order on a NavigationStack pop / cover dismiss: the screen
+        // behind starts waiting first, then the player's onDisappear queues
+        // its last save.
+        let waiter = Task { await model.waitForSaves() }
+        try? await Task.sleep(for: .milliseconds(50))
+        model.queueSavePosition(recordingId: 7, seconds: 900)
+        await waiter.value
 
-        XCTAssertTrue(saved)
+        XCTAssertEqual(StubURLProtocol.recorded.map(\.url?.path), ["/api/v1/recordings/7/position"])
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - start, .milliseconds(300))
     }
 
-    func testWaitForSavesReturnsAtOnceWhenIdle() async {
+    func testQueuedSaveCountsBeforeItStarts() async {
+        StubURLProtocol.handler = { _ in (204, Data(), [:]) }
+        StubURLProtocol.delay = { _ in 0.3 }
         let model = RecordingsModel(client: await makeClient())
         let start = ContinuousClock.now
 
-        await model.waitForSaves()
+        // No grace: only the synchronous count can make this wait.
+        model.queueSavePosition(recordingId: 7, seconds: 900)
+        await model.waitForSaves(grace: .zero)
+
+        XCTAssertEqual(StubURLProtocol.recorded.count, 1)
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - start, .milliseconds(300))
+    }
+
+    func testQueueSavePositionSkipsUnsavablePositions() async {
+        StubURLProtocol.handler = { _ in (204, Data(), [:]) }
+        let model = RecordingsModel(client: await makeClient())
+        let start = ContinuousClock.now
+
+        model.queueSavePosition(recordingId: 7, seconds: .nan)
+        await model.waitForSaves(grace: .zero)
+
+        XCTAssertEqual(StubURLProtocol.recorded.count, 0)
+        XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(200))
+    }
+
+    func testWaitForSavesReturnsAtOnceWhenIdleWithoutGrace() async {
+        let model = RecordingsModel(client: await makeClient())
+        let start = ContinuousClock.now
+
+        await model.waitForSaves(grace: .zero)
 
         XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(200))
+    }
+
+    func testWaitForSavesGivesUpAfterTheGraceWhenNothingIsQueued() async {
+        let model = RecordingsModel(client: await makeClient())
+        let start = ContinuousClock.now
+
+        await model.waitForSaves(grace: .milliseconds(100))
+
+        let waited = ContinuousClock.now - start
+        XCTAssertGreaterThanOrEqual(waited, .milliseconds(100))
+        XCTAssertLessThan(waited, .seconds(1))
     }
 
     // MARK: - Scheduling
