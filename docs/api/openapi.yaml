@@ -1494,6 +1494,8 @@ paths:
         - `transcode.encoder` `"auto"` or a probed-available backend
         - `dvr.padStartSeconds` 0–1800 and `dvr.padEndSeconds` 0–3600 (both
           required when `dvr` is present)
+        - `dvr.quality` `"720p"` or `"1080p"` (optional; absent keeps the
+          stored value)
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -2456,6 +2458,18 @@ components:
           description: |
             Keep recording this many seconds after the show. Default 180.
             Applies to recordings scheduled afterwards.
+        quality:
+          type: string
+          enum: ['720p', '1080p']
+          description: |
+            Resolution finished recordings are converted to (H.264 HLS).
+            `720p` (default): 720p at about 4 Mb/s (~1.7 GiB per hour).
+            `1080p`: keeps 1080i broadcasts at 1920x1080, deinterlaced, at
+            about 8 Mb/s (~3.4 GiB per hour); 720p broadcasts stay 720p at
+            about 6 Mb/s. Read when a recording is converted, so it applies to
+            recordings converted afterwards; the master playlist advertises
+            each recording's resolution. Optional in PUT (absent keeps the
+            stored value); absent in GET on older servers.
     DVRStorage:
       type: object
       required: [dir, usedBytes, freeBytes, totalBytes, floorBytes, minFreeBytes, recordings]

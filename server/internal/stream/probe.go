@@ -1,7 +1,9 @@
 package stream
 
 import (
+	"bufio"
 	"bytes"
+	"io"
 	"strings"
 
 	"github.com/ajthom90/bowtie/server/internal/transcode"
@@ -78,6 +80,47 @@ func audioTrackFrom(desc []byte) transcode.AudioTrack {
 		k += 2 + l
 	}
 	return transcode.AudioTrack{}
+}
+
+// SourceHeightTS reads up to limit bytes of an MPEG-TS (e.g. a DVR capture
+// part) and returns the MPEG-2 video's vertical size, the same way a live
+// ingest learns it; 0 when unknown (H.264 video, or no header in range).
+func SourceHeightTS(r io.Reader, limit int64) int {
+	br := bufio.NewReader(io.LimitReader(r, limit))
+	var pmtPIDs map[uint16]struct{}
+	var videoPID uint16
+	pkt := make([]byte, tsPacketSize)
+	for {
+		// Resync to 0x47.
+		b, err := br.ReadByte()
+		if err != nil {
+			return 0
+		}
+		if b != tsSyncByte {
+			continue
+		}
+		pkt[0] = b
+		if _, err := io.ReadFull(br, pkt[1:]); err != nil {
+			return 0
+		}
+		pid := tsPID(pkt)
+		switch {
+		case pid == tsPIDPAT:
+			pmtPIDs = parsePATPMTPIDs(pkt)
+		case videoPID == 0 && pmtPIDs != nil:
+			if _, ok := pmtPIDs[pid]; ok {
+				info := parsePMT(pkt)
+				if info.VideoPID != 0 && !info.VideoMPEG2 {
+					return 0
+				}
+				videoPID = info.VideoPID
+			}
+		case videoPID != 0 && pid == videoPID:
+			if h := sequenceHeaderHeight(pkt[4:]); h > 0 {
+				return h
+			}
+		}
+	}
 }
 
 var seqHeaderCode = []byte{0, 0, 1, 0xB3}

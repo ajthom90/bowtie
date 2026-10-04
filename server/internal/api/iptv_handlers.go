@@ -179,16 +179,16 @@ type xmltvSrc struct {
 	Src string `xml:"src,attr"`
 }
 type xmltvProg struct {
-	Start    string        `xml:"start,attr"`
-	Stop     string        `xml:"stop,attr"`
-	Channel  string        `xml:"channel,attr"`
-	Title    string        `xml:"title"`
-	SubTitle string        `xml:"sub-title,omitempty"`
-	Desc     string        `xml:"desc,omitempty"`
-	Category string        `xml:"category,omitempty"`
-	Episode  *xmltvEpisode `xml:"episode-num,omitempty"`
-	New      *struct{}     `xml:"new,omitempty"`
-	Rating   *xmltvRating  `xml:"rating,omitempty"`
+	Start      string        `xml:"start,attr"`
+	Stop       string        `xml:"stop,attr"`
+	Channel    string        `xml:"channel,attr"`
+	Title      string        `xml:"title"`
+	SubTitle   string        `xml:"sub-title,omitempty"`
+	Desc       string        `xml:"desc,omitempty"`
+	Categories []string      `xml:"category"`
+	Episode    *xmltvEpisode `xml:"episode-num,omitempty"`
+	New        *struct{}     `xml:"new,omitempty"`
+	Rating     *xmltvRating  `xml:"rating,omitempty"`
 }
 type xmltvEpisode struct {
 	System string `xml:"system,attr"`
@@ -250,7 +250,7 @@ func xmltvChannel(g epg.GuideChannel) xmltvChan {
 
 func xmltvProgramme(g epg.GuideChannel, p epg.GuideProgram) xmltvProg {
 	x := xmltvProg{Start: xmltvTime(p.Start), Stop: xmltvTime(p.Stop), Channel: iptvChannelID(g.ChannelID),
-		Title: p.Title, SubTitle: p.Subtitle, Desc: p.Description, Category: p.Category}
+		Title: p.Title, SubTitle: p.Subtitle, Desc: p.Description, Categories: store.SplitCategories(p.Category)}
 	if p.ProgramID != "" {
 		x.Episode = &xmltvEpisode{System: "dd_progid", Value: ddProgID(p.ProgramID)}
 	}

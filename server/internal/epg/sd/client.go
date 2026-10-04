@@ -285,10 +285,6 @@ func ToStore(lineup Lineup, scheds []StationSchedule, details map[string]Program
 			if len(d.Descriptions.Description1000) > 0 {
 				desc = d.Descriptions.Description1000[0].Description
 			}
-			cat := ""
-			if len(d.Genres) > 0 {
-				cat = d.Genres[0]
-			}
 			progs = append(progs, store.Program{
 				EPGChannelID: epgID,
 				Start:        sp.AirDateTime,
@@ -296,7 +292,7 @@ func ToStore(lineup Lineup, scheds []StationSchedule, details map[string]Program
 				Title:        title,
 				Subtitle:     d.EpisodeTitle150,
 				Description:  desc,
-				Category:     cat,
+				Category:     store.JoinCategories(d.Genres),
 				Rating:       pickRating(sp.Ratings, d.ContentRating),
 				ProgramID:    sp.ProgramID,
 				SeriesID:     store.SeriesIDOf(sp.ProgramID),

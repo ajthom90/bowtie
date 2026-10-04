@@ -520,7 +520,7 @@ func TestToStore(t *testing.T) {
 		t.Fatalf("Stop = %v, want %v", p.Stop, wantStop)
 	}
 	if p.Title != "Blue Bloods" || p.Subtitle != "Drawing Dead" ||
-		p.Description != "Frank deals with a case." || p.Category != "Crime drama" {
+		p.Description != "Frank deals with a case." || p.Category != "Crime drama; Drama" {
 		t.Fatalf("program fields = %+v", p)
 	}
 }

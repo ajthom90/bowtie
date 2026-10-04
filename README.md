@@ -216,6 +216,7 @@ add devices by IP.
 | Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
 | Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
 | Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC, buffer, adaptive quality (DB-backed) |
+| Control plane (DVR) | **Admin → Recordings** — padding, and recording quality: 720p (default, ~1.7 GB/hour) or up to 1080p (1080i kept at full resolution, deinterlaced; ~3.4 GB/hour), applied to recordings converted afterwards |
 | File | `<dataDir>/config.yaml` |
 
 **Seeds vs overrides:** product keys (EPG sources, encoder, HEVC) are

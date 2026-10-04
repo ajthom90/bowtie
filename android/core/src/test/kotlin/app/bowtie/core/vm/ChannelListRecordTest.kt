@@ -3,6 +3,7 @@ package app.bowtie.core.vm
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.TOKEN_PAIR
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.recordingJson
+import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideRecordingMark
 import app.bowtie.core.InMemoryTokenStore
 import kotlinx.coroutines.runBlocking
@@ -108,6 +109,8 @@ class ChannelListRecordTest {
         assertEquals("""{"channelId":5,"programStart":"2026-10-04T00:00:00Z"}""", posts.single())
         assertEquals(GuideRecordingMark(id = 9, state = "scheduled"), vm.row().nowNext.now!!.recording)
         assertNull(vm.row().nowNext.next!!.recording)
+        // The marked row keeps the buckets worked out on load.
+        assertEquals(vm.row().programs.map { GuideFilter.buckets(it) }, vm.row().programBuckets)
     }
 
     @Test
