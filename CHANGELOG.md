@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-10-04
+
+### Added
+
+- **Record by time (web).** Recordings → Upcoming → **Record by time**:
+  pick a channel, a date and a start and end time (an end before the start
+  runs past midnight) — handy for a game that's not in the guide, or a
+  server with no guide data. Asks before going ahead if your tuners are
+  already booked.
+
 ## [0.18.1] — 2026-10-04
 
 ### Fixed

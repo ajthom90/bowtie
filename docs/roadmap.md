@@ -50,9 +50,8 @@ requests that come up most in their forums and subreddits.
 - **First start on some channels takes ~20 s** when FFmpeg's full layout
   (all renditions, captions) times out and Bowtie falls back to one rung.
   Seen intermittently on FOX 9 locally.
-- **Manual (time-based) recordings** — the API takes a channel, start and
-  stop, but no app has a "record 8–9 PM on 9.1" form yet, so without guide
-  data there's nothing to press Record on.
+- **Record by time** is on the web only (0.19.0); the TV and mobile apps
+  still need guide data to record.
 - **Recording list/details** can't tell "commercial detection hasn't run"
   from "no ads found".
 
