@@ -8,6 +8,8 @@ import {
   guideNumberParts,
   isTunerIdle,
   isZeroTime,
+  LIMIT_OPTIONS,
+  limitLabel,
   qualityLabel,
   signalPercent,
 } from './adminModel'
@@ -121,5 +123,16 @@ describe('qualityLabel', () => {
   it('maps known values', () => {
     expect(qualityLabel('')).toBe('Unlimited')
     expect(qualityLabel('high')).toBe('High')
+  })
+})
+
+describe('limitLabel', () => {
+  it('reads 0 as no limit', () => {
+    expect(limitLabel(0)).toBe('No limit')
+    expect(limitLabel(1)).toBe('1')
+  })
+  it('offers no limit and 1 to 8', () => {
+    expect(LIMIT_OPTIONS.map((o) => o.value)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+    expect(LIMIT_OPTIONS[0].label).toBe('No limit')
   })
 })

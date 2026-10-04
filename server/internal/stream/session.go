@@ -10,6 +10,7 @@ import (
 type Viewer struct {
 	ID        string
 	SessionID string
+	UserID    int64
 	Username  string
 	LastSeen  time.Time
 	// MaxHeight is the viewer's quality ceiling (negotiated profile height);

@@ -1,7 +1,10 @@
 package app.bowtie.core
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -166,6 +169,31 @@ class BowtieClientTest {
             """{"channelId":7,"caps":{"videoCodecs":["h264"],"audioCodecs":["aac"],"maxHeight":1080,"profile":"high"}}""",
             body,
         )
+    }
+
+    /**
+     * A zap cancels the in-flight create. The HTTP call must be cancelled too
+     * (closing the connection), so the server abandons that start and its
+     * account-limit reservation instead of finishing it into an orphan viewer.
+     */
+    @Test
+    fun cancellingCreateSessionAbortsTheCall() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(
+            MockResponse()
+                .setBody("""{"viewerId":"v1","playlistUrl":"/x"}""")
+                .setHeadersDelay(5, TimeUnit.SECONDS),
+        )
+        val c = client()
+        c.login("alice", "secret")
+        val caps = ClientCaps(listOf("h264"), listOf("aac"), maxHeight = 0, profile = "")
+        val job = launch(Dispatchers.IO) { c.createSession(channelId = 7L, caps = caps) }
+        take("/api/v1/auth/login")
+        take("/api/v1/sessions")
+        val started = System.nanoTime()
+        job.cancelAndJoin()
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("cancel took ${tookMs}ms; the request kept running", tookMs < 1_000)
     }
 
     // ── single-flight refresh ───────────────────────────────────────────────

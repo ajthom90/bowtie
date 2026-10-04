@@ -15,6 +15,8 @@ type userJSON struct {
 	Username   string `json:"username"`
 	Role       string `json:"role"`
 	MaxQuality string `json:"maxQuality"`
+	MaxStreams int    `json:"maxStreams"`
+	MaxTuners  int    `json:"maxTuners"`
 }
 
 type tokenPairJSON struct {
@@ -29,6 +31,8 @@ func userToJSON(u store.User) userJSON {
 		Username:   u.Username,
 		Role:       u.Role,
 		MaxQuality: u.MaxQuality,
+		MaxStreams: u.MaxStreams,
+		MaxTuners:  u.MaxTuners,
 	}
 }
 

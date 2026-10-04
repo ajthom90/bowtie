@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, type User, type UserRole } from '../api/client'
+import { ApiError, type PatchUserRequest, type User, type UserRole } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { QUALITY_OPTIONS, qualityLabel } from './adminModel'
+import { LIMIT_OPTIONS, QUALITY_OPTIONS, qualityLabel } from './adminModel'
 import styles from './Admin.module.css'
 
 export function Users() {
@@ -14,6 +14,8 @@ export function Users() {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<UserRole>('viewer')
   const [maxQuality, setMaxQuality] = useState('')
+  const [maxStreams, setMaxStreams] = useState(0)
+  const [maxTuners, setMaxTuners] = useState(0)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
@@ -46,11 +48,15 @@ export function Users() {
         password,
         role,
         maxQuality,
+        maxStreams,
+        maxTuners,
       })
       setUsername('')
       setPassword('')
       setRole('viewer')
       setMaxQuality('')
+      setMaxStreams(0)
+      setMaxTuners(0)
       await load()
     } catch (err) {
       setCreateError(err instanceof ApiError ? err.message || 'Create failed' : 'Create failed')
@@ -59,7 +65,7 @@ export function Users() {
     }
   }
 
-  async function patchUser(id: number, body: { role?: UserRole; maxQuality?: string; password?: string }) {
+  async function patchUser(id: number, body: PatchUserRequest) {
     setBusyId(id)
     setError(null)
     try {
@@ -156,6 +162,8 @@ export function Users() {
             ))}
           </select>
         </label>
+        <LimitSelect label="Streams" value={maxStreams} onChange={setMaxStreams} disabled={creating} />
+        <LimitSelect label="Tuners" value={maxTuners} onChange={setMaxTuners} disabled={creating} />
         <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`} disabled={creating}>
           {creating ? 'Creating…' : 'Create user'}
         </button>
@@ -181,6 +189,8 @@ export function Users() {
                 <th scope="col">Username</th>
                 <th scope="col">Role</th>
                 <th scope="col">Max quality</th>
+                <th scope="col">Streams</th>
+                <th scope="col">Tuners</th>
                 <th scope="col">Actions</th>
               </tr>
             </thead>
@@ -219,6 +229,24 @@ export function Users() {
                       ) : null}
                     </select>
                   </td>
+                  <td data-label="Streams">
+                    <LimitSelect
+                      small
+                      label={`Streams for ${u.username}`}
+                      value={u.maxStreams ?? 0}
+                      disabled={busyId === u.id || u.role === 'admin'}
+                      onChange={(n) => void patchUser(u.id, { maxStreams: n })}
+                    />
+                  </td>
+                  <td data-label="Tuners">
+                    <LimitSelect
+                      small
+                      label={`Tuners for ${u.username}`}
+                      value={u.maxTuners ?? 0}
+                      disabled={busyId === u.id || u.role === 'admin'}
+                      onChange={(n) => void patchUser(u.id, { maxTuners: n })}
+                    />
+                  </td>
                   <td data-label="Actions" className={styles.cardActions}>
                     <div className={styles.actions}>
                       <button
@@ -246,5 +274,48 @@ export function Users() {
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * Stream/tuner limit picker. In the create form it renders its own label; in
+ * the table (small) the label is the accessible name only. Admins are never
+ * limited, so their rows are disabled.
+ */
+function LimitSelect({
+  label,
+  value,
+  onChange,
+  disabled,
+  small = false,
+}: {
+  label: string
+  value: number
+  onChange: (n: number) => void
+  disabled: boolean
+  small?: boolean
+}) {
+  const select = (
+    <select
+      className={small ? `${styles.select} ${styles.selectSm}` : styles.select}
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(Number(e.target.value))}
+      aria-label={small ? label : undefined}
+      title={label.startsWith('Tuners') ? "Joining a channel someone else is watching doesn't use a tuner" : undefined}
+    >
+      {LIMIT_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  )
+  if (small) return select
+  return (
+    <label className={styles.label}>
+      {label}
+      {select}
+    </label>
   )
 }

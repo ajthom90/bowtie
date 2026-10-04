@@ -1,21 +1,28 @@
 package app.bowtie.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.IOException
 import java.time.Instant
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Viewer-allowlist HTTP client: login/refresh/logout/me/password/channels/guide/sessions.
@@ -284,12 +291,12 @@ class BowtieClient(
             // Snapshot the token actually sent — concurrent refresh may rotate
             // accessToken before we process a late 401 for the old token.
             val tokenUsed = accessToken
-            val first = okHttp.newCall(build(tokenUsed)).execute()
+            val first = okHttp.newCall(build(tokenUsed)).await()
             try {
                 if (first.code == 401 && retryOn401 && attachAuth) {
                     first.close()
                     singleFlightRefresh(failedAccessToken = tokenUsed)
-                    okHttp.newCall(build(accessToken)).execute().use { retry ->
+                    okHttp.newCall(build(accessToken)).await().use { retry ->
                         if (retry.code == 401) {
                             clearSessionKeepServer()
                             throw BowtieError.Unauthorized
@@ -303,9 +310,32 @@ class BowtieClient(
             }
         } catch (e: BowtieError) {
             throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw BowtieError.Network(e)
         }
+    }
+
+    /**
+     * Runs the call, cancelling it (and closing its connection) when the
+     * coroutine is cancelled. A blocking execute() would keep the request
+     * alive after a zap, so the server would finish a start nobody wants —
+     * an orphan viewer that counts against the account's stream limit.
+     */
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { cancel() }
+        enqueue(
+            object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    cont.resume(response) { _, value, _ -> value.close() }
+                }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            },
+        )
     }
 
     private fun handleBody(response: Response): String {

@@ -34,9 +34,15 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		Password   string `json:"password"`
 		Role       string `json:"role"`
 		MaxQuality string `json:"maxQuality"`
+		MaxStreams int    `json:"maxStreams"`
+		MaxTuners  int    `json:"maxTuners"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !validLimit(req.MaxStreams) || !validLimit(req.MaxTuners) {
+		writeError(w, http.StatusBadRequest, limitRangeMsg)
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
@@ -59,6 +65,8 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		PasswordHash: hash,
 		Role:         req.Role,
 		MaxQuality:   req.MaxQuality,
+		MaxStreams:   req.MaxStreams,
+		MaxTuners:    req.MaxTuners,
 		CreatedAt:    time.Now().UTC(),
 	})
 	if err != nil {
@@ -96,10 +104,16 @@ func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Role       *string `json:"role"`
 		MaxQuality *string `json:"maxQuality"`
+		MaxStreams *int    `json:"maxStreams"`
+		MaxTuners  *int    `json:"maxTuners"`
 		Password   *string `json:"password"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if (req.MaxStreams != nil && !validLimit(*req.MaxStreams)) || (req.MaxTuners != nil && !validLimit(*req.MaxTuners)) {
+		writeError(w, http.StatusBadRequest, limitRangeMsg)
 		return
 	}
 
@@ -124,6 +138,12 @@ func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxQuality != nil {
 		u.MaxQuality = *req.MaxQuality
+	}
+	if req.MaxStreams != nil {
+		u.MaxStreams = *req.MaxStreams
+	}
+	if req.MaxTuners != nil {
+		u.MaxTuners = *req.MaxTuners
 	}
 	if err := s.deps.Store.UpdateUser(u); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update user")
@@ -569,3 +589,10 @@ func epgIconByID(st *store.Store) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// maxUserLimit bounds per-account stream/tuner limits (0 = unlimited).
+const maxUserLimit = 8
+
+const limitRangeMsg = "maxStreams and maxTuners must be 0 (no limit) to 8"
+
+func validLimit(n int) bool { return n >= 0 && n <= maxUserLimit }

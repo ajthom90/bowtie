@@ -212,9 +212,9 @@ func (d *countingDial) DialCalls() int64 { return d.n.Load() }
 
 // pipeBody is a controllable live stream: Write from test, Read from pump.
 type pipeBody struct {
-	pr     *io.PipeReader
-	pw     *io.PipeWriter
-	closed atomic.Bool
+	pr      *io.PipeReader
+	pw      *io.PipeWriter
+	closed  atomic.Bool
 	onClose func()
 }
 

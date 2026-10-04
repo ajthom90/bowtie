@@ -5,6 +5,25 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-10-03
+
+### Added
+
+- **Per-account limits.** In **Admin → Users**, set how many **Streams** an
+  account may watch at once and how many **Tuners** it may use, so someone you
+  share the antenna with can't take every tuner. Watching a channel another
+  account is already watching never uses a tuner, so it doesn't count. Admins
+  are never limited. A viewer over a limit sees, for example, "Your account
+  can use 1 tuner at a time. Stop another channel first." (HTTP 429,
+  `code: "user_limit"`).
+
+### Fixed
+
+- **Android/Fire TV: quick channel changes no longer leave a stream running
+  on the server.** Changing channel again before the last one started now
+  cancels that request outright, so it can't count against an account's
+  limit (or hold a tuner) until it times out.
+
 ## [0.8.0] — 2026-10-03
 
 ### Added

@@ -672,6 +672,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TunersBusyError'
+        '429':
+          description: |
+            The caller's account limit would be exceeded (see User.maxStreams
+            and User.maxTuners). `error` is a message to show the viewer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserLimitError'
         '500':
           description: |
             The session could not be started. `error` is "failed to start
@@ -884,7 +892,7 @@ components:
           type: string
     User:
       type: object
-      required: [id, username, role, maxQuality]
+      required: [id, username, role, maxQuality, maxStreams, maxTuners]
       properties:
         id:
           type: integer
@@ -897,6 +905,33 @@ components:
         maxQuality:
           type: string
           description: Quality profile name, or empty for unlimited
+        maxStreams:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: Concurrent streams allowed (0 = no limit; admins are never limited)
+        maxTuners:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: |
+            Tuners the account may occupy alone (0 = no limit). Watching a
+            channel another account is already watching costs no tuner.
+    UserLimitError:
+      type: object
+      required: [error, code, kind, limit]
+      properties:
+        error:
+          type: string
+          example: Your account can use 1 tuner at a time. Stop another channel first.
+        code:
+          type: string
+          enum: [user_limit]
+        kind:
+          type: string
+          enum: [streams, tuners]
+        limit:
+          type: integer
     LoginRequest:
       type: object
       required: [username, password]
@@ -947,6 +982,18 @@ components:
         maxQuality:
           type: string
           description: Quality profile name, or empty for unlimited
+        maxStreams:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: Concurrent streams allowed (0 = no limit; admins are never limited)
+        maxTuners:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: |
+            Tuners the account may occupy alone (0 = no limit). Watching a
+            channel another account is already watching costs no tuner.
     PatchUserRequest:
       type: object
       properties:
@@ -955,6 +1002,18 @@ components:
           enum: [admin, viewer]
         maxQuality:
           type: string
+        maxStreams:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: Concurrent streams allowed (0 = no limit; admins are never limited)
+        maxTuners:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: |
+            Tuners the account may occupy alone (0 = no limit). Watching a
+            channel another account is already watching costs no tuner.
         password:
           type: string
           format: password

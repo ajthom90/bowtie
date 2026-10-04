@@ -326,8 +326,8 @@ func newTestManagerWithDial(st *store.Store, cfg config.Config, clock *fakeClock
 	im, cd := newManagerIngest(clock, dial)
 	m := NewManager(ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		// Tuners nil; StreamURL injected
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
@@ -669,8 +669,8 @@ func TestStartStreamURLError(t *testing.T) {
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		StreamURL: func(store.Channel) (string, error) {
 			return "", want
 		},
@@ -830,8 +830,8 @@ func TestEncoderSettingAppliesPerSession(t *testing.T) {
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
 		},
@@ -898,8 +898,8 @@ func TestHLSListSizeFromStreamingSetting(t *testing.T) {
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
 		},
@@ -1067,8 +1067,8 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
 		},
@@ -1726,7 +1726,7 @@ func TestRestartDialDoesNotBlockManager(t *testing.T) {
 		return false
 	})
 	stepClock(clock, 6*time.Second) // past restart backoff and the 5s ingest tail
-	go m.maintain()                // restart → Attach → dial blocks
+	go m.maintain()                 // restart → Attach → dial blocks
 	waitFor(t, 2*time.Second, func() bool { return dials.Load() == 2 })
 
 	done := make(chan struct{})

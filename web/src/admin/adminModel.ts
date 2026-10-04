@@ -112,3 +112,13 @@ export function qualityLabel(value: string): string {
   const found = QUALITY_OPTIONS.find((o) => o.value === value)
   return found ? found.label : value || 'Unlimited'
 }
+
+/** Per-account stream/tuner limits the admin can pick (0 = no limit). */
+export const LIMIT_OPTIONS: { value: number; label: string }[] = Array.from({ length: 9 }, (_, n) => ({
+  value: n,
+  label: limitLabel(n),
+}))
+
+export function limitLabel(n: number): string {
+  return n === 0 ? 'No limit' : String(n)
+}
