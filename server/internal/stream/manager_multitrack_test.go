@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -23,6 +24,13 @@ func vtCaps() transcode.Capabilities {
 // shared ladder on or off, and a device that sends PAT/PMT(eng, spa AC-3) plus
 // a 720-line MPEG-2 sequence header, then blocks.
 func newMultitrackManager(t *testing.T, adaptive bool) (*Manager, *IngestManager, *stubRunner, int64) {
+	t.Helper()
+	return newProbeManager(t, adaptive, true)
+}
+
+// newProbeManager is newMultitrackManager with the multitrack kill switch
+// selectable (multitrack=false ≙ BOWTIE_MULTITRACK=off).
+func newProbeManager(t *testing.T, adaptive, multitrack bool) (*Manager, *IngestManager, *stubRunner, int64) {
 	t.Helper()
 	st, cfg, clock, runner, chID, _ := setupEnv(t)
 	body := probeBody(audioES(0x81, 0x34, "eng", 0), audioES(0x81, 0x35, "spa", 0))
@@ -47,7 +55,7 @@ func newMultitrackManager(t *testing.T, adaptive bool) (*Manager, *IngestManager
 		Clock:             clock.Now,
 		Settings:          prov,
 		Ingest:            im,
-		Multitrack:        true,
+		Multitrack:        multitrack,
 		TrackProbeTimeout: time.Second,
 	})
 	t.Cleanup(im.Shutdown)
@@ -160,5 +168,48 @@ func TestMultitrackOffIsVideoPlusFirstAudio(t *testing.T) {
 	}
 	if n := im.attachCalls.Load(); n != 1 || !runner.LastSpec().Layout.IsSafe() {
 		t.Fatalf("attach=%d layout=%+v", n, runner.LastSpec().Layout)
+	}
+}
+
+// The kill switch drops captions/extra audio/5.1 only: the ladder and the
+// broadcast-height cap still apply (spec §7).
+func TestKillSwitchKeepsLadderAndSourceCap(t *testing.T) {
+	m, _, runner, chID := newProbeManager(t, true, false)
+	if _, err := m.Start(context.Background(), viewer("a", ""), chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	l := runner.LastSpec().Layout
+	if len(l.Rungs) != 3 || l.Rungs[0].Height != 720 || l.Captions || l.AC3Copy || len(l.AACTracks()) != 1 {
+		t.Fatalf("kill switch + ladder: layout=%+v", l)
+	}
+
+	m2, _, runner2, ch2 := newProbeManager(t, false, false)
+	if _, err := m2.Start(context.Background(), viewer("a", ""), ch2, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	if r := runner2.LastSpec().Layout.Rungs; len(r) != 1 || r[0].Height != 720 {
+		t.Fatalf("kill switch must still cap at the 720 source: %+v", r)
+	}
+}
+
+// A ladder that fails to start falls back to a per-quality session (one rung
+// at the viewer's capped quality), not one shared 720 rung for everyone.
+func TestLadderFallbackIsPerQuality(t *testing.T) {
+	m, _, runner, chID := newMultitrackManager(t, true)
+	runner.onStart = func(spec transcode.JobSpec) {
+		if len(spec.Layout.Rungs) > 1 {
+			runner.failNext = true
+		}
+	}
+	if _, err := m.Start(context.Background(), viewer("capped", "low"), chID, clientCaps("")); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	specs := runner.Specs()
+	last := specs[len(specs)-1].Layout
+	if len(last.Rungs) != 1 || last.Rungs[0].Height != 480 || last.Captions {
+		t.Fatalf("fallback layout=%+v", last)
+	}
+	if k := m.Sessions()[0].Key; k == fmt.Sprintf("ch%d|ladder", chID) {
+		t.Fatalf("fallback session must not take the shared ladder key: %s", k)
 	}
 }

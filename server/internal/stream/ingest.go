@@ -936,10 +936,14 @@ func (m *IngestManager) ProgramInfo(channelID int64, timeout time.Duration) (Pro
 			c.mu.Lock()
 			pmt, h := c.lastPMT, c.sourceHeight
 			c.mu.Unlock()
-			if pmt != nil && (h > 0 || !time.Now().Before(deadline)) {
+			if pmt != nil {
 				info := parsePMT(pmt)
-				info.SourceHeight = h
-				return info, true
+				// Only MPEG-2 carries the height we read; don't wait for it
+				// on H.264 or other video.
+				if h > 0 || !info.VideoMPEG2 || !time.Now().Before(deadline) {
+					info.SourceHeight = h
+					return info, true
+				}
 			}
 		}
 		if !time.Now().Before(deadline) {

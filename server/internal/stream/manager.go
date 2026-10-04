@@ -216,16 +216,24 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 		return ViewerHandle{}, err
 	}
 
-	safe := !m.multitrack
+	fallback := false
 	var lastErr error
 	for attempt := 0; attempt < startMaxAttempts; attempt++ {
-		h, err, retry := m.startAttempt(ctx, user, ch, key, decision, inputURL, adaptive, safe)
+		tracks := m.multitrack && !fallback
+		h, err, retry := m.startAttempt(ctx, user, ch, key, decision, inputURL, adaptive, tracks)
 		if err == nil {
 			return h, nil
 		}
-		if !safe && errors.Is(err, errPlaylistNotReady) {
+		if !fallback && (tracks || adaptive) && errors.Is(err, errPlaylistNotReady) {
+			// One retry in the simplest shape: one rung at this viewer's
+			// quality (a per-quality session, not the shared ladder), first
+			// audio only, no captions.
 			log.Printf("stream: channel %d: full layout failed (%v); retrying with one rung, first audio, no captions", ch.ID, err)
-			safe = true
+			fallback = true
+			if adaptive {
+				adaptive = false
+				key = sessionKey(ch.ID, decision, false)
+			}
 			attempt-- // the fallback is not a duplicate-key retry
 			continue
 		}
@@ -248,7 +256,7 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 //	Close(old sub if any) → Attach → JobSpec.Stdin=sub.R → runner.Start
 //
 // Close on: proc-death, abandon, waitPlaylist failure, Terminate, teardown.
-func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Channel, key string, decision transcode.Decision, inputURL string, adaptive, safe bool) (ViewerHandle, error, bool) {
+func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Channel, key string, decision transcode.Decision, inputURL string, adaptive, tracks bool) (ViewerHandle, error, bool) {
 	m.mu.Lock()
 	if existing, ok := m.byKey[key]; ok && !existing.terminated {
 		h, err := m.addViewerLocked(existing, user.Username, decision.Profile.Height)
@@ -283,7 +291,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		return ViewerHandle{}, err, false
 	}
 
-	layout := m.layoutFor(ch.ID, decision, adaptive, safe)
+	layout := m.layoutFor(ch.ID, decision, adaptive, tracks)
 	capSub, err := m.attachCaptions(ctx, ch.ID, inputURL, layout)
 	if err != nil {
 		log.Printf("stream: channel %d: caption tap attach failed: %v (continuing without captions)", ch.ID, err)
@@ -870,13 +878,12 @@ func (m *Manager) adaptiveForStart(d transcode.Decision) (bool, error) {
 	return s.Adaptive, nil
 }
 
-// layoutFor builds the session's output once the video sub is attached.
-func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, safe bool) transcode.Layout {
-	var info ProgramInfo
-	ok := false
-	if m.multitrack && !safe {
-		info, ok = m.ingest.ProgramInfo(channelID, m.trackProbe)
-	}
+// layoutFor builds the session's output once the video sub is attached. The
+// rungs always follow the broadcast (ladder ≤ source, or one rung capped at
+// the source height); tracks adds every audio track, the AC-3 copies and
+// captions (off with the BOWTIE_MULTITRACK kill switch or in the fallback).
+func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tracks bool) transcode.Layout {
+	info, ok := m.ingest.ProgramInfo(channelID, m.trackProbe)
 	src := info.SourceHeight
 	l := transcode.Layout{VideoCodec: d.VideoCodec, AudioKbps: d.Profile.AudioKbps}
 	if adaptive {
@@ -892,12 +899,15 @@ func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, saf
 	if ok && len(info.Audio) > 0 {
 		l.Audio = info.Audio
 	}
-	if m.multitrack && !safe {
-		l.Captions = true
-		l.AC3Copy = true
+	if !tracks {
+		if len(l.Audio) > 0 {
+			l.Audio = []transcode.AudioTrack{{Lang: l.Audio[0].Lang}}
+		}
 		return l
 	}
-	return l.Safe()
+	l.Captions = true
+	l.AC3Copy = true
+	return l
 }
 
 // attachCaptions attaches the caption tap when the layout has captions.

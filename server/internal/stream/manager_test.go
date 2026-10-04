@@ -325,6 +325,7 @@ func newTestManager(st *store.Store, cfg config.Config, clock *fakeClock, runner
 func newTestManagerWithDial(st *store.Store, cfg config.Config, clock *fakeClock, runner *stubRunner, dial DialFunc) (*Manager, *IngestManager, *countingDial) {
 	im, cd := newManagerIngest(clock, dial)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		// Tuners nil; StreamURL injected
@@ -667,6 +668,7 @@ func TestStartStreamURLError(t *testing.T) {
 	want := errors.New("stream url failed")
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(store.Channel) (string, error) {
@@ -827,6 +829,7 @@ func TestEncoderSettingAppliesPerSession(t *testing.T) {
 	}
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -894,6 +897,7 @@ func TestHLSListSizeFromStreamingSetting(t *testing.T) {
 	}
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -1062,6 +1066,7 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	runner := newRaceRunner()
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {

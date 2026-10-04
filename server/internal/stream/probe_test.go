@@ -126,3 +126,30 @@ func TestProgramInfoTimesOutWithoutPMT(t *testing.T) {
 		t.Fatal("timeout not honored")
 	}
 }
+
+// H.264 video carries no MPEG-2 sequence header: ProgramInfo must not wait
+// out the timeout for a height it can never learn.
+func TestProgramInfoDoesNotWaitForH264Height(t *testing.T) {
+	pmt := pmtPacket(audioES(0x81, 0x34, "eng", 0))
+	pmt[5+12] = 0x1B // first ES (video) → H.264
+	b := newTSBuilder()
+	b.pmtPID = 0x30
+	body := append(append([]byte{}, b.PAT()...), pmt...)
+	im, _ := newTestIngest(t, func(context.Context, string) (io.ReadCloser, int, error) {
+		return newBlockingBody(body), 200, nil
+	}, nil)
+	sub, err := im.Attach(context.Background(), 7, "http://dev/auto/v7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sub.Close() }()
+	go func() { _, _ = io.Copy(io.Discard, sub.R) }()
+	start := time.Now()
+	info, ok := im.ProgramInfo(7, 3*time.Second)
+	if !ok || info.VideoMPEG2 || info.SourceHeight != 0 || len(info.Audio) != 1 {
+		t.Fatalf("info=%+v ok=%v", info, ok)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("waited %v for an H.264 height", time.Since(start))
+	}
+}

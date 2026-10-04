@@ -623,6 +623,7 @@ func TestHeartbeatAdvancesLastSeen(t *testing.T) {
 		FFmpegPath: "ffmpeg",
 	}
 	mgr := stream.NewManager(stream.ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -981,6 +982,7 @@ func TestAdminPreviewDisabledChannelE2E(t *testing.T) {
 		return nil, nil
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:    cfg,
 		Store:  st,
 		Tuners: tuners,
@@ -1124,6 +1126,7 @@ func TestE2EStreamLifecycle(t *testing.T) {
 	})
 
 	mgr := stream.NewManager(stream.ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:    cfg,
 		Store:  st,
 		Tuners: tuners,
@@ -1363,6 +1366,7 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 		return nil, nil
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:    cfg,
 		Store:  st,
 		Tuners: tuners,
