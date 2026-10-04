@@ -35,6 +35,7 @@ const streamSecret = "0123456789abcdef0123456789abcdef"
 type stubStreams struct {
 	mu         sync.Mutex
 	startFn    func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
+	joinFn     func(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
 	touchCalls []string
 	stopped    []string
 	terminated []string
@@ -58,6 +59,13 @@ func (s *stubStreams) Start(ctx context.Context, user store.User, channelID int6
 		return s.startFn(ctx, user, channelID, caps)
 	}
 	return stream.ViewerHandle{}, errors.New("start not configured")
+}
+
+func (s *stubStreams) Join(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error) {
+	if s.joinFn != nil {
+		return s.joinFn(ctx, user, sessionID, channelID, caps)
+	}
+	return stream.ViewerHandle{}, stream.ErrNotJoinable
 }
 
 func (s *stubStreams) Touch(id string) bool {

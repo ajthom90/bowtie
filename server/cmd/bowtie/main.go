@@ -111,6 +111,18 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		return "", nil, fmt.Errorf("stream token secret: %w", err)
 	}
 
+	// Stable identity for apps (SharePlay: same server whatever URL each uses).
+	serverIDRaw, err := loadOrCreateHexSecret(st, "server_id")
+	if err != nil {
+		_ = st.Close()
+		return "", nil, fmt.Errorf("server id: %w", err)
+	}
+	serverID := hex.EncodeToString(serverIDRaw[:16])
+	serverName := os.Getenv("BOWTIE_SERVER_NAME")
+	if serverName == "" {
+		serverName, _ = os.Hostname()
+	}
+
 	// Root context for ALL background goroutines (tuners, epg, stream manager).
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
@@ -171,6 +183,8 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 
 	apiHandler := api.New(api.Deps{
 		Version:           version,
+		ServerID:          serverID,
+		ServerName:        serverName,
 		Cfg:               cfg,
 		Store:             st,
 		Auth:              authSvc,

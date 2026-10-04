@@ -26,6 +26,10 @@ type Deps struct {
 	Probe             func() transcode.Capabilities // Task 11
 	// Version is the release version, served by GET /api/v1/version.
 	Version string
+	// ServerID (stable, random) and ServerName identify this server to apps
+	// (SharePlay: is a participant signed in to the sharer's server?).
+	ServerID   string
+	ServerName string
 	Streams           StreamController              // Task 15
 	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
 	// Settings is the DB-backed product settings provider (v0.4.0). Used for
@@ -168,5 +172,9 @@ func decodeJSON(r *http.Request, dst any) error {
 // handleVersion reports the running release so deployments can be checked
 // remotely. Public: it reveals nothing the startup log doesn't.
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": s.deps.Version})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":    s.deps.Version,
+		"serverId":   s.deps.ServerID,
+		"serverName": s.deps.ServerName,
+	})
 }

@@ -38,6 +38,9 @@ const vttTimestampMap = "X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000"
 // StreamController is the stream manager surface consumed by HTTP handlers.
 type StreamController interface {
 	Start(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
+	// Join adds a viewer to an existing session (SharePlay); stream.ErrNotJoinable
+	// means start normally instead.
+	Join(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
 	Touch(string) bool
 	StopViewer(string)
 	Sessions() []stream.SessionInfo
@@ -75,6 +78,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ChannelID int64                `json:"channelId"`
 		Caps      transcode.ClientCaps `json:"caps"`
+		// JoinSessionID: watch in the same session as a SharePlay sharer.
+		JoinSessionID string `json:"joinSessionId"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -85,7 +90,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h, err := s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+	var h stream.ViewerHandle
+	if req.JoinSessionID != "" {
+		h, err = s.deps.Streams.Join(r.Context(), u, req.JoinSessionID, req.ChannelID, req.Caps)
+		if errors.Is(err, stream.ErrNotJoinable) {
+			h, err = s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+		}
+	} else {
+		h, err = s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+	}
 	if err != nil {
 		s.writeStartError(w, err, u)
 		return
@@ -102,6 +115,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if info, ok := s.deps.Streams.SessionInfoOf(h.ViewerID); ok {
 		resp["session"] = map[string]string{
+			"id":          h.SessionID,
 			"videoCodec":  info.VideoCodec,
 			"profile":     info.Profile,
 			"backend":     info.Backend,

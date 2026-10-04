@@ -16,11 +16,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [version]
+                required: [version, serverId, serverName]
                 properties:
                   version:
                     type: string
                     example: 0.5.3
+                  serverId:
+                    type: string
+                    description: Stable random ID of this server (same whatever URL a client uses)
+                  serverName:
+                    type: string
+                    description: BOWTIE_SERVER_NAME, or the host name
   /api/v1/auth/login:
     post:
       summary: Log in with username and password
@@ -1887,6 +1893,13 @@ components:
           format: int64
         caps:
           $ref: '#/components/schemas/ClientCaps'
+        joinSessionId:
+          type: string
+          description: |
+            SharePlay: join this existing session (the sharer's `session.id`)
+            so every participant plays the same playlist. If it is gone, on
+            another channel, or in a codec the client can't play, a normal
+            session starts instead. Account limits apply either way.
     CreateSessionResponse:
       type: object
       required: [viewerId, playlistUrl, session]
@@ -1903,6 +1916,9 @@ components:
       description: Negotiated session fields for client stats overlay
       required: [videoCodec, profile, backend, channelName]
       properties:
+        id:
+          type: string
+          description: Server session ID (shared by everyone watching the same stream)
         videoCodec:
           type: string
           example: h264
