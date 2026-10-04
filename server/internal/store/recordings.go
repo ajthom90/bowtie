@@ -72,15 +72,15 @@ func (s *Store) CreateRecording(r Recording) (int64, error) {
 	return res.LastInsertId()
 }
 
-// UpdateRecording writes every mutable field of r.
+// UpdateRecording writes every mutable field of r except Protected, which
+// only SetRecordingProtected changes (so the DVR never clobbers a Keep).
 func (s *Store) UpdateRecording(r Recording) error {
 	res, err := s.db.Exec(`UPDATE recordings SET start = ?, stop = ?, pad_start_sec = ?, pad_end_sec = ?,
 		state = ?, partial = ?, failure = ?, failure_detail = ?, actual_start = ?, actual_stop = ?,
-		missed_sec = ?, dir = ?, size_bytes = ?, duration_sec = ?, protected = ? WHERE id = ?`,
+		missed_sec = ?, dir = ?, size_bytes = ?, duration_sec = ? WHERE id = ?`,
 		formatTime(r.Start), formatTime(r.Stop), r.PadStartSec, r.PadEndSec, r.State,
 		boolToInt(r.Partial), r.Failure, r.FailureDetail, formatOptTime(r.ActualStart),
-		formatOptTime(r.ActualStop), r.MissedSec, r.Dir, r.SizeBytes, r.DurationSec,
-		boolToInt(r.Protected), r.ID)
+		formatOptTime(r.ActualStop), r.MissedSec, r.Dir, r.SizeBytes, r.DurationSec, r.ID)
 	if err != nil {
 		return err
 	}
@@ -195,4 +195,32 @@ func scanRecording(row scannable) (Recording, error) {
 func (s *Store) SetRecordingProtected(id int64, on bool) error {
 	_, err := s.db.Exec(`UPDATE recordings SET protected = ? WHERE id = ?`, boolToInt(on), id)
 	return err
+}
+
+// StopRecordingAt moves a pending recording's window so it ends at stop (and
+// starts no later than stop), touching nothing else. It reports false when
+// the recording isn't scheduled, waiting or recording.
+func (s *Store) StopRecordingAt(id int64, stop time.Time) (bool, error) {
+	res, err := s.db.Exec(`UPDATE recordings SET
+			stop = CASE WHEN stop > ? THEN ? ELSE stop END,
+			pad_end_sec = 0,
+			pad_start_sec = CASE WHEN start > ? THEN 0 ELSE pad_start_sec END,
+			start = CASE WHEN start > ? THEN ? ELSE start END
+		WHERE id = ? AND state IN (?, ?, ?)`,
+		formatTime(stop), formatTime(stop), formatTime(stop), formatTime(stop), formatTime(stop),
+		id, RecScheduled, RecWaiting, RecRecording)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// RecordingWatchedSince reports whether anyone saved a playback position for
+// the recording since t (someone is watching it).
+func (s *Store) RecordingWatchedSince(id int64, t time.Time) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM recording_positions WHERE recording_id = ? AND updated_at >= ?`,
+		id, formatTime(t)).Scan(&n)
+	return n > 0, err
 }

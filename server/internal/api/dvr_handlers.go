@@ -280,6 +280,10 @@ func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.DVR.StopNow(rec.ID); err != nil {
+		if errors.Is(err, dvr.ErrNotStoppable) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to stop recording")
 		return
 	}

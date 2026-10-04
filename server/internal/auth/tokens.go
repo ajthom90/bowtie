@@ -145,7 +145,18 @@ func (a *Auth) Rotate(raw string, now time.Time) (store.User, string, error) {
 		}
 	}
 	if r, ok := a.rotated[hash]; ok && now.Sub(r.at) <= refreshReuseWindow {
-		return r.user, r.newRaw, nil
+		// Only while the token it was swapped for is still live (not signed
+		// out), and for a user who still exists.
+		if _, err := a.Store.RefreshTokenByHash(hashRefreshToken(r.newRaw)); err != nil {
+			delete(a.rotated, hash)
+			return store.User{}, "", errors.New("refresh token revoked")
+		}
+		u, err := a.Store.UserByID(r.user.ID)
+		if err != nil {
+			delete(a.rotated, hash)
+			return store.User{}, "", err
+		}
+		return u, r.newRaw, nil
 	}
 	tok, err := a.Store.RefreshTokenByHash(hash)
 	if err != nil {

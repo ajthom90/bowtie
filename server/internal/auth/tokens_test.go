@@ -172,3 +172,22 @@ func TestRefreshReuseWindow(t *testing.T) {
 		t.Fatalf("new token: %v", err)
 	}
 }
+
+// Signing out (revoking the new token) inside the reuse window ends it: a
+// late repeat with the old token must not sign back in.
+func TestRefreshReuseWindowEndsOnRevoke(t *testing.T) {
+	a, s := openTestAuth(t)
+	u := seedUser(t, s)
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	raw, _ := a.NewRefreshToken(u.ID, now)
+	_, first, err := a.Rotate(raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Revoke(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.Rotate(raw, now.Add(5*time.Second)); err == nil {
+		t.Fatal("old token signed back in after sign-out")
+	}
+}
