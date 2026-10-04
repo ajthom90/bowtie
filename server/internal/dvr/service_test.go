@@ -271,6 +271,7 @@ func TestWaitsForTunerAndMarksPartial(t *testing.T) {
 	if rec.MissedSec != 300 {
 		t.Fatalf("missedSec=%d want 300", rec.MissedSec)
 	}
+	time.Sleep(20 * time.Millisecond) // let some bytes land before the window ends
 	e.clock.Set(r.WindowStop())
 	e.svc.Tick()
 	if done := waitState(t, e.st, r.ID, store.RecReady); !done.Partial {
