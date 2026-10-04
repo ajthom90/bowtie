@@ -37,12 +37,20 @@ struct TVSleepPanel: View {
     }
 }
 
-/// Installs the Sleep Timer panel and the remote-focusable Keep watching
-/// button (an `AVPlayerViewController` contextual action, like Skip Intro).
+/// Installs the Sleep Timer panel and the player's remote-focusable
+/// contextual action (an `AVPlayerViewController` contextual action, like
+/// Skip Intro): Keep watching while the sleep prompt is up, otherwise Skip ad
+/// inside a commercial break (recordings).
 @MainActor
 final class TVSleepTimerSupport {
+    private enum ContextualAction: Equatable {
+        case none
+        case keepWatching
+        case skipAd
+    }
+
     private var host: UIHostingController<TVSleepPanel>?
-    private var showingKeepWatching = false
+    private var shownAction: ContextualAction = .none
 
     nonisolated init() {}
 
@@ -54,17 +62,29 @@ final class TVSleepTimerSupport {
         return panel
     }
 
+    /// `skipAd` is non-nil while a recording is inside a commercial break.
+    /// The action list is replaced only when it changes, so the pill isn't
+    /// re-presented on every view update.
     func update(
         _ vc: AVPlayerViewController,
         timer: SleepTimer,
         programEnd: Date?,
-        warning: Bool
+        warning: Bool,
+        skipAd: (() -> Void)? = nil
     ) {
         host?.rootView = TVSleepPanel(timer: timer, programEnd: programEnd)
-        guard warning != showingKeepWatching else { return }
-        showingKeepWatching = warning
-        vc.contextualActions = warning
-            ? [UIAction(title: "Keep watching") { [weak timer] _ in timer?.extend() }]
-            : []
+        let wanted: ContextualAction = warning ? .keepWatching : (skipAd != nil ? .skipAd : .none)
+        guard wanted != shownAction else { return }
+        shownAction = wanted
+        switch wanted {
+        case .none:
+            vc.contextualActions = []
+        case .keepWatching:
+            vc.contextualActions = [UIAction(title: "Keep watching") { [weak timer] _ in timer?.extend() }]
+        case .skipAd:
+            vc.contextualActions = [
+                UIAction(title: "Skip ad", image: UIImage(systemName: "forward.end.fill")) { _ in skipAd?() },
+            ]
+        }
     }
 }

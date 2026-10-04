@@ -1,7 +1,8 @@
 import SwiftUI
 import BowtieKit
 
-/// Server + account settings: change server, change password, sign out.
+/// Server, playback (this device) and account settings: change server, Skip
+/// ads automatically, change password, sign out.
 struct SettingsView: View {
     @Bindable var appModel: AppModel
 
@@ -26,6 +27,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 serverSection
+                playbackSection
                 accountSection
             }
             .padding(24)
@@ -82,6 +84,24 @@ struct SettingsView: View {
             .buttonStyle(BowtiePlainButtonStyle())
             .accessibilityLabel("Change server")
             .accessibilityHint("Sign out and choose a different Bowtie server")
+        }
+        .bowtieFocusSection()
+    }
+
+    // MARK: - Playback (this device)
+
+    private var playbackSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Playback")
+
+            AutoSkipAdsToggle()
+                .padding(Theme.fieldPadding)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                        .stroke(Theme.line, lineWidth: 1)
+                )
         }
         .bowtieFocusSection()
     }

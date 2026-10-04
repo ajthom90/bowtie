@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,9 +53,13 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
+import app.bowtie.core.Commercial
+import app.bowtie.core.CommercialSkipper
 import app.bowtie.core.RecordingLogic
 import app.bowtie.core.SleepTimer
+import app.bowtie.core.player.AutoSkipAdsStore
 import app.bowtie.core.player.VodPlayer
 import app.bowtie.core.vm.RecordingsViewModel
 import app.bowtie.tv.BowtieColors
@@ -66,11 +73,16 @@ import okhttp3.HttpUrl
 /** How long the progress bar stays up after a key press while playing. */
 private const val INFO_HIDE_MS = 4_000L
 
+/** How long "Skipped ad" stays up after an automatic skip. */
+private const val SKIPPED_AD_TOAST_MS = 1_500L
+
 /**
  * Recording playback for TV: HLS VOD with DPAD seeking ([VodKeys]), a
  * progress bar shown on any key and while paused, and the resume position
  * saved every 15 s, on background, at the end and on exit. Down (or Menu)
- * opens the menu with the sleep timer.
+ * opens the menu with the sleep timer and Skip ads automatically. Inside a
+ * detected commercial break a focused Skip ad button appears (OK skips; Back
+ * still leaves); with Skip ads automatically on, each break is skipped once.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -100,6 +112,14 @@ fun TvRecordingPlayerScreen(
     var showMenu by remember { mutableStateOf(false) }
     val menuFocusRequester = remember { FocusRequester() }
     val sleepWarningFocusRequester = remember { FocusRequester() }
+    val skipAdFocusRequester = remember { FocusRequester() }
+    // Per screen, not per load: a retry (fresh playlist) doesn't re-skip breaks.
+    val skipper = remember { CommercialSkipper(start.recording.commercials) }
+    val autoSkipStore = remember { AutoSkipAdsStore(context) }
+    var autoSkipAds by remember { mutableStateOf(autoSkipStore.enabled) }
+    var activeAd by remember { mutableStateOf<Commercial?>(null) }
+    var skippedNonce by remember { mutableIntStateOf(0) }
+    var showSkipped by remember { mutableStateOf(false) }
 
     // Sleep timer: fires the same leave as Back (saves the position on dispose).
     val sleepTimer = rememberSleepTimer { onBack() }
@@ -135,6 +155,19 @@ fun TvRecordingPlayerScreen(
     fun showInfo() {
         infoVisible = true
         infoNonce++
+    }
+
+    /** Seek to a break's end (exact: Media3's default seek). */
+    fun seekPastAd(targetSec: Double) {
+        val target = (targetSec * 1000).toLong()
+        activeAd = null
+        player.seekTo(target)
+        positionMs = target
+    }
+
+    fun skipAd() {
+        skipper.skip(player.currentPosition / 1000.0)?.let { seekPastAd(it) }
+        showInfo()
     }
 
     LaunchedEffect(player) {
@@ -176,19 +209,37 @@ fun TvRecordingPlayerScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Progress readout + periodic position save.
+    // Progress readout, commercial breaks and periodic position save.
     LaunchedEffect(player) {
         var sinceSaveMs = 0L
         while (isActive) {
             delay(500)
             positionMs = player.currentPosition
             player.duration.takeIf { it != C.TIME_UNSET && it > 0 }?.let { durationMs = it }
+            if (skipper.segments.isNotEmpty()) {
+                val atSec = positionMs / 1000.0
+                // Only while playing, so seeking while paused never jumps.
+                val autoTarget = if (autoSkipAds && player.isPlaying) skipper.autoSkipTarget(atSec) else null
+                if (autoTarget != null) {
+                    seekPastAd(autoTarget)
+                    skippedNonce++
+                } else {
+                    activeAd = skipper.active(atSec)
+                }
+            }
             sinceSaveMs += 500
             if (sinceSaveMs >= RecordingLogic.POSITION_SAVE_INTERVAL_MS) {
                 sinceSaveMs = 0
                 if (player.isPlaying) save()
             }
         }
+    }
+
+    LaunchedEffect(skippedNonce) {
+        if (skippedNonce == 0) return@LaunchedEffect
+        showSkipped = true
+        delay(SKIPPED_AD_TOAST_MS)
+        showSkipped = false
     }
 
     LaunchedEffect(infoNonce, isPlaying) {
@@ -207,12 +258,16 @@ fun TvRecordingPlayerScreen(
         if (showMenu) showMenu = false else onBack()
     }
 
-    // Focus: the menu while open, else Keep watching while prompting, else the player.
-    LaunchedEffect(showMenu, sleepWarning) {
+    val skipAdVisible = activeAd != null && error == null
+
+    // Focus: the menu while open, else Keep watching while prompting, else
+    // Skip ad inside a break, else the player.
+    LaunchedEffect(showMenu, sleepWarning, skipAdVisible) {
         runCatching {
             when {
                 showMenu -> menuFocusRequester.requestFocus()
                 sleepWarning -> sleepWarningFocusRequester.requestFocus()
+                skipAdVisible -> skipAdFocusRequester.requestFocus()
                 else -> focusRequester.requestFocus()
             }
         }
@@ -263,6 +318,12 @@ fun TvRecordingPlayerScreen(
                     }
                     return@onPreviewKeyEvent false
                 }
+                // This handler sees keys before the focused Skip ad button, so
+                // OK is routed here; the D-pad still seeks and Back still leaves.
+                if (skipAdVisible && isSelectKey(native.keyCode)) {
+                    if (native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount == 0) skipAd()
+                    return@onPreviewKeyEvent true
+                }
                 val result = VodKeys.onKey(native.keyCode, native.action, native.repeatCount)
                 result.action?.let { apply(it) }
                 result.handled
@@ -299,7 +360,11 @@ fun TvRecordingPlayerScreen(
                 Text(start.recording.title, style = BowtieType.title, color = BowtieColors.text)
                 Text(start.recording.channelName, style = BowtieType.label, color = BowtieColors.dim)
                 Spacer(Modifier.height(16.dp))
-                ProgressBar(fraction = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f)
+                ProgressBar(
+                    fraction = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f,
+                    commercials = skipper.segments,
+                    durationMs = durationMs,
+                )
                 Spacer(Modifier.height(8.dp))
                 Row {
                     Text(
@@ -319,6 +384,37 @@ fun TvRecordingPlayerScreen(
                     Spacer(Modifier.height(12.dp))
                     Text(it, style = BowtieType.body, color = BowtieColors.alert)
                 }
+            }
+        }
+
+        if (showSkipped) {
+            Text(
+                text = "Skipped ad",
+                style = BowtieType.body,
+                color = BowtieColors.text,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 48.dp, bottom = if (infoVisible) 170.dp else 48.dp)
+                    .background(BowtieColors.bg.copy(alpha = 0.9f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+            )
+        } else if (skipAdVisible) {
+            Button(
+                onClick = { skipAd() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 48.dp, bottom = if (infoVisible) 170.dp else 48.dp)
+                    .focusRequester(skipAdFocusRequester),
+                colors = ButtonDefaults.colors(
+                    containerColor = BowtieColors.raised,
+                    contentColor = BowtieColors.amber,
+                    focusedContainerColor = BowtieColors.amber,
+                    focusedContentColor = BowtieColors.bg,
+                    pressedContainerColor = BowtieColors.amber,
+                    pressedContentColor = BowtieColors.bg,
+                ),
+            ) {
+                Text(text = "Skip ad  ▶▶", style = BowtieType.body)
             }
         }
 
@@ -359,6 +455,14 @@ fun TvRecordingPlayerScreen(
                     firstFocus = menuFocusRequester,
                 )
                 Spacer(Modifier.height(12.dp))
+                AutoSkipAdsButton(
+                    on = autoSkipAds,
+                    onToggle = {
+                        autoSkipAds = !autoSkipAds
+                        autoSkipStore.enabled = autoSkipAds
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = { showMenu = false },
                     modifier = Modifier.fillMaxWidth(),
@@ -371,8 +475,14 @@ fun TvRecordingPlayerScreen(
     }
 }
 
+private fun isSelectKey(keyCode: Int): Boolean =
+    keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+        keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+        keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+
+/** Progress with the commercial breaks tinted. */
 @Composable
-private fun ProgressBar(fraction: Float) {
+private fun ProgressBar(fraction: Float, commercials: List<Commercial>, durationMs: Long) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -387,5 +497,23 @@ private fun ProgressBar(fraction: Float) {
                 .clip(RoundedCornerShape(50))
                 .background(BowtieColors.amber),
         )
+        if (durationMs > 0) {
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(6.dp)) {
+                val durationSec = durationMs / 1000.0
+                commercials.forEach { c ->
+                    val from = (c.start / durationSec).coerceIn(0.0, 1.0).toFloat()
+                    val to = (c.end / durationSec).coerceIn(0.0, 1.0).toFloat()
+                    if (to > from) {
+                        Box(
+                            modifier = Modifier
+                                .offset(x = maxWidth * from)
+                                .width(maxWidth * (to - from))
+                                .height(6.dp)
+                                .background(BowtieColors.dim.copy(alpha = 0.7f)),
+                        )
+                    }
+                }
+            }
+        }
     }
 }

@@ -3,7 +3,7 @@ import AVFoundation
 import BowtieKit
 
 /// Full-screen VOD player for a recording: AVKit transport with full scrubbing,
-/// plus auto-hiding Bowtie chrome (title + Done).
+/// plus auto-hiding Bowtie chrome (title + Done) and Skip ad in commercial breaks.
 struct RecordingPlayerView: View {
     let model: RecordingsModel
 
@@ -43,6 +43,8 @@ struct RecordingPlayerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
         }
+        // Not part of the auto-hiding chrome: stays up for the whole break.
+        .skipAdOverlay(controller, bottomInset: 96)
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
         .onAppear {

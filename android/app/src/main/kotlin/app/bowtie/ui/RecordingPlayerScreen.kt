@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,7 +40,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import app.bowtie.BowtieColors
 import app.bowtie.BowtieType
+import app.bowtie.core.Commercial
+import app.bowtie.core.CommercialSkipper
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.player.AutoSkipAdsStore
 import app.bowtie.core.player.VodPlayer
 import app.bowtie.core.vm.RecordingsViewModel
 import kotlinx.coroutines.delay
@@ -47,10 +51,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 
+/** How often the player checks for a commercial break. */
+private const val COMMERCIAL_CHECK_MS = 500L
+
 /**
  * Plays a recording as HLS VOD with Media3's seekable controller, starting at
  * [startAtSec]. Saves the resume position every 15 s, when backgrounded, at the
- * end, and on exit.
+ * end, and on exit. Inside a detected commercial break it offers Skip ad, and
+ * skips each break once by itself when Skip ads automatically is on.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -72,6 +80,18 @@ fun RecordingPlayerScreen(
     var lastSavedMs by remember { mutableStateOf(-1L) }
     var retrying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // Per screen, not per load: a retry (fresh playlist) doesn't re-skip breaks.
+    val skipper = remember { CommercialSkipper(start.recording.commercials) }
+    val autoSkipAds = remember { AutoSkipAdsStore(context) }
+    var activeAd by remember { mutableStateOf<Commercial?>(null) }
+    var skippedNonce by remember { mutableIntStateOf(0) }
+    var showSkipped by remember { mutableStateOf(false) }
+
+    /** Seek to a break's end (exact: Media3's default seek). */
+    fun seekPastAd(targetSec: Double) {
+        activeAd = null
+        player.seekTo((targetSec * 1000).toLong())
+    }
 
     /** Ask for a fresh playlist (tokens expire) and pick up where playback stopped. */
     fun retry() {
@@ -141,6 +161,32 @@ fun RecordingPlayerScreen(
         }
     }
 
+    // Commercial breaks: Skip ad while inside one; auto-skip (only while
+    // playing, so scrubbing while paused never jumps) once per break.
+    LaunchedEffect(player) {
+        if (skipper.segments.isEmpty()) return@LaunchedEffect
+        while (isActive) {
+            delay(COMMERCIAL_CHECK_MS)
+            val atSec = player.currentPosition / 1000.0
+            if (autoSkipAds.enabled && player.isPlaying) {
+                val target = skipper.autoSkipTarget(atSec)
+                if (target != null) {
+                    seekPastAd(target)
+                    skippedNonce++
+                    continue
+                }
+            }
+            activeAd = skipper.active(atSec)
+        }
+    }
+
+    LaunchedEffect(skippedNonce) {
+        if (skippedNonce == 0) return@LaunchedEffect
+        showSkipped = true
+        delay(SKIPPED_AD_TOAST_MS)
+        showSkipped = false
+    }
+
     DisposableEffect(activity) {
         val window = activity?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -208,6 +254,22 @@ fun RecordingPlayerScreen(
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
             }
+        }
+
+        // Not tied to the controller's visibility: stays up for the whole break.
+        if (showSkipped) {
+            SkippedAdToast(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 96.dp, end = 16.dp),
+            )
+        } else if (activeAd != null && error == null) {
+            SkipAdButton(
+                onSkip = { skipper.skip(player.currentPosition / 1000.0)?.let { seekPastAd(it) } },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 96.dp, end = 16.dp),
+            )
         }
 
         if (sleepStatus.warning) {
