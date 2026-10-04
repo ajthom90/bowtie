@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] — 2026-10-04
+
+### Added
+
+- **Continue watching.** Recordings you've started show up in a row at the
+  top of the guide and Recordings (web, iPhone/iPad, Mac Recordings, Apple
+  TV home, Android, Android TV / Fire TV) — most recently watched first, with
+  how much is left. Pick one to carry on where you stopped; remove one to
+  start it over. Recordings carry `positionUpdatedAt` in the API.
+
 ## [0.16.0] — 2026-10-04
 
 ### Added
