@@ -21,6 +21,8 @@ type searchHitJSON struct {
 	Subtitle    string              `json:"subtitle"`
 	Description string              `json:"description"`
 	Category    string              `json:"category"`
+	Rating      string              `json:"rating"`
+	Locked      bool                `json:"locked"`
 	Recording   *epg.GuideRecording `json:"recording,omitempty"`
 }
 
@@ -51,9 +53,17 @@ func (s *Server) handleGuideSearch(w http.ResponseWriter, r *http.Request) {
 		icons = map[string]string{}
 	}
 	recs := s.recordingsByProgram()
+	policy := s.callerPolicy(r)
 	out := make([]searchHitJSON, 0, len(hits))
 	for _, h := range hits {
+		if !policy.ChannelAllowed(h.ChannelID) {
+			continue
+		}
+		if !policy.ProgramAllowed(h.Rating) {
+			h.Description = ""
+		}
 		out = append(out, searchHitJSON{
+			Rating: h.Rating, Locked: !policy.ProgramAllowed(h.Rating),
 			ChannelID: h.ChannelID, GuideNumber: h.GuideNumber, ChannelName: h.ChannelName,
 			LogoURL: icons[h.EPGChannelID], Start: h.Start.UTC(), Stop: h.Stop.UTC(),
 			Title: h.Title, Subtitle: h.Subtitle, Description: h.Description, Category: h.Category,

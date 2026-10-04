@@ -18,20 +18,20 @@ import (
 // Deps holds dependencies for the HTTP API.
 // Later tasks add fields when their packages exist.
 type Deps struct {
-	Cfg               config.Config
-	Store             *store.Store
-	Auth              *auth.Auth
-	Tuners            *tuner.Manager // Task 7
-	EPG               *epg.Service   // Task 10
-	Probe             func() transcode.Capabilities // Task 11
+	Cfg    config.Config
+	Store  *store.Store
+	Auth   *auth.Auth
+	Tuners *tuner.Manager                // Task 7
+	EPG    *epg.Service                  // Task 10
+	Probe  func() transcode.Capabilities // Task 11
 	// Version is the release version, served by GET /api/v1/version.
 	Version string
 	// ServerID (stable, random) and ServerName identify this server to apps
 	// (SharePlay: is a participant signed in to the sharer's server?).
-	ServerID   string
-	ServerName string
-	Streams           StreamController              // Task 15
-	StreamTokenSecret []byte                        // Task 15 signed playlist/segment tokens
+	ServerID          string
+	ServerName        string
+	Streams           StreamController // Task 15
+	StreamTokenSecret []byte           // Task 15 signed playlist/segment tokens
 	// Settings is the DB-backed product settings provider (v0.4.0). Used for
 	// admin transcode "selected" and settings API routes.
 	Settings *settings.Provider

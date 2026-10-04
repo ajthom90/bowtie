@@ -270,6 +270,10 @@ paths:
                       type: string
                     category:
                       type: string
+                    rating:
+                      type: string
+                    locked:
+                      type: boolean
                     recording:
                       type: object
                       required: [id, state]
@@ -1134,6 +1138,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TunersBusyError'
+        '403':
+          description: |
+            Parental controls block this channel, or the program on now
+            (`{"error": "Blocked by parental controls (rated TV-MA)", "code": "parental"}`).
+            A playing viewer stopped later for the same reason gets this
+            from its heartbeat and playlist requests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           description: |
             The caller's account limit would be exceeded (see User.maxStreams
@@ -1354,7 +1368,7 @@ components:
           type: string
     User:
       type: object
-      required: [id, username, role, maxQuality, maxStreams, maxTuners]
+      required: [id, username, role, maxQuality, maxStreams, maxTuners, allowedChannelIds, maxRating, blockUnrated]
       properties:
         id:
           type: integer
@@ -1379,6 +1393,20 @@ components:
           description: |
             Tuners the account may occupy alone (0 = no limit). Watching a
             channel another account is already watching costs no tuner.
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     UserLimitError:
       type: object
       required: [error, code, kind, limit]
@@ -1456,6 +1484,20 @@ components:
           description: |
             Tuners the account may occupy alone (0 = no limit). Watching a
             channel another account is already watching costs no tuner.
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     PatchUserRequest:
       type: object
       properties:
@@ -1480,6 +1522,20 @@ components:
           type: string
           format: password
           description: If set, replaces the user's password
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     Device:
       type: object
       required: [deviceId, ip, model, tunerCount, manual, lastSeen, streamPort]
@@ -1710,6 +1766,12 @@ components:
       type: object
       required: [start, stop, title, subtitle, description, category]
       properties:
+        rating:
+          type: string
+          description: Rating from the guide source (e.g. TV-14; "" = not rated)
+        locked:
+          type: boolean
+          description: Parental controls block this program for the caller (description is hidden)
         recording:
           type: object
           description: Present when this program is scheduled or recorded

@@ -44,6 +44,7 @@ type stubStreams struct {
 	viewers    map[string]bool
 	reception  map[int64]stream.Reception
 	media      map[string]stream.SessionMedia // viewerID → media
+	blocked    map[string]string              // viewerID → parental reason
 }
 
 func newStubStreams() *stubStreams {
@@ -66,6 +67,13 @@ func (s *stubStreams) Join(ctx context.Context, user store.User, sessionID strin
 		return s.joinFn(ctx, user, sessionID, channelID, caps)
 	}
 	return stream.ViewerHandle{}, stream.ErrNotJoinable
+}
+
+func (s *stubStreams) BlockedReason(id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	why, ok := s.blocked[id]
+	return why, ok
 }
 
 func (s *stubStreams) Touch(id string) bool {
@@ -218,7 +226,6 @@ func mediaPlaylist(name, ext string) string {
 		"",
 	}, "\n")
 }
-
 
 // writeFixtureSession writes the fixtureLayout() session files: three rungs,
 // AAC and AC-3 renditions, captions playlist and a WebVTT segment.
@@ -632,8 +639,8 @@ func TestHeartbeatAdvancesLastSeen(t *testing.T) {
 	}
 	mgr := stream.NewManager(stream.ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:   cfg,
-		Store: st,
+		Cfg:               cfg,
+		Store:             st,
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1/auto/v" + ch.GuideNumber, nil
 		},
@@ -991,9 +998,9 @@ func TestAdminPreviewDisabledChannelE2E(t *testing.T) {
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:    cfg,
-		Store:  st,
-		Tuners: tuners,
+		Cfg:               cfg,
+		Store:             st,
+		Tuners:            tuners,
 		Caps: transcode.Capabilities{
 			Available: []transcode.Backend{transcode.BackendSoftware},
 			HEVC:      map[transcode.Backend]bool{},
@@ -1135,9 +1142,9 @@ func TestE2EStreamLifecycle(t *testing.T) {
 
 	mgr := stream.NewManager(stream.ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:    cfg,
-		Store:  st,
-		Tuners: tuners,
+		Cfg:               cfg,
+		Store:             st,
+		Tuners:            tuners,
 		Caps: transcode.Capabilities{
 			Available: []transcode.Backend{transcode.BackendSoftware},
 			HEVC:      map[transcode.Backend]bool{},
@@ -1332,7 +1339,6 @@ func TestE2EStreamLifecycle(t *testing.T) {
 	}
 }
 
-
 // TestStartDial503SurfacesTunersBusy: fake with 0 free tuners → 503 payload shape via errors.Is.
 func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	// Occupy both tuners so the next dial gets 503.
@@ -1375,9 +1381,9 @@ func TestStartDial503SurfacesTunersBusy(t *testing.T) {
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
 		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
-		Cfg:    cfg,
-		Store:  st,
-		Tuners: tuners,
+		Cfg:               cfg,
+		Store:             st,
+		Tuners:            tuners,
 		Caps: transcode.Capabilities{
 			Available: []transcode.Backend{transcode.BackendSoftware},
 			HEVC:      map[transcode.Backend]bool{},
@@ -1676,5 +1682,27 @@ func TestCaptionPlaylistEndpointRepairsFFmpeg51Append(t *testing.T) {
 	body := rr.Body.String()
 	if rr.Code != 200 || strings.Contains(body, "#EXT-X-ENDLIST") || !strings.Contains(body, "/api/v1/stream/"+v+"/v7200.vtt?token=") {
 		t.Fatalf("status=%d body:\n%s", rr.Code, body)
+	}
+}
+
+// A viewer parental controls stopped gets 403 {code: parental} with the
+// reason on its next heartbeat or playlist request, not a bare 404.
+func TestBlockedViewerGets403WithReason(t *testing.T) {
+	ss := newStubStreams()
+	ss.blocked = map[string]string{"vb": "Blocked by parental controls (rated TV-MA)"}
+	h, _, _ := testAPIWithStreams(t, ss)
+	tok := stream.SignStreamToken([]byte(streamSecret), "vb", time.Now().UTC().Add(time.Hour))
+	for _, path := range []string{
+		"/api/v1/sessions/vb/heartbeat?token=" + tok,
+		"/api/v1/stream/vb/index.m3u8?token=" + tok,
+	} {
+		method := "GET"
+		if strings.Contains(path, "heartbeat") {
+			method = "POST"
+		}
+		rr := doJSON(t, h, method, path, nil, nil)
+		if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), `"code":"parental"`) || !strings.Contains(rr.Body.String(), "TV-MA") {
+			t.Fatalf("%s: %d %s", path, rr.Code, rr.Body.String())
+		}
 	}
 }

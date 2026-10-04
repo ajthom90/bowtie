@@ -105,6 +105,11 @@ type GuideProgram struct {
 	Subtitle    string    `json:"subtitle"`
 	Description string    `json:"description"`
 	Category    string    `json:"category"`
+	// Rating as the guide source gives it ("TV-14"; "" = not rated).
+	Rating string `json:"rating"`
+	// Locked: parental controls block this program for the caller (the API
+	// layer sets it and blanks the description).
+	Locked bool `json:"locked"`
 	// Recording is filled by the API layer when this program is scheduled
 	// or recorded.
 	Recording *GuideRecording `json:"recording,omitempty"`
@@ -332,6 +337,7 @@ func (s *Service) Guide(ctx context.Context, start, stop time.Time) ([]GuideChan
 				Subtitle:    p.Subtitle,
 				Description: p.Description,
 				Category:    p.Category,
+				Rating:      p.Rating,
 			})
 		}
 	}

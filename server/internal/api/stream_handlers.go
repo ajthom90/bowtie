@@ -53,6 +53,18 @@ type StreamController interface {
 	ChannelReception(channelID int64) (stream.Reception, bool)
 	// SessionMediaOf returns the viewer's session layout and quality ceiling.
 	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
+	// BlockedReason reports why parental controls stopped a viewer.
+	BlockedReason(viewerID string) (string, bool)
+}
+
+// viewerGone answers a request for a viewer that no longer exists: 403 with
+// the reason if parental controls stopped it, else 404.
+func (s *Server) viewerGone(w http.ResponseWriter, viewerID string) {
+	if why, ok := s.deps.Streams.BlockedReason(viewerID); ok {
+		writeParentalBlock(w, why)
+		return
+	}
+	writeError(w, http.StatusNotFound, "viewer not found")
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +99,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ChannelID == 0 {
 		writeError(w, http.StatusBadRequest, "channelId required")
+		return
+	}
+
+	if why := s.parentalStartBlock(r, u, req.ChannelID); why != "" {
+		writeParentalBlock(w, why)
 		return
 	}
 
@@ -246,7 +263,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	media, ok := s.deps.Streams.SessionMediaOf(viewerID)
@@ -277,7 +294,7 @@ func fileExists(path string) bool {
 // URLs. Players poll these (not index.m3u8), so each fetch keeps the viewer alive.
 func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, viewerID, name string) {
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	dir, ok := s.deps.Streams.SessionDirOf(viewerID)
@@ -440,7 +457,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
