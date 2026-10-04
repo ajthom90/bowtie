@@ -123,6 +123,13 @@
   color: var(--alert);
 }
 
+/* Actions above a list (Upcoming: Record by time). */
+.listTools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
 .status {
   margin: 0 0 1rem;
   color: var(--text-dim);
