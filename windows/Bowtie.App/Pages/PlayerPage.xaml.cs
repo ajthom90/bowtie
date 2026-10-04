@@ -133,6 +133,8 @@ public sealed partial class PlayerPage : Page
             AppServices.Recordings.SavePosition(vod.Start.Recording.Id, _player.PlaybackSession.Position);
         }
         TearDownMedia();
+        // Detach before closing: the element must not touch a closed player while unloading.
+        PlayerElement.SetMediaPlayer(null);
         _player.Dispose();
 
         if (_live != null)

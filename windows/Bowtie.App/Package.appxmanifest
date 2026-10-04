@@ -50,9 +50,8 @@
     </Application>
   </Applications>
 
+  <!-- Full-trust desktop app: not network-isolated, so no network capabilities are needed. -->
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <Capability Name="internetClient" />
-    <Capability Name="privateNetworkClientServer" />
   </Capabilities>
 </Package>
