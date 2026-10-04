@@ -217,6 +217,18 @@ export const GUIDE_COPY = {
   noSignal: 'No signal',
 } as const
 
+/**
+ * One line above the grid when no channel has any program data at all (the
+ * guide has never been downloaded). Null when some channel has data.
+ */
+export function noGuideDataHint(
+  channels: readonly { programs: readonly unknown[] }[],
+  role: 'admin' | 'viewer',
+): string | null {
+  if (channels.length === 0 || channels.some((c) => c.programs.length > 0)) return null
+  return role === 'admin' ? 'No guide data yet — see Admin → EPG' : 'No guide data yet'
+}
+
 /** Badge text for a channel's last known reception, or null for none. */
 export function receptionNote(reception: string | undefined): string | null {
   return reception === 'noSignal' ? GUIDE_COPY.noSignal : null

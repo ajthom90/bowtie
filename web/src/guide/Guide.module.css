@@ -553,6 +553,18 @@
   color: var(--alert);
 }
 
+/* One line above the grid when no channel has program data yet */
+.noDataHint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
 .emptyGuide {
   padding: 2rem 1.25rem;
   color: var(--text-dim);

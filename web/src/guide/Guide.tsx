@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, type GuideChannel, type RecentChannel, type Recording } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { guideMarkText, guideRecLabel } from '../recordings/recordingsModel'
@@ -19,6 +19,7 @@ import {
   formatTimeRange,
   halfHourTicks,
   layoutRow,
+  noGuideDataHint,
   nowLinePct,
   receptionNote,
   selectGuidePageState,
@@ -59,6 +60,8 @@ type Props = {
   onMultiview?: () => void
   /** Present only for admins — opens the admin area. Viewers never receive this. */
   onAdmin?: () => void
+  /** Admins only: opens Admin → EPG (from the "no guide data" hint). */
+  onAdminEpg?: () => void
   /** Opens the Recordings page. */
   onRecordings?: () => void
   /** Opens the Account page (from the username in the header). */
@@ -77,6 +80,7 @@ export function Guide({
   onResumeRecording,
   onMultiview,
   onAdmin,
+  onAdminEpg,
   onRecordings,
   onAccount,
 }: Props) {
@@ -90,6 +94,8 @@ export function Guide({
   /** Failed star / clear: shown above the grid without replacing it. */
   const [actionError, setActionError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
+  /** The program cell that opened the sheet (focus returns there after the player). */
+  const sheetOpenerRef = useRef<HTMLElement | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   /** Bumped after a recording change so open search results refresh. */
   const [searchEpoch, setSearchEpoch] = useState(0)
@@ -250,6 +256,11 @@ export function Guide({
     [channels, loading, error, user?.role],
   )
 
+  const noDataHint = useMemo(
+    () => (rows ? noGuideDataHint(rows, user?.role === 'admin' ? 'admin' : 'viewer') : null),
+    [rows, user?.role],
+  )
+
   const windowLabel = `${formatGuideTime(start)} – ${formatGuideTime(stop)}`
 
   function page(dir: -1 | 1) {
@@ -273,6 +284,7 @@ export function Guide({
           onChanged={() => void load()}
           refreshKey={searchEpoch}
           suspended={selected !== null}
+          channels={channels ?? undefined}
         />
         <div className={styles.toolbarRight}>
           <button type="button" className={styles.btn} onClick={() => page(-1)} aria-label="Previous time window">
@@ -366,6 +378,21 @@ export function Guide({
         <p className={styles.actionError} role="alert">
           {actionError}
         </p>
+      ) : null}
+
+      {pageState.kind === 'ready' && noDataHint ? (
+        <div className={styles.noDataHint} role="status">
+          {onAdminEpg ? (
+            <>
+              <span>No guide data yet.</span>
+              <button type="button" className={styles.btn} onClick={onAdminEpg}>
+                See Admin → EPG
+              </button>
+            </>
+          ) : (
+            <span>{noDataHint}</span>
+          )}
+        </div>
       ) : null}
 
       {pageState.kind === 'ready' && showContinue && onResumeRecording ? (
@@ -478,12 +505,13 @@ export function Guide({
                   now={now}
                   filter={filter}
                   onWatch={onWatch}
-                  onSelect={(program) =>
+                  onSelect={(program, opener) => {
+                    sheetOpenerRef.current = opener
                     setSelected({
                       channel: { channelId: ch.channelId, guideNumber: ch.guideNumber, name: ch.name },
                       program,
                     })
-                  }
+                  }}
                 />
               )
             })}
@@ -502,6 +530,9 @@ export function Guide({
           onWatch={() => {
             const { channel, program } = selected
             setSelected(null)
+            // Focus the cell behind the sheet so leaving the player returns there.
+            sheetOpenerRef.current?.focus()
+            sheetOpenerRef.current = null
             onWatch({
               channelId: channel.channelId,
               guideNumber: channel.guideNumber,
@@ -549,7 +580,7 @@ function ChannelRow({
   /** Programs outside the chosen category are dimmed. */
   filter: GuideFilter
   onWatch: (t: WatchTarget) => void
-  onSelect: (program: GuideProgram) => void
+  onSelect: (program: GuideProgram, opener: HTMLElement) => void
 }) {
   const watch = (programTitle?: string) => {
     onWatch({
@@ -647,7 +678,7 @@ function ChannelRow({
                   type="button"
                   className={`${styles.cell}${onAir ? ` ${styles.cellOnAir}` : ''}${dimmed ? ` ${styles.cellDimmed}` : ''}`}
                   style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
-                  onClick={() => onSelect(cell.program)}
+                  onClick={(e) => onSelect(cell.program, e.currentTarget)}
                   aria-haspopup="dialog"
                   aria-label={`${cell.program.title}, channel ${channel.guideNumber}${cell.program.locked ? ', blocked by parental controls' : ''}${recWords ? `, ${recWords.toLowerCase()}` : ''}${dimmed ? `, not in ${filterLabel(filter)}` : ''}`}
                 >

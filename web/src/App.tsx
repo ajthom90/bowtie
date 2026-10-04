@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Account } from './account/Account'
-import { Admin } from './admin/Admin'
+import { Admin, type AdminTab } from './admin/Admin'
 import type { Recording } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { LinkPage } from './auth/LinkPage'
+import { focusMarkOf, restoreFocus, type FocusMark } from './focusReturn'
 import { isLinkPath } from './auth/linkModel'
 import { Login } from './auth/Login'
 import { Guide, type WatchTarget } from './guide/Guide'
@@ -36,10 +37,35 @@ function Shell() {
   const { user, ready } = useAuth()
   const [path, navigate] = usePath()
   const onLink = isLinkPath(path)
-  const [watching, setWatching] = useState<WatchTarget | null>(null)
+  const [watching, setWatchingState] = useState<WatchTarget | null>(null)
   const [view, setView] = useState<View>('guide')
+  /** The Admin section to open on (the guide's "no guide data" hint opens EPG). */
+  const [adminTab, setAdminTab] = useState<AdminTab>('tuners')
   const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
-  const [playingRecording, setPlayingRecording] = useState<Recording | null>(null)
+  const [playingRecording, setPlayingRecordingState] = useState<Recording | null>(null)
+  /** The control that opened a player, focused again when the page returns. */
+  const returnFocusRef = useRef<FocusMark | null>(null)
+  const [focusEpoch, setFocusEpoch] = useState(0)
+  const openPlayer = () => {
+    returnFocusRef.current = focusMarkOf(document.activeElement)
+  }
+  const closePlayer = () => setFocusEpoch((n) => n + 1)
+  const setWatching = (t: WatchTarget | null) => {
+    if (t) openPlayer()
+    else closePlayer()
+    setWatchingState(t)
+  }
+  const setPlayingRecording = (rec: Recording | null) => {
+    if (rec) openPlayer()
+    else closePlayer()
+    setPlayingRecordingState(rec)
+  }
+  useEffect(() => {
+    if (focusEpoch === 0) return
+    const mark = returnFocusRef.current
+    returnFocusRef.current = null
+    return restoreFocus(mark)
+  }, [focusEpoch])
   /** Continue watching: start at the saved position without asking. */
   const [autoResume, setAutoResume] = useState(false)
   const playRecording = (rec: Recording) => {
@@ -55,8 +81,8 @@ function Shell() {
     // Multiview replaces any player (e.g. via browser Back): that player must
     // not come back, and start its stream again, when the guide returns.
     if (inMultiview) {
-      setWatching(null)
-      setPlayingRecording(null)
+      setWatchingState(null)
+      setPlayingRecordingState(null)
     }
   }, [inMultiview])
 
@@ -109,7 +135,12 @@ function Shell() {
     )
   }
 
-  const onAdmin = user.role === 'admin' ? () => setView('admin') : undefined
+  const openAdmin = (tab: AdminTab) => {
+    setAdminTab(tab)
+    setView('admin')
+  }
+  const onAdmin = user.role === 'admin' ? () => openAdmin('tuners') : undefined
+  const onAdminEpg = user.role === 'admin' ? () => openAdmin('epg') : undefined
   const onAccount = () => setView('account')
 
   if (view === 'account') {
@@ -149,6 +180,7 @@ function Shell() {
         onPreview={(t) => setWatching(t)}
         onRecordings={() => setView('recordings')}
         onAccount={onAccount}
+        initialTab={adminTab}
       />
     )
   }
@@ -159,6 +191,7 @@ function Shell() {
       onResumeRecording={resumeRecording}
       onMultiview={onMultiview}
       onAdmin={onAdmin}
+      onAdminEpg={onAdminEpg}
       onRecordings={() => setView('recordings')}
       onAccount={onAccount}
     />
