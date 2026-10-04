@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Account } from './account/Account'
 import { Admin } from './admin/Admin'
 import type { Recording } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -12,7 +13,7 @@ import { Recordings } from './recordings/Recordings'
 import type { RecordingsTab } from './recordings/recordingsModel'
 import styles from './App.module.css'
 
-type View = 'guide' | 'admin' | 'recordings'
+type View = 'guide' | 'admin' | 'recordings' | 'account'
 
 /** The current path, kept in step with back/forward. No router: only /link is a real route. */
 function usePath(): [string, (to: string) => void] {
@@ -67,6 +68,18 @@ function Shell() {
   }
 
   const onAdmin = user.role === 'admin' ? () => setView('admin') : undefined
+  const onAccount = () => setView('account')
+
+  if (view === 'account') {
+    return (
+      <Account
+        onGuide={() => setView('guide')}
+        onRecordings={() => setView('recordings')}
+        onAdmin={onAdmin}
+        onLink={() => navigate('/link')}
+      />
+    )
+  }
 
   if (view === 'recordings') {
     return (
@@ -75,6 +88,7 @@ function Shell() {
         onTab={setRecordingsTab}
         onGuide={() => setView('guide')}
         onAdmin={onAdmin}
+        onAccount={onAccount}
         onPlay={setPlayingRecording}
       />
     )
@@ -89,6 +103,7 @@ function Shell() {
         onBack={() => setView('guide')}
         onPreview={(t) => setWatching(t)}
         onRecordings={() => setView('recordings')}
+        onAccount={onAccount}
       />
     )
   }
@@ -98,6 +113,7 @@ function Shell() {
       onWatch={setWatching}
       onAdmin={onAdmin}
       onRecordings={() => setView('recordings')}
+      onAccount={onAccount}
     />
   )
 }
