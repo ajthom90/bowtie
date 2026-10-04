@@ -146,3 +146,29 @@ func TestRefreshExpired(t *testing.T) {
 		t.Fatal("Rotate expired refresh: want error")
 	}
 }
+
+// Two refreshes with the same token a moment apart (two browser tabs, an app
+// waking up twice) must not sign the user out: within 30 s the second gets the
+// same new token; after that, the old token is dead.
+func TestRefreshReuseWindow(t *testing.T) {
+	a, s := openTestAuth(t)
+	u := seedUser(t, s)
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	raw, _ := a.NewRefreshToken(u.ID, now)
+
+	_, first, err := a.Rotate(raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotUser, second, err := a.Rotate(raw, now.Add(10*time.Second))
+	if err != nil || second != first || gotUser.ID != u.ID {
+		t.Fatalf("repeat within window: token same=%v user=%d err=%v", second == first, gotUser.ID, err)
+	}
+	if _, _, err := a.Rotate(raw, now.Add(31*time.Second)); err == nil {
+		t.Fatal("old token accepted after the reuse window")
+	}
+	// The shared new token still works normally.
+	if _, _, err := a.Rotate(first, now.Add(40*time.Second)); err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+}
