@@ -7,7 +7,7 @@ import UIKit
 /// Client capability reporting for session negotiation.
 ///
 /// Pure construction lives in `make(maxHeight:)`. Platform probes are isolated
-/// behind `#if canImport(UIKit)` so macOS unit tests never need a screen.
+/// behind `#if canImport(UIKit)` / `os(macOS)` so unit tests never need a screen.
 public enum Caps {
     /// Pure capability set used by tests and by `current()`.
     /// Always advertises h264+hevc and aac+ac3+eac3; profile is empty (Auto).
@@ -34,6 +34,11 @@ public enum Caps {
         #else
         return make(maxHeight: 1080)
         #endif
+    }
+    #elseif os(macOS)
+    /// macOS reports 1080, matching iOS (v1 cap).
+    public static func current() -> ClientCaps {
+        make(maxHeight: 1080)
     }
     #endif
 }

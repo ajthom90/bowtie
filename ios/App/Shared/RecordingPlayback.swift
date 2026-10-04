@@ -117,6 +117,7 @@ final class RecordingPlayerController {
     #endif
 }
 
+#if canImport(UIKit)
 /// Native AVKit transport (full VOD scrubbing). `onTap` observes taps without
 /// taking them from AVKit (iOS chrome); omit it on tvOS.
 struct RecordingVideoContainer: UIViewControllerRepresentable {
@@ -170,3 +171,4 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
         }
     }
 }
+#endif

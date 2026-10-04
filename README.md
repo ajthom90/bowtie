@@ -17,7 +17,7 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
   shared across quality variants
 
 **Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
-Admin → Settings) plus iOS/tvOS, Android/Fire TV, and Roku clients.
+Admin → Settings) plus iOS/tvOS/macOS, Android/Fire TV, and Roku clients.
 
 ---
 
@@ -242,6 +242,7 @@ cd web && npm ci && npm test && npm run build
 ## Apps
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
+- **macOS** — native Mac app (macOS 14+) built from the same Xcode project (`BowtieMac` scheme): a sidebar of channels (Recent, Favorites) and recordings, an `AVPlayerView` player with picture in picture and full screen, and keyboard shortcuts (Space, L for live, ⌘↑/⌘↓, ⌘F). Not yet published to the Mac App Store or notarized; see [`ios/README.md`](ios/README.md#macos-app).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 

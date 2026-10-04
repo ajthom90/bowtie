@@ -42,6 +42,13 @@ jobs:
           xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV \
             -destination 'generic/platform=tvOS Simulator' build
 
+      # Ad-hoc signed: the runner has no team certificate.
+      - name: Build BowtieMac (macOS)
+        run: |
+          xcodebuild -project Bowtie.xcodeproj -scheme BowtieMac \
+            -destination 'platform=macOS' \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
+
       # Simulator tests must resolve a UDID at runtime — never hard-code a
       # device name (runner images change default simulators).
       - name: Test SharedTests (iOS Simulator)
