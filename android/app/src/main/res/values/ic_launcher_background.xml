@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bowtie bg token (#101418), shared with Theme.kt / Theme.swift / web CSS. -->
+    <color name="ic_launcher_background">#101418</color>
+</resources>

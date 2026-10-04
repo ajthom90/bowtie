@@ -7,6 +7,7 @@ import { Sessions } from './Sessions'
 import { Settings } from './Settings'
 import { Tuners } from './Tuners'
 import { Users } from './Users'
+import { BowtieMark } from '../BowtieMark'
 import styles from './Admin.module.css'
 
 export type AdminTab = 'tuners' | 'channels' | 'epg' | 'settings' | 'users' | 'sessions'
@@ -48,7 +49,10 @@ export function Admin({ onBack, onPreview }: Props) {
     <div className={styles.page}>
       <header className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
-          <span className={styles.brand}>Bowtie</span>
+          <span className={styles.brand}>
+            <BowtieMark size={22} />
+            Bowtie
+          </span>
           <span className={styles.subtitle}>Admin</span>
         </div>
         <div className={styles.toolbarRight}>

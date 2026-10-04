@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { useAuth } from './AuthContext'
+import { BowtieMark } from '../BowtieMark'
 import styles from './Login.module.css'
 
 export function Login() {
@@ -30,7 +31,10 @@ export function Login() {
   return (
     <div className={styles.page}>
       <form className={styles.card} onSubmit={onSubmit}>
-        <h1 className={styles.title}>Bowtie</h1>
+        <h1 className={styles.title}>
+          <BowtieMark size={34} />
+          Bowtie
+        </h1>
         <p className={styles.subtitle}>Sign in to watch live TV</p>
         <label className={styles.label}>
           Username

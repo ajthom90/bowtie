@@ -17,6 +17,7 @@ import {
   supportsFavorites,
   withFavorite,
 } from './guideModel'
+import { BowtieMark } from '../BowtieMark'
 import styles from './Guide.module.css'
 
 export type WatchTarget = {
@@ -146,7 +147,10 @@ export function Guide({ onWatch, onAdmin }: Props) {
     <div className={styles.page}>
       <header className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
-          <span className={styles.brand}>Bowtie</span>
+          <span className={styles.brand}>
+            <BowtieMark size={22} />
+            Bowtie
+          </span>
           <span className={styles.windowLabel}>{windowLabel}</span>
         </div>
         <div className={styles.toolbarRight}>
