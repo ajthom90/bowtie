@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError, type GuideChannel, type RecentChannel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { guideMarkText, guideRecLabel } from '../recordings/recordingsModel'
 import {
   GUIDE_COPY,
   currentProgramTitle,
@@ -16,7 +17,9 @@ import {
   sortFavoritesFirst,
   supportsFavorites,
   withFavorite,
+  type GuideProgram,
 } from './guideModel'
+import { ProgramSheet } from './ProgramSheet'
 import styles from './Guide.module.css'
 
 export type WatchTarget = {
@@ -30,9 +33,13 @@ type Props = {
   onWatch: (target: WatchTarget) => void
   /** Present only for admins — opens the admin area. Viewers never receive this. */
   onAdmin?: () => void
+  /** Opens the Recordings page. */
+  onRecordings?: () => void
 }
 
-export function Guide({ onWatch, onAdmin }: Props) {
+type Selected = { channel: GuideChannel; program: GuideProgram }
+
+export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
   const { client, user, logout } = useAuth()
   const [{ start, stop }, setWindow] = useState(() => defaultWindow())
   const [channels, setChannels] = useState<GuideChannel[] | null>(null)
@@ -42,6 +49,8 @@ export function Guide({ onWatch, onAdmin }: Props) {
   const [recents, setRecents] = useState<RecentChannel[]>([])
   /** Failed star / clear: shown above the grid without replacing it. */
   const [actionError, setActionError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Selected | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -168,6 +177,11 @@ export function Guide({ onWatch, onAdmin }: Props) {
             {user?.username}
             {user?.role === 'admin' ? ' · admin' : ''}
           </span>
+          {onRecordings ? (
+            <button type="button" className={styles.btn} onClick={onRecordings}>
+              Recordings
+            </button>
+          ) : null}
           {onAdmin ? (
             <button type="button" className={styles.btn} onClick={onAdmin}>
               Admin
@@ -178,6 +192,15 @@ export function Guide({ onWatch, onAdmin }: Props) {
           </button>
         </div>
       </header>
+
+      {notice ? (
+        <div className={styles.notice} role="status">
+          <span>{notice}</span>
+          <button type="button" className={styles.btn} onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {pageState.kind === 'loading' ? (
         <p className={styles.status}>Loading guide…</p>
@@ -279,11 +302,37 @@ export function Guide({ onWatch, onAdmin }: Props) {
                   windowStop={stop}
                   now={now}
                   onWatch={onWatch}
+                  onSelect={(program) => setSelected({ channel: ch, program })}
                 />
               )
             })}
           </div>
         </div>
+      ) : null}
+
+      {selected ? (
+        <ProgramSheet
+          channel={selected.channel}
+          program={selected.program}
+          now={new Date()}
+          onClose={() => setSelected(null)}
+          onWatch={() => {
+            const { channel, program } = selected
+            setSelected(null)
+            onWatch({
+              channelId: channel.channelId,
+              guideNumber: channel.guideNumber,
+              name: channel.name,
+              programTitle: program.title,
+            })
+          }}
+          onChanged={(warning) => {
+            setSelected(null)
+            setNotice(warning ?? null)
+            void load()
+          }}
+          onRecordings={onRecordings}
+        />
       ) : null}
     </div>
   )
@@ -300,6 +349,7 @@ function ChannelRow({
   now,
   onWatch,
   onToggleFavorite,
+  onSelect,
 }: {
   channel: GuideChannel
   /** Absent when the server predates favorites (no star shown). */
@@ -312,6 +362,7 @@ function ChannelRow({
   windowStop: Date
   now: Date
   onWatch: (t: WatchTarget) => void
+  onSelect: (program: GuideProgram) => void
 }) {
   const watch = (programTitle?: string) => {
     onWatch({
@@ -399,16 +450,30 @@ function ChannelRow({
               }
               const onAir =
                 now.getTime() >= cell.start.getTime() && now.getTime() < cell.stop.getTime()
+              const mark = cell.program.recording
+              const rec = guideRecLabel(mark)
+              const recWords = mark ? guideMarkText(mark.state) : ''
               return (
                 <button
                   key={`prog-${i}-${cell.program.start}`}
                   type="button"
                   className={`${styles.cell}${onAir ? ` ${styles.cellOnAir}` : ''}`}
                   style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
-                  onClick={() => watch(cell.program.title)}
-                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}`}
+                  onClick={() => onSelect(cell.program)}
+                  aria-haspopup="dialog"
+                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}${recWords ? `, ${recWords.toLowerCase()}` : ''}`}
                 >
-                  <span className={styles.cellTitle}>{cell.program.title}</span>
+                  <span className={styles.cellTitle}>
+                    {rec ? (
+                      <span
+                        className={`${styles.recMark}${mark?.state === 'recording' ? ` ${styles.recLive}` : ''}`}
+                        aria-hidden
+                      >
+                        {rec}
+                      </span>
+                    ) : null}
+                    {cell.program.title}
+                  </span>
                   <span className={styles.cellTime}>
                     {formatTimeRange(new Date(cell.program.start), new Date(cell.program.stop))}
                   </span>
