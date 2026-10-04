@@ -19,7 +19,7 @@ struct ChannelRailView: View {
     /// Continue watching: its shelf, and the recordings model that plays from it.
     @State private var continueModel: ContinueWatchingModel?
     @State private var recordingsModel: RecordingsModel?
-    @State private var activePlayback: RecordingsModel.Playback?
+    @State private var activePlayback: ContinuePlayback?
 
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
@@ -95,9 +95,9 @@ struct ChannelRailView: View {
                 .navigationDestination(isPresented: $showSearch) {
                     searchDestination
                 }
-                .navigationDestination(item: $activePlayback) { playback in
+                .navigationDestination(item: $activePlayback) { item in
                     if let recordingsModel {
-                        TVRecordingPlayerView(playback: playback, model: recordingsModel)
+                        TVRecordingPlayerView(playback: item.playback, model: recordingsModel)
                     }
                 }
                 .alert(
@@ -382,7 +382,7 @@ struct ChannelRailView: View {
         guard let recordingsModel,
               let playback = await recordingsModel.resume(recording, stopping: playerModel)
         else { return }
-        activePlayback = playback
+        activePlayback = ContinuePlayback(playback: playback)
     }
 
     private func open(channel: Channel) {
@@ -440,6 +440,17 @@ struct ChannelRailView: View {
         }
         return parts.joined(separator: ", ")
     }
+}
+
+// MARK: - Continue watching destination
+
+/// A recording started from Continue watching. Its own type, so this
+/// destination doesn't clash with Recordings' `Playback` destination further
+/// down the same navigation stack.
+private struct ContinuePlayback: Hashable, Identifiable {
+    let playback: RecordingsModel.Playback
+
+    var id: Int64 { playback.id }
 }
 
 // MARK: - Condensed rail row
