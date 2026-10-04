@@ -45,7 +45,7 @@ requests that come up most in their forums and subreddits.
 ## Platforms people ask about
 
 - **Xbox:** no native app; use Kodi for Xbox with the M3U/XMLTV feed
-  (Account → IPTV feed).
+  (web app → Account → “Use Bowtie in other apps”).
 - **PlayStation:** no way to install third-party apps; Plex-style casting is
   not available either. Not planned.
 - **Samsung (Tizen) / LG (webOS) TVs:** would need their own web-based apps

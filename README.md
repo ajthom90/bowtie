@@ -7,17 +7,29 @@
 
 **Open-source HDHomeRun live TV streaming with hardware transcoding** — share your antenna with your family.
 
-Bowtie is a single Go binary (with an embedded React web viewer) that:
+Bowtie is a single Go binary (with an embedded React web app) plus native apps
+for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
-- Discovers Silicondust HDHomeRun tuners on your LAN
-- Transcodes over-the-air channels to HLS with hardware acceleration when available
-- Serves a TV guide (free from your HDHomeRun, plus optional XMLTV and/or Schedules Direct)
-- Lets an admin manage users, devices, channels, and active sessions
-- Live pause/rewind within a settings-backed buffer, with one tuner per channel
-  shared across quality variants
+- Finds your HDHomeRun tuners and streams over-the-air channels to every
+  screen as HLS, with hardware transcoding (Quick Sync, NVENC, VAAPI,
+  VideoToolbox) when available, captions, every broadcast audio track and 5.1
+- Shows a TV guide — free from your HDHomeRun, or XMLTV / Schedules Direct —
+  with search, favorites, recents and **All · Sports · Movies · News · Kids ·
+  New** filters
+- Pauses and rewinds live TV, and plays up to four channels at once in the
+  web app's **Multiview**
+- **Records** shows and whole series (new episodes only, keep the latest N),
+  finds and **skips commercials** with Comskip, and picks up where you left
+  off with **Continue watching**
+- Signs TVs in by **scanning a QR code** with your phone; supports **parental
+  controls**, per-account stream limits, a **sleep timer**, SharePlay on Apple
+  devices, and a personal **M3U/XMLTV feed** for Kodi, TiviMate and friends
+- Gives the admin users, tuners, channels, sessions, a storage gauge,
+  recording quality, **notifications** (ntfy, Discord, webhook) and
+  **backup**
 
-**Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
-Admin → Settings) plus iOS/tvOS/macOS, Android/Fire TV, and Roku clients.
+**Project status:** see [CHANGELOG.md](CHANGELOG.md) for the latest release
+and [docs/roadmap.md](docs/roadmap.md) for what's next.
 
 ---
 
@@ -319,6 +331,10 @@ cd web && npm ci && npm test && npm run build
 - **macOS** — native Mac app (macOS 14+) built from the same Xcode project (`BowtieMac` scheme): a sidebar of channels (Recent, Favorites) and recordings, an `AVPlayerView` player with picture in picture and full screen, and keyboard shortcuts (Space, L for live, ⌘↑/⌘↓, ⌘F). Not yet published to the Mac App Store or notarized; see [`ios/README.md`](ios/README.md#macos-app).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
+- **Windows** — native WinUI 3 app (x64 and ARM64) in progress on the `feat/windows` branch; not released yet.
+- **Xbox** — no native app; install Kodi from the Microsoft Store and add your M3U/XMLTV feed (web app → Account → “Use Bowtie in other apps”).
+- **PlayStation** — no way to install third-party apps; not supported.
+- **Any other device** — the web app works in any modern browser, including smart-TV browsers.
 
 ---
 
