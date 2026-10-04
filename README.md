@@ -186,9 +186,9 @@ add devices by IP.
 | Source | Keys |
 |--------|------|
 | Flag / env | `--data-dir` / `BOWTIE_DATA_DIR` (default `./data`, Docker `/data`) |
-| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES` |
+| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1) |
 | Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
-| Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC (DB-backed) |
+| Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC, buffer, adaptive quality (DB-backed) |
 | File | `<dataDir>/config.yaml` |
 
 **Seeds vs overrides:** product keys (EPG sources, encoder, HEVC) are

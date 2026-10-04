@@ -5,10 +5,33 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] — 2026-10-03
 
 ### Added
 
+- **Closed captions.** The broadcast's captions (CEA-608) become a separate
+  caption track that works with every encoder, including Intel QSV. Turn
+  them on with **CC** in the web and Android players, the system Subtitles
+  menu on iPhone/iPad/Apple TV, or `*` on Roku.
+- **Other audio languages and 5.1.** Every broadcast audio track is offered
+  (e.g. FOX 9's Español): **Audio** in the web, iPhone/iPad and Android
+  players, the system audio panel on Apple TV, `*` on Roku. The original
+  Dolby 5.1 is also offered; surround-capable devices pick it automatically.
+- **Choices are remembered** per device (audio language, captions on/off).
+- **Shared rewind across accounts.** Viewers of a channel at the same quality
+  share one transcode and one rewind window, whatever their account or audio
+  format (AC-3 and AAC clients no longer split).
+- **Adaptive quality (admin switch, off by default).** Admin → Settings →
+  Streaming → *Adaptive quality*: one transcode per channel at
+  1080/720/480/360 (never above the broadcast) that **every** viewer shares;
+  players pick the quality for their connection, and a viewer's quality
+  setting or account limit caps it. Check it on your GPU first:
+  `docs/deploy/adaptive-quality-check.md`.
+- **No more upscaling:** "Original" on a 720p channel now stays 720p.
+- Quality pickers read as "the most this player will use".
+- `BOWTIE_MULTITRACK=off` turns off captions, extra audio and 5.1.
+- If a channel can't start with all its tracks, it falls back to one quality
+  and its main audio automatically.
 - **iPhone/iPad: "Live" button.** The player's top controls show **Live** with
   a red dot while you're at the live point. When you've rewound (or a channel
   you just tuned starts behind), it shows how far behind you are
@@ -16,6 +39,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Android phone: the Bowtie controls (Back, Quality, Stats) never came back**
+  after their first auto-hide; they now show with the player controls and sit
+  under the channel name, clear of the scrubber.
 - **iPhone/iPad: live rewind controls were unreachable.** Bowtie's own player
   chrome caught every tap, so the system scrubber, ±10 s skip and jump-to-live
   never appeared. Taps now reach the system controls, and Bowtie's quality,
