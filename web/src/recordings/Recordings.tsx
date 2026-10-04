@@ -21,6 +21,7 @@ import {
 } from './recordingsModel'
 import { ruleSummary, stopShowConfirmText } from './seriesModel'
 import { ContinueWatching } from './ContinueWatching'
+import { ManualRecordDialog } from './ManualRecordDialog'
 import { selectContinueWatching, withPositionReset } from './continueModel'
 import styles from './Recordings.module.css'
 
@@ -130,6 +131,8 @@ function RecordingList({
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [manualOpen, setManualOpen] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   // Bumped by every load and every local change: a list that was already on
   // its way (say the 20 s refresh) can't undo a change made since it left.
   const generation = useRef(0)
@@ -236,8 +239,29 @@ function RecordingList({
   const now = new Date()
   const continueItems = tab === 'recorded' && rows ? selectContinueWatching(rows) : []
 
+  const onManualDone = (warning?: string) => {
+    setManualOpen(false)
+    setNotice(warning ?? null)
+    void load({ quiet: true })
+  }
+
   return (
     <>
+      {tab === 'upcoming' ? (
+        <div className={styles.listTools}>
+          <button type="button" className={styles.btn} onClick={() => setManualOpen(true)}>
+            Record by time
+          </button>
+        </div>
+      ) : null}
+      {manualOpen ? (
+        <ManualRecordDialog onClose={() => setManualOpen(false)} onDone={onManualDone} />
+      ) : null}
+      {notice ? (
+        <p className={styles.status} role="status">
+          {notice}
+        </p>
+      ) : null}
       {actionError ? (
         <p className={styles.statusError} role="alert">
           {actionError}
