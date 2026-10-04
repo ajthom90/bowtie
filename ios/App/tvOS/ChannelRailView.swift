@@ -253,6 +253,8 @@ struct ChannelRailView: View {
             } else {
                 List {
                     ForEach(visible) { row in
+                        // Once per row: the view and its VoiceOver label read the same answer.
+                        let highlight = model.highlight(for: row, at: now)
                         Button {
                             open(channel: row.channel)
                         } label: {
@@ -260,7 +262,7 @@ struct ChannelRailView: View {
                                 row: row,
                                 now: now,
                                 isPlaying: playerModel.currentChannel?.id == row.channel.id,
-                                highlight: model.highlight(for: row, at: now)
+                                highlight: highlight
                             )
                             .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                         }
@@ -279,7 +281,7 @@ struct ChannelRailView: View {
                         }
                         .listRowBackground(Theme.bg)
                         .accessibilityElement(children: .combine)
-                        .accessibilityLabel(accessibilityLabel(for: row, highlight: model.highlight(for: row, at: now)))
+                        .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
                         .accessibilityHint("Play this channel. Press and hold to favorite or record.")
                         .accessibilityActions {
                             if model.supportsFavorites {

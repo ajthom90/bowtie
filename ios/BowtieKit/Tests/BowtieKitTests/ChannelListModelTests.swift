@@ -124,6 +124,46 @@ final class ChannelListModelTests: XCTestCase {
         XCTAssertEqual(ChannelListModel(client: client, defaults: defaults).filter, .sports)
     }
 
+    func testLoadClassifiesEachProgramOnceOntoItsRow() async throws {
+        let channelsData = TestFixtures.channelJSON([(1, "4.1", "WABC"), (2, "7.1", "WXYZ")])
+        let guideData = Data("""
+        [{"channelId":1,"guideNumber":"4.1","name":"WABC","logoUrl":"","programs":[
+          {"start":"2024-06-15T20:00:00Z","stop":"2024-06-15T21:00:00Z","title":"Six","subtitle":"","description":"","category":"News"},
+          {"start":"2024-06-15T21:00:00Z","stop":"2024-06-15T22:00:00Z","title":"Game","subtitle":"","description":"","category":"Sports event; Football"}
+        ]}]
+        """.utf8)
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/channels": return (200, channelsData, [:])
+            case "/api/v1/guide": return (200, guideData, [:])
+            default: return (500, Data(), [:])
+            }
+        }
+        let defaults = UserDefaults(suiteName: "ChannelListModelClassifyTests")!
+        defaults.removePersistentDomain(forName: "ChannelListModelClassifyTests")
+        let client = makeClient()
+        await seedAccess(client)
+        let model = ChannelListModel(client: client, now: { [weak self] in self?.clock ?? Date() }, defaults: defaults)
+        await model.load()
+
+        // Buckets ride on the row, one set per program, from the load.
+        XCTAssertEqual(model.rows.first { $0.id == 1 }?.programBuckets, [[.news], [.sports]])
+        XCTAssertEqual(model.rows.first { $0.id == 2 }?.programBuckets, [])
+
+        model.filter = .sports
+        XCTAssertEqual(model.filteredRows(at: clock).map(\.id), [1])
+        let row = try XCTUnwrap(model.rows.first { $0.id == 1 })
+        XCTAssertEqual(
+            model.highlight(for: row, at: clock),
+            GuideFilter.RowHighlight(nowMatches: false, nextMatches: true, later: nil)
+        )
+
+        // The selected channel stays listed (dimmed) under a filter it doesn't match.
+        let kept = model.filteredRows(at: clock, keeping: 2)
+        XCTAssertEqual(kept.rows.map(\.id), [1, 2])
+        XCTAssertEqual(kept.keptId, 2)
+    }
+
     func testLoadRequestsGuideWindowNowToNowPlus4h() async throws {
         let channelsData = TestFixtures.channelJSON([(1, "4.1", "WABC")])
         StubURLProtocol.handler = { request in

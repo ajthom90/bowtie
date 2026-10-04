@@ -11,13 +11,36 @@ public final class ChannelListModel {
         public let nowNext: GuideLogic.NowNext
         /// The channel's programs in the loaded guide window (category filters).
         public let programs: [GuideProgram]
+        /// Each of `programs`' category buckets, same order. Worked out once
+        /// when the row is built (on guide load), not on every render.
+        public let programBuckets: [Set<GuideBucket>]
 
         public var id: Int64 { channel.id }
 
-        public init(channel: Channel, nowNext: GuideLogic.NowNext, programs: [GuideProgram] = []) {
+        /// `programBuckets` nil (or not one per program) classifies `programs`.
+        public init(
+            channel: Channel,
+            nowNext: GuideLogic.NowNext,
+            programs: [GuideProgram] = [],
+            programBuckets: [Set<GuideBucket>]? = nil
+        ) {
             self.channel = channel
             self.nowNext = nowNext
             self.programs = programs
+            if let programBuckets, programBuckets.count == programs.count {
+                self.programBuckets = programBuckets
+            } else {
+                self.programBuckets = programs.map(GuideFilter.buckets(for:))
+            }
+        }
+
+        /// The buckets of `program`, one of this row's (now / next). Looked up
+        /// by start time, so a copy with a newer recording mark still finds them.
+        public func buckets(of program: GuideProgram) -> Set<GuideBucket> {
+            if let i = programs.firstIndex(where: { $0.start == program.start }) {
+                return programBuckets[i]
+            }
+            return GuideFilter.buckets(for: program)
         }
     }
 
@@ -70,9 +93,16 @@ public final class ChannelListModel {
         filter.visibleRows(rows, from: date, to: windowEnd(from: date))
     }
 
+    /// `filteredRows(at:)` for a list with a selection: the row for
+    /// `channelId` (the selected / playing channel) stays in its usual place
+    /// even when it doesn't match, flagged so the view can dim it.
+    public func filteredRows(at date: Date, keeping channelId: Int64?) -> GuideFilter.KeptRows {
+        filter.visibleRows(rows, from: date, to: windowEnd(from: date), keeping: channelId)
+    }
+
     /// How `row` reads under `filter` at `date` (dimmed lines, a later match).
     public func highlight(for row: Row, at date: Date) -> GuideFilter.RowHighlight {
-        filter.highlight(nowNext: row.nowNext, programs: row.programs, from: date, to: windowEnd(from: date))
+        filter.highlight(for: row, from: date, to: windowEnd(from: date))
     }
 
     private func windowEnd(from date: Date) -> Date {
@@ -186,7 +216,12 @@ public final class ChannelListModel {
             guard row.channel.id == channelId else { return row }
             var channel = row.channel
             channel.favorite = favorite
-            return Row(channel: channel, nowNext: row.nowNext, programs: row.programs)
+            return Row(
+                channel: channel,
+                nowNext: row.nowNext,
+                programs: row.programs,
+                programBuckets: row.programBuckets
+            )
         }
         state = .loaded(sorted(updated))
     }

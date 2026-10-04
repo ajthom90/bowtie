@@ -141,16 +141,19 @@ class GuideFilterTest {
         assertTrue(GuideFilter.NEW.matches(prog(isNew = true)))
     }
 
+    private fun classify(programs: List<GuideProgram>) = programs.map { GuideFilter.buckets(it) }
+
     @Test
     fun channelMatchesWithinWindow() {
         val from = t0
         val to = at(4.0)
-        assertTrue(GuideFilter.ALL.matches(emptyList(), from, to))
-        assertFalse(GuideFilter.SPORTS.matches(emptyList(), from, to))
+        assertTrue(GuideFilter.ALL.matches(emptyList(), emptyList(), from, to))
+        assertFalse(GuideFilter.SPORTS.matches(emptyList(), emptyList(), from, to))
         val programs = listOf(prog("News"), prog("Football", start = 2.0, hours = 3.0))
-        assertTrue(GuideFilter.SPORTS.matches(programs, from, to))
-        assertTrue(GuideFilter.NEWS.matches(programs, from, to))
-        assertFalse(GuideFilter.MOVIES.matches(programs, from, to))
+        val b = classify(programs)
+        assertTrue(GuideFilter.SPORTS.matches(programs, b, from, to))
+        assertTrue(GuideFilter.NEWS.matches(programs, b, from, to))
+        assertFalse(GuideFilter.MOVIES.matches(programs, b, from, to))
     }
 
     @Test
@@ -159,9 +162,10 @@ class GuideFilterTest {
         val to = at(4.0)
         val before = prog("Golf", start = -2.0, hours = 2.0)
         val after = prog("Golf", start = 4.0)
-        assertFalse(GuideFilter.SPORTS.matches(listOf(before, after), from, to))
-        val running = prog("Golf", start = -1.0, hours = 1.5)
-        assertTrue(GuideFilter.SPORTS.matches(listOf(running), from, to))
+        val outside = listOf(before, after)
+        assertFalse(GuideFilter.SPORTS.matches(outside, classify(outside), from, to))
+        val running = listOf(prog("Golf", start = -1.0, hours = 1.5))
+        assertTrue(GuideFilter.SPORTS.matches(running, classify(running), from, to))
     }
 
     @Test
@@ -169,8 +173,10 @@ class GuideFilterTest {
         val late = prog("Golf", start = 3.0)
         val early = prog("Football", start = 1.0)
         val ended = prog("Golf", start = -2.0)
-        assertEquals(early, GuideFilter.SPORTS.firstMatch(listOf(late, ended, prog("News"), early), t0, at(4.0)))
-        assertNull(GuideFilter.MOVIES.firstMatch(listOf(late, early), t0, at(4.0)))
+        val programs = listOf(late, ended, prog("News"), early)
+        assertEquals(early, GuideFilter.SPORTS.firstMatch(programs, classify(programs), t0, at(4.0)))
+        val two = listOf(late, early)
+        assertNull(GuideFilter.MOVIES.firstMatch(two, classify(two), t0, at(4.0)))
     }
 
     @Test
@@ -180,18 +186,58 @@ class GuideFilterTest {
         val golf = prog("Golf", start = 2.0)
         val nowNext = GuideLogic.NowNext(now = news, next = drama)
         val programs = listOf(news, drama, golf)
+        val b = classify(programs)
         assertEquals(
             GuideFilter.RowHighlight(nowMatches = true, nextMatches = true, later = null),
-            GuideFilter.ALL.highlight(nowNext, programs, t0, at(4.0)),
+            GuideFilter.ALL.highlight(nowNext, programs, b, t0, at(4.0)),
         )
         assertEquals(
             GuideFilter.RowHighlight(nowMatches = true, nextMatches = false, later = null),
-            GuideFilter.NEWS.highlight(nowNext, programs, t0, at(4.0)),
+            GuideFilter.NEWS.highlight(nowNext, programs, b, t0, at(4.0)),
         )
         assertEquals(
             GuideFilter.RowHighlight(nowMatches = false, nextMatches = false, later = golf),
-            GuideFilter.SPORTS.highlight(nowNext, programs, t0, at(4.0)),
+            GuideFilter.SPORTS.highlight(nowNext, programs, b, t0, at(4.0)),
         )
+    }
+
+    // ── Classified once per load ────────────────────────────────────────────
+
+    @Test
+    fun filteringReadsThePrecomputedBuckets() {
+        // Buckets that contradict the categories: filtering must use them,
+        // not classify the programs again.
+        val news = prog("News")
+        val drama = prog("Drama", start = 1.0)
+        val programs = listOf(news, drama)
+        val b = listOf(setOf(GuideBucket.SPORTS), setOf(GuideBucket.MOVIES))
+        val nowNext = GuideLogic.NowNext(now = news, next = drama)
+
+        assertTrue(GuideFilter.SPORTS.matches(programs, b, t0, at(4.0)))
+        assertFalse(GuideFilter.NEWS.matches(programs, b, t0, at(4.0)))
+        assertEquals(drama, GuideFilter.MOVIES.firstMatch(programs, b, t0, at(4.0)))
+        assertEquals(
+            GuideFilter.RowHighlight(nowMatches = true, nextMatches = false, later = null),
+            GuideFilter.SPORTS.highlight(nowNext, programs, b, t0, at(4.0)),
+        )
+        assertEquals(
+            GuideFilter.RowHighlight(nowMatches = false, nextMatches = false, later = null),
+            GuideFilter.NEWS.highlight(nowNext, programs, b, t0, at(4.0)),
+        )
+    }
+
+    @Test
+    fun highlightFindsNowByStartWhenItCarriesANewerRecordingMark() {
+        val golf = prog("Golf")
+        val marked = golf.copy(recording = GuideRecordingMark(id = 9, state = "scheduled"))
+        val h = GuideFilter.SPORTS.highlight(
+            GuideLogic.NowNext(now = marked, next = null),
+            listOf(golf),
+            listOf(setOf(GuideBucket.SPORTS)),
+            t0,
+            at(4.0),
+        )
+        assertTrue(h.nowMatches)
     }
 
     // ── Copy and persistence ────────────────────────────────────────────────

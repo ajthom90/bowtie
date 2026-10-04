@@ -116,29 +116,78 @@ public enum GuideFilter: String, CaseIterable, Identifiable, Sendable {
     // MARK: - Filtering
 
     /// `.all` matches everything; otherwise the program is in this bucket.
+    /// Classifies `program`; rows carry their programs' buckets already.
     public func matches(_ program: GuideProgram) -> Bool {
+        matches(Self.buckets(for: program))
+    }
+
+    /// `.all` matches everything; otherwise `buckets` holds this one.
+    public func matches(_ buckets: Set<GuideBucket>) -> Bool {
         guard let bucket else { return true }
-        return Self.buckets(for: program).contains(bucket)
+        return buckets.contains(bucket)
     }
 
-    /// Some program overlapping `[from, to)` matches. `.all` keeps every
-    /// channel, even one without guide data.
-    public func matches(programs: [GuideProgram], from: Date, to: Date) -> Bool {
+    /// Some program of `row` overlapping `[from, to)` matches. `.all` keeps
+    /// every channel, even one without guide data.
+    public func matches(row: ChannelListModel.Row, from: Date, to: Date) -> Bool {
         guard self != .all else { return true }
-        return programs.contains { $0.start < to && $0.stop > from && matches($0) }
+        return row.programs.indices.contains { i in
+            let p = row.programs[i]
+            return p.start < to && p.stop > from && matches(row.programBuckets[i])
+        }
     }
 
-    /// The earliest matching program overlapping `[from, to)`.
-    public func firstMatch(in programs: [GuideProgram], from: Date, to: Date) -> GuideProgram? {
-        programs
-            .filter { $0.start < to && $0.stop > from && matches($0) }
+    /// The earliest matching program of `row` overlapping `[from, to)`.
+    public func firstMatch(in row: ChannelListModel.Row, from: Date, to: Date) -> GuideProgram? {
+        row.programs.indices
+            .filter { i in
+                let p = row.programs[i]
+                return p.start < to && p.stop > from && matches(row.programBuckets[i])
+            }
+            .map { row.programs[$0] }
             .min { $0.start < $1.start }
     }
 
     /// Rows with something matching in `[from, to)`, order kept.
     public func visibleRows(_ rows: [ChannelListModel.Row], from: Date, to: Date) -> [ChannelListModel.Row] {
         guard self != .all else { return rows }
-        return rows.filter { matches(programs: $0.programs, from: from, to: to) }
+        return rows.filter { matches(row: $0, from: from, to: to) }
+    }
+
+    /// Rows for a list with a selection (macOS sidebar): `visibleRows`, plus
+    /// the row for `keeping` in its usual place even when it doesn't match,
+    /// so the selection (and the channel playing from it) never drops out.
+    public func visibleRows(
+        _ rows: [ChannelListModel.Row],
+        from: Date,
+        to: Date,
+        keeping channelId: Int64?
+    ) -> KeptRows {
+        guard self != .all else { return KeptRows(rows: rows, keptId: nil) }
+        var keptId: Int64?
+        let shown = rows.filter { row in
+            if matches(row: row, from: from, to: to) { return true }
+            guard row.id == channelId else { return false }
+            keptId = row.id
+            return true
+        }
+        return KeptRows(rows: shown, keptId: keptId)
+    }
+
+    /// `visibleRows(_:from:to:keeping:)`'s answer.
+    public struct KeptRows: Equatable {
+        /// Rows to show, order kept.
+        public let rows: [ChannelListModel.Row]
+        /// The row shown only because it is kept (draw it dimmed); nil when it matches.
+        public let keptId: Int64?
+
+        public init(rows: [ChannelListModel.Row], keptId: Int64?) {
+            self.rows = rows
+            self.keptId = keptId
+        }
+
+        /// Nothing matches the filter (a kept row aside).
+        public var hasNoMatches: Bool { rows.allSatisfy { $0.id == keptId } }
     }
 
     /// How a now/next row reads under this filter: which lines stay bright,
@@ -155,18 +204,14 @@ public enum GuideFilter: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    public func highlight(
-        nowNext: GuideLogic.NowNext,
-        programs: [GuideProgram],
-        from: Date,
-        to: Date
-    ) -> RowHighlight {
-        let nowMatches = nowNext.now.map(matches) ?? false
-        let nextMatches = nowNext.next.map(matches) ?? false
+    /// Uses the buckets `row` worked out when the guide loaded.
+    public func highlight(for row: ChannelListModel.Row, from: Date, to: Date) -> RowHighlight {
         guard self != .all else {
             return RowHighlight(nowMatches: true, nextMatches: true, later: nil)
         }
-        let later = nowMatches || nextMatches ? nil : firstMatch(in: programs, from: from, to: to)
+        let nowMatches = row.nowNext.now.map { matches(row.buckets(of: $0)) } ?? false
+        let nextMatches = row.nowNext.next.map { matches(row.buckets(of: $0)) } ?? false
+        let later = nowMatches || nextMatches ? nil : firstMatch(in: row, from: from, to: to)
         return RowHighlight(nowMatches: nowMatches, nextMatches: nextMatches, later: later)
     }
 
