@@ -51,9 +51,31 @@ public actor BowtieClient {
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        // RFC 3339, with or without fractional seconds (Go may emit either).
+        d.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = BowtieClient.parseDate(string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an RFC 3339 date, got \(string)"
+            )
+        }
         return d
     }()
+
+    private static func parseDate(_ string: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let date = plain.date(from: string) {
+            return date
+        }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: string)
+    }
 
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -193,6 +215,52 @@ public actor BowtieClient {
             body: nil as EmptyBody?,
             authorize: false,
             retryOn401: false
+        )
+    }
+
+    // MARK: - Favorites / recents
+
+    /// Stars (`PUT`) or unstars (`DELETE`) a channel for the signed-in user.
+    /// Both are idempotent and answer 204. Throws `.notFound` for an unknown or
+    /// disabled channel, or on a server without favorites.
+    public func setFavorite(channelId: Int64, on: Bool) async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/me/favorites/\(channelId)",
+            method: on ? "PUT" : "DELETE",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Recently watched channels, newest first. Throws `.notFound` on a server
+    /// without recents.
+    public func recents(limit: Int = 8) async throws -> [RecentChannel] {
+        var components = URLComponents(
+            url: ServerURL.resolve(path: "/api/v1/me/recents", against: server),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        guard let url = components.url else {
+            throw BowtieError.invalidServerURL
+        }
+        return try await sendURL(
+            url: url,
+            method: "GET",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Clears the signed-in user's watch history (204).
+    public func clearRecents() async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/me/recents",
+            method: "DELETE",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
         )
     }
 
