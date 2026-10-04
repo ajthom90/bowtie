@@ -44,10 +44,11 @@ type settingsHDHomeRunJSON struct {
 	Enabled bool `json:"enabled"`
 }
 
-// settingsDVRJSON is the recording padding section.
+// settingsDVRJSON is the recording section: padding and conversion quality.
 type settingsDVRJSON struct {
-	PadStartSeconds int `json:"padStartSeconds"`
-	PadEndSeconds   int `json:"padEndSeconds"`
+	PadStartSeconds int    `json:"padStartSeconds"`
+	PadEndSeconds   int    `json:"padEndSeconds"`
+	Quality         string `json:"quality"`
 }
 
 type settingsResponseJSON struct {
@@ -61,7 +62,8 @@ type settingsResponseJSON struct {
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
 // Within a present section every field is required except schedulesDirect.password
-// (absent or empty = keep existing). streaming is optional (omit = leave unchanged).
+// (absent or empty = keep existing), streaming.adaptive and dvr.quality (absent =
+// keep existing). streaming is optional (omit = leave unchanged).
 type putSettingsRequest struct {
 	XMLTV           *putXMLTVSection     `json:"xmltv"`
 	SchedulesDirect *putSDSection        `json:"schedulesDirect"`
@@ -75,6 +77,8 @@ type putDVRSection struct {
 	// Both are required within the section.
 	PadStartSeconds *int `json:"padStartSeconds"`
 	PadEndSeconds   *int `json:"padEndSeconds"`
+	// Quality is optional (older clients omit it): nil keeps the stored value.
+	Quality *string `json:"quality,omitempty"`
 }
 
 type putHDHomeRunSection struct {
@@ -273,7 +277,7 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 			Adaptive:      stream.Adaptive,
 		},
 		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
-		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds},
+		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds, Quality: dvrCfg.Quality},
 	}, nil
 }
 
@@ -358,9 +362,14 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 			return nil, fmt.Sprintf("dvr.padStartSeconds must be between 0 and %d", settings.MaxPadStartSeconds)
 		case *end < 0 || *end > settings.MaxPadEndSeconds:
 			return nil, fmt.Sprintf("dvr.padEndSeconds must be between 0 and %d", settings.MaxPadEndSeconds)
+		case req.DVR.Quality != nil && !settings.ValidDVRQuality(*req.DVR.Quality):
+			return nil, fmt.Sprintf("dvr.quality must be one of %s", strings.Join(settings.DVRQualities, ", "))
 		}
 		kv[settings.KeyDVRPadStartSeconds] = strconv.Itoa(*start)
 		kv[settings.KeyDVRPadEndSeconds] = strconv.Itoa(*end)
+		if req.DVR.Quality != nil {
+			kv[settings.KeyDVRQuality] = *req.DVR.Quality
+		}
 	}
 
 	return kv, ""
