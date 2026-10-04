@@ -406,8 +406,9 @@ function doHttp(built as object) as object
     else if method = "DELETE"
         xfer.SetRequest("DELETE")
         sent = xfer.AsyncGetToString()
-    else if method = "PUT"
-        xfer.SetRequest("PUT")
+    else if method = "PUT" or method = "PATCH"
+        ' SetRequest overrides the verb; AsyncPostFromString carries the body.
+        xfer.SetRequest(method)
         sent = xfer.AsyncPostFromString(body)
     else
         xfer.SetRequest(method)
