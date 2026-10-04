@@ -9,6 +9,7 @@ import {
   formatBytes,
   gaugeSegments,
   paddingToForm,
+  qualityOptionLabel,
   qualitySizeHint,
   storageWarning,
   type PaddingForm,
@@ -161,7 +162,7 @@ export function DvrAdmin() {
                 >
                   {RECORDING_QUALITIES.map((q) => (
                     <option key={q.value} value={q.value}>
-                      {q.label}
+                      {qualityOptionLabel(q)}
                     </option>
                   ))}
                 </select>

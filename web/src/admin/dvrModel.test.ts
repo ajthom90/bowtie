@@ -9,6 +9,7 @@ import {
   gaugeSegments,
   minutesToSeconds,
   paddingToForm,
+  qualityOptionLabel,
   qualitySizeHint,
   secondsToMinutes,
   storageWarning,
@@ -172,6 +173,13 @@ describe('recording quality', () => {
     // (4000 + 160) kb/s × 3600 s ÷ 8 = 1.872 GB (decimal).
     expect(bytesPerHour(4000, 160)).toBe(1_872_000_000)
     expect(bytesPerHour(8000, 160)).toBe(3_672_000_000)
+  })
+
+  it('labels each choice with its size', () => {
+    expect(RECORDING_QUALITIES.map(qualityOptionLabel)).toEqual([
+      '720p — about 1.7 GB/hour',
+      'Up to 1080p — up to 3.4 GB/hour',
+    ])
   })
 
   it('explains the size of each choice in one line', () => {

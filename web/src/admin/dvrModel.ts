@@ -93,6 +93,12 @@ export function bytesPerHour(videoKbps: number, audioKbps: number): number {
   return ((videoKbps + audioKbps) * 1000 * 3600) / 8
 }
 
+/** A select option's text: the choice and its size per hour. */
+export function qualityOptionLabel(opt: RecordingQualityOption): string {
+  const size = formatBytes(bytesPerHour(opt.videoKbps, opt.audioKbps))
+  return `${opt.label} — ${opt.value === '1080p' ? 'up to' : 'about'} ${size}/hour`
+}
+
 /** One-line size explanation for a quality choice. */
 export function qualitySizeHint(q: RecordingQuality): string {
   const opt = RECORDING_QUALITIES.find((o) => o.value === q) ?? RECORDING_QUALITIES[0]
