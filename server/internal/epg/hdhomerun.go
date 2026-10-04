@@ -64,6 +64,7 @@ func (s *Service) superviseHDHomeRun(ctx context.Context) {
 			return
 		}
 		if !s.hdhomerunConfigured() {
+			s.clearFailure(sourceHDHomeRun)
 			if !s.sleepOrDone(ctx, sourceHDHomeRun, unconfiguredPoll) {
 				return
 			}
