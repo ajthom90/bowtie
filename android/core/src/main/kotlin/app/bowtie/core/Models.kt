@@ -50,6 +50,35 @@ data class TokenPair(
     val user: User,
 )
 
+/** `POST /auth/device`: a quick sign-in code for a TV to show. */
+@Serializable
+data class DeviceSignIn(
+    /** Secret; only this device knows it. Polled with `/auth/device/token`. */
+    val deviceCode: String,
+    /** What the person types on their phone ("BCDF-2345"). */
+    val userCode: String,
+    /** The web app's /link page with the code filled in. */
+    val verifyUrl: String,
+    /** Server-relative PNG of [verifyUrl] as a QR code. */
+    val qrUrl: String = "",
+    /** Seconds the code lives. */
+    val expiresIn: Int,
+    /** Seconds between polls. */
+    val interval: Int,
+)
+
+/** One `/auth/device/token` poll. */
+sealed class DevicePoll {
+    /** 428: not approved yet. */
+    data object Pending : DevicePoll()
+
+    /** 410: expired, used or unknown; start over with a new code. */
+    data object Expired : DevicePoll()
+
+    /** 200: approved; the client now holds the session, as after a password sign-in. */
+    data class SignedIn(val user: User) : DevicePoll()
+}
+
 @Serializable
 data class Channel(
     val id: Long,

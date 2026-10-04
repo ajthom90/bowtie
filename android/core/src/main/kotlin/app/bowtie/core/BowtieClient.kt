@@ -57,6 +57,61 @@ class BowtieClient(
         pair.user
     }
 
+    // ── Quick sign-in (TV apps) ─────────────────────────────────────────────
+
+    /** Start a quick sign-in: a code and QR for a signed-in phone to approve. */
+    suspend fun startDeviceSignIn(deviceName: String): DeviceSignIn = withContext(Dispatchers.IO) {
+        val body = sendUnauthed(
+            path = "/api/v1/auth/device",
+            bodyJson = BowtieJson.encodeToString(DeviceStartRequest(deviceName = deviceName)),
+        ) { code, text ->
+            if (code != 200) throw mapHttpError(code, text)
+            text
+        }
+        BowtieJson.decodeFromString(body)
+    }
+
+    /**
+     * Poll a quick sign-in. On approval the tokens are applied exactly as
+     * [login] does (refresh token persisted, user published).
+     */
+    suspend fun pollDeviceSignIn(deviceCode: String): DevicePoll = withContext(Dispatchers.IO) {
+        sendUnauthed(
+            path = "/api/v1/auth/device/token",
+            bodyJson = BowtieJson.encodeToString(DeviceTokenRequest(deviceCode = deviceCode)),
+        ) { code, text ->
+            when (code) {
+                200 -> {
+                    val pair = BowtieJson.decodeFromString<TokenPair>(text)
+                    applyTokens(pair)
+                    DevicePoll.SignedIn(pair.user)
+                }
+                428 -> DevicePoll.Pending
+                410 -> DevicePoll.Expired
+                else -> throw mapHttpError(code, text)
+            }
+        }
+    }
+
+    /** The QR code PNG at the server-relative [qrUrl] (no auth). 404 once the code expires. */
+    suspend fun deviceQrPng(qrUrl: String): ByteArray = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(ServerUrl.resolve(qrUrl, server)).get().build()
+        try {
+            okHttp.newCall(request).await().use { response ->
+                if (!response.isSuccessful) {
+                    throw mapHttpError(response.code, response.body?.string().orEmpty())
+                }
+                response.body?.bytes() ?: ByteArray(0)
+            }
+        } catch (e: BowtieError) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw BowtieError.Network(e)
+        }
+    }
+
     /**
      * Rotate the stored refresh token into a live session.
      * Throws [BowtieError.Unauthorized] when absent or rotation fails.
@@ -374,6 +429,30 @@ class BowtieClient(
 
     // ── HTTP helpers ────────────────────────────────────────────────────────
 
+    /** Unauthenticated JSON POST; [handle] gets the status and body text. Cancellable. */
+    private suspend fun <T> sendUnauthed(
+        path: String,
+        bodyJson: String,
+        handle: (code: Int, body: String) -> T,
+    ): T {
+        val request = Request.Builder()
+            .url(apiUrl(path))
+            .post(jsonBody(bodyJson))
+            .header("Content-Type", JSON_MEDIA)
+            .build()
+        try {
+            okHttp.newCall(request).await().use { response ->
+                return handle(response.code, response.body?.string().orEmpty())
+            }
+        } catch (e: BowtieError) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw BowtieError.Network(e)
+        }
+    }
+
     private fun postUnauthed(path: String, bodyJson: String): TokenPair {
         val request = Request.Builder()
             .url(apiUrl(path))
@@ -571,6 +650,12 @@ private data class LoginRequest(val username: String, val password: String)
 
 @Serializable
 private data class RefreshRequest(val refreshToken: String)
+
+@Serializable
+private data class DeviceStartRequest(val deviceName: String)
+
+@Serializable
+private data class DeviceTokenRequest(val deviceCode: String)
 
 @Serializable
 private data class ChangePasswordRequest(

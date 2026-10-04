@@ -1,5 +1,6 @@
 package app.bowtie.tv.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +22,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -26,7 +31,9 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import app.bowtie.core.BowtieError
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.bowtie.core.vm.AppViewModel
+import app.bowtie.core.vm.DeviceSignInViewModel
 import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieDimens
 import app.bowtie.tv.BowtieType
@@ -44,6 +51,38 @@ fun LoginScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // "Sign in with your phone": polls in this screen's scope, so leaving stops it.
+    val client = appViewModel.client
+    var phoneMode by remember { mutableStateOf(false) }
+    val deviceVm = remember(client) {
+        client?.let { DeviceSignInViewModel(client = it, deviceName = tvDeviceName(), scope = scope) }
+    }
+    val deviceState = deviceVm?.state?.collectAsStateWithLifecycle()?.value
+    val phoneButtonFocus = remember { FocusRequester() }
+
+    LaunchedEffect(deviceState) {
+        if (deviceState is DeviceSignInViewModel.State.SignedIn) {
+            appViewModel.completeSignIn(deviceState.user)
+        }
+    }
+    DisposableEffect(deviceVm) { onDispose { deviceVm?.stop() } }
+    LaunchedEffect(phoneMode) {
+        if (!phoneMode && deviceVm != null) runCatching { phoneButtonFocus.requestFocus() }
+    }
+
+    fun usePhone() {
+        phoneMode = true
+        error = null
+        deviceVm?.start()
+    }
+
+    fun usePassword() {
+        deviceVm?.stop()
+        phoneMode = false
+    }
+
+    BackHandler(enabled = phoneMode) { usePassword() }
 
     fun submit() {
         if (busy) return
@@ -81,6 +120,10 @@ fun LoginScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (phoneMode && deviceVm != null) {
+            PhoneSignInPanel(viewModel = deviceVm, onUsePassword = { usePassword() })
+            return@Column
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = 720.dp)
@@ -99,6 +142,30 @@ fun LoginScreen(
                 color = BowtieColors.dim,
             )
             Spacer(Modifier.height(32.dp))
+
+            if (deviceVm != null) {
+                Button(
+                    onClick = { usePhone() },
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(phoneButtonFocus),
+                    colors = tvButtonColors(selected = true),
+                ) {
+                    Text(
+                        text = "Sign in with your phone",
+                        style = BowtieType.body,
+                        color = BowtieColors.bg,
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "Or use your username and password",
+                    style = BowtieType.label,
+                    color = BowtieColors.dim,
+                )
+                Spacer(Modifier.height(12.dp))
+            }
 
             TvTextField(
                 value = username,
