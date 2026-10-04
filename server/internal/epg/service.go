@@ -105,6 +105,15 @@ type GuideProgram struct {
 	Subtitle    string    `json:"subtitle"`
 	Description string    `json:"description"`
 	Category    string    `json:"category"`
+	// Recording is filled by the API layer when this program is scheduled
+	// or recorded.
+	Recording *GuideRecording `json:"recording,omitempty"`
+}
+
+// GuideRecording links a guide program to its DVR recording.
+type GuideRecording struct {
+	ID    int64  `json:"id"`
+	State string `json:"state"`
 }
 
 // RefreshAll refreshes configured EPG sources (provider re-read per call), then prunes.

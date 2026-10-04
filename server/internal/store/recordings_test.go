@@ -69,3 +69,15 @@ func TestRecordingsCRUD(t *testing.T) {
 		t.Fatalf("position survived delete: %d", p)
 	}
 }
+
+func TestSetRecordingProtectedOnly(t *testing.T) {
+	s := openTestStore(t)
+	id, _ := s.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "t",
+		Start: time.Now(), Stop: time.Now().Add(time.Hour), State: store.RecRecording, CreatedAt: time.Now()})
+	if err := s.SetRecordingProtected(id, true); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.RecordingByID(id); !r.Protected || r.State != store.RecRecording {
+		t.Fatalf("%+v", r)
+	}
+}

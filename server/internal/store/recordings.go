@@ -189,3 +189,10 @@ func scanRecording(row scannable) (Recording, error) {
 	}
 	return r, nil
 }
+
+// SetRecordingProtected sets only the protected flag (safe while the DVR is
+// updating the same row).
+func (s *Store) SetRecordingProtected(id int64, on bool) error {
+	_, err := s.db.Exec(`UPDATE recordings SET protected = ? WHERE id = ?`, boolToInt(on), id)
+	return err
+}

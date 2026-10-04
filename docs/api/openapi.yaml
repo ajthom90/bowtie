@@ -205,6 +205,308 @@ paths:
           description: Cleared
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/recordings:
+    get:
+      summary: List recordings (everyone's)
+      operationId: listRecordings
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          description: upcoming (scheduled/waiting/recording, oldest first), recorded (converting/ready, newest first) or failed (newest first). Omit for all.
+          schema:
+            type: string
+            enum: [upcoming, recorded, failed]
+      responses:
+        '200':
+          description: Recordings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recording'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Schedule a recording
+      description: |
+        Either a guide program (`channelId` + `programStart`, the program's
+        exact start) or a manual window (`channelId` + `start` + `stop`,
+        optional `title`). Capture starts 1 min early and ends 3 min late.
+        Overlapping recordings on the same channel share a tuner; more
+        distinct channels than tuners is a 409 unless `force`.
+      operationId: createRecording
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelId]
+              properties:
+                channelId:
+                  type: integer
+                  format: int64
+                programStart:
+                  type: string
+                  format: date-time
+                start:
+                  type: string
+                  format: date-time
+                stop:
+                  type: string
+                  format: date-time
+                title:
+                  type: string
+                force:
+                  type: boolean
+      responses:
+        '201':
+          description: Scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recording, warnings]
+                properties:
+                  recording:
+                    $ref: '#/components/schemas/Recording'
+                  warnings:
+                    type: array
+                    items:
+                      type: object
+                      required: [code, message]
+                      properties:
+                        code:
+                          type: string
+                          enum: [usesAllTuners]
+                        message:
+                          type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown/disabled channel, or no such program in the guide
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Tuner conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, tunerCount, conflicts]
+                properties:
+                  error:
+                    type: string
+                  tunerCount:
+                    type: integer
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Recording'
+        '503':
+          description: Recording is not available on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/recordings/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      summary: Keep (protect) a recording from automatic deletion
+      operationId: patchRecording
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                protected:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Cancel a scheduled recording, or delete a recording and its files
+      operationId: deleteRecording
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/recordings/{id}/stop:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Stop a recording now and keep what was recorded
+      operationId: stopRecording
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Stopping
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/recordings/{id}/play:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Get a playback URL for a ready recording
+      operationId: playRecording
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: HLS VOD URL (token-signed) and the caller's resume position
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [playlistUrl, positionSec, durationSec]
+                properties:
+                  playlistUrl:
+                    type: string
+                  positionSec:
+                    type: integer
+                  durationSec:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Not ready to play yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/recordings/{id}/position:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      summary: Save the caller's resume position
+      operationId: setRecordingPosition
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [positionSec]
+              properties:
+                positionSec:
+                  type: integer
+                  minimum: 0
+      responses:
+        '204':
+          description: Saved
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/recordings/{id}/hls/{file}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: file
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^(index|v\d{3,4}|aac\d)(\.m3u8|_\d{5}\.ts)$'
+      - name: token
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      summary: A recording's HLS VOD files (token from /play; no bearer)
+      operationId: getRecordingFile
+      tags: [dvr]
+      responses:
+        '200':
+          description: Playlist (URIs carry the token) or MPEG-TS segment
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/admin/users:
     get:
       summary: List all users
@@ -1199,6 +1501,60 @@ components:
           type: boolean
         epgChannelId:
           type: string
+    Recording:
+      type: object
+      required: [id, title, subtitle, description, category, channelId, channelName, start, stop, state, partial, failure, failureDetail, durationSec, sizeBytes, protected, positionSec, scheduledBy, canManage]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        subtitle:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        channelId:
+          type: integer
+          format: int64
+        channelName:
+          type: string
+        start:
+          type: string
+          format: date-time
+        stop:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [scheduled, waiting, recording, converting, ready, failed]
+          description: waiting = inside its window, retrying for a free tuner
+        partial:
+          type: boolean
+          description: More than a minute is missing (late start, dropped stream, or a restart)
+        failure:
+          type: string
+          enum: ['', noTuner, noSignal, diskFull, error]
+        failureDetail:
+          type: string
+        durationSec:
+          type: integer
+        sizeBytes:
+          type: integer
+          format: int64
+        protected:
+          type: boolean
+          description: Never deleted automatically when space runs low
+        positionSec:
+          type: integer
+          description: The caller's resume position
+        scheduledBy:
+          type: string
+        canManage:
+          type: boolean
+          description: The caller may stop, delete or protect it (scheduler or admin)
     RecentChannel:
       type: object
       required: [channelId, guideNumber, name, logoUrl, watchedAt]
@@ -1276,6 +1632,16 @@ components:
       type: object
       required: [start, stop, title, subtitle, description, category]
       properties:
+        recording:
+          type: object
+          description: Present when this program is scheduled or recorded
+          required: [id, state]
+          properties:
+            id:
+              type: integer
+              format: int64
+            state:
+              type: string
         start:
           type: string
           format: date-time
