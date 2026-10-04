@@ -59,6 +59,7 @@ import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
+import app.bowtie.core.vm.SeriesResult
 import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
 import app.bowtie.core.GuideProgram
@@ -82,6 +83,7 @@ fun ChannelListScreen(
     onOpenChannel: (Channel) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecordings: () -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -143,6 +145,15 @@ fun ChannelListScreen(
         }
     }
 
+    fun recordSeries(channelId: Long, program: GuideProgram) {
+        scope.launch {
+            when (val result = channelListViewModel.recordSeries(channelId, program)) {
+                is SeriesResult.Scheduled -> snackbar.showSnackbar("${program.title}: ${result.message}")
+                is SeriesResult.Failed -> snackbar.showSnackbar(result.message)
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -169,6 +180,9 @@ fun ChannelListScreen(
                     )
                 }
                 Row {
+                    TextButton(onClick = onOpenSearch) {
+                        Text("Search", color = BowtieColors.amber)
+                    }
                     TextButton(onClick = onOpenRecordings) {
                         Text("Recordings", color = BowtieColors.amber)
                     }
@@ -308,6 +322,10 @@ fun ChannelListScreen(
                     actionSheetId = null
                     record(row.channel.id, program, force = false)
                 },
+                onRecordSeries = { program ->
+                    actionSheetId = null
+                    recordSeries(row.channel.id, program)
+                },
             )
         }
     }
@@ -351,6 +369,7 @@ private fun ChannelActionSheet(
     onWatch: () -> Unit,
     onToggleFavorite: () -> Unit,
     onRecord: (GuideProgram) -> Unit,
+    onRecordSeries: (GuideProgram) -> Unit,
 ) {
     Column(modifier = Modifier.padding(bottom = 24.dp)) {
         Text(
@@ -393,6 +412,14 @@ private fun ChannelActionSheet(
                     onClick = { onRecord(program) },
                 )
             }
+        }
+        // One per show (now and next are often the same show); offered even if this airing is set.
+        programs.map { it.second }.distinctBy { it.title }.forEach { program ->
+            SheetItem(
+                text = "Record series \"${program.title}\"",
+                detail = "Every new episode on ${row.channel.guideNumber} ${row.channel.name}",
+                onClick = { onRecordSeries(program) },
+            )
         }
     }
 }
@@ -558,7 +585,10 @@ private fun ChannelRow(
                         text = now.title,
                         style = BowtieType.body.copy(color = BowtieColors.text),
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    LockMark(now)
                 }
                 Spacer(Modifier.height(6.dp))
                 ProgressCapsule(progress = progress)
@@ -579,7 +609,10 @@ private fun ChannelRow(
                         style = BowtieType.label,
                         color = BowtieColors.dim,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    LockMark(next)
                 }
             }
         }
@@ -598,6 +631,19 @@ private fun RecordMark(program: GuideProgram) {
         style = BowtieType.label,
         color = BowtieColors.alert,
         modifier = Modifier.semantics { contentDescription = "Set to record" },
+    )
+}
+
+/** Lock and rating after a program parental controls block for this user. */
+@Composable
+internal fun LockMark(program: GuideProgram) {
+    val label = RecordingLogic.lockLabel(program) ?: return
+    Text(
+        text = "  $label",
+        style = BowtieType.label,
+        color = BowtieColors.amber,
+        maxLines = 1,
+        modifier = Modifier.semantics { contentDescription = "Blocked by parental controls, $label" },
     )
 }
 

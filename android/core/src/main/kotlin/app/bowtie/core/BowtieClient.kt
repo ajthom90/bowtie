@@ -57,6 +57,61 @@ class BowtieClient(
         pair.user
     }
 
+    // ── Quick sign-in (TV apps) ─────────────────────────────────────────────
+
+    /** Start a quick sign-in: a code and QR for a signed-in phone to approve. */
+    suspend fun startDeviceSignIn(deviceName: String): DeviceSignIn = withContext(Dispatchers.IO) {
+        val body = sendUnauthed(
+            path = "/api/v1/auth/device",
+            bodyJson = BowtieJson.encodeToString(DeviceStartRequest(deviceName = deviceName)),
+        ) { code, text ->
+            if (code != 200) throw mapHttpError(code, text)
+            text
+        }
+        BowtieJson.decodeFromString(body)
+    }
+
+    /**
+     * Poll a quick sign-in. On approval the tokens are applied exactly as
+     * [login] does (refresh token persisted, user published).
+     */
+    suspend fun pollDeviceSignIn(deviceCode: String): DevicePoll = withContext(Dispatchers.IO) {
+        sendUnauthed(
+            path = "/api/v1/auth/device/token",
+            bodyJson = BowtieJson.encodeToString(DeviceTokenRequest(deviceCode = deviceCode)),
+        ) { code, text ->
+            when (code) {
+                200 -> {
+                    val pair = BowtieJson.decodeFromString<TokenPair>(text)
+                    applyTokens(pair)
+                    DevicePoll.SignedIn(pair.user)
+                }
+                428 -> DevicePoll.Pending
+                410 -> DevicePoll.Expired
+                else -> throw mapHttpError(code, text)
+            }
+        }
+    }
+
+    /** The QR code PNG at the server-relative [qrUrl] (no auth). 404 once the code expires. */
+    suspend fun deviceQrPng(qrUrl: String): ByteArray = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(ServerUrl.resolve(qrUrl, server)).get().build()
+        try {
+            okHttp.newCall(request).await().use { response ->
+                if (!response.isSuccessful) {
+                    throw mapHttpError(response.code, response.body?.string().orEmpty())
+                }
+                response.body?.bytes() ?: ByteArray(0)
+            }
+        } catch (e: BowtieError) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw BowtieError.Network(e)
+        }
+    }
+
     /**
      * Rotate the stored refresh token into a live session.
      * Throws [BowtieError.Unauthorized] when absent or rotation fails.
@@ -115,6 +170,17 @@ class BowtieClient(
         }
 
     /**
+     * Upcoming and on-now programs whose title, episode or description contains
+     * [query] (case-insensitive); title matches first, then by start time.
+     */
+    suspend fun searchGuide(query: String, limit: Int = 50): List<GuideSearchResult> =
+        withContext(Dispatchers.IO) {
+            // Query is spliced as an encoded query: encode it, with %20 rather than '+'.
+            val q = java.net.URLEncoder.encode(query, Charsets.UTF_8.name()).replace("+", "%20")
+            BowtieJson.decodeFromString(authed("GET", "/api/v1/guide/search?q=$q&limit=$limit"))
+        }
+
+    /**
      * Star ([on]) or unstar a channel for the signed-in user (PUT / DELETE, 204, idempotent).
      * Throws [BowtieError.NotFound] when the channel is unknown or disabled.
      */
@@ -161,9 +227,12 @@ class BowtieClient(
 
     /**
      * Session liveness beat (spec C). Auth is the stream token query param only —
-     * never Bearer (avoids racing access-token refresh mid-session). Best-effort.
+     * never Bearer (avoids racing access-token refresh mid-session). Best-effort,
+     * except that a viewer stopped by parental controls throws
+     * [BowtieError.Parental] so the player can say why.
      */
     suspend fun heartbeat(viewerId: String, token: String): Unit = withContext(Dispatchers.IO) {
+        var parental: BowtieError.Parental? = null
         try {
             val path = "/api/v1/sessions/$viewerId/heartbeat?token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
             val request = Request.Builder()
@@ -171,12 +240,14 @@ class BowtieClient(
                 .post("".toRequestBody(null))
                 .build()
             okHttp.newCall(request).execute().use { response ->
-                // 204 success; all other statuses swallowed (best-effort).
-                response.body?.close()
+                // 204 success; every other status is swallowed (best-effort) except parental.
+                val body = response.body?.string().orEmpty()
+                if (response.code == 403) parental = parentalError(body)
             }
         } catch (_: Exception) {
             // swallow
         }
+        parental?.let { throw it }
     }
 
     suspend fun me(): User = withContext(Dispatchers.IO) {
@@ -213,6 +284,41 @@ class BowtieClient(
             ),
         )
         BowtieJson.decodeFromString(body)
+    }
+
+    // ── Series rules ────────────────────────────────────────────────────────
+
+    /** Everyone's series recording rules. */
+    suspend fun recordingRules(): List<RecordingRule> = withContext(Dispatchers.IO) {
+        BowtieJson.decodeFromString(authed("GET", "/api/v1/recording-rules"))
+    }
+
+    /**
+     * Record the show of the guide program on [channelId] at [programStart]:
+     * new episodes only by default, on that channel ([anyChannel] false),
+     * keeping all ([keepLatest] 0). Upcoming airings are scheduled at once.
+     */
+    suspend fun createRecordingRule(
+        channelId: Long,
+        programStart: Instant,
+        anyChannel: Boolean = false,
+        newOnly: Boolean = true,
+        keepLatest: Int = 0,
+    ): CreatedRecordingRule = withContext(Dispatchers.IO) {
+        val body = authed(
+            method = "POST",
+            path = "/api/v1/recording-rules",
+            bodyJson = BowtieJson.encodeToString(
+                CreateRuleRequest(channelId, programStart, anyChannel, newOnly, keepLatest),
+            ),
+        )
+        BowtieJson.decodeFromString(body)
+    }
+
+    /** Stop recording a show: cancels its upcoming recordings; recorded ones stay. */
+    suspend fun deleteRecordingRule(id: Long): Unit = withContext(Dispatchers.IO) {
+        authed("DELETE", "/api/v1/recording-rules/$id")
+        Unit
     }
 
     /** Cancel a scheduled recording, or delete a recording and its files. */
@@ -322,6 +428,30 @@ class BowtieClient(
     }
 
     // ── HTTP helpers ────────────────────────────────────────────────────────
+
+    /** Unauthenticated JSON POST; [handle] gets the status and body text. Cancellable. */
+    private suspend fun <T> sendUnauthed(
+        path: String,
+        bodyJson: String,
+        handle: (code: Int, body: String) -> T,
+    ): T {
+        val request = Request.Builder()
+            .url(apiUrl(path))
+            .post(jsonBody(bodyJson))
+            .header("Content-Type", JSON_MEDIA)
+            .build()
+        try {
+            okHttp.newCall(request).await().use { response ->
+                return handle(response.code, response.body?.string().orEmpty())
+            }
+        } catch (e: BowtieError) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw BowtieError.Network(e)
+        }
+    }
 
     private fun postUnauthed(path: String, bodyJson: String): TokenPair {
         val request = Request.Builder()
@@ -436,6 +566,8 @@ class BowtieClient(
     private fun mapHttpError(code: Int, body: String, path: String = ""): BowtieError {
         return when (code) {
             401 -> BowtieError.Unauthorized
+            403 -> parentalError(body)
+                ?: BowtieError.Server(403, extractErrorMessage(body) ?: body.ifEmpty { "HTTP 403" })
             404 -> BowtieError.NotFound
             409 -> {
                 // Only a schedule conflict carries `conflicts`; /play's 409 is a plain error.
@@ -451,7 +583,7 @@ class BowtieClient(
             )
             503 -> {
                 // A recordings 503 means the DVR is off, not that tuners are busy.
-                if (path.startsWith("/api/v1/recordings")) {
+                if (path.startsWith("/api/v1/recordings") || path.startsWith("/api/v1/recording-rules")) {
                     return BowtieError.Server(503, extractErrorMessage(body) ?: "HTTP 503")
                 }
                 try {
@@ -465,6 +597,17 @@ class BowtieClient(
                 code,
                 extractErrorMessage(body) ?: body.ifEmpty { "HTTP $code" },
             )
+        }
+    }
+
+    /** A 403 body with `code: "parental"`, else null. */
+    private fun parentalError(body: String): BowtieError.Parental? {
+        if (body.isBlank()) return null
+        return try {
+            val e = BowtieJson.decodeFromString<ErrorBody>(body)
+            if (e.code == "parental") BowtieError.Parental(e.error) else null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -509,6 +652,12 @@ private data class LoginRequest(val username: String, val password: String)
 private data class RefreshRequest(val refreshToken: String)
 
 @Serializable
+private data class DeviceStartRequest(val deviceName: String)
+
+@Serializable
+private data class DeviceTokenRequest(val deviceCode: String)
+
+@Serializable
 private data class ChangePasswordRequest(
     val currentPassword: String,
     val newPassword: String,
@@ -520,8 +669,9 @@ private data class CreateSessionRequest(
     val caps: ClientCaps,
 )
 
+/** `code` is set on some errors (e.g. "parental"). */
 @Serializable
-private data class ErrorBody(val error: String)
+private data class ErrorBody(val error: String, val code: String? = null)
 
 /** `force` is optional: false is omitted (BowtieJson has encodeDefaults = false). */
 @Serializable
@@ -530,6 +680,17 @@ private data class ScheduleRecordingRequest(
     @Serializable(with = InstantIso8601Serializer::class)
     val programStart: Instant,
     val force: Boolean = false,
+)
+
+/** No defaults: every option is sent explicitly (BowtieJson omits defaults). */
+@Serializable
+private data class CreateRuleRequest(
+    val channelId: Long,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val programStart: Instant,
+    val anyChannel: Boolean,
+    val newOnly: Boolean,
+    val keepLatest: Int,
 )
 
 /** No default: positionSec 0 (start over) must be sent. */

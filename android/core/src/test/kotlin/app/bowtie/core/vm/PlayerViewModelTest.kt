@@ -63,6 +63,10 @@ class PlayerViewModelTest {
     private var createStatusCodes: List<Int> = emptyList()
     private var createBodies: List<String> = emptyList()
 
+    /** Heartbeat answer (status, body). */
+    @Volatile
+    private var heartbeatResponse: Pair<Int, String> = 204 to ""
+
     @Before
     fun setUp() {
         Dispatchers.setMain(StandardTestDispatcher())
@@ -72,6 +76,7 @@ class PlayerViewModelTest {
         createSeq.set(0)
         createStatusCodes = emptyList()
         createBodies = emptyList()
+        heartbeatResponse = 204 to ""
 
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -95,6 +100,7 @@ class PlayerViewModelTest {
                         val errBody = when (code) {
                             422 -> """{"error":"profile not available"}"""
                             404 -> """{"error":"channel not found"}"""
+                            403 -> PARENTAL_BODY
                             503 -> """{"error":"all tuners in use","sessions":[]}"""
                             else -> """{"error":"fail"}"""
                         }
@@ -106,7 +112,8 @@ class PlayerViewModelTest {
                     return MockResponse().setBody(body)
                 }
                 if (method == "POST" && path.contains("/heartbeat")) {
-                    return MockResponse().setResponseCode(204)
+                    val (code, body) = heartbeatResponse
+                    return MockResponse().setResponseCode(code).setBody(body)
                 }
                 if (method == "DELETE" && path.startsWith("/api/v1/sessions/")) {
                     return MockResponse().setResponseCode(204)
@@ -504,6 +511,72 @@ class PlayerViewModelTest {
         assertEquals(1, sessionCreates().count())
     }
 
+    // ── Parental controls (403 code "parental") ─────────────────────────────
+
+    @Test
+    fun create403ParentalShowsServerMessage() = runTest {
+        installMain()
+        createStatusCodes = listOf(403)
+        val client = authedClient()
+        val vm = makeVm(client, this)
+
+        playThroughDebounce(vm, ch1)
+
+        assertEquals(
+            PlayerViewModel.State.Failed("Blocked by parental controls (rated TV-MA)"),
+            vm.state.value,
+        )
+        assertEquals("no silent retry for a parental block", 1, sessionCreates().size)
+        vm.stop()
+        runCurrent()
+    }
+
+    @Test
+    fun heartbeat403ParentalFailsWithMessageAndStopsBeating() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        assertTrue(vm.state.value is PlayerViewModel.State.Playing)
+
+        heartbeatResponse = 403 to PARENTAL_BODY
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) {
+            vm.state.value is PlayerViewModel.State.Failed
+        }
+        assertEquals(
+            PlayerViewModel.State.Failed("Blocked by parental controls (rated TV-MA)"),
+            vm.state.value,
+        )
+        val beats = heartbeats().size
+
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS * 3)
+        runCurrent()
+        Thread.sleep(50)
+        runCurrent()
+        assertEquals("beats stop after a parental block", beats, heartbeats().size)
+        vm.stop()
+        runCurrent()
+    }
+
+    @Test
+    fun heartbeatOtherErrorKeepsPlaying() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        heartbeatResponse = 500 to """{"error":"boom"}"""
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) { heartbeats().isNotEmpty() }
+        Thread.sleep(50)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Playing)
+        vm.stop()
+        runCurrent()
+    }
+
     // ── Heartbeats (15s cadence + A6 through-stall) ─────────────────────────
 
     @Test
@@ -587,5 +660,10 @@ class PlayerViewModelTest {
             "Jumped to live — paused longer than the buffer",
             PlayerViewModel.OUT_OF_WINDOW_NOTICE,
         )
+    }
+
+    private companion object {
+        const val PARENTAL_BODY =
+            """{"error":"Blocked by parental controls (rated TV-MA)","code":"parental"}"""
     }
 }

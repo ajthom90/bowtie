@@ -48,6 +48,7 @@ import app.bowtie.BowtieType
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
 import app.bowtie.core.RecordingLogic.Action
+import app.bowtie.core.RecordingRule
 import app.bowtie.core.RecordingLogic.Tab as RecTab
 import app.bowtie.core.vm.RecordingsViewModel
 import kotlinx.coroutines.delay
@@ -78,6 +79,7 @@ fun RecordingsScreen(
     var refreshing by remember { mutableStateOf(false) }
     var pendingResume by remember { mutableStateOf<RecordingsViewModel.PlayStart?>(null) }
     var confirmDelete by remember { mutableStateOf<Recording?>(null) }
+    var confirmStopShow by remember { mutableStateOf<RecordingRule?>(null) }
 
     BackHandler { onBack() }
 
@@ -188,6 +190,24 @@ fun RecordingsScreen(
                             }
                         }
                     }
+                    is RecordingsViewModel.Load.Shows -> {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            if (load.rules.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = emptyCopy(state.tab),
+                                        style = BowtieType.body,
+                                        color = BowtieColors.dim,
+                                        modifier = Modifier.padding(BowtieDimens.screenPadding),
+                                    )
+                                }
+                            }
+                            items(load.rules, key = { it.id }) { rule ->
+                                RuleRow(rule = rule, onStop = { confirmStopShow = rule })
+                                HorizontalDivider(color = BowtieColors.line)
+                            }
+                        }
+                    }
                     is RecordingsViewModel.Load.Loaded -> {
                         if (load.items.isEmpty()) {
                             // LazyColumn so pull-to-refresh still works on an empty tab.
@@ -243,6 +263,26 @@ fun RecordingsScreen(
         )
     }
 
+    confirmStopShow?.let { rule ->
+        AlertDialog(
+            onDismissRequest = { confirmStopShow = null },
+            title = { Text("Stop recording \"${rule.title}\"?") },
+            text = { Text("Upcoming episodes are cancelled. Recorded episodes stay.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmStopShow = null
+                    scope.launch { viewModel.stopShow(rule) }
+                }) { Text("Stop recording", color = BowtieColors.alert) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmStopShow = null }) {
+                    Text("Keep recording", color = BowtieColors.text)
+                }
+            },
+            containerColor = BowtieColors.surface,
+        )
+    }
+
     confirmDelete?.let { r ->
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
@@ -268,6 +308,26 @@ private fun emptyCopy(tab: RecTab): String = when (tab) {
     RecTab.Upcoming -> "Nothing set to record. Press and hold a channel to record what's on."
     RecTab.Recorded -> "No recordings yet."
     RecTab.Missed -> "No missed recordings."
+    RecTab.Shows -> "No shows set to record. Press and hold a channel and choose Record series."
+}
+
+/** A series rule: the show, where and which episodes, and "Stop recording this show" for its owner. */
+@Composable
+private fun RuleRow(rule: RecordingRule, onStop: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+    ) {
+        Text(rule.title, style = BowtieType.body, color = BowtieColors.text, maxLines = 2)
+        Spacer(Modifier.height(4.dp))
+        Text(RecordingLogic.ruleDetail(rule), style = BowtieType.label, color = BowtieColors.dim)
+        if (rule.canManage) {
+            TextButton(onClick = onStop) {
+                Text("Stop recording this show", color = BowtieColors.alert)
+            }
+        }
+    }
 }
 
 @Composable
@@ -292,6 +352,9 @@ private fun RecordingRow(
         Text(recording.title, style = BowtieType.body, color = BowtieColors.text, maxLines = 2)
         if (recording.subtitle.isNotEmpty()) {
             Text(recording.subtitle, style = BowtieType.label, color = BowtieColors.dim, maxLines = 1)
+        }
+        RecordingLogic.lockLabel(recording)?.let {
+            Text(it, style = BowtieType.label, color = BowtieColors.amber)
         }
         Spacer(Modifier.height(4.dp))
         Text(
