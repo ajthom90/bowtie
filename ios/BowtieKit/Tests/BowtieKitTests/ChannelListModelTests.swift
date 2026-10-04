@@ -150,6 +150,32 @@ final class ChannelListModelTests: XCTestCase {
         XCTAssertFalse(message.isEmpty)
     }
 
+    func testReloadKeepsRowsOnScreenWhileInFlight() async throws {
+        let channelsData = TestFixtures.channelJSON([(1, "4.1", "WABC")])
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/api/v1/channels" {
+                return (200, channelsData, [:])
+            }
+            return (200, Data("[]".utf8), [:])
+        }
+        let client = makeClient()
+        await seedAccess(client)
+        let model = ChannelListModel(client: client, now: { [weak self] in self?.clock ?? Date() })
+        await model.load()
+
+        // Second load (e.g. after scheduling a recording) is slow.
+        StubURLProtocol.delay = { _ in 0.3 }
+        let reload = Task { await model.load() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        guard case .loaded(let rows) = model.state else {
+            await reload.value
+            return XCTFail("rows should stay while reloading, got \(model.state)")
+        }
+        XCTAssertEqual(rows.map(\.channel.id), [1])
+        await reload.value
+    }
+
     func testInitialStateIsLoading() {
         let client = makeClient()
         let model = ChannelListModel(client: client, now: { Date() })

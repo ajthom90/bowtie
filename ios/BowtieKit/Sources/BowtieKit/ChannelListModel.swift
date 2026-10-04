@@ -40,8 +40,11 @@ public final class ChannelListModel {
     }
 
     /// Fetches channels + guide(now..now+4h) and joins via `GuideLogic.nowNext`.
+    /// A reload keeps the current rows on screen until the new ones arrive.
     public func load() async {
-        state = .loading
+        if case .loaded = state {} else {
+            state = .loading
+        }
         let at = now()
         let stop = at.addingTimeInterval(guideWindow)
 
