@@ -69,6 +69,8 @@ fun RecordingPlayerScreen(
     viewModel: RecordingsViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The back button's destination ("Recordings", or "Channels" from Continue watching). */
+    backLabel: String = "Recordings",
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -235,7 +237,7 @@ fun RecordingPlayerScreen(
             ) {
                 Row {
                     TextButton(onClick = onBack) {
-                        Text("‹ Recordings", color = BowtieColors.amber)
+                        Text("‹ $backLabel", color = BowtieColors.amber)
                     }
                     TextButton(onClick = { showSleepSheet = true }) {
                         Text(sleepChipLabel(sleepStatus), color = BowtieColors.amber)

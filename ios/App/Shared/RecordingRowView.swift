@@ -146,7 +146,7 @@ struct RecordingStateBadge: View {
     }
 }
 
-private struct WatchedBar: View {
+struct WatchedBar: View {
     let fraction: Double
 
     var body: some View {

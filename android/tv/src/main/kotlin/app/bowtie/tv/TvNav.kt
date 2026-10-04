@@ -30,6 +30,7 @@ import app.bowtie.core.TokenStore
 import app.bowtie.core.User
 import app.bowtie.core.vm.AppViewModel
 import app.bowtie.core.vm.ChannelListViewModel
+import app.bowtie.core.vm.ContinueWatchingViewModel
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.vm.RecordingsViewModel
 import app.bowtie.tv.ui.ChannelRailScreen
@@ -50,6 +51,8 @@ private sealed class ReadyRoute {
     data class RecordingPlayer(
         val start: RecordingsViewModel.PlayStart,
         val startAtSec: Int,
+        /** Where Back goes: Recordings, or Channels after Continue watching. */
+        val returnTo: ReadyRoute = Recordings,
     ) : ReadyRoute()
 }
 
@@ -135,6 +138,11 @@ private fun ReadyShell(
         key = "recordings-${client.server}",
         factory = factory,
     )
+    val continueWatchingViewModel: ContinueWatchingViewModel = viewModel(
+        viewModelStoreOwner = owner,
+        key = "continueWatching-${client.server}",
+        factory = factory,
+    )
 
     var route by remember(client.server) { mutableStateOf<ReadyRoute>(ReadyRoute.Channels) }
     val listState by channelListViewModel.state.collectAsStateWithLifecycle()
@@ -161,6 +169,17 @@ private fun ReadyShell(
                 },
                 onOpenSettings = { route = ReadyRoute.Settings },
                 onOpenRecordings = { route = ReadyRoute.Recordings },
+                continueWatching = continueWatchingViewModel,
+                onResumeRecording = { r ->
+                    when (val res = recordingsViewModel.resume(r)) {
+                        is RecordingsViewModel.Resume.Ready -> {
+                            route = ReadyRoute.RecordingPlayer(res.start, res.startAtSec, returnTo = ReadyRoute.Channels)
+                            null
+                        }
+                        is RecordingsViewModel.Resume.Failed -> res.message
+                    }
+                },
+                awaitRecordingSaves = recordingsViewModel::awaitSaves,
                 modifier = modifier,
             )
         }
@@ -178,7 +197,7 @@ private fun ReadyShell(
                 startAtSec = r.startAtSec,
                 server = client.server,
                 viewModel = recordingsViewModel,
-                onBack = { route = ReadyRoute.Recordings },
+                onBack = { route = r.returnTo },
                 modifier = modifier,
             )
         }
@@ -247,6 +266,8 @@ private class ReadyViewModelFactory(
                 PlayerViewModel(client = client, caps = caps) as T
             modelClass.isAssignableFrom(RecordingsViewModel::class.java) ->
                 RecordingsViewModel(client = client) as T
+            modelClass.isAssignableFrom(ContinueWatchingViewModel::class.java) ->
+                ContinueWatchingViewModel(client = client) as T
             else -> error("Unknown ViewModel class: ${modelClass.name}")
         }
     }

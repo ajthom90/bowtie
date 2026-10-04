@@ -61,6 +61,7 @@ import app.bowtie.BowtieColors
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.vm.ChannelListViewModel
+import app.bowtie.core.vm.ContinueWatchingViewModel
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.vm.SeriesResult
 import app.bowtie.core.BowtieError
@@ -68,6 +69,7 @@ import app.bowtie.core.Channel
 import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
+import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
 import app.bowtie.core.User
 import kotlinx.coroutines.delay
@@ -88,7 +90,12 @@ fun ChannelListScreen(
     onOpenSettings: () -> Unit,
     onOpenRecordings: () -> Unit,
     onOpenSearch: () -> Unit,
+    continueWatching: ContinueWatchingViewModel,
+    /** Continue watching: plays the recording; returns why it can't, or null. */
+    onResumeRecording: suspend (Recording) -> String?,
     modifier: Modifier = Modifier,
+    /** Waits for the recording player's last position save (back from it). */
+    awaitRecordingSaves: suspend () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     /** Channel whose long-press menu (favorite + record) is open; read live from [state]. */
@@ -100,6 +107,8 @@ fun ChannelListScreen(
     val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
     val message by channelListViewModel.message.collectAsStateWithLifecycle()
     val filter by channelListViewModel.filter.collectAsStateWithLifecycle()
+    val continueItems by continueWatching.items.collectAsStateWithLifecycle()
+    val continueMessage by continueWatching.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -127,6 +136,26 @@ fun ChannelListScreen(
     // Back from the player (a route change, not ON_START): the Recent row may have grown.
     LaunchedEffect(channelListViewModel) {
         channelListViewModel.refreshRecents()
+    }
+
+    // Back from a recording (or Recordings): it moves to the front, or leaves when finished.
+    LaunchedEffect(continueWatching) {
+        awaitRecordingSaves()
+        continueWatching.refresh()
+    }
+
+    // A remove the server refused.
+    LaunchedEffect(continueMessage) {
+        val text = continueMessage ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        continueWatching.clearMessage()
+    }
+
+    fun resume(r: Recording) {
+        scope.launch {
+            val error = onResumeRecording(r) ?: return@launch
+            Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+        }
     }
 
     // A favorite toggle the server refused (already reverted).
@@ -219,6 +248,7 @@ fun ChannelListScreen(
                         refreshing = true
                         try {
                             channelListViewModel.refresh()
+                            continueWatching.refresh()
                         } finally {
                             refreshing = false
                         }
@@ -293,6 +323,16 @@ fun ChannelListScreen(
                             HorizontalDivider(color = BowtieColors.line)
                         }
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                            if (continueItems.isNotEmpty()) {
+                                item(key = "continue-row") {
+                                    ContinueWatchingRow(
+                                        items = continueItems,
+                                        onResume = ::resume,
+                                        onRemove = { r -> scope.launch { continueWatching.remove(r) } },
+                                    )
+                                    HorizontalDivider(color = BowtieColors.line)
+                                }
+                            }
                             if (showStars && recents.isNotEmpty()) {
                                 item(key = "recent-row") {
                                     RecentRow(

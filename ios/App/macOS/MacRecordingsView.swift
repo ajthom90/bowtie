@@ -12,6 +12,7 @@ struct MacRecordingsView: View {
     @Binding var activeRecording: RecordingPlayerController?
 
     @State private var model: RecordingsModel?
+    @State private var continueModel: ContinueWatchingModel?
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
     @State private var confirmStopRule: RecordingRule?
@@ -36,8 +37,24 @@ struct MacRecordingsView: View {
         .task {
             if model == nil {
                 model = RecordingsModel(client: client)
+                continueModel = ContinueWatchingModel(client: client)
             }
             await model?.load()
+        }
+        .task(id: continueModel != nil) {
+            await continueModel?.load()
+        }
+        // The player closed (Done, or from the main view): show where it was left.
+        .onChange(of: activeRecording == nil) { _, closed in
+            if closed {
+                Task {
+                    await model?.waitForSaves()
+                    await continueModel?.load()
+                }
+            }
+        }
+        .bowtieToast(continueModel?.actionError) {
+            continueModel?.actionError = nil
         }
         .task(id: model != nil) {
             while !Task.isCancelled {
@@ -81,7 +98,10 @@ struct MacRecordingsView: View {
             presenting: confirmDelete
         ) { recording in
             Button("Delete \u{201C}\(recording.title)\u{201D}", role: .destructive) {
-                Task { await model?.delete(recording) }
+                Task {
+                    await model?.delete(recording)
+                    await continueModel?.load()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
@@ -109,6 +129,20 @@ struct MacRecordingsView: View {
 
     private func list(_ model: RecordingsModel) -> some View {
         VStack(spacing: 0) {
+            if let continueModel, !continueModel.items.isEmpty {
+                ContinueWatchingShelf(
+                    items: continueModel.items,
+                    onPlay: { recording in Task { await resume(recording, model: model) } },
+                    onRemove: { recording in
+                        Task {
+                            await continueModel.remove(recording)
+                            await model.load()
+                        }
+                    }
+                )
+                .padding(.top, 12)
+            }
+
             Picker("Show", selection: tabBinding(model)) {
                 ForEach(RecordingsTab.allCases) { tab in
                     Text(tab.title).tag(tab)
@@ -125,7 +159,10 @@ struct MacRecordingsView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    Task { await model.load() }
+                    Task {
+                        await model.load()
+                        await continueModel?.load()
+                    }
                 } label: {
                     Label("Reload", systemImage: "arrow.clockwise")
                 }
@@ -304,6 +341,12 @@ struct MacRecordingsView: View {
         }
     }
 
+    /// Continue watching: straight to the saved position, no Resume prompt.
+    private func resume(_ recording: Recording, model: RecordingsModel) async {
+        guard let playback = await model.resume(recording, stopping: playerModel) else { return }
+        start(playback)
+    }
+
     private func play(_ recording: Recording, model: RecordingsModel) async {
         // One stream at a time: a live session (maybe in PiP) ends, but only
         // once /play succeeds. On failure live TV keeps playing and the
@@ -329,7 +372,10 @@ struct MacRecordingsView: View {
     private func closePlayer() {
         activeRecording?.finish()
         activeRecording = nil
-        Task { await model?.load() }
+        Task {
+            await model?.waitForSaves()
+            await model?.load()
+        }
     }
 }
 

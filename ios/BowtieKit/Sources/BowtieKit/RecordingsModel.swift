@@ -55,6 +55,8 @@ public final class RecordingsModel {
     private let client: BowtieClient
     /// Bumped per load so a slow response for an old tab can't land.
     private var generation: UInt64 = 0
+    /// Position saves sent but not answered yet.
+    private var savesInFlight = 0
 
     public init(client: BowtieClient, tab: RecordingsTab = .recorded) {
         self.client = client
@@ -182,7 +184,20 @@ public final class RecordingsModel {
     /// Best-effort save of the player's position (every 15 s and on dismiss).
     public func savePosition(recordingId: Int64, seconds: Double) async {
         guard let sec = RecordingLogic.positionToSave(seconds: seconds) else { return }
+        savesInFlight += 1
+        defer { savesInFlight -= 1 }
         try? await client.saveRecordingPosition(id: recordingId, positionSec: sec)
+    }
+
+    /// Waits (up to `timeout`) for position saves already under way, such as
+    /// the player's last save on close, so a reload right after shows it.
+    public func waitForSaves(timeout: Duration = .seconds(3)) async {
+        // Let a save the closing player just queued on the main actor start.
+        await Task.yield()
+        let deadline = ContinuousClock.now + timeout
+        while savesInFlight > 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     // MARK: - Rows

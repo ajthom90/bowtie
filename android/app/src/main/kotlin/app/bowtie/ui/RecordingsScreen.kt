@@ -50,6 +50,7 @@ import app.bowtie.core.RecordingLogic
 import app.bowtie.core.RecordingLogic.Action
 import app.bowtie.core.RecordingRule
 import app.bowtie.core.RecordingLogic.Tab as RecTab
+import app.bowtie.core.vm.ContinueWatchingViewModel
 import app.bowtie.core.vm.RecordingsViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -70,9 +71,12 @@ fun RecordingsScreen(
     viewModel: RecordingsViewModel,
     onPlay: (start: RecordingsViewModel.PlayStart, startAtSec: Int) -> Unit,
     onBack: () -> Unit,
+    continueWatching: ContinueWatchingViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val continueItems by continueWatching.items.collectAsStateWithLifecycle()
+    val continueMessage by continueWatching.message.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbar = remember { SnackbarHostState() }
@@ -97,6 +101,28 @@ fun RecordingsScreen(
         val msg = state.message ?: return@LaunchedEffect
         snackbar.showSnackbar(msg)
         viewModel.clearMessage()
+    }
+
+    // Back from the player: wait for its last position save, then reload the row.
+    LaunchedEffect(continueWatching) {
+        viewModel.awaitSaves()
+        continueWatching.refresh()
+    }
+
+    LaunchedEffect(continueMessage) {
+        val msg = continueMessage ?: return@LaunchedEffect
+        snackbar.showSnackbar(msg)
+        continueWatching.clearMessage()
+    }
+
+    /** Continue watching: straight to the saved position, no Resume prompt. */
+    fun resume(r: Recording) {
+        scope.launch {
+            when (val res = viewModel.resume(r)) {
+                is RecordingsViewModel.Resume.Ready -> onPlay(res.start, res.startAtSec)
+                is RecordingsViewModel.Resume.Failed -> snackbar.showSnackbar(res.message)
+            }
+        }
     }
 
     fun play(r: Recording) {
@@ -141,6 +167,19 @@ fun RecordingsScreen(
                 )
             }
 
+            if (continueItems.isNotEmpty()) {
+                ContinueWatchingRow(
+                    items = continueItems,
+                    onResume = ::resume,
+                    onRemove = { r ->
+                        scope.launch {
+                            // The Recorded tab's "stopped at" goes too.
+                            if (continueWatching.remove(r)) viewModel.refresh()
+                        }
+                    },
+                )
+            }
+
             val tabs = RecTab.entries
             PrimaryTabRow(
                 selectedTabIndex = tabs.indexOf(state.tab),
@@ -170,6 +209,7 @@ fun RecordingsScreen(
                         refreshing = true
                         try {
                             viewModel.refresh()
+                            continueWatching.refresh()
                         } finally {
                             refreshing = false
                         }
@@ -291,7 +331,9 @@ fun RecordingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = null
-                    scope.launch { viewModel.delete(r) }
+                    scope.launch {
+                        if (viewModel.delete(r)) continueWatching.refresh()
+                    }
                 }) { Text("Delete", color = BowtieColors.alert) }
             },
             dismissButton = {

@@ -7,9 +7,9 @@ import org.junit.Test
 class RailKeysTest {
 
     @Test
-    fun menuDownTogglesFavoriteOnce() {
+    fun menuDownActsOnce() {
         assertEquals(
-            RailKeys.Outcome.ToggleFavorite,
+            RailKeys.Outcome.MenuPress,
             RailKeys.onKey(KeyEvent.KEYCODE_MENU, KeyEvent.ACTION_DOWN, repeatCount = 0),
         )
     }
