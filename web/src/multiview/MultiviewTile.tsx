@@ -63,6 +63,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
       },
     })
 
+    let attached = false
     // Stops the viewer (keepalive, so it survives navigation and tab close).
     // Safe to call again: a session that resolves after cleanup is stopped too.
     const release = () => {
@@ -72,8 +73,11 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
         hls.destroy()
         hls = null
       }
+      // Only reset the element if this run attached to it: a later run (a
+      // new channel, or StrictMode's remount) may own it by now.
       const video = videoRef.current
-      if (video) {
+      if (video && attached) {
+        attached = false
         video.removeAttribute('src')
         video.load()
       }
@@ -98,6 +102,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
     const attach = (url: string) => {
       const video = videoRef.current
       if (!video) return
+      attached = true
       if (Hls.isSupported()) {
         hls = new Hls({ enableWorker: true, lowLatencyMode: false })
         hls.loadSource(url)

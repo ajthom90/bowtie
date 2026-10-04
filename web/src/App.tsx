@@ -40,6 +40,15 @@ function Shell() {
   const [view, setView] = useState<View>('guide')
   const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
   const [playingRecording, setPlayingRecording] = useState<Recording | null>(null)
+  const inMultiview = isMultiviewPath(path)
+  useEffect(() => {
+    // Multiview replaces any player (e.g. via browser Back): that player must
+    // not come back, and start its stream again, when the guide returns.
+    if (inMultiview) {
+      setWatching(null)
+      setPlayingRecording(null)
+    }
+  }, [inMultiview])
 
   if (!ready) {
     return (
@@ -71,7 +80,7 @@ function Shell() {
   }
   const onMultiview = () => navigate(MULTIVIEW_PATH)
 
-  if (isMultiviewPath(path)) {
+  if (inMultiview) {
     return <Multiview onGuide={toGuide} />
   }
 
