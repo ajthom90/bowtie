@@ -99,6 +99,23 @@ public struct GuideChannel: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Server
+
+/// `GET /api/v1/version`.
+public struct ServerVersion: Codable, Equatable, Sendable {
+    public let version: String
+    /// Stable random ID of the server, whatever URL reaches it. Absent from older servers.
+    public let serverId: String?
+    /// Display name (BOWTIE_SERVER_NAME or the host name). Absent from older servers.
+    public let serverName: String?
+
+    public init(version: String, serverId: String?, serverName: String?) {
+        self.version = version
+        self.serverId = serverId
+        self.serverName = serverName
+    }
+}
+
 // MARK: - Sessions
 
 public struct ClientCaps: Codable, Sendable {
@@ -121,12 +138,22 @@ public struct ClientCaps: Codable, Sendable {
 }
 
 public struct SessionInfoMeta: Codable, Equatable, Sendable {
+    /// Server session ID, shared by everyone on the same stream (SharePlay
+    /// joiners send it as `joinSessionId`). Absent from older servers.
+    public let id: String?
     public let videoCodec: String
     public let profile: String
     public let backend: String
     public let channelName: String
 
-    public init(videoCodec: String, profile: String, backend: String, channelName: String) {
+    public init(
+        id: String? = nil,
+        videoCodec: String,
+        profile: String,
+        backend: String,
+        channelName: String
+    ) {
+        self.id = id
         self.videoCodec = videoCodec
         self.profile = profile
         self.backend = backend
