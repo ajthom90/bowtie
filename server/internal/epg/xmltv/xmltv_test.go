@@ -3,6 +3,7 @@ package xmltv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,24 @@ func TestParseTime(t *testing.T) {
 		if !got.Equal(tt.want) {
 			t.Errorf("ParseTime(%q) = %v, want %v", tt.in, got.UTC(), tt.want)
 		}
+	}
+}
+
+func TestRatingsToStore(t *testing.T) {
+	doc := `<tv><channel id="c"><display-name>C</display-name></channel>
+<programme start="20261004010000 +0000" stop="20261004020000 +0000" channel="c">
+  <title>Late Movie</title>
+  <rating system="MPAA"><value>R</value></rating>
+  <rating system="VCHIP"><value>TV-MA</value></rating>
+</programme>
+<programme start="20261004020000 +0000" stop="20261004030000 +0000" channel="c"><title>News</title></programme>
+</tv>`
+	tv, err := Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, progs, _ := ToStore(tv)
+	if len(progs) != 2 || progs[0].Rating != "TV-MA" || progs[1].Rating != "" {
+		t.Fatalf("%+v", progs)
 	}
 }

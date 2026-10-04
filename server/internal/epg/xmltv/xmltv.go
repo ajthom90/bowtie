@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/parental"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -38,6 +39,10 @@ type Programme struct {
 	Icon       struct {
 		Src string `xml:"src,attr"`
 	} `xml:"icon"`
+	Ratings []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:"value"`
+	} `xml:"rating"`
 }
 
 // Parse streams an XMLTV document from r, decoding channel and programme
@@ -139,6 +144,7 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			Description:  p.Desc,
 			Category:     category,
 			IconURL:      p.Icon.Src,
+			Rating:       rating(p),
 		})
 	}
 	return chans, progs, skipped
@@ -160,4 +166,13 @@ func pickNames(names []string) (displayName, callsign string) {
 		}
 	}
 	return displayName, callsign
+}
+
+// rating picks the program's rating (US TV first, then MPAA).
+func rating(p Programme) string {
+	rs := make([]parental.Rated, 0, len(p.Ratings))
+	for _, r := range p.Ratings {
+		rs = append(rs, parental.Rated{System: r.System, Code: r.Value})
+	}
+	return parental.Pick(rs)
 }

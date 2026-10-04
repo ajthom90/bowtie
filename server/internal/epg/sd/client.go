@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/parental"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -66,12 +67,16 @@ type LineupSummary struct {
 // StationSchedule is one element of the POST /schedules response.
 // The server may return one object per stationID/date combination.
 type StationSchedule struct {
-	StationID string `json:"stationID"`
-	Programs  []struct {
-		ProgramID   string    `json:"programID"`
-		AirDateTime time.Time `json:"airDateTime"`
-		Duration    int       `json:"duration"` // seconds
-	} `json:"programs"`
+	StationID string             `json:"stationID"`
+	Programs  []ScheduledProgram `json:"programs"`
+}
+
+// ScheduledProgram is one airing in a station schedule.
+type ScheduledProgram struct {
+	ProgramID   string    `json:"programID"`
+	AirDateTime time.Time `json:"airDateTime"`
+	Duration    int       `json:"duration"` // seconds
+	Ratings     []Rating  `json:"ratings"`  // per airing
 }
 
 // ProgramDetail is program metadata from POST /programs.
@@ -87,6 +92,27 @@ type ProgramDetail struct {
 	} `json:"descriptions"`
 	EpisodeTitle150 string   `json:"episodeTitle150"`
 	Genres          []string `json:"genres"`
+	ContentRating   []Rating `json:"contentRating"`
+}
+
+// Rating is an SD rating ({"body": "USA Parental Rating", "code": "TV14"}).
+type Rating struct {
+	Body string `json:"body"`
+	Code string `json:"code"`
+}
+
+// pickRating prefers the airing's ratings, then the program's.
+func pickRating(airing, program []Rating) string {
+	for _, rs := range [][]Rating{airing, program} {
+		in := make([]parental.Rated, 0, len(rs))
+		for _, r := range rs {
+			in = append(in, parental.Rated{System: r.Body, Code: r.Code})
+		}
+		if got := parental.Pick(in); got != "" {
+			return got
+		}
+	}
+	return ""
 }
 
 type apiError struct {
@@ -270,6 +296,7 @@ func ToStore(lineup Lineup, scheds []StationSchedule, details map[string]Program
 				Subtitle:     d.EpisodeTitle150,
 				Description:  desc,
 				Category:     cat,
+				Rating:       pickRating(sp.Ratings, d.ContentRating),
 			})
 		}
 	}
