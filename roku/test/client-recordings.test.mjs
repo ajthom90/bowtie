@@ -184,3 +184,46 @@ test('playRecording: server-relative playlistUrl resolves against the base; 409 
     assert.equal(out.busy.error.code, 409);
     assert.equal(out.busy.error.message, "this recording isn't ready to play yet");
 });
+
+// ── Series recording rules ──────────────────────────────────────────────────
+
+test('recordingRules → GET /recording-rules; createRecordingRule → POST {channelId, programStart}', () => {
+    const out = runBrs(LIB, `
+        out.list = bowtie_client_buildRequest("recordingRules", {}, "tok", "${BASE}")
+        ${build('create', 'createRecordingRule', '{ channelId: 3, programStart: "2026-10-05T00:00:00Z" }')}
+        out.del = bowtie_client_buildRequest("deleteRecordingRule", { id: 5 }, "tok", "${BASE}")
+    `);
+    assert.equal(out.list.method, 'GET');
+    assert.equal(out.list.url, `${API}/recording-rules`);
+    assert.equal(out.list.headers.Authorization, 'Bearer tok');
+    assert.equal(out.create.method, 'POST');
+    assert.equal(out.create.url, `${API}/recording-rules`);
+    assert.equal(out.create.headers.Authorization, 'Bearer tok');
+    assert.equal(out.create.headers['Content-Type'], 'application/json');
+    // This channel, new episodes only: the server's defaults.
+    assert.deepEqual(out.create.body, { channelId: 3, programStart: '2026-10-05T00:00:00Z' });
+    assert.equal(out.del.method, 'DELETE');
+    assert.equal(out.del.url, `${API}/recording-rules/5`);
+    assert.equal(out.del.headers.Authorization, 'Bearer tok');
+});
+
+test('recording rules: 200 list, 201 {rule, scheduled}, 204 delete, 403 surfaces', () => {
+    const rule = { id: 5, title: 'Jeopardy!', seriesId: 'SH01', channelId: 3, channelName: '5.1 KSTP', newOnly: true, keepLatest: 0, scheduledBy: 'andrew', canManage: true, createdAt: '2026-10-04T00:00:00Z' };
+    const out = runBrs(LIB, `
+        out.list = bowtie_client_parseResponse("recordingRules", 200, ${lit(JSON.stringify([rule]))})
+        out.created = bowtie_client_parseResponse("createRecordingRule", 201, ${lit(JSON.stringify({ rule, scheduled: 3 }))})
+        out.del = bowtie_client_parseResponse("deleteRecordingRule", 204, "")
+        out.forbidden = bowtie_client_parseResponse("deleteRecordingRule", 403, "{""error"":""only the person who set it up (or an admin) can remove this rule""}")
+        out.gone = bowtie_client_parseResponse("createRecordingRule", 404, "{""error"":""program not found in the guide""}")
+    `);
+    assert.equal(out.list.ok, true);
+    assert.equal(out.list.data[0].title, 'Jeopardy!');
+    assert.equal(out.created.ok, true);
+    assert.equal(out.created.data.scheduled, 3);
+    assert.equal(out.created.data.rule.id, 5);
+    assert.equal(out.del.ok, true);
+    assert.equal(out.forbidden.ok, false);
+    assert.equal(out.forbidden.error.code, 403);
+    assert.equal(out.forbidden.error.message, 'only the person who set it up (or an admin) can remove this rule');
+    assert.equal(out.gone.error.code, 404);
+});

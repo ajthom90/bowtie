@@ -85,7 +85,7 @@ a note.
 
 | Key | Action |
 |-----|--------|
-| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Cancel**. |
+| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Record series** (when the guide has a program on now), **Cancel**. |
 | Up from the first channel | Recent row (when the server has watch history), then the header (Recordings / Settings) |
 | Left / Right in the header | Move between **Recordings** and **Settings** |
 | Down from the header / Recent | Back toward the rail |
@@ -102,6 +102,12 @@ dialog lists the recordings already holding the tuners with **Record anyway**
 (scheduled at a lower priority; earlier recordings keep their tuners) or
 **Cancel**.
 
+**Record series** records every new episode of the show on this channel
+(`POST /api/v1/recording-rules` with the program's channel and start; the
+server's defaults are this channel, new episodes only). The upcoming airings in
+the next 14 days are scheduled at once and the dialog says **Scheduled N
+episodes**; more are added as the guide refreshes.
+
 Up/down zapping in the player follows rail order, so it cycles favorites first.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
@@ -111,7 +117,10 @@ same account) and is hidden when empty or on a server without favorites.
 **Recordings** (in the header next to Settings) lists everyone's recordings in
 three tabs: **Upcoming** (scheduled, waiting for a tuner, recording now),
 **Recorded** (converting, ready) and **Missed** (failed, with the reason in
-plain words, e.g. "No tuner was free").
+plain words, e.g. "No tuner was free"), plus **Shows**, the series being
+recorded (`GET /api/v1/recording-rules`). Recordings a series scheduled
+(`ruleId` > 0) say **Series**; an episode skipped by deleting it ahead of time
+says **Skipped** (not tinted red like a real miss).
 
 | Key | Action |
 |-----|--------|
@@ -120,6 +129,7 @@ plain words, e.g. "No tuner was free").
 | OK on a recorded item | Play it. Past the first 10 s and before the last 30 s, asks **Resume from m:ss** / **Start over**. |
 | OK on any other item | Same as `*` |
 | `*` (Options) on an item | **Stop recording** (while recording), **Keep / Don't keep** (protect from automatic deletion), **Cancel recording** (upcoming) or **Delete** (asks first: it removes the recording for everyone), **Close**. Only the person who scheduled it or an admin (`canManage`) gets these; others see who scheduled it. |
+| `*` or OK on a show (Shows tab) | **Stop recording this show** (`DELETE /recording-rules/{id}`: cancels its upcoming recordings, recorded ones stay), **Close**. Only whoever set it up or an admin (`canManage`). |
 | Back | Recordings → channel rail |
 
 ### Recording playback
@@ -193,8 +203,8 @@ roku/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
     ├── ConnectScene
     ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
-    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record)
-    ├── RecordingsScene     # Upcoming / Recorded / Missed + VOD Video (RecordingItem rows)
+    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record / series)
+    ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows)
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene

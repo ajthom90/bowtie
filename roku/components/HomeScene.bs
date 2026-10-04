@@ -2,7 +2,8 @@
 ' join with bowtie.guide.nowNext; refresh on show + 5-min timer.
 ' Favorites float to the top (bowtie.favorites). * on a rail item opens a
 ' dialog: Favorite/Unfavorite (optimistic toggle), Record this program (when
-' the guide has a current program; 409 → conflicts + Record anyway), Cancel.
+' the guide has a current program; 409 → conflicts + Record anyway), Record
+' series (POST /recording-rules → "Scheduled N episodes"), Cancel.
 ' A Recent row (recentList) sits above the rail when the server has watch
 ' history. Focus: [Recordings | Settings] <-> recentList <-> rail.
 
@@ -56,7 +57,7 @@ sub init()
     m.menu = []
     m.optionsChannelId = invalid
     m.optionsProgram = invalid
-    ' In-flight createRecording: {id, channelId, program}.
+    ' In-flight createRecording / createRecordingRule: {id, channelId, program, series}.
     m.pendingRecord = invalid
     m.recSeq = 0
     ' Header button Up from the rail returns to (Recordings until one is left).
@@ -288,6 +289,8 @@ sub onDialogButton()
             toggleFavorite(m.optionsChannelId)
         else if choice = "record"
             sendRecord(m.optionsChannelId, m.optionsProgram, false)
+        else if choice = "series"
+            sendSeries(m.optionsChannelId, m.optionsProgram)
         end if
     else if mode = "conflict"
         ' Record anyway: lower priority; earlier recordings keep their tuners.
@@ -314,12 +317,37 @@ sub sendRecord(channelId as dynamic, program as dynamic, force as boolean)
     if task = invalid or channelId = invalid or program = invalid or program.start = invalid then return
     m.recSeq = m.recSeq + 1
     reqId = "home-record-" + m.recSeq.toStr()
-    m.pendingRecord = { id: reqId, channelId: channelId, program: program }
+    m.pendingRecord = { id: reqId, channelId: channelId, program: program, series: false }
     task.request = {
         id: reqId
         kind: "createRecording"
         params: { channelId: channelId, programStart: program.start, force: force }
     }
+end sub
+
+' POST /recording-rules from the current program: this channel, new episodes
+' only (the server's defaults). It schedules the upcoming airings at once.
+sub sendSeries(channelId as dynamic, program as dynamic)
+    task = m.top.apiTask
+    if task = invalid or channelId = invalid or program = invalid or program.start = invalid then return
+    m.recSeq = m.recSeq + 1
+    reqId = "home-series-" + m.recSeq.toStr()
+    m.pendingRecord = { id: reqId, channelId: channelId, program: program, series: true }
+    task.request = {
+        id: reqId
+        kind: "createRecordingRule"
+        params: { channelId: channelId, programStart: program.start }
+    }
+end sub
+
+sub handleSeriesResponse(resp as object)
+    m.pendingRecord = invalid
+    if resp.ok = true
+        ' "Scheduled N episodes." The next guide refresh brings their marks.
+        showDialog("info", "Recording series", bowtie.recordings.seriesScheduledMessage(resp.data), ["OK"])
+        return
+    end if
+    showDialog("info", "Can't record series", [bowtie.recordings.seriesErrorText(resp.error)], ["OK"])
 end sub
 
 sub handleRecordResponse(resp as object)
@@ -505,7 +533,11 @@ sub onApiResponse()
         return
     end if
     if m.pendingRecord <> invalid and resp.id = m.pendingRecord.id
-        handleRecordResponse(resp)
+        if m.pendingRecord.series = true
+            handleSeriesResponse(resp)
+        else
+            handleRecordResponse(resp)
+        end if
         return
     end if
 end sub

@@ -2,7 +2,8 @@
 ' (no I/O, no nodes). Strings mirror web/src/recordings/recordingsModel.ts.
 '
 ' Tabs: upcoming (scheduled/waiting/recording), recorded (converting/ready),
-' missed (failed; the server's state=failed).
+' missed (failed; the server's state=failed), shows (series recording rules,
+' GET /recording-rules).
 ' Times: the server sends UTC ISO strings; formatting takes the local offset
 ' from UTC in seconds (local = utc + utcOffsetSec) so it is testable. The
 ' scene passes -roDateTime.GetTimeZoneOffset() * 60.
@@ -14,14 +15,20 @@ namespace bowtie.recordings
     ' ── Tabs ─────────────────────────────────────────────────────────────────
 
     function tabIds() as object
-        return ["upcoming", "recorded", "missed"]
+        return ["upcoming", "recorded", "missed", "shows"]
     end function
 
     function tabLabel(tabId as string) as string
         if tabId = "upcoming" then return "Upcoming"
         if tabId = "recorded" then return "Recorded"
         if tabId = "missed" then return "Missed"
+        if tabId = "shows" then return "Shows"
         return ""
+    end function
+
+    ' The Shows tab lists series rules, not recordings.
+    function isRulesTab(tabId as string) as boolean
+        return tabId = "shows"
     end function
 
     ' GET /recordings?state= value for a tab.
@@ -34,6 +41,7 @@ namespace bowtie.recordings
         if tabId = "upcoming" then return "Nothing scheduled. Press * on a channel and choose Record."
         if tabId = "recorded" then return "No recordings yet."
         if tabId = "missed" then return "No missed recordings."
+        if tabId = "shows" then return "No shows yet. Press * on a channel and choose Record series."
         return ""
     end function
 
@@ -88,6 +96,7 @@ namespace bowtie.recordings
             "positionSec": bowtie.recordings.asNumber(r.positionSec)
             "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
             "canManage": (r.canManage = true)
+            "ruleId": bowtie.recordings.asNumber(r.ruleId)
         }
     end function
 
@@ -99,6 +108,7 @@ namespace bowtie.recordings
         if f = "noTuner" then return "No tuner was free"
         if f = "noSignal" then return "No signal"
         if f = "diskFull" then return "Disk full"
+        if f = "skipped" then return "Skipped"
         if f = "error"
             d = bowtie.recordings.asString(detail).Trim()
             if d <> "" then return d
@@ -111,6 +121,8 @@ namespace bowtie.recordings
     function statusText(r as object) as string
         state = bowtie.recordings.asString(r.state)
         if state = "failed"
+            ' A series episode the user deleted ahead of time: not a miss.
+            if bowtie.recordings.asString(r.failure) = "skipped" then return "Skipped"
             why = bowtie.recordings.failureText(r.failure, r.failureDetail)
             if why = "" then return "Missed"
             return "Missed: " + why
@@ -149,6 +161,7 @@ namespace bowtie.recordings
         parts.push(bowtie.recordings.formatWhen(bowtie.recordings.asString(r.start), bowtie.recordings.asString(r.stop), nowIso, utcOffsetSec))
         channelName = bowtie.recordings.asString(r.channelName)
         if channelName <> "" then parts.push(channelName)
+        if bowtie.recordings.asNumber(r.ruleId) > 0 then parts.push("Series")
         state = bowtie.recordings.asString(r.state)
         if state = "ready" or state = "converting"
             if bowtie.recordings.asNumber(r.durationSec) > 0 then parts.push(bowtie.recordings.formatDuration(r.durationSec))
@@ -157,6 +170,11 @@ namespace bowtie.recordings
         status = bowtie.recordings.statusText(r)
         if status <> "" then parts.push(status)
         return bowtie.recordings.joinParts(parts, " · ")
+    end function
+
+    ' Red detail text for a real miss; a skipped episode was the user's choice.
+    function missedTint(r as object) as boolean
+        return bowtie.recordings.asString(r.state) = "failed" and bowtie.recordings.asString(r.failure) <> "skipped"
     end function
 
     ' ── Playback ─────────────────────────────────────────────────────────────
@@ -338,7 +356,8 @@ namespace bowtie.recordings
     ' HomeScene's * dialog for a channel. favoritesSupported: the server sends
     ' "favorite" on channels. nowProgram: the channel's current guide program,
     ' or invalid. → { buttons: [{id, label}], note }
-    ' ids: favorite, record, cancel.
+    ' ids: favorite, record, series, cancel. Record series (this channel, new
+    ' episodes) is offered even when this airing is already marked.
     function homeOptions(favoritesSupported as boolean, isFavorite as boolean, nowProgram as dynamic) as object
         menu = []
         note = ""
@@ -358,6 +377,7 @@ namespace bowtie.recordings
                 markText = bowtie.recordings.guideMarkText(mark.state)
                 if markText <> "" then note = note + " · " + markText
             end if
+            menu.push({ id: "series", label: "Record series" })
         end if
         menu.push({ id: "cancel", label: "Cancel" })
         return { buttons: menu, note: note }
@@ -407,6 +427,108 @@ namespace bowtie.recordings
             end for
         end if
         return lines
+    end function
+
+    ' ── Series ───────────────────────────────────────────────────────────────
+
+    ' 201 {rule, scheduled} → dialog lines ending "Scheduled N episodes."
+    function seriesScheduledMessage(data as dynamic) as object
+        lines = []
+        n = 0
+        if data <> invalid
+            n = Int(bowtie.recordings.asNumber(data.scheduled))
+            r = data.rule
+            if r <> invalid
+                line = "Recording new episodes of “" + bowtie.recordings.asString(r.title) + "”"
+                channelName = bowtie.recordings.asString(r.channelName)
+                if bowtie.recordings.asNumber(r.channelId) > 0 and channelName <> "" then line = line + " on " + channelName
+                lines.push(line + ".")
+            end if
+        end if
+        if n = 1
+            lines.push("Scheduled 1 episode.")
+        else if n = 0
+            lines.push("Scheduled 0 episodes. New ones are added as the guide fills in.")
+        else
+            lines.push("Scheduled " + n.toStr() + " episodes.")
+        end if
+        return lines
+    end function
+
+    ' Why Record series failed, in plain words. A 404 is either the program
+    ' gone from the guide or a server without series rules.
+    function seriesErrorText(err as dynamic) as string
+        if err = invalid then return "Couldn't set up the series recording."
+        code = Int(bowtie.recordings.asNumber(err.code))
+        message = bowtie.recordings.asString(err.message)
+        if code = 404
+            if Instr(1, message, "guide") > 0 then return "That program isn't in the guide anymore."
+            if Instr(1, message, "channel not found") > 0 then return "That channel isn't available anymore."
+            return "Series recording isn't available on this server."
+        end if
+        if code = 503 then return "Recording isn't available on this server."
+        if code <> 0 and message <> "" then return message
+        return "Couldn't set up the series recording."
+    end function
+
+    ' raw GET /recording-rules body → normalized rules; entries without an id dropped.
+    function parseRules(raw as dynamic) as object
+        list = []
+        if raw = invalid or Type(raw) <> "roArray" then return list
+        for each r in raw
+            if r <> invalid and Type(r) = "roAssociativeArray" and r.id <> invalid
+                list.push({
+                    "id": r.id
+                    "title": bowtie.recordings.asString(r.title)
+                    "channelId": bowtie.recordings.asNumber(r.channelId)
+                    "channelName": bowtie.recordings.asString(r.channelName)
+                    "newOnly": (r.newOnly = true)
+                    "keepLatest": bowtie.recordings.asNumber(r.keepLatest)
+                    "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
+                    "canManage": (r.canManage = true)
+                })
+            end if
+        end for
+        return list
+    end function
+
+    function ruleTitleLine(rule as object) as string
+        return bowtie.recordings.asString(rule.title)
+    end function
+
+    ' "5.1 KSTP · New episodes only · Set up by andrew"
+    function ruleDetailLine(rule as object) as string
+        parts = []
+        channelName = bowtie.recordings.asString(rule.channelName)
+        if bowtie.recordings.asNumber(rule.channelId) <= 0 or channelName = ""
+            parts.push("Any channel")
+        else
+            parts.push(channelName)
+        end if
+        if rule.newOnly = true
+            parts.push("New episodes only")
+        else
+            parts.push("All episodes")
+        end if
+        keep = Int(bowtie.recordings.asNumber(rule.keepLatest))
+        if keep > 0 then parts.push("Keeps the latest " + keep.toStr())
+        who = bowtie.recordings.asString(rule.scheduledBy)
+        if who <> "" then parts.push("Set up by " + who)
+        return bowtie.recordings.joinParts(parts, " · ")
+    end function
+
+    ' [{id, label}] for a show's * dialog; [] when the caller can't manage it.
+    ' ids: stopRule, close.
+    function ruleOptionButtons(rule as object) as object
+        menu = []
+        if rule.canManage <> true then return menu
+        menu.push({ id: "stopRule", label: "Stop recording this show" })
+        menu.push({ id: "close", label: "Close" })
+        return menu
+    end function
+
+    function stopRuleNote() as string
+        return "Upcoming episodes are cancelled; recorded ones stay."
     end function
 
     ' ── helpers ──────────────────────────────────────────────────────────────

@@ -4,7 +4,8 @@
 ' buildRequest kinds: healthz, login, refresh, logout, me, changePassword,
 '   channels, guide, createSession, deleteSession, heartbeat, setFavorite, recents,
 '   recordings, createRecording, deleteRecording, stopRecording, playRecording,
-'   setRecordingPosition, protectRecording
+'   setRecordingPosition, protectRecording, recordingRules, createRecordingRule,
+'   deleteRecordingRule, deviceStart, deviceToken
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
 ' heartbeat: stream-token query only (no Bearer); 204 success.
@@ -15,6 +16,8 @@
 '   conflicts}; deleteRecording / stopRecording {id} → 204; playRecording {id}
 '   → {playlistUrl (absolute), positionSec, durationSec}; setRecordingPosition
 '   {id, positionSec} → 204; protectRecording {id, keep} → PATCH {protected}.
+' Series (tag dvr): recordingRules → GET list; createRecordingRule {channelId,
+'   programStart} → 201 {rule, scheduled}; deleteRecordingRule {id} → 204.
 ' Quick sign-in (no Bearer): deviceStart {deviceName} → {deviceCode, userCode,
 '   verifyUrl, qrUrl (absolute), expiresIn, interval}; deviceToken {deviceCode}
 '   → 200 TokenPair (as login), 428 kind "pending", 410 kind "expired".
@@ -158,6 +161,26 @@ namespace bowtie.client
             headers = bowtie.client.jsonAuthHeaders(accessToken)
             body = FormatJson({ "protected": (params.keep = true) })
 
+        else if kind = "recordingRules"
+            url = base + "/api/v1/recording-rules"
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "createRecordingRule"
+            ' This channel, new episodes only: the server's defaults.
+            url = base + "/api/v1/recording-rules"
+            method = "POST"
+            headers = bowtie.client.jsonAuthHeaders(accessToken)
+            body = FormatJson({
+                "channelId": params.channelId
+                "programStart": params.programStart
+            })
+
+        else if kind = "deleteRecordingRule"
+            url = base + "/api/v1/recording-rules/" + bowtie.client.idString(params.id)
+            method = "DELETE"
+            headers = bowtie.client.authHeaders(accessToken)
+
         else if kind = "createSession"
             url = base + "/api/v1/sessions"
             method = "POST"
@@ -225,7 +248,7 @@ namespace bowtie.client
             return { ok: false, error: { code: httpCode, message: "healthz failed" } }
         end if
 
-        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite" or kind = "deleteRecording" or kind = "stopRecording" or kind = "setRecordingPosition"
+        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite" or kind = "deleteRecording" or kind = "stopRecording" or kind = "setRecordingPosition" or kind = "deleteRecordingRule"
             ' Best-effort: 2xx and empty bodies are success; delete swallows errors at ApiTask.
             if httpCode >= 200 and httpCode < 300
                 return { ok: true, data: true }

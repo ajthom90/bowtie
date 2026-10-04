@@ -32,19 +32,22 @@ const rec = (over = {}) => ({
     ...over,
 });
 
-test('tabs: Upcoming / Recorded / Missed, Missed queries failed', () => {
+test('tabs: Upcoming / Recorded / Missed / Shows, Missed queries failed', () => {
     const out = runBrs(LIB, `
         out.ids = bowtie_recordings_tabIds()
-        out.labels = [bowtie_recordings_tabLabel("upcoming"), bowtie_recordings_tabLabel("recorded"), bowtie_recordings_tabLabel("missed")]
+        out.labels = [bowtie_recordings_tabLabel("upcoming"), bowtie_recordings_tabLabel("recorded"), bowtie_recordings_tabLabel("missed"), bowtie_recordings_tabLabel("shows")]
         out.queries = [bowtie_recordings_tabQuery("upcoming"), bowtie_recordings_tabQuery("recorded"), bowtie_recordings_tabQuery("missed")]
-        out.empty = [bowtie_recordings_emptyText("upcoming"), bowtie_recordings_emptyText("recorded"), bowtie_recordings_emptyText("missed")]
+        out.empty = [bowtie_recordings_emptyText("upcoming"), bowtie_recordings_emptyText("recorded"), bowtie_recordings_emptyText("missed"), bowtie_recordings_emptyText("shows")]
+        out.rules = [bowtie_recordings_isRulesTab("shows"), bowtie_recordings_isRulesTab("upcoming")]
     `);
-    assert.deepEqual(out.ids, ['upcoming', 'recorded', 'missed']);
-    assert.deepEqual(out.labels, ['Upcoming', 'Recorded', 'Missed']);
+    assert.deepEqual(out.ids, ['upcoming', 'recorded', 'missed', 'shows']);
+    assert.deepEqual(out.labels, ['Upcoming', 'Recorded', 'Missed', 'Shows']);
     assert.deepEqual(out.queries, ['upcoming', 'recorded', 'failed']);
     assert.equal(out.empty[0], 'Nothing scheduled. Press * on a channel and choose Record.');
     assert.equal(out.empty[1], 'No recordings yet.');
     assert.equal(out.empty[2], 'No missed recordings.');
+    assert.equal(out.empty[3], 'No shows yet. Press * on a channel and choose Record series.');
+    assert.deepEqual(out.rules, [true, false]);
 });
 
 test('tabOf maps every state; filterForTab keeps only that tab, in order', () => {
@@ -249,16 +252,16 @@ test('homeOptions: favorite toggle, record when there is a current program, canc
         out.recnow = h(true, false, ${bs({ ...now, recording: { id: 9, state: 'recording' } })})
     `);
     const labels = (o) => o.buttons.map((b) => b.label);
-    assert.deepEqual(labels(out.full), ['Favorite', 'Record this program', 'Cancel']);
-    assert.deepEqual(out.full.buttons.map((b) => b.id), ['favorite', 'record', 'cancel']);
+    assert.deepEqual(labels(out.full), ['Favorite', 'Record this program', 'Record series', 'Cancel']);
+    assert.deepEqual(out.full.buttons.map((b) => b.id), ['favorite', 'record', 'series', 'cancel']);
     assert.equal(out.full.note, 'Now: News');
-    assert.deepEqual(labels(out.starred), ['Unfavorite', 'Record this program', 'Cancel']);
+    assert.deepEqual(labels(out.starred), ['Unfavorite', 'Record this program', 'Record series', 'Cancel']);
     assert.deepEqual(labels(out.noguide), ['Favorite', 'Cancel']);
     assert.equal(out.noguide.note, '');
     // A server without favorites has no star to toggle.
-    assert.deepEqual(labels(out.oldserver), ['Record this program', 'Cancel']);
+    assert.deepEqual(labels(out.oldserver), ['Record this program', 'Record series', 'Cancel']);
     // Already scheduled or recording: no second Record, say so instead.
-    assert.deepEqual(labels(out.scheduled), ['Favorite', 'Cancel']);
+    assert.deepEqual(labels(out.scheduled), ['Favorite', 'Record series', 'Cancel']);
     assert.equal(out.scheduled.note, 'Now: News · Recording scheduled');
     assert.equal(out.recnow.note, 'Now: News · Recording now');
 });
@@ -309,4 +312,126 @@ test('row text: title line and detail line for each tab', () => {
     assert.equal(out.ready, 'Today 7:00–7:30 PM · 5.1 KSTP · 33 min · 3.8 GB');
     assert.equal(out.sched, 'Today 7:00–7:30 PM · 5.1 KSTP · Scheduled');
     assert.equal(out.missed, 'Today 7:00–7:30 PM · 5.1 KSTP · Missed: No signal');
+});
+
+// ── Series ──────────────────────────────────────────────────────────────────
+
+const rule = (over = {}) => ({
+    id: 5,
+    title: 'Jeopardy!',
+    seriesId: 'SH01',
+    channelId: 3,
+    channelName: '5.1 KSTP',
+    newOnly: true,
+    keepLatest: 0,
+    scheduledBy: 'andrew',
+    canManage: true,
+    createdAt: '2026-10-04T00:00:00Z',
+    ...over,
+});
+
+test('series rows: ruleId > 0 says Series; a skipped episode says Skipped, not Missed', () => {
+    const now = '2026-10-04T15:00:00Z';
+    const off = -5 * 3600;
+    const out = runBrs(LIB, `
+        d = bowtie_recordings_detailLine
+        s = bowtie_recordings_statusText
+        out.series = d(${bs(rec({ state: 'scheduled', ruleId: 5, durationSec: 0, sizeBytes: 0 }))}, "${now}", ${off})
+        out.oneoff = d(${bs(rec({ state: 'scheduled', ruleId: 0, durationSec: 0, sizeBytes: 0 }))}, "${now}", ${off})
+        out.skipped = s(${bs(rec({ state: 'failed', failure: 'skipped', failureDetail: 'Skipped', ruleId: 5 }))})
+        out.skipline = d(${bs(rec({ state: 'failed', failure: 'skipped', failureDetail: 'Skipped', ruleId: 5, durationSec: 0, sizeBytes: 0 }))}, "${now}", ${off})
+        out.text = bowtie_recordings_failureText("skipped", "Skipped")
+        out.tint = [bowtie_recordings_missedTint(${bs(rec({ state: 'failed', failure: 'noTuner' }))}), bowtie_recordings_missedTint(${bs(rec({ state: 'failed', failure: 'skipped' }))}), bowtie_recordings_missedTint(${bs(rec())})]
+        l = bowtie_recordings_parseList(${bs([rec({ ruleId: 5 }), rec({ id: 8 })])})
+        out.ruleids = [l[0].ruleId, l[1].ruleId]
+    `);
+    assert.equal(out.series, 'Today 7:00–7:30 PM · 5.1 KSTP · Series · Scheduled');
+    assert.equal(out.oneoff, 'Today 7:00–7:30 PM · 5.1 KSTP · Scheduled');
+    assert.equal(out.skipped, 'Skipped');
+    assert.equal(out.skipline, 'Today 7:00–7:30 PM · 5.1 KSTP · Series · Skipped');
+    assert.equal(out.text, 'Skipped');
+    // Red is for real misses; a skip was the user's own choice.
+    assert.deepEqual(out.tint, [true, false, false]);
+    assert.deepEqual(out.ruleids, [5, 0]);
+});
+
+test('homeOptions: Record series next to Record this program, even once this airing is marked', () => {
+    const now = { start: '2026-10-05T00:00:00Z', stop: '2026-10-05T00:30:00Z', title: 'News' };
+    const out = runBrs(LIB, `
+        h = bowtie_recordings_homeOptions
+        out.full = h(true, false, ${bs(now)})
+        out.marked = h(true, false, ${bs({ ...now, recording: { id: 9, state: 'scheduled' } })})
+        out.noguide = h(true, false, invalid)
+    `);
+    assert.deepEqual(out.full.buttons.map((b) => b.label), ['Favorite', 'Record this program', 'Record series', 'Cancel']);
+    assert.deepEqual(out.full.buttons.map((b) => b.id), ['favorite', 'record', 'series', 'cancel']);
+    assert.deepEqual(out.marked.buttons.map((b) => b.id), ['favorite', 'series', 'cancel']);
+    assert.deepEqual(out.noguide.buttons.map((b) => b.id), ['favorite', 'cancel']);
+});
+
+test('seriesScheduledMessage: what is recorded, then "Scheduled N episodes"', () => {
+    const out = runBrs(LIB, `
+        f = bowtie_recordings_seriesScheduledMessage
+        out.three = f(${bs({ rule: rule(), scheduled: 3 })})
+        out.one = f(${bs({ rule: rule(), scheduled: 1 })})
+        out.none = f(${bs({ rule: rule({ channelId: 0, channelName: '' }), scheduled: 0 })})
+        out.bare = f(invalid)
+    `);
+    assert.deepEqual(out.three, ['Recording new episodes of “Jeopardy!” on 5.1 KSTP.', 'Scheduled 3 episodes.']);
+    assert.deepEqual(out.one, ['Recording new episodes of “Jeopardy!” on 5.1 KSTP.', 'Scheduled 1 episode.']);
+    assert.deepEqual(out.none, ['Recording new episodes of “Jeopardy!”.', 'Scheduled 0 episodes. New ones are added as the guide fills in.']);
+    assert.deepEqual(out.bare, ['Scheduled 0 episodes. New ones are added as the guide fills in.']);
+});
+
+test('seriesErrorText: plain words for the ways Record series fails', () => {
+    const out = runBrs(LIB, `
+        e = bowtie_recordings_seriesErrorText
+        out.t = [
+            e({ code: 404, message: "program not found in the guide" }),
+            e({ code: 404, message: "404 page not found" }),
+            e({ code: 503, message: "recording is not available" }),
+            e({ code: 500, message: "failed to create rule" }),
+            e({ code: 0, message: "" }),
+            e(invalid),
+        ]
+    `);
+    assert.deepEqual(out.t, [
+        "That program isn't in the guide anymore.",
+        "Series recording isn't available on this server.",
+        "Recording isn't available on this server.",
+        'failed to create rule',
+        "Couldn't set up the series recording.",
+        "Couldn't set up the series recording.",
+    ]);
+});
+
+test('rules: parseRules, title and detail lines for the Shows tab', () => {
+    const out = runBrs(LIB, `
+        l = bowtie_recordings_parseRules(${bs([rule(), 'junk', { title: 'no id' }, rule({ id: 6, title: 'News', channelId: 0, channelName: '', newOnly: false, keepLatest: 5, scheduledBy: '', canManage: false })])})
+        out.count = l.count()
+        out.first = snapshot(l[0])
+        out.title = bowtie_recordings_ruleTitleLine(l[0])
+        out.d1 = bowtie_recordings_ruleDetailLine(l[0])
+        out.d2 = bowtie_recordings_ruleDetailLine(l[1])
+        out.bad = bowtie_recordings_parseRules(${bs({ error: 'nope' })})
+    `);
+    assert.equal(out.count, 2);
+    assert.equal(out.first.id, 5);
+    assert.equal(out.first.canManage, true);
+    assert.equal(out.title, 'Jeopardy!');
+    assert.equal(out.d1, '5.1 KSTP · New episodes only · Set up by andrew');
+    assert.equal(out.d2, 'Any channel · All episodes · Keeps the latest 5');
+    assert.deepEqual(out.bad, []);
+});
+
+test('ruleOptionButtons: Stop recording this show only with canManage', () => {
+    const out = runBrs(LIB, `
+        out.mine = bowtie_recordings_ruleOptionButtons(${bs(rule())})
+        out.theirs = bowtie_recordings_ruleOptionButtons(${bs(rule({ canManage: false }))})
+        out.note = bowtie_recordings_stopRuleNote()
+    `);
+    assert.deepEqual(out.mine.map((b) => b.label), ['Stop recording this show', 'Close']);
+    assert.deepEqual(out.mine.map((b) => b.id), ['stopRule', 'close']);
+    assert.deepEqual(out.theirs, []);
+    assert.equal(out.note, 'Upcoming episodes are cancelled; recorded ones stay.');
 });
