@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ApiError, type GuideChannel } from '../api/client'
+import { ApiError, type GuideChannel, type RecentChannel } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import {
   GUIDE_COPY,
+  currentProgramTitle,
   defaultWindow,
   formatGuideTime,
   formatTimeRange,
@@ -12,6 +13,9 @@ import {
   receptionNote,
   selectGuidePageState,
   shiftWindow,
+  sortFavoritesFirst,
+  supportsFavorites,
+  withFavorite,
 } from './guideModel'
 import styles from './Guide.module.css'
 
@@ -35,13 +39,24 @@ export function Guide({ onWatch, onAdmin }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(() => new Date())
+  const [recents, setRecents] = useState<RecentChannel[]>([])
+  /** Failed star / clear: shown above the grid without replacing it. */
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setActionError(null)
     try {
       const data = await client.getGuide(start, stop)
       setChannels(data)
+      // Recents ride along with every guide load. Older servers (no
+      // `favorite`, or 404 on the GET) simply get no Recent row.
+      if (supportsFavorites(data)) {
+        client.getRecents(8).then(setRecents, () => setRecents([]))
+      } else {
+        setRecents([])
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message || 'Failed to load guide')
@@ -49,10 +64,53 @@ export function Guide({ onWatch, onAdmin }: Props) {
         setError('Failed to load guide')
       }
       setChannels(null)
+      setRecents([])
     } finally {
       setLoading(false)
     }
   }, [client, start, stop])
+
+  const favoritesOn = useMemo(() => (channels ? supportsFavorites(channels) : false), [channels])
+  const rows = useMemo(() => (channels ? sortFavoritesFirst(channels) : null), [channels])
+
+  async function toggleFavorite(channel: GuideChannel) {
+    const id = channel.channelId
+    const on = channel.favorite !== true
+    setActionError(null)
+    setChannels((cs) => cs && withFavorite(cs, id, on))
+    try {
+      await (on ? client.addFavorite(id) : client.removeFavorite(id))
+    } catch (err) {
+      setChannels((cs) => cs && withFavorite(cs, id, !on))
+      setActionError(
+        err instanceof ApiError && err.message ? err.message : 'Could not update favorite',
+      )
+    }
+  }
+
+  async function clearRecents() {
+    const prev = recents
+    setActionError(null)
+    setRecents([])
+    try {
+      await client.clearRecents()
+    } catch (err) {
+      setRecents(prev)
+      setActionError(
+        err instanceof ApiError && err.message ? err.message : 'Could not clear recents',
+      )
+    }
+  }
+
+  function watchRecent(r: RecentChannel) {
+    const ch = channels?.find((c) => c.channelId === r.channelId)
+    onWatch({
+      channelId: r.channelId,
+      guideNumber: r.guideNumber,
+      name: r.name,
+      programTitle: ch ? currentProgramTitle(ch.programs, now) : undefined,
+    })
+  }
 
   useEffect(() => {
     void load()
@@ -147,7 +205,41 @@ export function Guide({ onWatch, onAdmin }: Props) {
         </div>
       ) : null}
 
-      {pageState.kind === 'ready' && channels ? (
+      {actionError && pageState.kind === 'ready' ? (
+        <p className={styles.actionError} role="alert">
+          {actionError}
+        </p>
+      ) : null}
+
+      {pageState.kind === 'ready' && recents.length > 0 ? (
+        <nav className={styles.recents} aria-label="Recently watched">
+          <span className={styles.recentsLabel}>Recent</span>
+          <div className={styles.recentChips}>
+            {recents.map((r) => (
+              <button
+                key={r.channelId}
+                type="button"
+                className={styles.chip}
+                onClick={() => watchRecent(r)}
+                aria-label={`Watch channel ${r.guideNumber} ${r.name}`}
+              >
+                <span className={styles.chipNum}>{r.guideNumber}</span>
+                <span className={styles.chipName}>{r.name}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className={styles.chipClear}
+            onClick={() => void clearRecents()}
+            aria-label="Clear recently watched"
+          >
+            Clear
+          </button>
+        </nav>
+      ) : null}
+
+      {pageState.kind === 'ready' && rows ? (
         <div className={styles.scroll} tabIndex={0} role="region" aria-label="TV guide">
           <div className={styles.grid}>
             <div className={styles.corner} aria-hidden />
@@ -170,7 +262,7 @@ export function Guide({ onWatch, onAdmin }: Props) {
               </div>
             </div>
 
-            {channels.map((ch) => {
+            {rows.map((ch) => {
               const cells = layoutRow(ch.programs, start, stop)
               const hasPrograms = ch.programs.length > 0
 
@@ -178,6 +270,7 @@ export function Guide({ onWatch, onAdmin }: Props) {
                 <ChannelRow
                   key={ch.channelId}
                   channel={ch}
+                  onToggleFavorite={favoritesOn ? () => void toggleFavorite(ch) : undefined}
                   cells={cells}
                   hasPrograms={hasPrograms}
                   nowPct={nowPct}
@@ -206,8 +299,11 @@ function ChannelRow({
   windowStop,
   now,
   onWatch,
+  onToggleFavorite,
 }: {
   channel: GuideChannel
+  /** Absent when the server predates favorites (no star shown). */
+  onToggleFavorite?: () => void
   cells: ReturnType<typeof layoutRow>
   hasPrograms: boolean
   nowPct: number | null
@@ -227,31 +323,43 @@ function ChannelRow({
   }
 
   // Find currently airing title for channel-column click.
-  const currentTitle = channel.programs.find((p) => {
-    const a = Date.parse(p.start)
-    const b = Date.parse(p.stop)
-    const n = now.getTime()
-    return n >= a && n < b
-  })?.title
+  const currentTitle = currentProgramTitle(channel.programs, now)
   const rxNote = receptionNote(channel.reception)
+  const fav = channel.favorite === true
 
   return (
     <>
-      <button
-        type="button"
-        className={`${styles.channelCell} ${rxNote ? styles.noSignal : ''}`}
-        onClick={() => watch(currentTitle)}
-        aria-label={`Watch channel ${channel.guideNumber} ${channel.name}${rxNote ? `, ${rxNote.toLowerCase()} last time` : ''}`}
-      >
-        <span className={styles.channelNum}>{channel.guideNumber}</span>
-        {channel.logoUrl ? (
-          <img className={styles.logo} src={channel.logoUrl} alt="" width={24} height={24} />
+      <div className={styles.channelCell}>
+        <button
+          type="button"
+          className={`${styles.channelWatch} ${rxNote ? styles.noSignal : ''}`}
+          onClick={() => watch(currentTitle)}
+          aria-label={`Watch channel ${channel.guideNumber} ${channel.name}${rxNote ? `, ${rxNote.toLowerCase()} last time` : ''}`}
+        >
+          <span className={styles.channelNum}>{channel.guideNumber}</span>
+          {channel.logoUrl ? (
+            <img className={styles.logo} src={channel.logoUrl} alt="" width={24} height={24} />
+          ) : null}
+          <span className={styles.channelMeta}>
+            <span className={styles.callSign}>{channel.name}</span>
+            {rxNote ? <span className={styles.rxBadge}>{rxNote}</span> : null}
+          </span>
+        </button>
+        {onToggleFavorite ? (
+          <button
+            type="button"
+            className={`${styles.star}${fav ? ` ${styles.starOn}` : ''}`}
+            aria-pressed={fav}
+            aria-label={`Favorite ${channel.name}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleFavorite()
+            }}
+          >
+            <span aria-hidden>{fav ? '★' : '☆'}</span>
+          </button>
         ) : null}
-        <span className={styles.channelMeta}>
-          <span className={styles.callSign}>{channel.name}</span>
-          {rxNote ? <span className={styles.rxBadge}>{rxNote}</span> : null}
-        </span>
-      </button>
+      </div>
 
       <div className={styles.rowPrograms}>
         <div className={styles.gridlines} aria-hidden>

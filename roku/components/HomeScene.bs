@@ -1,10 +1,20 @@
 ' Channel rail: MarkupList + ChannelRailItem; channels+guide via ApiTask;
 ' join with bowtie.guide.nowNext; refresh on show + 5-min timer.
+' Favorites float to the top (bowtie.favorites); * on a rail item toggles one
+' optimistically. A Recent row (recentList) sits above the rail when the
+' server has watch history. Focus: settings <-> recentList <-> rail.
 
 import "pkg:/source/lib/GuideLogic.bs"
+import "pkg:/source/lib/Favorites.bs"
 
 const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 const GUIDE_WINDOW_SECS = 4 * 3600
+const RECENTS_LIMIT = 8
+' Rail placement without / with the Recent row above it.
+const RAIL_Y = 160
+const RAIL_ROWS = 7
+const RAIL_Y_WITH_RECENTS = 280
+const RAIL_ROWS_WITH_RECENTS = 6
 
 sub init()
     m.titleLabel = m.top.findNode("titleLabel")
@@ -17,19 +27,30 @@ sub init()
     m.errorLabel = m.top.findNode("errorLabel")
     m.retryButton = m.top.findNode("retryButton")
     m.channelList = m.top.findNode("channelList")
+    m.recentLabel = m.top.findNode("recentLabel")
+    m.recentList = m.top.findNode("recentList")
     m.refreshTimer = m.top.findNode("refreshTimer")
 
     m.observing = false
     m.loadGen = 0
     m.pendingChannelsId = ""
     m.pendingGuideId = ""
+    m.pendingRecentsId = ""
+    ' In-flight star toggles: request id -> {channelId, on}.
+    m.pendingFavs = {}
+    m.favSeq = 0
+    ' bowtie.favorites state; m.channels is always m.fav.channels (the rail).
+    m.fav = invalid
     m.channels = []
+    m.guideById = {}
+    m.recents = []
     m.busy = false
     m.lastLoadedAt = 0
 
     m.settingsButton.observeField("buttonSelected", "onSettingsButton")
     m.retryButton.observeField("buttonSelected", "onRetryButton")
     m.channelList.observeField("itemSelected", "onItemSelected")
+    m.recentList.observeField("itemSelected", "onRecentSelected")
     m.refreshTimer.observeField("fire", "onRefreshTimer")
     m.top.observeField("visible", "onVisible")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -111,7 +132,17 @@ sub onRetryButton()
 end sub
 
 sub onItemSelected()
-    idx = m.channelList.itemSelected
+    selectChannelAt(m.channelList.itemSelected)
+end sub
+
+sub onRecentSelected()
+    idx = m.recentList.itemSelected
+    if idx = invalid or idx < 0 or idx >= m.recents.count() then return
+    ' Play from the rail so up/down zapping continues in rail order.
+    selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.recents[idx].channelId))
+end sub
+
+sub selectChannelAt(idx as dynamic)
     if idx = invalid or idx < 0 then return
     if m.channels = invalid or idx >= m.channels.count() then return
     ch = m.channels[idx]
@@ -126,6 +157,95 @@ sub onItemSelected()
     }
 end sub
 
+' Focus chain settings <-> recentList <-> rail, and * to star the focused
+' rail item. Only rail focus takes *; PlayerScene is a sibling, so its keys
+' (where * belongs to the system menu) never reach here.
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press <> true then return false
+
+    if m.channelList.hasFocus()
+        if key = "options"
+            return toggleFocusedFavorite()
+        end if
+        ' MarkupList lets "up" through only from its first item.
+        if key = "up"
+            if m.recentList.visible = true
+                m.recentList.setFocus(true)
+            else
+                m.settingsButton.setFocus(true)
+            end if
+            return true
+        end if
+        return false
+    end if
+
+    if m.recentList.hasFocus()
+        if key = "down" and m.channelList.visible = true
+            m.channelList.setFocus(true)
+            return true
+        end if
+        if key = "up"
+            m.settingsButton.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+
+    if m.settingsButton.hasFocus() and key = "down"
+        if m.recentList.visible = true
+            m.recentList.setFocus(true)
+            return true
+        end if
+        if m.channelList.visible = true
+            m.channelList.setFocus(true)
+            return true
+        end if
+    end if
+
+    return false
+end function
+
+' Optimistic: flip the star, re-sort in place (no reload: that would show the
+' spinner and drop focus), keep focus on the same channel, then PUT/DELETE.
+function toggleFocusedFavorite() as boolean
+    idx = m.channelList.itemFocused
+    if m.fav = invalid or idx = invalid or idx < 0 or idx >= m.channels.count() then return false
+    ch = m.channels[idx]
+    result = bowtie.favorites.toggle(m.fav, ch.id)
+    if result = invalid then return false
+    m.channels = m.fav.channels
+    renderRail(ch.id)
+    sendFavorite(ch.id, result.on)
+    return true
+end function
+
+sub sendFavorite(channelId as dynamic, on as boolean)
+    task = m.top.apiTask
+    if task = invalid then return
+    m.favSeq = m.favSeq + 1
+    reqId = "home-fav-" + m.favSeq.toStr()
+    m.pendingFavs[reqId] = { channelId: channelId, on: on }
+    task.request = {
+        id: reqId
+        kind: "setFavorite"
+        params: { channelId: channelId, on: on }
+    }
+end sub
+
+sub handleFavoriteResponse(resp as object)
+    pending = m.pendingFavs[resp.id]
+    m.pendingFavs.Delete(resp.id)
+    if m.fav = invalid then return
+    ' Remember the focused channel; a revert can move it.
+    focusedId = invalid
+    idx = m.channelList.itemFocused
+    if idx <> invalid and idx >= 0 and idx < m.channels.count() then focusedId = m.channels[idx].id
+    if bowtie.favorites.resolve(m.fav, pending.channelId, pending.on, resp.ok = true)
+        m.channels = m.fav.channels
+        renderRail(focusedId)
+    end if
+end sub
+
 sub loadChannels()
     task = m.top.apiTask
     if task = invalid then return
@@ -135,6 +255,9 @@ sub loadChannels()
     m.busy = true
     m.pendingChannelsId = "home-channels-" + gen.toStr()
     m.pendingGuideId = ""
+    m.pendingRecentsId = ""
+    ' The reload is queued behind any PUT/DELETE, so it returns server truth.
+    m.pendingFavs = {}
     showLoading()
 
     task.request = {
@@ -161,6 +284,17 @@ sub loadGuide()
     }
 end sub
 
+sub loadRecents()
+    task = m.top.apiTask
+    if task = invalid then return
+    m.pendingRecentsId = "home-recents-" + m.loadGen.toStr()
+    task.request = {
+        id: m.pendingRecentsId
+        kind: "recents"
+        params: { limit: RECENTS_LIMIT }
+    }
+end sub
+
 sub onApiResponse()
     task = m.top.apiTask
     if task = invalid then return
@@ -176,6 +310,14 @@ sub onApiResponse()
         handleGuideResponse(resp)
         return
     end if
+    if resp.id = m.pendingRecentsId and m.pendingRecentsId <> ""
+        handleRecentsResponse(resp)
+        return
+    end if
+    if resp.id <> invalid and m.pendingFavs.DoesExist(resp.id)
+        handleFavoriteResponse(resp)
+        return
+    end if
 end sub
 
 sub handleChannelsResponse(resp as object)
@@ -186,18 +328,10 @@ sub handleChannelsResponse(resp as object)
         return
     end if
 
-    data = resp.data
-    channels = []
-    if data <> invalid
-        ' API may return a bare array or {channels: [...]}.
-        if type(data) = "roArray"
-            channels = data
-        else if data.channels <> invalid
-            channels = data.channels
-        end if
-    end if
-
-    m.channels = normalizeChannels(channels)
+    ' API may return a bare array or {channels: [...]}; favorites first.
+    m.fav = bowtie.favorites.newState(resp.data)
+    m.channels = m.fav.channels
+    m.recents = []
 
     if m.channels.count() = 0
         m.busy = false
@@ -206,6 +340,10 @@ sub handleChannelsResponse(resp as object)
         return
     end if
 
+    ' Recents first (ApiTask is FIFO), so the row is ready when the guide
+    ' response shows the rail and both paint together. An older server
+    ' without favorites has no /me/recents either.
+    if m.fav.supported then loadRecents()
     ' Fetch guide for now/next join.
     loadGuide()
 end sub
@@ -215,41 +353,63 @@ sub handleGuideResponse(resp as object)
     m.busy = false
     m.lastLoadedAt = nowAsSeconds()
 
-    guideById = {}
+    m.guideById = {}
     if resp.ok = true and resp.data <> invalid
-        guideById = indexGuide(resp.data)
+        m.guideById = indexGuide(resp.data)
     end if
 
-    atIso = isoNow()
-    content = buildListContent(m.channels, guideById, atIso)
-    m.channelList.content = content
+    renderRail(invalid)
     showList()
 end sub
 
-function normalizeChannels(raw as object) as object
-    out = []
-    if raw = invalid then return out
-    for each c in raw
-        if c <> invalid
-            id = c.id
-            if id = invalid then id = 0
-            gn = c.guideNumber
-            if gn = invalid
-                gn = ""
-            else if type(gn) <> "String" and type(gn) <> "roString"
-                gn = gn.toStr()
-            end if
-            name = c.name
-            if name = invalid then name = ""
-            out.push({
-                id: id
-                guideNumber: gn
-                name: name
-            })
+sub handleRecentsResponse(resp as object)
+    m.pendingRecentsId = ""
+    ' Any error (404 from a server without recents included) hides the row.
+    recents = []
+    if resp.ok = true
+        for each r in bowtie.favorites.parseRecents(resp.data)
+            ' Only channels on the rail: selecting one plays from the rail.
+            if bowtie.favorites.indexOfChannel(m.channels, r.channelId) >= 0 then recents.push(r)
+        end for
+    end if
+    m.recents = recents
+    updateRecentsRow()
+end sub
+
+' Rebuild the rail from m.channels and the last guide; keep focus on
+' focusChannelId when given (its index changes when favorites re-sort).
+sub renderRail(focusChannelId as dynamic)
+    m.channelList.content = buildListContent(m.channels, m.guideById, isoNow())
+    if focusChannelId <> invalid
+        idx = bowtie.favorites.indexOfChannel(m.channels, focusChannelId)
+        if idx >= 0 then m.channelList.jumpToItem = idx
+    end if
+end sub
+
+' Show the Recent row only beside a visible rail with history; the rail
+' shifts down and loses a row to make room.
+sub updateRecentsRow()
+    show = (m.channelList.visible = true and m.recents.count() > 0)
+    if show
+        root = CreateObject("roSGNode", "ContentNode")
+        for each r in m.recents
+            item = root.createChild("ContentNode")
+            item.title = r.name
+            item.addFields({ guideNumber: r.guideNumber, channelId: r.channelId })
+        end for
+        m.recentList.content = root
+        m.channelList.translation = [80, RAIL_Y_WITH_RECENTS]
+        m.channelList.numRows = RAIL_ROWS_WITH_RECENTS
+    else
+        if m.recentList.hasFocus() and m.channelList.visible = true
+            m.channelList.setFocus(true)
         end if
-    end for
-    return out
-end function
+        m.channelList.translation = [80, RAIL_Y]
+        m.channelList.numRows = RAIL_ROWS
+    end if
+    m.recentLabel.visible = show
+    m.recentList.visible = show
+end sub
 
 function indexGuide(data as object) as object
     byId = {}
@@ -298,6 +458,7 @@ function buildListContent(channels as object, guideById as object, atIso as stri
             nowTitle: nowTitle
             nextTitle: nextTitle
             progress: progress
+            favorite: ch.favorite
             rowKind: "channel"
         })
     end for
@@ -366,6 +527,7 @@ sub showLoading()
     m.errorGroup.visible = false
     m.channelList.visible = false
     m.settingsButton.setFocus(true)
+    updateRecentsRow()
 end sub
 
 sub showEmpty()
@@ -375,6 +537,7 @@ sub showEmpty()
     m.errorGroup.visible = false
     m.channelList.visible = false
     m.settingsButton.setFocus(true)
+    updateRecentsRow()
 end sub
 
 sub showError(message as string)
@@ -384,6 +547,7 @@ sub showError(message as string)
     m.errorLabel.text = message
     m.channelList.visible = false
     m.retryButton.setFocus(true)
+    updateRecentsRow()
 end sub
 
 sub showList()
@@ -391,6 +555,7 @@ sub showList()
     m.emptyLabel.visible = false
     m.errorGroup.visible = false
     m.channelList.visible = true
+    updateRecentsRow()
     m.channelList.setFocus(true)
 end sub
 

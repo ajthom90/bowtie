@@ -104,6 +104,35 @@
             />
         </Group>
 
+        <!-- Recent row (GET /me/recents). Shown only when non-empty; while it is,
+             HomeScene moves the rail to y=280 and drops it to 6 rows.
+             Horizontal, so a one-row MarkupGrid (MarkupList is vertical-only). -->
+        <Label
+            id="recentLabel"
+            translation="[80, 136]"
+            width="800"
+            height="32"
+            text="Recent"
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+            visible="false"
+        />
+        <MarkupGrid
+            id="recentList"
+            translation="[80, 172]"
+            itemComponentName="RecentChannelItem"
+            itemSize="[208, 88]"
+            itemSpacing="[12, 0]"
+            numColumns="8"
+            numRows="1"
+            drawFocusFeedback="true"
+            drawFocusFeedbackOnTop="true"
+            focusBitmapUri="pkg:/images/focus_amber.9.png"
+            visible="false"
+        />
+
         <!-- Channel rail -->
         <MarkupList
             id="channelList"

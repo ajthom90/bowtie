@@ -114,6 +114,30 @@ class BowtieClient(
             BowtieJson.decodeFromString(body)
         }
 
+    /**
+     * Star ([on]) or unstar a channel for the signed-in user (PUT / DELETE, 204, idempotent).
+     * Throws [BowtieError.NotFound] when the channel is unknown or disabled.
+     */
+    suspend fun setFavorite(channelId: Long, on: Boolean): Unit = withContext(Dispatchers.IO) {
+        authed(if (on) "PUT" else "DELETE", "/api/v1/me/favorites/$channelId")
+        Unit
+    }
+
+    /**
+     * Channels the user watched recently, newest first (server caps [limit] at 20).
+     * A server without favorites/recents answers [BowtieError.NotFound].
+     */
+    suspend fun recents(limit: Int = 8): List<RecentChannel> = withContext(Dispatchers.IO) {
+        val body = authed("GET", "/api/v1/me/recents?limit=$limit")
+        BowtieJson.decodeFromString(body)
+    }
+
+    /** Clear the user's watch history (204). */
+    suspend fun clearRecents(): Unit = withContext(Dispatchers.IO) {
+        authed("DELETE", "/api/v1/me/recents")
+        Unit
+    }
+
     suspend fun createSession(channelId: Long, caps: ClientCaps): CreatedSession =
         withContext(Dispatchers.IO) {
             val body = authed(
@@ -274,6 +298,7 @@ class BowtieClient(
             when (method) {
                 "GET" -> b.get()
                 "DELETE" -> b.delete()
+                "PUT" -> b.put((bodyJson ?: "").toRequestBody(JSON_MEDIA_TYPE))
                 "POST" -> {
                     val rb = (bodyJson ?: "").toRequestBody(JSON_MEDIA_TYPE)
                     b.post(rb)

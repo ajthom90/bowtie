@@ -164,3 +164,105 @@ describe('ApiClient.heartbeat', () => {
     })
   })
 })
+
+describe('ApiClient favorites and recents', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function lastCall(fetchMock: ReturnType<typeof vi.fn>): [string, RequestInit | undefined] {
+    return fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as [string, RequestInit | undefined]
+  }
+
+  it('addFavorite PUTs /me/favorites/{id}', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await expect(client.addFavorite(7)).resolves.toBeUndefined()
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/v1/me/favorites/7')
+    expect(init?.method).toBe('PUT')
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok')
+  })
+
+  it('removeFavorite DELETEs /me/favorites/{id}', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await client.removeFavorite(7)
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/v1/me/favorites/7')
+    expect(init?.method).toBe('DELETE')
+  })
+
+  it('addFavorite surfaces a 404 as ApiError', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'channel not found' }), { status: 404 }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await expect(client.addFavorite(99)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 404,
+      message: 'channel not found',
+    })
+  })
+
+  it('getRecents GETs /me/recents with the limit', async () => {
+    const body = [
+      {
+        channelId: 7,
+        guideNumber: '9.1',
+        name: 'FOX9',
+        logoUrl: '',
+        watchedAt: '2026-10-03T19:42:10Z',
+      },
+    ]
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await expect(client.getRecents(5)).resolves.toEqual(body)
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/v1/me/recents?limit=5')
+    expect(init?.method).toBe('GET')
+  })
+
+  it('getRecents defaults the limit to 8', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('[]', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await client.getRecents()
+    expect(lastCall(fetchMock)[0]).toBe('/api/v1/me/recents?limit=8')
+  })
+
+  it('getRecents throws a 404 ApiError on an older server', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('404 page not found', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await expect(client.getRecents()).rejects.toMatchObject({ name: 'ApiError', status: 404 })
+  })
+
+  it('clearRecents DELETEs /me/recents', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'tok', () => {})
+
+    await client.clearRecents()
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/v1/me/recents')
+    expect(init?.method).toBe('DELETE')
+  })
+})

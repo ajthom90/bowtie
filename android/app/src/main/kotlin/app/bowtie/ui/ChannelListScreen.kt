@@ -1,10 +1,14 @@
 package app.bowtie.ui
 
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,11 +17,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -32,6 +38,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -43,6 +56,7 @@ import app.bowtie.BowtieType
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.Channel
+import app.bowtie.core.RecentChannel
 import app.bowtie.core.User
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -52,7 +66,7 @@ import kotlin.time.Duration.Companion.minutes
 
 private const val EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
     user: User,
@@ -65,6 +79,9 @@ fun ChannelListScreen(
     val state by channelListViewModel.state.collectAsStateWithLifecycle()
     val playingChannel by playerViewModel.currentChannel.collectAsStateWithLifecycle()
     val channelsStale by playerViewModel.channelsStale.collectAsStateWithLifecycle()
+    val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
+    val message by channelListViewModel.message.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
@@ -78,6 +95,18 @@ fun ChannelListScreen(
                 channelListViewModel.refreshIfStale()
             }
         }
+    }
+
+    // Back from the player (a route change, not ON_START): the Recent row may have grown.
+    LaunchedEffect(channelListViewModel) {
+        channelListViewModel.refreshRecents()
+    }
+
+    // A favorite toggle the server refused (already reverted).
+    LaunchedEffect(message) {
+        val text = message ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        channelListViewModel.consumeMessage()
     }
 
     // 404 / channelsStale from the player → force reload.
@@ -177,15 +206,41 @@ fun ChannelListScreen(
                     }
                 }
                 is ChannelListViewModel.LoadState.Loaded -> {
+                    val favorites = s.favorites
+                    val others = s.others
+                    val showStars = s.favoritesSupported
+                    val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
+                        ChannelRow(
+                            row = row,
+                            isPlaying = playingChannel?.id == row.channel.id,
+                            showStar = showStars,
+                            onClick = { onOpenChannel(row.channel) },
+                            onToggleFavorite = { channelListViewModel.toggleFavorite(row.id) },
+                        )
+                        HorizontalDivider(color = BowtieColors.line)
+                    }
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(s.rows, key = { it.id }) { row ->
-                            ChannelRow(
-                                row = row,
-                                isPlaying = playingChannel?.id == row.channel.id,
-                                onClick = { onOpenChannel(row.channel) },
-                            )
-                            HorizontalDivider(color = BowtieColors.line)
+                        if (showStars && recents.isNotEmpty()) {
+                            item(key = "recent-row") {
+                                RecentRow(
+                                    recents = recents,
+                                    onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
+                                )
+                                HorizontalDivider(color = BowtieColors.line)
+                            }
                         }
+                        if (favorites.isNotEmpty()) {
+                            stickyHeader(key = "header-favorites") {
+                                SectionHeader("Favorites")
+                            }
+                            items(favorites, key = { it.id }) { channelRow(it) }
+                            if (others.isNotEmpty()) {
+                                stickyHeader(key = "header-channels") {
+                                    SectionHeader("Channels")
+                                }
+                            }
+                        }
+                        items(others, key = { it.id }) { channelRow(it) }
                     }
                 }
             }
@@ -193,12 +248,94 @@ fun ChannelListScreen(
     }
 }
 
+/** Pinned section label ("Favorites", "Channels"); opaque so rows scroll under it. */
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        text = title.uppercase(),
+        style = BowtieType.label,
+        color = BowtieColors.dim,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BowtieColors.bg)
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 8.dp),
+    )
+}
+
+/** Horizontal strip of recently watched channels; a tap plays the channel. */
+@Composable
+private fun RecentRow(
+    recents: List<RecentChannel>,
+    onOpen: (RecentChannel) -> Unit,
+) {
+    Column(modifier = Modifier.padding(vertical = 10.dp)) {
+        Text(
+            text = "RECENT",
+            style = BowtieType.label,
+            color = BowtieColors.dim,
+            modifier = Modifier.padding(horizontal = BowtieDimens.screenPadding),
+        )
+        Spacer(Modifier.height(8.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = BowtieDimens.screenPadding),
+        ) {
+            items(recents, key = { it.channelId }) { recent ->
+                Column(
+                    modifier = Modifier
+                        .width(112.dp)
+                        .clip(RoundedCornerShape(BowtieDimens.cornerRadius))
+                        .background(BowtieColors.surface)
+                        .clickable(onClickLabel = "Play ${recent.name}") { onOpen(recent) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text = recent.guideNumber,
+                        style = BowtieType.channelNumber,
+                        color = BowtieColors.text,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = recent.name,
+                        style = BowtieType.label,
+                        color = BowtieColors.dim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Trailing ☆/★ toggle. */
+@Composable
+private fun FavoriteStar(isFavorite: Boolean, onToggle: () -> Unit) {
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier.semantics {
+            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites"
+            stateDescription = if (isFavorite) "Favorite" else "Not favorite"
+        },
+    ) {
+        Text(
+            text = if (isFavorite) "★" else "☆",
+            style = BowtieType.title,
+            color = if (isFavorite) BowtieColors.amber else BowtieColors.dim,
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelRow(
     row: ChannelListViewModel.Row,
     isPlaying: Boolean,
+    showStar: Boolean,
     onClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     val now = row.nowNext.now
     val next = row.nowNext.next
     val progress = ChannelListViewModel.programProgress(now, Instant.now())
@@ -207,7 +344,18 @@ private fun ChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClickLabel = if (row.isFavorite) "Remove from favorites" else "Add to favorites",
+                onLongClick = if (showStar) {
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggleFavorite()
+                    }
+                } else {
+                    null
+                },
+            )
             // Last tune got no signal: dim (still tappable; signal may return).
             .alpha(if (row.channel.hasNoSignal) 0.55f else 1f)
             .padding(
@@ -262,6 +410,9 @@ private fun ChannelRow(
                     maxLines = 1,
                 )
             }
+        }
+        if (showStar) {
+            FavoriteStar(isFavorite = row.isFavorite, onToggle = onToggleFavorite)
         }
     }
 }

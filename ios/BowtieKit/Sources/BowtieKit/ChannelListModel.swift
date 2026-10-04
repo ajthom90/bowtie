@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 /// Loads the channel list and joins each row with guide now/next for a 4-hour window.
+/// Starred channels sort first; the user's recently watched channels load alongside.
 @Observable
 @MainActor
 public final class ChannelListModel {
@@ -30,6 +31,9 @@ public final class ChannelListModel {
     private let now: () -> Date
     private let staleInterval: TimeInterval = 5 * 60
     private var lastLoadedAt: Date?
+    /// Each channel's position in the server's list, so an unstarred channel
+    /// returns to its original slot.
+    private var serverOrder: [Int64: Int] = [:]
 
     /// Guide request window length: now … now+4h (matches design default).
     private let guideWindow: TimeInterval = 4 * 60 * 60
@@ -48,8 +52,10 @@ public final class ChannelListModel {
         do {
             async let channelsTask = client.channels()
             async let guideTask = client.guide(start: at, stop: stop)
+            async let recentsTask = Self.fetchRecents(client: client)
             let channels = try await channelsTask
             let guide = try await guideTask
+            apply(await recentsTask)
 
             if channels.isEmpty {
                 state = .empty
@@ -57,7 +63,11 @@ public final class ChannelListModel {
                 return
             }
 
-            let byId = Dictionary(uniqueKeysWithValues: guide.map { ($0.channelId, $0) })
+            serverOrder = Dictionary(
+                channels.enumerated().map { ($0.element.id, $0.offset) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let byId = Dictionary(guide.map { ($0.channelId, $0) }, uniquingKeysWith: { first, _ in first })
             let rows: [Row] = channels.map { channel in
                 let programs = byId[channel.id]?.programs ?? []
                 return Row(
@@ -65,10 +75,160 @@ public final class ChannelListModel {
                     nowNext: GuideLogic.nowNext(programs: programs, at: at)
                 )
             }
-            state = .loaded(rows)
+            state = .loaded(sorted(rows))
             lastLoadedAt = at
         } catch {
             state = .failed(Self.message(for: error))
+        }
+    }
+
+    // MARK: - Favorites
+
+    /// Loaded rows (favorites first), or empty while loading / failed / empty.
+    public var rows: [Row] {
+        if case .loaded(let rows) = state { return rows }
+        return []
+    }
+
+    /// The server reports `favorite` on channels. Older servers omit it, so the
+    /// views hide stars and the Recent row.
+    public var supportsFavorites: Bool {
+        rows.contains { $0.channel.favorite != nil }
+    }
+
+    /// Starred channels in guide-number order.
+    public var favoriteRows: [Row] { rows.filter { $0.channel.isFavorite } }
+
+    /// Everything else, in server order.
+    public var otherRows: [Row] { rows.filter { !$0.channel.isFavorite } }
+
+    /// Last favorite / recents action that failed, for a toast. Cleared by
+    /// `dismissActionError()`.
+    public private(set) var actionError: String?
+
+    public func dismissActionError() {
+        actionError = nil
+    }
+
+    /// Stars or unstars a channel. Optimistic: the list re-sorts at once and
+    /// reverts if the server refuses.
+    public func toggleFavorite(channelId: Int64) async {
+        guard supportsFavorites,
+              let channel = rows.first(where: { $0.channel.id == channelId })?.channel
+        else {
+            return
+        }
+        let previous = channel.favorite
+        let on = !channel.isFavorite
+        setLocalFavorite(channelId: channelId, to: on)
+
+        do {
+            try await client.setFavorite(channelId: channelId, on: on)
+        } catch {
+            // Only undo our own flip; a later toggle may have changed it since.
+            if rows.first(where: { $0.channel.id == channelId })?.channel.favorite == on {
+                setLocalFavorite(channelId: channelId, to: previous)
+            }
+            actionError = on
+                ? "Couldn't add \(channel.name) to Favorites"
+                : "Couldn't remove \(channel.name) from Favorites"
+        }
+    }
+
+    /// Numeric guide-number order: "9.1" < "9.2" < "9.10" < "11.1".
+    public static func guideNumberPrecedes(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.compare(rhs, options: [.numeric]) == .orderedAscending
+    }
+
+    private func setLocalFavorite(channelId: Int64, to favorite: Bool?) {
+        let updated = rows.map { row -> Row in
+            guard row.channel.id == channelId else { return row }
+            var channel = row.channel
+            channel.favorite = favorite
+            return Row(channel: channel, nowNext: row.nowNext)
+        }
+        state = .loaded(sorted(updated))
+    }
+
+    /// Favorites in guide-number order, then the rest in server order.
+    private func sorted(_ rows: [Row]) -> [Row] {
+        let position = { (row: Row) in self.serverOrder[row.channel.id] ?? Int.max }
+        let favorites = rows.filter { $0.channel.isFavorite }.sorted { a, b in
+            if Self.guideNumberPrecedes(a.channel.guideNumber, b.channel.guideNumber) { return true }
+            if Self.guideNumberPrecedes(b.channel.guideNumber, a.channel.guideNumber) { return false }
+            return position(a) < position(b)
+        }
+        let others = rows.filter { !$0.channel.isFavorite }.sorted { position($0) < position($1) }
+        return favorites + others
+    }
+
+    // MARK: - Recents
+
+    /// How many recent channels the Recent row shows.
+    public static let recentsLimit = 8
+
+    /// Recently watched channels, newest first, as last fetched.
+    public private(set) var recents: [RecentChannel] = []
+
+    /// False once the server answered 404 for recents (older server).
+    public private(set) var recentsSupported = true
+
+    /// Recents as playable channels, resolved through the loaded rows when
+    /// present (so they carry `favorite` / `reception`). Empty on older servers.
+    public var recentChannels: [Channel] {
+        guard supportsFavorites, recentsSupported else { return [] }
+        let byId = Dictionary(rows.map { ($0.channel.id, $0.channel) }, uniquingKeysWith: { first, _ in first })
+        return recents.map { byId[$0.channelId] ?? $0.channel }
+    }
+
+    /// Show the Recent row: supported and non-empty.
+    public var showsRecents: Bool { !recentChannels.isEmpty }
+
+    /// Re-fetches only the recents (e.g. after leaving the player).
+    public func refreshRecents() async {
+        guard recentsSupported else { return }
+        apply(await Self.fetchRecents(client: client))
+    }
+
+    /// Clears the watch history. Optimistic; restores the row on failure.
+    public func clearRecents() async {
+        let previous = recents
+        recents = []
+        do {
+            try await client.clearRecents()
+        } catch {
+            recents = previous
+            actionError = "Couldn't clear Recent channels"
+        }
+    }
+
+    private enum RecentsResult: Sendable {
+        case loaded([RecentChannel])
+        case unsupported
+        case failed
+    }
+
+    private nonisolated static func fetchRecents(client: BowtieClient) async -> RecentsResult {
+        do {
+            return .loaded(try await client.recents(limit: recentsLimit))
+        } catch BowtieError.notFound {
+            return .unsupported
+        } catch {
+            return .failed
+        }
+    }
+
+    private func apply(_ result: RecentsResult) {
+        switch result {
+        case .loaded(let items):
+            recents = items
+            recentsSupported = true
+        case .unsupported:
+            recents = []
+            recentsSupported = false
+        case .failed:
+            // A transient error must not cost the channel list; keep what we had.
+            break
         }
     }
 

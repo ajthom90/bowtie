@@ -60,6 +60,18 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 
 (`supports_input_launch=1` is set in the channel manifest.)
 
+## Channel rail controls
+
+| Key | Action |
+|-----|--------|
+| `*` (Options) on a channel | Star / unstar it. Starred channels move to the top (guide-number order) with a ★; the change is sent to the server and undone if it fails. |
+| Up from the first channel | Recent row (when the server has watch history), then Settings |
+| Down from Settings / Recent | Back toward the rail |
+
+Up/down zapping in the player follows rail order, so it cycles favorites first.
+The Recent row lists the last 8 channels watched for 30 s or more (any device,
+same account) and is hidden when empty or on a server without favorites.
+
 ## Player controls
 
 | Key | Action |
