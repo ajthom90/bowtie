@@ -1,3 +1,5 @@
+<img src="docs/brand/bowtie-icon.svg" width="112" alt="Bowtie logo: a classic UHF bowtie TV antenna" align="right">
+
 # Bowtie
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)

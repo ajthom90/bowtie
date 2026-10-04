@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Bowtie app icon: the antenna mark on the app's dark background.
+       Full-bleed square; platforms apply their own corner mask. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1A2027"/>
+      <stop offset="1" stop-color="#101418"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g fill="none" stroke="#F0A428" stroke-width="36" stroke-linecap="round">
+    <path d="M444 290A100 100 0 0 1 580 290"/>
+    <path d="M398 222A168 168 0 0 1 626 222" stroke-opacity="0.5"/>
+  </g>
+  <g fill="none" stroke="#9BA5AE" stroke-linecap="round">
+    <path d="M512 470V792" stroke-width="38"/>
+    <path d="M368 812Q512 774 656 812" stroke-width="42"/>
+  </g>
+  <g fill="none" stroke="#F0A428" stroke-width="48" stroke-linejoin="round">
+    <path d="M482 452L170 290V614Z"/>
+    <path d="M542 452L854 290V614Z"/>
+  </g>
+  <circle cx="512" cy="452" r="34" fill="#F2EFE8"/>
+</svg>

@@ -18,6 +18,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Episode and series IDs and new/repeat flags come along, so series
   recordings work with it too.
 
+### Changed
+
+- **New logo.** The icon is now an old-school UHF bowtie TV antenna instead
+  of a necktie bowtie, on every app: iPhone/iPad, Apple TV (layered icon and
+  top shelf), Android (adaptive and themed icon, which replaces the stock
+  Android icon), Android TV / Fire TV (icon and banner), Roku (channel poster
+  and splash), and the web (favicon, home-screen icon, header and sign-in).
+  Source SVGs are in `docs/brand/`.
+
 ## [0.11.0] — 2026-10-04
 
 ### Added
