@@ -155,6 +155,9 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	// Admin transcode probe (Task 11).
 	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
 
+	// Admin DVR disk use.
+	handle("GET /api/v1/admin/dvr/storage", admin(http.HandlerFunc(s.handleAdminDVRStorage)))
+
 	// Stream sessions (Task 15 / v0.5.0 heartbeat).
 	handle("POST /api/v1/sessions", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateSession)))
 	handleFunc("GET /api/v1/stream/{viewerId}/index.m3u8", s.handlePlaylist)

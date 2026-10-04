@@ -43,12 +43,19 @@ type settingsHDHomeRunJSON struct {
 	Enabled bool `json:"enabled"`
 }
 
+// settingsDVRJSON is the recording padding section.
+type settingsDVRJSON struct {
+	PadStartSeconds int `json:"padStartSeconds"`
+	PadEndSeconds   int `json:"padEndSeconds"`
+}
+
 type settingsResponseJSON struct {
 	XMLTV           settingsXMLTVJSON     `json:"xmltv"`
 	SchedulesDirect settingsSDJSON        `json:"schedulesDirect"`
 	Transcode       settingsTranscodeJSON `json:"transcode"`
 	Streaming       settingsStreamingJSON `json:"streaming"`
 	HDHomeRun       settingsHDHomeRunJSON `json:"hdhomerun"`
+	DVR             settingsDVRJSON       `json:"dvr"`
 }
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
@@ -60,6 +67,13 @@ type putSettingsRequest struct {
 	Transcode       *putTranscodeSection `json:"transcode"`
 	Streaming       *putStreamingSection `json:"streaming"`
 	HDHomeRun       *putHDHomeRunSection `json:"hdhomerun"`
+	DVR             *putDVRSection       `json:"dvr"`
+}
+
+type putDVRSection struct {
+	// Both are required within the section.
+	PadStartSeconds *int `json:"padStartSeconds"`
+	PadEndSeconds   *int `json:"padEndSeconds"`
 }
 
 type putHDHomeRunSection struct {
@@ -222,6 +236,10 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 	if err != nil {
 		return settingsResponseJSON{}, err
 	}
+	dvrCfg, err := s.deps.Settings.DVR()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
 
 	caps := s.probeCaps()
 	available := make([]string, 0, len(caps.Available))
@@ -254,6 +272,7 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 			Adaptive:      stream.Adaptive,
 		},
 		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
+		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds},
 	}, nil
 }
 
@@ -325,6 +344,22 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 			return nil, "hdhomerun.enabled is required"
 		}
 		kv[settings.KeyEPGHDHomeRun] = strconv.FormatBool(*req.HDHomeRun.Enabled)
+	}
+
+	if req.DVR != nil {
+		start, end := req.DVR.PadStartSeconds, req.DVR.PadEndSeconds
+		switch {
+		case start == nil:
+			return nil, "dvr.padStartSeconds is required"
+		case end == nil:
+			return nil, "dvr.padEndSeconds is required"
+		case *start < 0 || *start > 1800:
+			return nil, "dvr.padStartSeconds must be between 0 and 1800"
+		case *end < 0 || *end > 3600:
+			return nil, "dvr.padEndSeconds must be between 0 and 3600"
+		}
+		kv[settings.KeyDVRPadStartSeconds] = strconv.Itoa(*start)
+		kv[settings.KeyDVRPadEndSeconds] = strconv.Itoa(*end)
 	}
 
 	return kv, ""

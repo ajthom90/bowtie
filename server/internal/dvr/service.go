@@ -81,6 +81,10 @@ type Deps struct {
 	// recordings while free space in Dir is below this (0 = never).
 	MinFreeBytes int64
 	FreeBytes    func(dir string) (int64, error)
+	TotalBytes   func(dir string) (int64, error)
+	// Padding returns the padding for a recording being scheduled now
+	// (nil or an error: DefaultPadStart / DefaultPadEnd).
+	Padding func() (start, end time.Duration, err error)
 }
 
 // Warning accompanies a successful Schedule.
@@ -131,6 +135,10 @@ type Service struct {
 	stopped    bool
 	onDeleted  func() // test hook: after the sweep deletes a recording
 
+	usedMu sync.Mutex // Storage's cached usedBytes
+	used   int64
+	usedAt time.Time
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -153,6 +161,9 @@ func New(deps Deps) *Service {
 	}
 	if deps.FreeBytes == nil {
 		deps.FreeBytes = freeBytes
+	}
+	if deps.TotalBytes == nil {
+		deps.TotalBytes = totalBytes
 	}
 	// FFmpeg's concat list resolves relative entries against the list's own
 	// directory, so every path the DVR hands out must be absolute.
@@ -230,6 +241,7 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	if title == "" {
 		title = "Recording"
 	}
+	padStart, padEnd := s.padding()
 	r := store.Recording{
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
@@ -237,7 +249,7 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
 		RuleID: req.RuleID, ProgramID: req.ProgramID,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
-		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
+		PadStartSec: int(padStart / time.Second), PadEndSec: int(padEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),
 	}
 
@@ -270,6 +282,19 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	}
 	r.ID = id
 	return r, warnings, nil
+}
+
+// padding is the configured padding for a recording scheduled now.
+func (s *Service) padding() (time.Duration, time.Duration) {
+	if s.deps.Padding == nil {
+		return DefaultPadStart, DefaultPadEnd
+	}
+	start, end, err := s.deps.Padding()
+	if err != nil {
+		log.Printf("dvr: padding setting: %v (using defaults)", err)
+		return DefaultPadStart, DefaultPadEnd
+	}
+	return start, end
 }
 
 // overlapping returns pending recordings whose show times overlap r's

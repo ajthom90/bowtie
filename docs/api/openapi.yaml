@@ -1458,6 +1458,8 @@ paths:
         - `xmltv.refreshHours` 1–168
         - `xmltv.source` empty (disabled), http(s) URL, or absolute path
         - `transcode.encoder` `"auto"` or a probed-available backend
+        - `dvr.padStartSeconds` 0–1800 and `dvr.padEndSeconds` 0–3600 (both
+          required when `dvr` is present)
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -1504,6 +1506,37 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/dvr/storage:
+    get:
+      summary: Recording disk use and counts
+      description: |
+        Disk space where recordings live (`totalBytes`/`freeBytes` from the
+        filesystem), what recordings use (`usedBytes`: ready recordings plus
+        files of in-progress ones; cached for up to 30 s), and recording
+        counts. New captures don't start while `freeBytes` < `floorBytes`;
+        the retention sweep deletes the oldest unprotected recordings while
+        `freeBytes` < `minFreeBytes` (0 = off).
+      operationId: adminDVRStorage
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Storage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DVRStorage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: Recording is not available on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/sessions:
     post:
       summary: Start or join a shared HLS stream session for a channel
@@ -2348,6 +2381,65 @@ components:
           $ref: '#/components/schemas/SettingsStreaming'
         hdhomerun:
           $ref: '#/components/schemas/SettingsHDHomeRun'
+        dvr:
+          $ref: '#/components/schemas/SettingsDVR'
+    SettingsDVR:
+      type: object
+      required: [padStartSeconds, padEndSeconds]
+      properties:
+        padStartSeconds:
+          type: integer
+          minimum: 0
+          maximum: 1800
+          description: |
+            Start recording this many seconds before the show. Default 60.
+            Applies to recordings scheduled afterwards.
+        padEndSeconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: |
+            Keep recording this many seconds after the show. Default 180.
+            Applies to recordings scheduled afterwards.
+    DVRStorage:
+      type: object
+      required: [dir, usedBytes, freeBytes, totalBytes, floorBytes, minFreeBytes, recordings]
+      properties:
+        dir:
+          type: string
+          description: Recordings directory
+        usedBytes:
+          type: integer
+          format: int64
+        freeBytes:
+          type: integer
+          format: int64
+        totalBytes:
+          type: integer
+          format: int64
+        floorBytes:
+          type: integer
+          format: int64
+          description: Below this much free space a new capture doesn't start
+        minFreeBytes:
+          type: integer
+          format: int64
+          description: The retention sweep frees space below this (0 = off)
+        recordings:
+          type: object
+          required: [ready, scheduled, recording, failed]
+          description: |
+            scheduled includes recordings waiting for a tuner; recording
+            includes converting; failed leaves out skipped series episodes.
+          properties:
+            ready:
+              type: integer
+            scheduled:
+              type: integer
+            recording:
+              type: integer
+            failed:
+              type: integer
     SettingsHDHomeRun:
       type: object
       required: [enabled]
@@ -2435,6 +2527,8 @@ components:
           $ref: '#/components/schemas/PutSettingsStreaming'
         hdhomerun:
           $ref: '#/components/schemas/SettingsHDHomeRun'
+        dvr:
+          $ref: '#/components/schemas/SettingsDVR'
     PutSettingsXMLTV:
       type: object
       required: [source, refreshHours]
