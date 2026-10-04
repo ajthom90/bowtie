@@ -251,45 +251,45 @@ struct ChannelRailView: View {
                     .frame(maxHeight: .infinity)
                     .focusSection()
             } else {
-            List {
-                ForEach(visible) { row in
-                    Button {
-                        open(channel: row.channel)
-                    } label: {
-                        RailRowView(
-                            row: row,
-                            now: now,
-                            isPlaying: playerModel.currentChannel?.id == row.channel.id,
-                            highlight: model.highlight(for: row, at: now)
-                        )
-                        .opacity(row.channel.hasNoSignal ? 0.55 : 1)
-                    }
-                    // Default button style → system focus scale / highlight.
-                    // Click-and-hold Select opens the menu.
-                    .contextMenu {
-                        if model.supportsFavorites {
-                            favoriteButton(for: row.channel, model: model)
+                List {
+                    ForEach(visible) { row in
+                        Button {
+                            open(channel: row.channel)
+                        } label: {
+                            RailRowView(
+                                row: row,
+                                now: now,
+                                isPlaying: playerModel.currentChannel?.id == row.channel.id,
+                                highlight: model.highlight(for: row, at: now)
+                            )
+                            .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                         }
-                        RecordMenuItems(
-                            channel: row.channel,
-                            nowNext: row.nowNext,
-                            flow: recordFlow,
-                            openRecordings: { showRecordings = true }
-                        )
-                    }
-                    .listRowBackground(Theme.bg)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(accessibilityLabel(for: row, highlight: model.highlight(for: row, at: now)))
-                    .accessibilityHint("Play this channel. Press and hold to favorite or record.")
-                    .accessibilityActions {
-                        if model.supportsFavorites {
-                            favoriteButton(for: row.channel, model: model)
+                        // Default button style → system focus scale / highlight.
+                        // Click-and-hold Select opens the menu.
+                        .contextMenu {
+                            if model.supportsFavorites {
+                                favoriteButton(for: row.channel, model: model)
+                            }
+                            RecordMenuItems(
+                                channel: row.channel,
+                                nowNext: row.nowNext,
+                                flow: recordFlow,
+                                openRecordings: { showRecordings = true }
+                            )
+                        }
+                        .listRowBackground(Theme.bg)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(accessibilityLabel(for: row, highlight: model.highlight(for: row, at: now)))
+                        .accessibilityHint("Play this channel. Press and hold to favorite or record.")
+                        .accessibilityActions {
+                            if model.supportsFavorites {
+                                favoriteButton(for: row.channel, model: model)
+                            }
                         }
                     }
                 }
-            }
-            .listStyle(.plain)
-            .focusSection()
+                .listStyle(.plain)
+                .focusSection()
             }
         }
         .bowtieToast(model.actionError) {
