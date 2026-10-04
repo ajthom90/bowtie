@@ -152,13 +152,14 @@ namespace bowtie.sleep
         return "Sleep timer: sleeping in " + bowtie.sleep.format(remain)
     end function
 
-    ' Menu button labels for the given options; the current one is ticked.
+    ' Menu button labels for the given options; the current one says so (plain
+    ' text: the system font may lack a check mark glyph).
     function buttonLabels(opts as object, state as object) as object
         labels = []
         current = state.option
         for each o in opts
             if o.id = current
-                labels.push("✓ " + o.label)
+                labels.push(o.label + " (current)")
             else
                 labels.push(o.label)
             end if

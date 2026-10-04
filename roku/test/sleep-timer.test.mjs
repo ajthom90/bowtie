@@ -118,7 +118,7 @@ test('end of program: deadline is the program end', () => {
     assert.equal(out.left, 1234);
     assert.equal(out.warn.warning, true);
     assert.equal(out.fire.fired, true);
-    assert.equal(out.labels[7], '✓ End of this program');
+    assert.equal(out.labels[7], 'End of this program (current)');
     assert.equal(out.labels[0], 'Off');
 });
 
