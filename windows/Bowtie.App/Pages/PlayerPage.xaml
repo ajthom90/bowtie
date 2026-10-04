@@ -86,7 +86,7 @@
             <MediaPlayerElement.TransportControls>
                 <MediaTransportControls IsCompact="False"
                                         IsSeekBarVisible="True" IsSeekEnabled="True"
-                                        IsFullWindowButtonVisible="False"
+                                       
                                         IsZoomButtonVisible="False"
                                         IsSkipBackwardButtonVisible="True" IsSkipBackwardEnabled="True"
                                         IsSkipForwardButtonVisible="True" IsSkipForwardEnabled="True"
