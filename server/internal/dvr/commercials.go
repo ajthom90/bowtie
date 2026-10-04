@@ -357,7 +357,7 @@ func (s *Service) detect(id int64) error {
 // vodDuration is a ready recording's playback length in seconds (from its
 // video playlist, else the stored whole seconds).
 func vodDuration(r store.Recording) float64 {
-	if pl, err := os.ReadFile(filepath.Join(PlaylistDir(r), vodLayout.TopName()+".m3u8")); err == nil {
+	if pl, err := os.ReadFile(vodVideoPlaylist(PlaylistDir(r))); err == nil {
 		if d := playlistDuration(pl); d > 0 {
 			return d.Seconds()
 		}
