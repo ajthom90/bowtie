@@ -36,6 +36,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   a red dot while you're at the live point. When you've rewound (or a channel
   you just tuned starts behind), it shows how far behind you are
   (e.g. "Live −0:20"); tap it to jump back to live.
+- **Easy Android and Fire TV installs.** Open `https://<your-server>/android`
+  on a phone, or type `https://<your-server>/tv` into the free Downloader app
+  on a Fire TV, to get the app that matches your server
+  ([guide](docs/install/android.md)). APKs now carry the release version, so
+  each release installs over the last.
 
 ### Fixed
 

@@ -58,7 +58,8 @@ Each GitHub Release attaches pre-built `bowtie` binaries (web UI embedded, `CGO_
 | `bowtie_*_darwin_arm64.tar.gz` | macOS Apple Silicon server binary |
 | `bowtie_*_linux_amd64.tar.gz` | Linux x86_64 server binary |
 | `bowtie_*_linux_arm64.tar.gz` | Linux arm64 server binary |
-| `bowtie-<version>.apk` | Android phone/tablet release APK |
+| `bowtie-<version>.apk`, `bowtie-android.apk` | Android phone/tablet APK ([install guide](docs/install/android.md)) |
+| `bowtie-tv-<version>.apk`, `bowtie-tv.apk` | Fire TV / Android TV APK |
 | `bowtie-roku-<version>.zip` | Roku channel sideload zip |
 
 ```bash
@@ -224,7 +225,7 @@ cd web && npm ci && npm test && npm run build
 ## Apps
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
-- **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build, GitHub Releases APK sideload).
+- **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 
 ---

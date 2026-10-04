@@ -14,8 +14,8 @@ android {
         applicationId = "app.bowtie.tv"
         minSdk = libs.versions.minSdkTv.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = rootProject.extra["bowtieVersionCode"] as Int
+        versionName = rootProject.extra["bowtieVersionName"] as String
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

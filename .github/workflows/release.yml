@@ -186,10 +186,15 @@ jobs:
           BOWTIE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           BOWTIE_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           BOWTIE_KEYSTORE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Stamps versionName/versionCode (android/build.gradle.kts).
+          BOWTIE_VERSION: ${{ github.ref_name }}
         run: |
           ./gradlew :app:assembleRelease :tv:assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "bowtie-${GITHUB_REF_NAME#v}.apk"
           cp tv/build/outputs/apk/release/tv-release.apk "bowtie-tv-${GITHUB_REF_NAME#v}.apk"
+          # Version-less copies: releases/latest/download/<name> always works.
+          cp app/build/outputs/apk/release/app-release.apk bowtie-android.apk
+          cp tv/build/outputs/apk/release/tv-release.apk bowtie-tv.apk
 
       - name: Upload APKs to release
         env:
@@ -197,7 +202,9 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" \
             "android/bowtie-${GITHUB_REF_NAME#v}.apk" \
-            "android/bowtie-tv-${GITHUB_REF_NAME#v}.apk"
+            "android/bowtie-tv-${GITHUB_REF_NAME#v}.apk" \
+            android/bowtie-android.apk \
+            android/bowtie-tv.apk
 
   # Sideloadable Roku channel zip attached to the GitHub Release created by GoReleaser.
   # needs goreleaser: the Release must exist before `gh release upload` (A6).
