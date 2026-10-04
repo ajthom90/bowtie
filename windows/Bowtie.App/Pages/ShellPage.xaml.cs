@@ -38,9 +38,14 @@ public sealed partial class ShellPage : Page
             return;
         }
 
-        // Back from the player.
-        if (ContentFrame.Content is ChannelsPage channels) channels.OnReturnedFromPlayer();
-        if (ContentFrame.Content is RecordingsPage recordings) recordings.OnReturnedFromPlayer();
+        // Back from the player. Deferred: the player's OnNavigatedFrom (which
+        // queues its last position save) can run after this page's
+        // OnNavigatedTo, and the reloads wait for that save.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (ContentFrame.Content is ChannelsPage channels) channels.OnReturnedFromPlayer();
+            if (ContentFrame.Content is RecordingsPage recordings) recordings.OnReturnedFromPlayer();
+        });
     }
 
     private void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
