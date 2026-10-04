@@ -21,8 +21,12 @@ public sealed record PlayStart(
 public sealed class RecordingsViewModel : ObservableObject, IDisposable
 {
     private readonly BowtieClient _client;
-    private readonly Channel<(long Id, int Sec)> _saves = System.Threading.Channels.Channel.CreateUnbounded<(long, int)>(
-        new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<(long Id, int Sec, TaskCompletionSource Done)> _saves =
+        System.Threading.Channels.Channel.CreateUnbounded<(long, int, TaskCompletionSource)>(
+            new UnboundedChannelOptions { SingleReader = true });
+
+    /// <summary>Completes once the most recently queued save has been sent (or failed).</summary>
+    private Task _lastSave = Task.CompletedTask;
 
     private RecordingTab _tab = RecordingTab.Recorded;
     private RecordingsStatus _status = RecordingsStatus.Loading;
@@ -114,32 +118,59 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var p = await _client.PlayRecordingAsync(r.Id, ct);
-            return new PlayStart(
-                r,
-                ServerUrl.Resolve(p.PlaylistUrl, _client.Server),
-                p.PositionSec,
-                p.DurationSec,
-                RecordingLogic.ShouldOfferResume(p.PositionSec, p.DurationSec));
+            return await StartAsync(_client, r, ct);
         }
         catch (Exception e) when (!ct.IsCancellationRequested)
         {
-            Message = e is ServerException { Status: 409 }
-                ? "This recording isn't ready to play yet."
-                : RecordingLogic.ErrorMessage(e);
+            Message = PlayErrorMessage(e);
             return null;
         }
     }
 
+    /// <summary>POST /recordings/{id}/play and resolve the playlist (shared with Continue watching).</summary>
+    internal static async Task<PlayStart> StartAsync(BowtieClient client, Recording r, CancellationToken ct)
+    {
+        var p = await client.PlayRecordingAsync(r.Id, ct);
+        return new PlayStart(
+            r,
+            ServerUrl.Resolve(p.PlaylistUrl, client.Server),
+            p.PositionSec,
+            p.DurationSec,
+            RecordingLogic.ShouldOfferResume(p.PositionSec, p.DurationSec));
+    }
+
+    internal static string PlayErrorMessage(Exception e) =>
+        e is ServerException { Status: 409 }
+            ? "This recording isn't ready to play yet."
+            : RecordingLogic.ErrorMessage(e);
+
     /// <summary>Queue a resume-position save (best-effort, in order).</summary>
-    public void SavePosition(long recordingId, TimeSpan position) =>
-        _saves.Writer.TryWrite((recordingId, Math.Max(0, (int)position.TotalSeconds)));
+    public void SavePosition(long recordingId, TimeSpan position)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_saves.Writer.TryWrite((recordingId, Math.Max(0, (int)position.TotalSeconds), done)))
+        {
+            _lastSave = done.Task;
+        }
+    }
+
+    /// <summary>
+    /// Waits (up to <paramref name="timeout"/>) for the saves queued so far to
+    /// reach the server, so a reload after the player closes sees the new
+    /// position. Never throws.
+    /// </summary>
+    public async Task SavesSettledAsync(TimeSpan timeout)
+    {
+        var last = _lastSave;
+        if (last.IsCompleted) return;
+        await Task.WhenAny(last, Task.Delay(timeout)).ConfigureAwait(false);
+    }
 
     public void Dispose() => _saves.Writer.TryComplete();
 
     private async Task DrainSavesAsync()
     {
-        await foreach (var (id, sec) in _saves.Reader.ReadAllAsync().ConfigureAwait(false))
+        await foreach (var (id, sec, done) in _saves.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             try
             {
@@ -148,6 +179,10 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
             catch (Exception)
             {
                 // Best-effort: the next save (every 15 s) catches up.
+            }
+            finally
+            {
+                done.TrySetResult();
             }
         }
     }

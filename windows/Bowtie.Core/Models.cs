@@ -183,6 +183,8 @@ public sealed record Recording
     public bool IsProtected { get; init; }
     /// <summary>The caller's resume position.</summary>
     public int PositionSec { get; init; }
+    /// <summary>When the caller's position was last saved; null from older servers (or never saved).</summary>
+    public DateTimeOffset? PositionUpdatedAt { get; init; }
     public string ScheduledBy { get; init; } = "";
     /// <summary>The caller may stop, delete or keep it.</summary>
     public bool CanManage { get; init; }
