@@ -341,6 +341,10 @@ class PlayerViewModel(
             is BowtieError.Server -> {
                 _state.value = State.Failed(error.message)
             }
+            is BowtieError.RecordingConflict -> {
+                // Only POST /recordings returns this; listed for exhaustiveness.
+                _state.value = State.Failed(error.message)
+            }
             is BowtieError.Network -> {
                 _state.value = State.Failed(
                     error.cause2.message ?: error.cause2.toString(),
