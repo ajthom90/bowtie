@@ -191,6 +191,13 @@ class ChannelListViewModelTest {
         assertEquals(2L, rows[1].channel.id)
         assertNull(rows[1].nowNext.now)
         assertNull(rows[1].nowNext.next)
+
+        // Sleep timer "End of this program": when the now program stops.
+        assertEquals(
+            Instant.parse("2024-06-15T21:00:00Z").toEpochMilli(),
+            vm.programEndMs(rows[0].channel),
+        )
+        assertNull(vm.programEndMs(rows[1].channel))
     }
 
     @Test

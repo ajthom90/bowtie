@@ -50,6 +50,7 @@ import androidx.tv.material3.Text
 import app.bowtie.core.Channel
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.SessionInfoMeta
+import app.bowtie.core.SleepTimer
 import app.bowtie.core.player.PlayerEngine
 import app.bowtie.core.player.TrackPrefsStore
 import app.bowtie.core.player.nextAudio
@@ -73,6 +74,9 @@ import okhttp3.HttpUrl
  * - DPAD_UP / DPAD_DOWN = zap (debounced via [PlayerViewModel])
  * - DPAD_LEFT / DPAD_RIGHT = seek ∓30s while drawer hidden
  * - BACK = stop + pop (or close drawer first)
+ *
+ * Sleep timer: in the drawer. In its last minute a "Still watching?" prompt
+ * takes focus (Keep watching); keys then go to it, like the drawer.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -86,6 +90,8 @@ fun TvPlayerScreen(
     onChannelChanged: (Channel, String?) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** When the program now on a channel ends (guide, epoch ms), for End of this program. */
+    programEndMs: (Channel) -> Long? = { null },
 ) {
     val context = LocalContext.current
     val activity = context as? android.app.Activity
@@ -113,6 +119,7 @@ fun TvPlayerScreen(
 
     val focusRequester = remember { FocusRequester() }
     val drawerFocusRequester = remember { FocusRequester() }
+    val sleepWarningFocusRequester = remember { FocusRequester() }
     val keyHandler = remember { PlayerKeyHandler() }
     var pendingFocusRestore by remember { mutableStateOf(false) }
     val requestFocusRestore = rememberUpdatedState {
@@ -180,6 +187,12 @@ fun TvPlayerScreen(
         onBack()
     }
 
+    // Sleep timer: fires the same leave as Back (stops the session, frees the
+    // tuner). Un-keyed remember, so it survives zaps (route changes channel).
+    val sleepTimer = rememberSleepTimer { leave() }
+    val sleepStatus by sleepTimer.status.collectAsStateWithLifecycle()
+    val sleepWarning = sleepStatus.warning
+
     fun zap(delta: Int) {
         val list = channelsLatest.value
         if (list.isEmpty()) return
@@ -237,7 +250,7 @@ fun TvPlayerScreen(
     LaunchedEffect(pendingFocusRestore, showDrawer) {
         if (!pendingFocusRestore) return@LaunchedEffect
         pendingFocusRestore = false
-        if (!showDrawer) {
+        if (!showDrawer && !sleepWarning) {
             focusRequester.requestFocus()
         }
     }
@@ -246,8 +259,21 @@ fun TvPlayerScreen(
     LaunchedEffect(showDrawer) {
         if (showDrawer) {
             drawerFocusRequester.requestFocus()
+        } else if (sleepWarning) {
+            sleepWarningFocusRequester.requestFocus()
         } else {
             focusRequester.requestFocus()
+        }
+    }
+
+    // "Still watching?": focus Keep watching; give it back when it goes.
+    LaunchedEffect(sleepWarning) {
+        runCatching {
+            when {
+                sleepWarning -> sleepWarningFocusRequester.requestFocus()
+                showDrawer -> drawerFocusRequester.requestFocus()
+                else -> focusRequester.requestFocus()
+            }
         }
     }
 
@@ -298,12 +324,12 @@ fun TvPlayerScreen(
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (showDrawer) {
-                    // Let drawer children handle navigation; only intercept BACK.
+                if (showDrawer || sleepWarning) {
+                    // Let drawer / prompt children handle navigation; only intercept BACK.
                     if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
                         event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN
                     ) {
-                        showDrawer = false
+                        if (showDrawer) showDrawer = false else leave()
                         return@onPreviewKeyEvent true
                     }
                     return@onPreviewKeyEvent false
@@ -401,6 +427,17 @@ fun TvPlayerScreen(
             )
         }
 
+        if (sleepWarning) {
+            TvSleepWarning(
+                remainingMs = sleepStatus.remainingMs ?: 0L,
+                focusRequester = sleepWarningFocusRequester,
+                onKeepWatching = { sleepTimer.extend() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp),
+            )
+        }
+
         when (state) {
             is PlayerViewModel.State.Starting,
             is PlayerViewModel.State.Stalled,
@@ -477,6 +514,12 @@ fun TvPlayerScreen(
                     if (engine.hasCaptions()) engine.captionsOn() else null
                 },
                 onCaptions = { engine.setCaptions(!engine.captionsOn()) },
+                sleepStatus = sleepStatus,
+                sleepOptions = SleepTimer.options(programEndMs(displayChannel), System.currentTimeMillis()),
+                onSelectSleep = { option ->
+                    showDrawer = false
+                    sleepTimer.start(option, programEndMs(displayChannel))
+                },
                 onClose = { showDrawer = false },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -499,6 +542,9 @@ private fun TransportDrawer(
     onAudio: () -> Unit,
     captionsOn: Boolean?,
     onCaptions: () -> Unit,
+    sleepStatus: SleepTimer.Status,
+    sleepOptions: List<SleepTimer.Option>,
+    onSelectSleep: (SleepTimer.Option) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -552,6 +598,12 @@ private fun TransportDrawer(
             }
         }
         Spacer(Modifier.height(12.dp))
+        SleepTimerChoices(
+            status = sleepStatus,
+            options = sleepOptions,
+            onSelect = onSelectSleep,
+        )
+        Spacer(Modifier.height(12.dp))
         audioLabel?.let { label ->
             Button(
                 onClick = onAudio,
@@ -600,7 +652,7 @@ private fun TransportDrawer(
 }
 
 @Composable
-private fun drawerButtonColors(selected: Boolean) = ButtonDefaults.colors(
+internal fun drawerButtonColors(selected: Boolean) = ButtonDefaults.colors(
     containerColor = if (selected) BowtieColors.raised else BowtieColors.bg,
     contentColor = BowtieColors.text,
     focusedContainerColor = BowtieColors.raised,

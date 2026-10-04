@@ -12,6 +12,8 @@ struct PlayerView: View {
     let serverURL: URL
     let maxQuality: String
     var nowTitle: String?
+    /// When the program now on a channel ends (guide), for End of this program.
+    var programEnd: (Channel) -> Date? = { _ in nil }
     @Bindable var playerModel: PlayerModel
 
     @Environment(\.dismiss) private var dismiss
@@ -33,6 +35,8 @@ struct PlayerView: View {
     @StateObject private var groupState = GroupStateObserver()
     @State private var sharingActivity: SharingActivity?
     @State private var isStartingSharePlay = false
+    /// Survives channel changes here; gone when the player is.
+    @State private var sleepTimer = SleepTimer()
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -70,20 +74,27 @@ struct PlayerView: View {
                 stalledSpinner
             }
 
-            if let notice = outOfWindowNotice {
-                Text(notice)
-                    .font(Theme.body(14))
-                    .foregroundStyle(Theme.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Theme.bg.opacity(0.88))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-                    .padding(.bottom, 96)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .transition(.opacity)
-                    .accessibilityLabel(notice)
+            VStack(spacing: 8) {
+                if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                    SleepWarningBanner(remaining: remaining) {
+                        sleepTimer.extend()
+                    }
+                }
+                if let notice = outOfWindowNotice {
+                    Text(notice)
+                        .font(Theme.body(14))
+                        .foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Theme.bg.opacity(0.88))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                        .transition(.opacity)
+                        .accessibilityLabel(notice)
+                }
             }
+            .padding(.bottom, 96)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -149,6 +160,9 @@ struct PlayerView: View {
         }
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
+        }
+        .drivesSleepTimer(sleepTimer) {
+            Task { await leave() }
         }
         .task(id: coordinationKey) {
             coordinatePlayback()
@@ -225,9 +239,13 @@ struct PlayerView: View {
             // The bottom edge belongs to the system transport (live scrubber),
             // so Bowtie's player controls get a second row up here.
             if !isBlockingError {
-                HStack(spacing: 10) {
-                    livePill
-                    playerButtons
+                // Scrolls sideways only when it doesn't fit (narrow iPhones);
+                // otherwise taps beside the buttons still reach AVKit.
+                ViewThatFits(in: .horizontal) {
+                    controlsRow
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        controlsRow
+                    }
                 }
             }
         }
@@ -244,6 +262,13 @@ struct PlayerView: View {
             // Decoration only: AVKit's top buttons sit under this gradient.
             .allowsHitTesting(false)
         )
+    }
+
+    private var controlsRow: some View {
+        HStack(spacing: 10) {
+            livePill
+            playerButtons
+        }
     }
 
     private var identityRow: some View {
@@ -325,6 +350,11 @@ struct PlayerView: View {
             if bridge.audioOptionNames.count > 1 {
                 audioMenu
             }
+            SleepTimerButton(
+                timer: sleepTimer,
+                programEnd: { programEnd(shownChannel) },
+                onOpen: { bumpChrome(for: Self.menuOpenDelay) }
+            )
             if canShare || playerModel.groupRole != nil {
                 sharePlayButton
             }

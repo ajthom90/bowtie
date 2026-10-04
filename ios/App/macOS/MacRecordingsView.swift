@@ -344,6 +344,7 @@ struct MacRecordingPlayerView: View {
 
     @State private var showChrome = true
     @State private var hideChromeTask: Task<Void, Never>?
+    @State private var sleepTimer = SleepTimer()
 
     private static let chromeHideDelay: Duration = .seconds(3)
 
@@ -357,6 +358,18 @@ struct MacRecordingPlayerView: View {
                 chrome
                     .transition(.opacity)
             }
+
+            if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                SleepWarningBanner(remaining: remaining) {
+                    sleepTimer.extend()
+                }
+                .padding(.bottom, 96)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+        .drivesSleepTimer(sleepTimer) {
+            // Same as Done: stop, save the position, back to the list.
+            onDone()
         }
         .onContinuousHover { phase in
             if case .active = phase {
@@ -390,6 +403,7 @@ struct MacRecordingPlayerView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                SleepTimerMenu(timer: sleepTimer, programEnd: nil)
                 Button("Done") {
                     onDone()
                 }

@@ -69,6 +69,7 @@ struct ChannelRailView: View {
                             serverURL: serverURL,
                             maxQuality: appModel.user?.maxQuality ?? "",
                             nowTitle: nowTitle(for: channel),
+                            programEnd: { programEnd(for: $0) },
                             playerModel: playerModel
                         )
                     } else {
@@ -323,6 +324,12 @@ struct ChannelRailView: View {
             return nil
         }
         return title
+    }
+
+    /// When the program now on `channel` ends, if the guide knows (sleep timer).
+    private func programEnd(for channel: Channel) -> Date? {
+        guard case .loaded(let rows) = listModel?.state else { return nil }
+        return rows.first(where: { $0.channel.id == channel.id })?.nowNext.now?.stop
     }
 
     private func accessibilityLabel(for row: ChannelListModel.Row) -> String {

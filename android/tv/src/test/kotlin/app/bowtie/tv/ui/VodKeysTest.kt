@@ -44,10 +44,17 @@ class VodKeysTest {
     }
 
     @Test
-    fun upDownMenu_showInfo_notZap() {
+    fun up_showsInfo_notZap() {
         assertEquals(Action.ShowInfo, down(KeyEvent.KEYCODE_DPAD_UP).action)
-        assertEquals(Action.ShowInfo, down(KeyEvent.KEYCODE_DPAD_DOWN).action)
-        assertEquals(Action.ShowInfo, down(KeyEvent.KEYCODE_MENU).action)
+        assertEquals(Action.ShowInfo, down(KeyEvent.KEYCODE_INFO).action)
+    }
+
+    @Test
+    fun downAndMenu_openTheMenu_once() {
+        // Down too: Google TV remotes have no Menu key.
+        assertEquals(Action.OpenMenu, down(KeyEvent.KEYCODE_DPAD_DOWN).action)
+        assertEquals(Action.OpenMenu, down(KeyEvent.KEYCODE_MENU).action)
+        assertNull(down(KeyEvent.KEYCODE_DPAD_DOWN, repeat = 1).action)
     }
 
     @Test
