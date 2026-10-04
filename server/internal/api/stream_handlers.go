@@ -163,6 +163,15 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.Us
 		}
 		if user.Role != "admin" {
 			sessions = filterSessionsEnabledOnly(sessions, s.enabledChannelIDs())
+			// Parental controls: don't reveal channels the account can't see.
+			p := policyFor(user)
+			kept := sessions[:0]
+			for _, se := range sessions {
+				if p.ChannelAllowed(se.ChannelID) {
+					kept = append(kept, se)
+				}
+			}
+			sessions = kept
 		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error":      "all tuners in use",

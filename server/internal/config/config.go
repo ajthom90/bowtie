@@ -29,7 +29,7 @@ type Config struct {
 	// DVRMinFreeGB: the DVR deletes the oldest unprotected recordings while
 	// free space is below this (default 20; 0 = never). Env BOWTIE_DVR_MIN_FREE_GB.
 	DVRMinFreeGB int `yaml:"dvrMinFreeGB"`
-	XMLTV             struct {
+	XMLTV        struct {
 		Source       string `yaml:"source"`       // file path or http(s) URL
 		RefreshHours int    `yaml:"refreshHours"` // default 12
 	} `yaml:"xmltv"`

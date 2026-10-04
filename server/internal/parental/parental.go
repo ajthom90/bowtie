@@ -92,3 +92,8 @@ func Pick(rs []Rated) string {
 	}
 	return best
 }
+
+// BlockAll allows nothing: used when the account can't be loaded.
+func BlockAll() Policy {
+	return Policy{Channels: map[int64]bool{}, MaxLevel: 1, BlockUnrated: true}
+}

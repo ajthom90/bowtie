@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
@@ -96,13 +97,14 @@ type Manager struct {
 	onWatched  func(userID, channelID int64, at time.Time)
 	blockedFor func(userID, channelID int64, now time.Time) string
 
-	mu           sync.Mutex
-	sessions     map[string]*session       // by session ID
-	byKey        map[string]*session       // by SessionKey
-	viewers      map[string]*Viewer        // by viewer ID
-	pending      map[*reservation]struct{} // limited accounts' in-flight starts (limits.go)
-	blocked      map[string]blockedViewer  // viewers parental controls stopped (parental.go)
-	lastParental time.Time
+	mu              sync.Mutex
+	sessions        map[string]*session       // by session ID
+	byKey           map[string]*session       // by SessionKey
+	viewers         map[string]*Viewer        // by viewer ID
+	pending         map[*reservation]struct{} // limited accounts' in-flight starts (limits.go)
+	blocked         map[string]blockedViewer  // viewers parental controls stopped (parental.go)
+	lastParental    time.Time
+	parentalRunning atomic.Bool
 
 	wg sync.WaitGroup // session supervisors
 }
@@ -622,8 +624,13 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.maintain()
-			if now := m.now(); now.Sub(m.lastParental) >= parentalEvery {
-				m.enforceParental(now)
+			if now := m.now(); now.Sub(m.lastParental) >= parentalEvery && m.parentalRunning.CompareAndSwap(false, true) {
+				m.lastParental = now
+				// Off the main loop: the checks read the store and guide.
+				go func() {
+					defer m.parentalRunning.Store(false)
+					m.enforceParental(now)
+				}()
 			}
 		}
 	}

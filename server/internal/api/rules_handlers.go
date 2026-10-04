@@ -79,6 +79,18 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "program not found in the guide")
 		return
 	}
+	u, err := s.deps.Store.UserByID(claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if pol := policyFor(u); !pol.ChannelAllowed(ch.ID) {
+		writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
+		return
+	} else if !pol.ProgramAllowed(p.Rating) {
+		writeParentalBlock(w, pol.Reason(p.Rating))
+		return
+	}
 	rule := store.RecordingRule{UserID: claims.UserID, Title: p.Title, SeriesID: p.SeriesID,
 		NewOnly: true, KeepLatest: req.KeepLatest, CreatedAt: time.Now().UTC()}
 	if req.NewOnly != nil {
@@ -126,11 +138,8 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete rule")
 		return
 	}
-	upcoming, _ := s.deps.Store.ListRecordings(store.RecScheduled)
-	for _, rec := range upcoming {
-		if rec.RuleID == id {
-			_ = s.deps.Store.DeleteRecording(rec.ID)
-		}
+	if s.deps.DVR != nil {
+		s.deps.DVR.CancelRule(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

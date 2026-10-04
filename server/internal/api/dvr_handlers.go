@@ -160,8 +160,22 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 		sr.Start, sr.Stop = p.Start, p.Stop
 	case req.Start != nil && req.Stop != nil:
 		sr.Start, sr.Stop = req.Start.UTC(), req.Stop.UTC()
+		// A manual window holds whatever airs in it: keep the strictest rating.
+		sr.Rating = s.windowRating(r, ch.ID, sr.Start, sr.Stop)
 	default:
 		writeError(w, http.StatusBadRequest, "send programStart, or start and stop")
+		return
+	}
+	u, err := s.deps.Store.UserByID(claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if p := policyFor(u); !p.ChannelAllowed(ch.ID) {
+		writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
+		return
+	} else if !p.ProgramAllowed(sr.Rating) {
+		writeParentalBlock(w, p.Reason(sr.Rating))
 		return
 	}
 
@@ -174,8 +188,13 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &conflict):
 		names := s.userNames()
 		list := make([]recordingJSON, 0, len(conflict.Conflicts))
+		pol := policyFor(u)
 		for _, c := range conflict.Conflicts {
-			list = append(list, s.recordingToJSON(c, claims, names))
+			j := s.recordingToJSON(c, claims, names)
+			if !pol.ChannelAllowed(c.ChannelID) || !pol.ProgramAllowed(c.Rating) {
+				j.Title, j.Subtitle, j.Description, j.Locked = "Another recording", "", "", true
+			}
+			list = append(list, j)
 		}
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":      fmt.Sprintf("Only %d tuners: other recordings already need them then. Record anyway to try if one frees up.", conflict.TunerCount),
@@ -336,7 +355,12 @@ func (s *Server) handlePlayRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "this recording isn't ready to play yet")
 		return
 	}
-	if p := s.callerPolicy(r); !p.ChannelAllowed(rec.ChannelID) {
+	u, err := s.deps.Store.UserByID(claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if p := policyFor(u); !p.ChannelAllowed(rec.ChannelID) {
 		writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
 		return
 	} else if !p.ProgramAllowed(rec.Rating) {

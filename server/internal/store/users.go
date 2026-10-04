@@ -133,6 +133,7 @@ func (s *Store) DeleteUser(id int64) error {
 	for _, q := range []string{
 		`DELETE FROM user_favorites WHERE user_id = ?`,
 		`DELETE FROM user_recents WHERE user_id = ?`,
+		`DELETE FROM recording_rules WHERE user_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err

@@ -16,6 +16,8 @@ const ruleHorizon = 14 * 24 * time.Hour
 // start). An episode missed for lack of a tuner can record at a later
 // airing; one the user skipped can't. Returns how many it scheduled.
 func (s *Service) ApplyRules() int {
+	s.rulesMu.Lock() // the hourly Tick and a new rule may both apply
+	defer s.rulesMu.Unlock()
 	now := s.deps.Clock()
 	rules, err := s.deps.Store.ListRules()
 	if err != nil || len(rules) == 0 {
@@ -89,6 +91,9 @@ func (s *Service) pruneRule(ruleID int64) {
 	for _, r := range ready {
 		if r.RuleID != ruleID || r.Protected {
 			continue
+		}
+		if watching, _ := s.deps.Store.RecordingWatchedSince(r.ID, s.deps.Clock().Add(-inUseWindow)); watching {
+			continue // someone is watching it; prune next time
 		}
 		if kept < rule.KeepLatest {
 			kept++

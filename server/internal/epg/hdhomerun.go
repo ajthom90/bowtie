@@ -240,7 +240,8 @@ func (s *Service) autoMapHDHomeRun(guide []xmltv.Channel) error {
 		if id == "" {
 			continue
 		}
-		if err := s.store.UpdateChannel(c.ID, c.Enabled, hdhomerunIDPrefix+id); err != nil {
+		// Only fills a never-mapped channel; Enabled and admin choices stay.
+		if _, err := s.store.AutoMapChannel(c.ID, hdhomerunIDPrefix+id); err != nil {
 			return err
 		}
 	}

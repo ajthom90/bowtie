@@ -681,3 +681,29 @@ func TestSeriesIDOf(t *testing.T) {
 		}
 	}
 }
+
+// I-3: automatic guide mapping only fills a channel that was never mapped:
+// an admin's "no guide" stays, and Enabled is never touched.
+func TestAutoMapOnlyFillsNeverMapped(t *testing.T) {
+	s := openTestStore(t)
+	_ = s.UpsertDevice(store.Device{DeviceID: "d", IP: "1.2.3.4", Model: "m", TunerCount: 1, StreamPort: 5004, LastSeen: time.Now()})
+	_ = s.SyncLineup("d", []store.Channel{{DeviceID: "d", GuideNumber: "5.1", Name: "A"}, {DeviceID: "d", GuideNumber: "9.1", Name: "B"}})
+	chans, _ := s.ListChannels(false)
+	a, b := chans[0], chans[1]
+	if err := s.UpdateChannel(b.ID, true, store.NoGuide); err != nil { // admin: no guide
+		t.Fatal(err)
+	}
+	if ok, err := s.AutoMapChannel(a.ID, "hd:1"); err != nil || !ok {
+		t.Fatalf("map never-mapped: %v %v", ok, err)
+	}
+	if ok, _ := s.AutoMapChannel(b.ID, "hd:2"); ok {
+		t.Fatal("overwrote the admin's no-guide choice")
+	}
+	if ok, _ := s.AutoMapChannel(a.ID, "hd:3"); ok {
+		t.Fatal("overwrote an existing mapping")
+	}
+	got, _ := s.ChannelByID(a.ID)
+	if got.EPGChannelID != "hd:1" || got.Enabled {
+		t.Fatalf("a=%+v (Enabled must be untouched)", got)
+	}
+}

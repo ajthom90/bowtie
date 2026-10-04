@@ -123,6 +123,7 @@ type Service struct {
 	captures  map[int64]*capture // in-flight captures by recording ID
 	deleting  map[int64]bool     // Delete in progress: never start a capture
 	tickMu    sync.Mutex         // one Tick at a time; Shutdown waits for it
+	rulesMu   sync.Mutex         // one ApplyRules at a time
 	convQueue chan int64
 	queued    map[int64]bool
 	lastSweep time.Time
@@ -390,29 +391,45 @@ func (s *Service) StopNow(id int64) error {
 // Delete cancels a scheduled recording or removes a finished one, with its
 // files. An upcoming episode a series rule scheduled is marked skipped
 // instead, so the rule doesn't schedule it again.
-func (s *Service) Delete(id int64) error {
+func (s *Service) Delete(id int64) error { return s.delete(id, true) }
+
+// CancelRule removes a series rule's upcoming episodes (stopping any that is
+// capturing). Recorded ones stay.
+func (s *Service) CancelRule(ruleID int64) {
+	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		if r.RuleID == ruleID {
+			_ = s.delete(r.ID, false)
+		}
+	}
+}
+
+func (s *Service) delete(id int64, allowSkip bool) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil {
 		return err
 	}
-	if r.RuleID != 0 && r.State == store.RecScheduled {
-		r.State, r.Failure, r.FailureDetail = store.RecFailed, "skipped", "Skipped"
-		return s.deps.Store.UpdateRecording(r)
-	}
 	s.mu.Lock()
-	s.deleting[id] = true
+	s.deleting[id] = true // no capture may start for this row from here on
+	c := s.captures[id]
+	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		delete(s.deleting, id)
 		s.mu.Unlock()
 	}()
-	c := s.captures[id]
-	if c != nil {
-		c.shutdown = true // don't finalize: the row is going away
-		c.cancel()
+	if allowSkip && r.RuleID != 0 && r.State == store.RecScheduled && c == nil {
+		r.State, r.Failure, r.FailureDetail = store.RecFailed, "skipped", "Skipped"
+		return s.deps.Store.UpdateRecording(r)
 	}
-	s.mu.Unlock()
 	if c != nil {
+		s.mu.Lock()
+		c.shutdown = true // don't finalize: the row is going away
+		s.mu.Unlock()
+		c.cancel()
 		<-c.done
 	}
 	if err := s.deps.Store.DeleteRecording(id); err != nil {
@@ -791,10 +808,13 @@ func (s *Service) sweep() {
 		if watching, _ := s.deps.Store.RecordingWatchedSince(r.ID, s.deps.Clock().Add(-inUseWindow)); watching {
 			continue
 		}
+		holdsFiles := r.SizeBytes > 0 || (r.Dir != "" && dirSize(r.Dir) > 0)
 		log.Printf("dvr: low on space (%d bytes free): deleting %q (%s)", free, r.Title, r.Start.Format(time.RFC3339))
 		if err := s.Delete(r.ID); err == nil {
-			deleted++
-			lastFree = free
+			if holdsFiles { // only deletions that should free space count
+				deleted++
+				lastFree = free
+			}
 			if s.onDeleted != nil {
 				s.onDeleted()
 			}

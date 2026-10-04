@@ -27,7 +27,6 @@ func (m *Manager) enforceParental(now time.Time) {
 		userID, channelID int64
 	}
 	m.mu.Lock()
-	m.lastParental = now
 	for id, b := range m.blocked {
 		if now.Sub(b.at) > blockedKeep {
 			delete(m.blocked, id)

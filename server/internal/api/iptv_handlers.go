@@ -107,7 +107,7 @@ func (s *Server) handleIPTVPlaylist(w http.ResponseWriter, r *http.Request) {
 			logo = icons[c.EPGChannelID]
 		}
 		fmt.Fprintf(&b, "#EXTINF:-1 tvg-id=\"%s\" tvg-chno=\"%s\" tvg-name=\"%s\" tvg-logo=\"%s\" group-title=\"Bowtie\",%s\n%s/stream/%d\n",
-			iptvChannelID(c.ID), c.GuideNumber, attr(c.Name), logo, oneLine(c.Name), base, c.ID)
+			iptvChannelID(c.ID), attr(c.GuideNumber), attr(c.Name), attr(logo), oneLine(c.Name), base, c.ID)
 	}
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))

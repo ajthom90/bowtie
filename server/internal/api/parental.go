@@ -28,19 +28,43 @@ func policyFor(u store.User) parental.Policy {
 	return p
 }
 
-// callerPolicy loads the signed-in user's policy (unrestricted on error: the
-// caller is authenticated, and every enforcing path re-checks with the user
-// it loaded itself).
+// callerPolicy loads the signed-in user's policy. It fails closed: an
+// account that can't be loaded (deleted while its token is still valid, or a
+// database error) is allowed nothing.
 func (s *Server) callerPolicy(r *http.Request) parental.Policy {
 	claims, ok := auth.ClaimsFrom(r.Context())
 	if !ok {
-		return parental.Policy{}
+		return parental.BlockAll()
 	}
 	u, err := s.deps.Store.UserByID(claims.UserID)
 	if err != nil {
-		return parental.Policy{}
+		return parental.BlockAll()
 	}
 	return policyFor(u)
+}
+
+// windowRating is the strictest rating among guide programs on channelID
+// overlapping [start, stop) — what a manual recording of that window holds.
+func (s *Server) windowRating(r *http.Request, channelID int64, start, stop time.Time) string {
+	if s.deps.EPG == nil {
+		return ""
+	}
+	guide, err := s.deps.EPG.Guide(r.Context(), start, stop)
+	if err != nil {
+		return ""
+	}
+	best := ""
+	for _, g := range guide {
+		if g.ChannelID != channelID {
+			continue
+		}
+		for _, p := range g.Programs {
+			if p.Start.Before(stop) && start.Before(p.Stop) && parental.Level(p.Rating) > parental.Level(best) {
+				best = p.Rating
+			}
+		}
+	}
+	return best
 }
 
 // writeParentalBlock answers 403 {"error", "code": "parental"}.

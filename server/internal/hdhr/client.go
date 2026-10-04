@@ -37,14 +37,14 @@ type LineupEntry struct {
 
 // TunerStatus is one tuner entry from /status.json.
 type TunerStatus struct {
-	Resource               string `json:"Resource"`
-	VctNumber              string `json:"VctNumber"`
-	VctName                string `json:"VctName"`
-	Frequency              int64  `json:"Frequency"`
-	SignalStrengthPercent  int    `json:"SignalStrengthPercent"`
-	SignalQualityPercent   int    `json:"SignalQualityPercent"`
-	SymbolQualityPercent   int    `json:"SymbolQualityPercent"`
-	TargetIP               string `json:"TargetIP"`
+	Resource              string `json:"Resource"`
+	VctNumber             string `json:"VctNumber"`
+	VctName               string `json:"VctName"`
+	Frequency             int64  `json:"Frequency"`
+	SignalStrengthPercent int    `json:"SignalStrengthPercent"`
+	SignalQualityPercent  int    `json:"SignalQualityPercent"`
+	SymbolQualityPercent  int    `json:"SymbolQualityPercent"`
+	TargetIP              string `json:"TargetIP"`
 }
 
 // DefaultHTTPClient is used by Fetch* helpers. Tests may replace it.

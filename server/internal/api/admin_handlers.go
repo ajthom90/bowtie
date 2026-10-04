@@ -348,7 +348,7 @@ func adminChannelToJSON(c store.Channel) adminChannelJSON {
 		GuideNumber:  c.GuideNumber,
 		Name:         c.Name,
 		Enabled:      c.Enabled,
-		EPGChannelID: c.EPGChannelID,
+		EPGChannelID: strings.TrimPrefix(c.EPGChannelID, store.NoGuide),
 	}
 }
 
@@ -531,6 +531,11 @@ func (s *Server) handleAdminPatchChannel(w http.ResponseWriter, r *http.Request)
 	}
 	if req.EPGChannelID != nil {
 		ch.EPGChannelID = *req.EPGChannelID
+		if ch.EPGChannelID == "" {
+			// An admin clearing the mapping means "no guide": keep automatic
+			// mapping (free HDHomeRun guide) from filling it back in.
+			ch.EPGChannelID = store.NoGuide
+		}
 	}
 	if err := s.deps.Store.UpdateChannel(ch.ID, ch.Enabled, ch.EPGChannelID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

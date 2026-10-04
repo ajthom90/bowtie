@@ -16,7 +16,8 @@ var ErrNotJoinable = errors.New("session can't be joined")
 
 // Join adds user's viewer to an existing session (SharePlay: everyone in a
 // group plays the sharer's playlist, so their program dates agree). Account
-// limits apply; the viewer's quality ceiling is its own negotiated one.
+// limits apply. The viewer's ceiling is its own negotiated one, but a
+// single-rung session above it still plays (the group shares one stream).
 func (m *Manager) Join(_ context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (ViewerHandle, error) {
 	ch, err := m.store.ChannelByID(channelID)
 	if err != nil || (!ch.Enabled && user.Role != "admin") {
