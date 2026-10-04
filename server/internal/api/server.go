@@ -6,6 +6,7 @@ import (
 
 	"github.com/ajthom90/bowtie/server/internal/auth"
 	"github.com/ajthom90/bowtie/server/internal/config"
+	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -35,6 +36,8 @@ type Deps struct {
 	// both zero so the client uses the SD default base URL).
 	SDBaseURL string
 	SDHTTP    *http.Client
+	// DVR schedules and records (nil: recording endpoints answer 503).
+	DVR *dvr.Service
 }
 
 // Server is the HTTP API surface.
@@ -85,6 +88,14 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("POST /api/v1/me/password", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleChangePassword)))
 	handle("PUT /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(true)))
 	handle("DELETE /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(false)))
+	handle("GET /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListRecordings)))
+	handle("POST /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateRecording)))
+	handle("PATCH /api/v1/recordings/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePatchRecording)))
+	handle("DELETE /api/v1/recordings/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeleteRecording)))
+	handle("POST /api/v1/recordings/{id}/stop", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleStopRecording)))
+	handle("POST /api/v1/recordings/{id}/play", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePlayRecording)))
+	handle("PUT /api/v1/recordings/{id}/position", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecordingPosition)))
+	handleFunc("GET /api/v1/recordings/{id}/hls/{file}", s.handleRecordingFile)
 	handle("GET /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecents)))
 	handle("DELETE /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleClearRecents)))
 

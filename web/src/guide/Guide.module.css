@@ -567,3 +567,39 @@
   text-transform: uppercase;
   color: var(--alert);
 }
+
+/* DVR: red dot on scheduled/recorded programs; "● REC" while recording. */
+.recMark {
+  color: var(--alert);
+  margin-right: 0.3rem;
+  font-size: 0.7rem;
+  vertical-align: 0.05em;
+}
+
+.recLive {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Dismissible notice under the toolbar (e.g. the usesAllTuners warning). */
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .notice {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+  }
+}

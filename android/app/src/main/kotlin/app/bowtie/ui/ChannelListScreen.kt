@@ -20,10 +20,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -55,8 +59,11 @@ import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
+import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
+import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
+import app.bowtie.core.RecordingLogic
 import app.bowtie.core.User
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -74,8 +81,13 @@ fun ChannelListScreen(
     playerViewModel: PlayerViewModel,
     onOpenChannel: (Channel) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRecordings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val snackbar = remember { SnackbarHostState() }
+    /** Channel whose long-press menu (favorite + record) is open; read live from [state]. */
+    var actionSheetId by remember { mutableStateOf<Long?>(null) }
+    var conflict by remember { mutableStateOf<PendingConflict?>(null) }
     val state by channelListViewModel.state.collectAsStateWithLifecycle()
     val playingChannel by playerViewModel.currentChannel.collectAsStateWithLifecycle()
     val channelsStale by playerViewModel.channelsStale.collectAsStateWithLifecycle()
@@ -117,133 +129,289 @@ fun ChannelListScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(BowtieColors.bg),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text(
-                    text = "Channels",
-                    style = BowtieType.title,
-                    color = BowtieColors.text,
-                )
-                Text(
-                    text = user.username,
-                    style = BowtieType.label,
-                    color = BowtieColors.dim,
-                )
-            }
-            TextButton(onClick = onOpenSettings) {
-                Text("Settings", color = BowtieColors.amber)
+    fun record(channelId: Long, program: GuideProgram, force: Boolean) {
+        scope.launch {
+            when (val result = channelListViewModel.record(channelId, program, force)) {
+                is ChannelListViewModel.ScheduleResult.Scheduled -> {
+                    val line = "Set to record: ${program.title}"
+                    snackbar.showSnackbar(result.warning?.let { "$line. $it" } ?: line)
+                }
+                is ChannelListViewModel.ScheduleResult.Conflict ->
+                    conflict = PendingConflict(channelId, program, result.error)
+                is ChannelListViewModel.ScheduleResult.Failed -> snackbar.showSnackbar(result.message)
             }
         }
+    }
 
-        HorizontalDivider(color = BowtieColors.line)
-
-        PullToRefreshBox(
-            isRefreshing = refreshing || state is ChannelListViewModel.LoadState.Loading,
-            onRefresh = {
-                scope.launch {
-                    refreshing = true
-                    try {
-                        channelListViewModel.refresh()
-                    } finally {
-                        refreshing = false
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BowtieColors.bg),
         ) {
-            when (val s = state) {
-                is ChannelListViewModel.LoadState.Loading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(color = BowtieColors.amber)
-                    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        text = "Channels",
+                        style = BowtieType.title,
+                        color = BowtieColors.text,
+                    )
+                    Text(
+                        text = user.username,
+                        style = BowtieType.label,
+                        color = BowtieColors.dim,
+                    )
                 }
-                is ChannelListViewModel.LoadState.Empty -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = EMPTY_COPY,
-                            style = BowtieType.body,
-                            color = BowtieColors.dim,
-                            modifier = Modifier.padding(BowtieDimens.screenPadding),
-                        )
+                Row {
+                    TextButton(onClick = onOpenRecordings) {
+                        Text("Recordings", color = BowtieColors.amber)
                     }
-                }
-                is ChannelListViewModel.LoadState.Failed -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(BowtieDimens.screenPadding),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            text = s.message,
-                            style = BowtieType.body,
-                            color = BowtieColors.alert,
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        TextButton(onClick = {
-                            scope.launch { channelListViewModel.refresh() }
-                        }) {
-                            Text("Try again", color = BowtieColors.amber)
-                        }
-                    }
-                }
-                is ChannelListViewModel.LoadState.Loaded -> {
-                    val favorites = s.favorites
-                    val others = s.others
-                    val showStars = s.favoritesSupported
-                    val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
-                        ChannelRow(
-                            row = row,
-                            isPlaying = playingChannel?.id == row.channel.id,
-                            showStar = showStars,
-                            onClick = { onOpenChannel(row.channel) },
-                            onToggleFavorite = { channelListViewModel.toggleFavorite(row.id) },
-                        )
-                        HorizontalDivider(color = BowtieColors.line)
-                    }
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        if (showStars && recents.isNotEmpty()) {
-                            item(key = "recent-row") {
-                                RecentRow(
-                                    recents = recents,
-                                    onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
-                                )
-                                HorizontalDivider(color = BowtieColors.line)
-                            }
-                        }
-                        if (favorites.isNotEmpty()) {
-                            stickyHeader(key = "header-favorites") {
-                                SectionHeader("Favorites")
-                            }
-                            items(favorites, key = { it.id }) { channelRow(it) }
-                            if (others.isNotEmpty()) {
-                                stickyHeader(key = "header-channels") {
-                                    SectionHeader("Channels")
-                                }
-                            }
-                        }
-                        items(others, key = { it.id }) { channelRow(it) }
+                    TextButton(onClick = onOpenSettings) {
+                        Text("Settings", color = BowtieColors.amber)
                     }
                 }
             }
+
+            HorizontalDivider(color = BowtieColors.line)
+
+            PullToRefreshBox(
+                isRefreshing = refreshing || state is ChannelListViewModel.LoadState.Loading,
+                onRefresh = {
+                    scope.launch {
+                        refreshing = true
+                        try {
+                            channelListViewModel.refresh()
+                        } finally {
+                            refreshing = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when (val s = state) {
+                    is ChannelListViewModel.LoadState.Loading -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(color = BowtieColors.amber)
+                        }
+                    }
+                    is ChannelListViewModel.LoadState.Empty -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = EMPTY_COPY,
+                                style = BowtieType.body,
+                                color = BowtieColors.dim,
+                                modifier = Modifier.padding(BowtieDimens.screenPadding),
+                            )
+                        }
+                    }
+                    is ChannelListViewModel.LoadState.Failed -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(BowtieDimens.screenPadding),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = s.message,
+                                style = BowtieType.body,
+                                color = BowtieColors.alert,
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            TextButton(onClick = {
+                                scope.launch { channelListViewModel.refresh() }
+                            }) {
+                                Text("Try again", color = BowtieColors.amber)
+                            }
+                        }
+                    }
+                    is ChannelListViewModel.LoadState.Loaded -> {
+                        val favorites = s.favorites
+                        val others = s.others
+                        val showStars = s.favoritesSupported
+                        val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
+                            ChannelRow(
+                                row = row,
+                                isPlaying = playingChannel?.id == row.channel.id,
+                                showStar = showStars,
+                                onClick = { onOpenChannel(row.channel) },
+                                onToggleFavorite = { channelListViewModel.toggleFavorite(row.id) },
+                                onLongClick = { actionSheetId = row.id },
+                            )
+                            HorizontalDivider(color = BowtieColors.line)
+                        }
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            if (showStars && recents.isNotEmpty()) {
+                                item(key = "recent-row") {
+                                    RecentRow(
+                                        recents = recents,
+                                        onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
+                                    )
+                                    HorizontalDivider(color = BowtieColors.line)
+                                }
+                            }
+                            if (favorites.isNotEmpty()) {
+                                stickyHeader(key = "header-favorites") {
+                                    SectionHeader("Favorites")
+                                }
+                                items(favorites, key = { it.id }) { channelRow(it) }
+                                if (others.isNotEmpty()) {
+                                    stickyHeader(key = "header-channels") {
+                                        SectionHeader("Channels")
+                                    }
+                                }
+                            }
+                            items(others, key = { it.id }) { channelRow(it) }
+                        }
+                    }
+                }
+            }
+        }
+        SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter))
+    }
+
+    val loaded = state as? ChannelListViewModel.LoadState.Loaded
+    val sheetRow = actionSheetId?.let { id -> loaded?.rows?.firstOrNull { it.id == id } }
+    if (actionSheetId != null && sheetRow == null) {
+        // The channel left the list (refresh/empty/failed): close the menu.
+        LaunchedEffect(actionSheetId) { actionSheetId = null }
+    }
+    sheetRow?.let { row ->
+        ModalBottomSheet(
+            onDismissRequest = { actionSheetId = null },
+            containerColor = BowtieColors.surface,
+        ) {
+            ChannelActionSheet(
+                row = row,
+                showFavorite = loaded?.favoritesSupported == true,
+                onWatch = {
+                    actionSheetId = null
+                    onOpenChannel(row.channel)
+                },
+                onToggleFavorite = {
+                    actionSheetId = null
+                    channelListViewModel.toggleFavorite(row.id)
+                },
+                onRecord = { program ->
+                    actionSheetId = null
+                    record(row.channel.id, program, force = false)
+                },
+            )
+        }
+    }
+
+    conflict?.let { c ->
+        AlertDialog(
+            onDismissRequest = { conflict = null },
+            title = { Text("Not enough tuners") },
+            text = { Text(RecordingLogic.conflictMessage(c.error)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    conflict = null
+                    record(c.channelId, c.program, force = true)
+                }) { Text("Record anyway", color = BowtieColors.amber) }
+            },
+            dismissButton = {
+                TextButton(onClick = { conflict = null }) {
+                    Text("Don't record", color = BowtieColors.text)
+                }
+            },
+            containerColor = BowtieColors.surface,
+        )
+    }
+}
+
+/** A 409 waiting on "Record anyway". */
+private data class PendingConflict(
+    val channelId: Long,
+    val program: GuideProgram,
+    val error: BowtieError.RecordingConflict,
+)
+
+/**
+ * Long-press menu on a channel: watch, add/remove favorite (when the server
+ * supports favorites), and record what's on now or next.
+ */
+@Composable
+private fun ChannelActionSheet(
+    row: ChannelListViewModel.Row,
+    showFavorite: Boolean,
+    onWatch: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onRecord: (GuideProgram) -> Unit,
+) {
+    Column(modifier = Modifier.padding(bottom = 24.dp)) {
+        Text(
+            text = "${row.channel.guideNumber} ${row.channel.name}",
+            style = BowtieType.title,
+            color = BowtieColors.text,
+            modifier = Modifier.padding(horizontal = BowtieDimens.screenPadding, vertical = 8.dp),
+        )
+        SheetItem(text = "Watch", onClick = onWatch)
+        if (showFavorite) {
+            SheetItem(
+                text = if (row.isFavorite) "Remove from favorites" else "Add to favorites",
+                onClick = onToggleFavorite,
+            )
+        }
+        val programs = listOfNotNull(
+            row.nowNext.now?.let { "On now" to it },
+            row.nowNext.next?.let { "Next" to it },
+        )
+        if (programs.isEmpty()) {
+            Text(
+                text = "No guide data, so there's nothing to record.",
+                style = BowtieType.label,
+                color = BowtieColors.dim,
+                modifier = Modifier.padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+            )
+        }
+        programs.forEach { (whenLabel, program) ->
+            val window = RecordingLogic.formatWhen(program.start, program.stop)
+            if (program.recording != null) {
+                SheetItem(
+                    text = "Set to record: ${program.title}",
+                    detail = "$whenLabel · $window · manage it in Recordings",
+                    onClick = null,
+                )
+            } else {
+                SheetItem(
+                    text = "Record \"${program.title}\"",
+                    detail = "$whenLabel · $window",
+                    onClick = { onRecord(program) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetItem(text: String, detail: String? = null, onClick: (() -> Unit)?) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
+    ) {
+        Text(
+            text = text,
+            style = BowtieType.body,
+            color = if (onClick != null) BowtieColors.text else BowtieColors.dim,
+        )
+        if (detail != null) {
+            Text(detail, style = BowtieType.label, color = BowtieColors.dim)
         }
     }
 }
@@ -334,6 +502,7 @@ private fun ChannelRow(
     showStar: Boolean,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     val now = row.nowNext.now
@@ -346,14 +515,11 @@ private fun ChannelRow(
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
-                onLongClickLabel = if (row.isFavorite) "Remove from favorites" else "Add to favorites",
-                onLongClick = if (showStar) {
-                    {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onToggleFavorite()
-                    }
-                } else {
-                    null
+                // One menu for both features: favorite/unfavorite and record.
+                onLongClickLabel = if (showStar) "Favorite or record" else "Record",
+                onLongClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
                 },
             )
             // Last tune got no signal: dim (still tappable; signal may return).
@@ -386,11 +552,14 @@ private fun ChannelRow(
             }
             if (now != null) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = now.title,
-                    style = BowtieType.body.copy(color = BowtieColors.text),
-                    maxLines = 1,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RecordMark(now)
+                    Text(
+                        text = now.title,
+                        style = BowtieType.body.copy(color = BowtieColors.text),
+                        maxLines = 1,
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
                 ProgressCapsule(progress = progress)
             } else {
@@ -403,18 +572,33 @@ private fun ChannelRow(
             }
             if (next != null) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Next: ${next.title}",
-                    style = BowtieType.label,
-                    color = BowtieColors.dim,
-                    maxLines = 1,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RecordMark(next)
+                    Text(
+                        text = "Next: ${next.title}",
+                        style = BowtieType.label,
+                        color = BowtieColors.dim,
+                        maxLines = 1,
+                    )
+                }
             }
         }
         if (showStar) {
             FavoriteStar(isFavorite = row.isFavorite, onToggle = onToggleFavorite)
         }
     }
+}
+
+/** Red dot before a program that's set to record. */
+@Composable
+private fun RecordMark(program: GuideProgram) {
+    if (program.recording == null) return
+    Text(
+        text = "● ",
+        style = BowtieType.label,
+        color = BowtieColors.alert,
+        modifier = Modifier.semantics { contentDescription = "Set to record" },
+    )
 }
 
 /** Amber-fill progress track for the airing program. */

@@ -36,6 +36,84 @@ export interface GuideProgram {
   subtitle: string
   description: string
   category: string
+  /** Present when this program is scheduled, recording or recorded. */
+  recording?: GuideRecordingMark
+}
+
+// ── DVR (OpenAPI tag dvr) ──────────────────────────────────────────────────
+
+/** GuideProgram.recording: the recording that covers this program. */
+export interface GuideRecordingMark {
+  id: number
+  state: string
+}
+
+export type RecordingState =
+  | 'scheduled'
+  | 'waiting'
+  | 'recording'
+  | 'converting'
+  | 'ready'
+  | 'failed'
+
+export type RecordingFailure = '' | 'noTuner' | 'noSignal' | 'diskFull' | 'error'
+
+export interface Recording {
+  id: number
+  title: string
+  subtitle: string
+  description: string
+  category: string
+  channelId: number
+  channelName: string
+  start: string
+  stop: string
+  /** waiting = inside its window, retrying for a free tuner. */
+  state: RecordingState
+  /** More than a minute is missing. */
+  partial: boolean
+  failure: RecordingFailure
+  failureDetail: string
+  durationSec: number
+  sizeBytes: number
+  /** Never deleted automatically when space runs low. */
+  protected: boolean
+  /** The caller's resume position. */
+  positionSec: number
+  scheduledBy: string
+  /** The caller may stop, delete or protect it (scheduler or admin). */
+  canManage: boolean
+}
+
+/** GET /recordings?state= filter. */
+export type RecordingsFilter = 'upcoming' | 'recorded' | 'failed'
+
+/** POST /recordings: a guide program, or a manual window. */
+export type CreateRecordingRequest =
+  | { channelId: number; programStart: string; force?: boolean }
+  | { channelId: number; start: string; stop: string; title?: string; force?: boolean }
+
+export interface RecordingWarning {
+  code: 'usesAllTuners' | string
+  message: string
+}
+
+export interface CreateRecordingResponse {
+  recording: Recording
+  warnings: RecordingWarning[]
+}
+
+/** 409 body from POST /recordings (on ApiError.body). */
+export interface RecordingConflict {
+  error: string
+  tunerCount: number
+  conflicts: Recording[]
+}
+
+export interface PlayRecordingResponse {
+  playlistUrl: string
+  positionSec: number
+  durationSec: number
 }
 
 export interface GuideChannel {
@@ -366,6 +444,42 @@ export class ApiClient {
       // ignore parse errors
     }
     throw new ApiError(res.status, msg || 'heartbeat failed')
+  }
+
+  // ── DVR ──────────────────────────────────────────────────────────────────
+
+  async listRecordings(state?: RecordingsFilter): Promise<Recording[]> {
+    const q = state ? `?${new URLSearchParams({ state })}` : ''
+    return this.request<Recording[]>('GET', `/api/v1/recordings${q}`)
+  }
+
+  /** 409 → ApiError whose body is a RecordingConflict; resend with force. */
+  async createRecording(body: CreateRecordingRequest): Promise<CreateRecordingResponse> {
+    return this.request<CreateRecordingResponse>('POST', '/api/v1/recordings', body)
+  }
+
+  async patchRecording(id: number, body: { protected?: boolean }): Promise<Recording> {
+    return this.request<Recording>('PATCH', `/api/v1/recordings/${id}`, body)
+  }
+
+  /** Cancels a scheduled recording, or deletes a recording and its files. */
+  async deleteRecording(id: number): Promise<void> {
+    await this.request<void>('DELETE', `/api/v1/recordings/${id}`)
+  }
+
+  /** Stops a recording now and keeps what was recorded. */
+  async stopRecording(id: number): Promise<void> {
+    await this.request<void>('POST', `/api/v1/recordings/${id}/stop`)
+  }
+
+  async playRecording(id: number): Promise<PlayRecordingResponse> {
+    return this.request<PlayRecordingResponse>('POST', `/api/v1/recordings/${id}/play`)
+  }
+
+  async setRecordingPosition(id: number, positionSec: number): Promise<void> {
+    await this.request<void>('PUT', `/api/v1/recordings/${id}/position`, {
+      positionSec: Math.max(0, Math.floor(positionSec)),
+    })
   }
 
   // ── Admin endpoints ──────────────────────────────────────────────────────

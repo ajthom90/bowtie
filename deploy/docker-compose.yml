@@ -22,6 +22,9 @@ services:
     volumes:
       # Persistent state: SQLite, config.yaml, JWT secrets, etc.
       - bowtie-data:/data
+      # DVR recordings default to /data/recordings. To keep them on their own
+      # disk or dataset, mount it and set BOWTIE_RECORDINGS_DIR below:
+      # - /mnt/media/recordings:/recordings
     # HLS segments are short-lived and high-churn. Keep them on tmpfs so they
     # never hit the data volume, avoid SSD wear, and disappear on container
     # restart (sessions recreate segments from the live tuner stream).
@@ -49,6 +52,8 @@ services:
       # Infra (always honored):
       BOWTIE_DATA_DIR: /data
       # BOWTIE_DEVICES: 192.168.1.50   # optional tuner IP seed
+      # BOWTIE_RECORDINGS_DIR: /recordings  # DVR recordings (default /data/recordings)
+      # BOWTIE_DVR_MIN_FREE_GB: "20"        # delete oldest unkept recordings below this
       # Product settings — first-boot seeds only (Admin → Settings is control plane):
       # BOWTIE_ENCODER: auto          # auto|qsv|vaapi|nvenc|software|videotoolbox
 

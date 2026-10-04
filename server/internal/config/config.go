@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,12 @@ type Config struct {
 	// DisableMultitrack turns off captions, extra audio and the 5.1 option
 	// (video + first audio as AAC). Env BOWTIE_MULTITRACK=off|0|false.
 	DisableMultitrack bool `yaml:"disableMultitrack"`
+	// RecordingsDir holds DVR recordings (default <DataDir>/recordings; never
+	// the segment tmpfs). Env BOWTIE_RECORDINGS_DIR.
+	RecordingsDir string `yaml:"recordingsDir"`
+	// DVRMinFreeGB: the DVR deletes the oldest unprotected recordings while
+	// free space is below this (default 20; 0 = never). Env BOWTIE_DVR_MIN_FREE_GB.
+	DVRMinFreeGB int `yaml:"dvrMinFreeGB"`
 	XMLTV             struct {
 		Source       string `yaml:"source"`       // file path or http(s) URL
 		RefreshHours int    `yaml:"refreshHours"` // default 12
@@ -35,7 +42,8 @@ type Config struct {
 
 // Load reads <dataDir>/config.yaml if present, applies defaults, then env overrides.
 // Env vars: BOWTIE_LISTEN_ADDR, BOWTIE_FFMPEG_PATH, BOWTIE_ENCODER, BOWTIE_SEGMENT_DIR,
-// BOWTIE_DEVICES (comma-separated), BOWTIE_MULTITRACK (off|0|false disables).
+// BOWTIE_DEVICES (comma-separated), BOWTIE_MULTITRACK (off|0|false disables),
+// BOWTIE_RECORDINGS_DIR, BOWTIE_DVR_MIN_FREE_GB.
 func Load(dataDir string) (Config, error) {
 	cfg := Config{
 		ListenAddr: ":8400",
@@ -43,6 +51,9 @@ func Load(dataDir string) (Config, error) {
 		SegmentDir: filepath.Join(dataDir, "segments"),
 		FFmpegPath: "ffmpeg",
 		Encoder:    "auto",
+		// DVR defaults (yaml/env may override).
+		RecordingsDir: filepath.Join(dataDir, "recordings"),
+		DVRMinFreeGB:  20,
 	}
 	cfg.XMLTV.RefreshHours = 12
 
@@ -59,6 +70,9 @@ func Load(dataDir string) (Config, error) {
 		}
 		if cfg.SegmentDir == "" {
 			cfg.SegmentDir = filepath.Join(dataDir, "segments")
+		}
+		if cfg.RecordingsDir == "" {
+			cfg.RecordingsDir = filepath.Join(dataDir, "recordings")
 		}
 		if cfg.FFmpegPath == "" {
 			cfg.FFmpegPath = "ffmpeg"
@@ -84,6 +98,14 @@ func Load(dataDir string) (Config, error) {
 	}
 	if v := os.Getenv("BOWTIE_SEGMENT_DIR"); v != "" {
 		cfg.SegmentDir = v
+	}
+	if v := os.Getenv("BOWTIE_RECORDINGS_DIR"); v != "" {
+		cfg.RecordingsDir = v
+	}
+	if v := os.Getenv("BOWTIE_DVR_MIN_FREE_GB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.DVRMinFreeGB = n
+		}
 	}
 	switch strings.ToLower(os.Getenv("BOWTIE_MULTITRACK")) {
 	case "off", "0", "false":

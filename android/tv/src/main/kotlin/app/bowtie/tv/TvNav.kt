@@ -29,11 +29,14 @@ import app.bowtie.core.User
 import app.bowtie.core.vm.AppViewModel
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
+import app.bowtie.core.vm.RecordingsViewModel
 import app.bowtie.tv.ui.ChannelRailScreen
 import app.bowtie.tv.ui.ConnectScreen
 import app.bowtie.tv.ui.LoginScreen
 import app.bowtie.tv.ui.SettingsScreen
 import app.bowtie.tv.ui.TvPlayerScreen
+import app.bowtie.tv.ui.TvRecordingPlayerScreen
+import app.bowtie.tv.ui.TvRecordingsScreen
 import okhttp3.HttpUrl
 
 /** In-app routes once [AppViewModel.Phase.Ready]. */
@@ -41,6 +44,11 @@ private sealed class ReadyRoute {
     data object Channels : ReadyRoute()
     data object Settings : ReadyRoute()
     data class Player(val channel: Channel, val nowTitle: String?) : ReadyRoute()
+    data object Recordings : ReadyRoute()
+    data class RecordingPlayer(
+        val start: RecordingsViewModel.PlayStart,
+        val startAtSec: Int,
+    ) : ReadyRoute()
 }
 
 /**
@@ -120,6 +128,11 @@ private fun ReadyShell(
         key = "player-${client.server}",
         factory = factory,
     )
+    val recordingsViewModel: RecordingsViewModel = viewModel(
+        viewModelStoreOwner = owner,
+        key = "recordings-${client.server}",
+        factory = factory,
+    )
 
     var route by remember(client.server) { mutableStateOf<ReadyRoute>(ReadyRoute.Channels) }
     val listState by channelListViewModel.state.collectAsStateWithLifecycle()
@@ -145,6 +158,25 @@ private fun ReadyShell(
                     route = ReadyRoute.Player(channel = channel, nowTitle = nowTitle)
                 },
                 onOpenSettings = { route = ReadyRoute.Settings },
+                onOpenRecordings = { route = ReadyRoute.Recordings },
+                modifier = modifier,
+            )
+        }
+        is ReadyRoute.Recordings -> {
+            TvRecordingsScreen(
+                viewModel = recordingsViewModel,
+                onPlay = { start, at -> route = ReadyRoute.RecordingPlayer(start, at) },
+                onBack = { route = ReadyRoute.Channels },
+                modifier = modifier,
+            )
+        }
+        is ReadyRoute.RecordingPlayer -> {
+            TvRecordingPlayerScreen(
+                start = r.start,
+                startAtSec = r.startAtSec,
+                server = client.server,
+                viewModel = recordingsViewModel,
+                onBack = { route = ReadyRoute.Recordings },
                 modifier = modifier,
             )
         }
@@ -209,6 +241,8 @@ private class ReadyViewModelFactory(
                 ChannelListViewModel(client = client) as T
             modelClass.isAssignableFrom(PlayerViewModel::class.java) ->
                 PlayerViewModel(client = client, caps = caps) as T
+            modelClass.isAssignableFrom(RecordingsViewModel::class.java) ->
+                RecordingsViewModel(client = client) as T
             else -> error("Unknown ViewModel class: ${modelClass.name}")
         }
     }

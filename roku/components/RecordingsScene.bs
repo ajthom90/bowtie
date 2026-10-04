@@ -1,0 +1,565 @@
+' DVR recordings screen. Tabs load GET /recordings?state=… (Missed = failed).
+' OK on a ready recording: POST /play → Resume / Start over → VOD in the
+' Video node (enableUI: Roku's trick-play bar; no BIF thumbnails). The
+' position is saved every 15 s, when the recording finishes, and on Back.
+' * on a row: Stop / Keep / Cancel / Delete for the scheduler or an admin
+' (canManage); Delete asks first because it removes it for everyone.
+' Focus: tabs (left/right) <-> list. Back: playback → list → Home.
+
+import "pkg:/source/lib/Recordings.bs"
+
+sub init()
+    m.upcomingTab = m.top.findNode("upcomingTab")
+    m.recordedTab = m.top.findNode("recordedTab")
+    m.missedTab = m.top.findNode("missedTab")
+    m.tabMarker = m.top.findNode("tabMarker")
+    m.loadingGroup = m.top.findNode("loadingGroup")
+    m.loadingSpinner = m.top.findNode("loadingSpinner")
+    m.messageLabel = m.top.findNode("messageLabel")
+    m.recordingList = m.top.findNode("recordingList")
+    m.hintLabel = m.top.findNode("hintLabel")
+    m.video = m.top.findNode("video")
+    m.positionTimer = m.top.findNode("positionTimer")
+
+    m.tabButtons = [m.upcomingTab, m.recordedTab, m.missedTab]
+    m.tabIndex = 0
+    m.items = []
+    m.observing = false
+    m.reqSeq = 0
+    m.pendingListId = ""
+    m.pendingActionId = ""
+    m.pendingPlayId = ""
+    ' Row to focus after a reload (after an action, or returning from playback).
+    m.restoreIndex = -1
+    m.dialog = invalid
+    m.dialogMode = ""
+    m.menu = []
+    ' Recording the open dialog acts on.
+    m.target = invalid
+    ' {rec, url, positionSec} between POST /play and the Resume dialog.
+    m.pendingPlayback = invalid
+    ' Recording being played, its last known position, and the last one saved.
+    m.playing = invalid
+    m.lastPosition = 0
+    m.lastSaved = -1
+
+    for each b in m.tabButtons
+        b.observeField("buttonSelected", "onTabSelected")
+    end for
+    m.recordingList.observeField("itemSelected", "onItemSelected")
+    m.positionTimer.observeField("fire", "onPositionTimer")
+    m.video.observeField("state", "onVideoState")
+    m.video.observeField("position", "onVideoPosition")
+    m.top.observeField("visible", "onVisible")
+    m.top.observeField("apiTask", "onApiTaskSet")
+end sub
+
+sub onApiTaskSet()
+    observeApi()
+end sub
+
+sub observeApi()
+    unobserveApi()
+    task = m.top.apiTask
+    if task <> invalid
+        task.observeFieldScoped("response", "onApiResponse")
+        m.observing = true
+    end if
+end sub
+
+sub unobserveApi()
+    if m.observing = true
+        task = m.top.apiTask
+        if task <> invalid
+            task.unobserveFieldScoped("response")
+        end if
+        m.observing = false
+    end if
+end sub
+
+sub onVisible()
+    if m.top.visible = true
+        m.top.closed = false
+        observeApi()
+        m.restoreIndex = -1
+        currentTabButton().setFocus(true)
+        loadTab()
+    else
+        ' Leaving (Back, sign-out): save the position before anything else.
+        if m.playing <> invalid then stopPlayback()
+        closeDialog()
+        unobserveApi()
+        setLoading(false)
+    end if
+end sub
+
+' ── Tabs and list ────────────────────────────────────────────────────────────
+
+function currentTab() as string
+    return bowtie.recordings.tabIds()[m.tabIndex]
+end function
+
+function currentTabButton() as object
+    return m.tabButtons[m.tabIndex]
+end function
+
+function focusedTabIndex() as integer
+    for i = 0 to m.tabButtons.count() - 1
+        if m.tabButtons[i].hasFocus() then return i
+    end for
+    return -1
+end function
+
+sub selectTab(index as integer)
+    if index < 0 or index >= m.tabButtons.count() then return
+    m.tabButtons[index].setFocus(true)
+    if index = m.tabIndex then return
+    m.tabIndex = index
+    m.restoreIndex = -1
+    loadTab()
+end sub
+
+sub onTabSelected()
+    ' OK on a tab: show it and move into its list.
+    idx = focusedTabIndex()
+    if idx >= 0 and idx <> m.tabIndex then selectTab(idx)
+    if m.recordingList.visible = true then m.recordingList.setFocus(true)
+end sub
+
+sub loadTab()
+    task = m.top.apiTask
+    if task = invalid then return
+    m.tabMarker.translation = [80 + m.tabIndex * 260, 172]
+    m.reqSeq = m.reqSeq + 1
+    m.pendingListId = "rec-list-" + m.reqSeq.toStr()
+    setLoading(true)
+    task.request = {
+        id: m.pendingListId
+        kind: "recordings"
+        params: { state: bowtie.recordings.tabQuery(currentTab()) }
+    }
+end sub
+
+sub handleListResponse(resp as object)
+    m.pendingListId = ""
+    setLoading(false)
+    if resp.ok <> true
+        m.items = []
+        showMessage(listErrorText(resp.error))
+        return
+    end if
+    m.items = bowtie.recordings.filterForTab(bowtie.recordings.parseList(resp.data), currentTab())
+    renderList()
+end sub
+
+function listErrorText(err as dynamic) as string
+    code = 0
+    if err <> invalid and err.code <> invalid then code = err.code
+    if code = 404 then return "This server doesn't support recordings yet."
+    if code = 503 then return "Recording isn't available on this server."
+    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
+    return "Couldn't load recordings."
+end function
+
+sub renderList()
+    if m.items.count() = 0
+        showMessage(bowtie.recordings.emptyText(currentTab()))
+        return
+    end if
+
+    nowIso = isoNow()
+    offset = localUtcOffset()
+    root = CreateObject("roSGNode", "ContentNode")
+    for each r in m.items
+        item = root.createChild("ContentNode")
+        item.title = bowtie.recordings.titleLine(r)
+        item.addFields({
+            detail: bowtie.recordings.detailLine(r, nowIso, offset)
+            missed: (r.state = "failed")
+        })
+    end for
+    m.messageLabel.visible = false
+    m.recordingList.content = root
+    m.recordingList.visible = true
+
+    idx = m.restoreIndex
+    m.restoreIndex = -1
+    if idx >= m.items.count() then idx = m.items.count() - 1
+    if idx >= 0
+        m.recordingList.jumpToItem = idx
+        ' Never pull focus out from under an open dialog.
+        if m.dialog = invalid then m.recordingList.setFocus(true)
+    end if
+    ensureFocus()
+end sub
+
+sub showMessage(text as string)
+    if m.recordingList.hasFocus() and m.dialog = invalid then currentTabButton().setFocus(true)
+    m.recordingList.visible = false
+    m.messageLabel.text = text
+    m.messageLabel.visible = true
+    ensureFocus()
+end sub
+
+' AppScene focuses this Group itself after showing it; hand focus to the tab
+' row so left/right/down work.
+sub ensureFocus()
+    if m.dialog = invalid and m.top.hasFocus() then currentTabButton().setFocus(true)
+end sub
+
+sub setLoading(on as boolean)
+    m.loadingGroup.visible = on
+    if on
+        m.loadingSpinner.control = "start"
+        m.messageLabel.visible = false
+    else
+        m.loadingSpinner.control = "stop"
+    end if
+end sub
+
+function focusedRecording() as dynamic
+    idx = m.recordingList.itemFocused
+    if idx = invalid or idx < 0 or idx >= m.items.count() then return invalid
+    return m.items[idx]
+end function
+
+sub onItemSelected()
+    idx = m.recordingList.itemSelected
+    if idx = invalid or idx < 0 or idx >= m.items.count() then return
+    r = m.items[idx]
+    if bowtie.recordings.rowActions(r).play
+        requestPlay(r)
+    else
+        openOptions(r)
+    end if
+end sub
+
+' ── * menu and actions ───────────────────────────────────────────────────────
+
+sub openOptions(r as dynamic)
+    if r = invalid then return
+    m.target = r
+    menu = bowtie.recordings.optionButtons(r)
+    if menu.count() = 0
+        who = r.scheduledBy
+        if who = invalid or who = "" then who = "the person who scheduled it"
+        showDialog("info", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset()), "Only " + who + " or an admin can change this recording."], ["OK"])
+        return
+    end if
+    m.menu = menu
+    showDialog("options", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset())], bowtie.recordings.buttonLabels(menu))
+end sub
+
+sub onDialogButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    mode = m.dialogMode
+    menu = m.menu
+    closeDialog()
+    restoreFocus()
+
+    if mode = "options"
+        choice = bowtie.recordings.buttonId(menu, idx)
+        if choice = "stop"
+            sendAction("stopRecording", { id: m.target.id })
+        else if choice = "keep"
+            sendAction("protectRecording", { id: m.target.id, keep: true })
+        else if choice = "unkeep"
+            sendAction("protectRecording", { id: m.target.id, keep: false })
+        else if choice = "cancel"
+            sendAction("deleteRecording", { id: m.target.id })
+        else if choice = "delete"
+            showDialog("confirmDelete", "Delete recording?", [bowtie.recordings.deleteConfirmText(m.target.title)], ["Delete", "Cancel"])
+        end if
+    else if mode = "confirmDelete"
+        if idx = 0 then sendAction("deleteRecording", { id: m.target.id })
+    else if mode = "resume"
+        pb = m.pendingPlayback
+        m.pendingPlayback = invalid
+        if pb = invalid then return
+        if idx = 0
+            startPlayback(pb.rec, pb.url, pb.positionSec)
+        else if idx = 1
+            startPlayback(pb.rec, pb.url, 0)
+        end if
+    end if
+end sub
+
+sub sendAction(kind as string, params as object)
+    task = m.top.apiTask
+    if task = invalid then return
+    m.reqSeq = m.reqSeq + 1
+    m.pendingActionId = "rec-action-" + m.reqSeq.toStr()
+    m.restoreIndex = m.recordingList.itemFocused
+    task.request = { id: m.pendingActionId, kind: kind, params: params }
+end sub
+
+sub handleActionResponse(resp as object)
+    m.pendingActionId = ""
+    if resp.ok <> true
+        showDialog("error", "Couldn't change the recording", [actionErrorText(resp.error)], ["OK"])
+        return
+    end if
+    loadTab()
+end sub
+
+function actionErrorText(err as dynamic) as string
+    code = 0
+    if err <> invalid and err.code <> invalid then code = err.code
+    if code = 403 then return "Only the person who scheduled it or an admin can do that."
+    if code = 404 then return "That recording is gone."
+    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
+    return "Something went wrong. Try again."
+end function
+
+' ── Playback ─────────────────────────────────────────────────────────────────
+
+sub requestPlay(r as object)
+    task = m.top.apiTask
+    if task = invalid then return
+    m.target = r
+    m.reqSeq = m.reqSeq + 1
+    m.pendingPlayId = "rec-play-" + m.reqSeq.toStr()
+    setLoading(true)
+    task.request = { id: m.pendingPlayId, kind: "playRecording", params: { id: r.id } }
+end sub
+
+sub handlePlayResponse(resp as object)
+    m.pendingPlayId = ""
+    setLoading(false)
+    r = m.target
+    if resp.ok <> true or r = invalid
+        msg = "Couldn't play this recording."
+        if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> "" then msg = resp.error.message
+        showDialog("error", "Can't play", [msg], ["OK"])
+        return
+    end if
+    data = resp.data
+    url = data.playlistUrl
+    if url = invalid or url = ""
+        showDialog("error", "Can't play", ["The server sent no playlist."], ["OK"])
+        return
+    end if
+    durationSec = data.durationSec
+    if durationSec = invalid or durationSec <= 0 then durationSec = r.durationSec
+    decision = bowtie.recordings.resumeDecision(data.positionSec, durationSec)
+    if decision.kind = "ask"
+        m.pendingPlayback = { rec: r, url: url, positionSec: decision.positionSec }
+        label = "Resume from " + bowtie.recordings.formatClock(decision.positionSec)
+        showDialog("resume", bowtie.recordings.titleLine(r), [], [label, "Start over"])
+        return
+    end if
+    startPlayback(r, url, 0)
+end sub
+
+sub startPlayback(r as object, url as string, startSec as integer)
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = url
+    content.streamFormat = "hls"
+    content.title = bowtie.recordings.titleLine(r)
+    if startSec > 0 then content.PlayStart = startSec
+    m.playing = r
+    m.lastPosition = startSec
+    m.lastSaved = startSec
+    m.restoreIndex = m.recordingList.itemFocused
+    m.video.content = content
+    m.video.visible = true
+    m.video.setFocus(true)
+    m.video.control = "play"
+    m.positionTimer.control = "start"
+end sub
+
+' Save (if moved), then stop and return to the list.
+sub stopPlayback()
+    savePosition()
+    m.positionTimer.control = "stop"
+    m.playing = invalid
+    m.video.control = "stop"
+    m.video.content = invalid
+    m.video.visible = false
+    if m.top.visible = true
+        ' Reload so a deleted/converted recording and the focus come back right.
+        loadTab()
+        currentTabButton().setFocus(true)
+    end if
+end sub
+
+sub onVideoPosition()
+    if m.playing = invalid then return
+    p = m.video.position
+    if p <> invalid and p > 0 then m.lastPosition = Int(p)
+end sub
+
+sub onPositionTimer()
+    savePosition()
+end sub
+
+sub savePosition()
+    if m.playing = invalid then return
+    p = m.video.position
+    if p <> invalid and p > 0 then m.lastPosition = Int(p)
+    if m.lastPosition = m.lastSaved then return
+    task = m.top.apiTask
+    if task = invalid then return
+    m.lastSaved = m.lastPosition
+    m.reqSeq = m.reqSeq + 1
+    ' Fire-and-forget: no response handler matches "rec-pos-".
+    task.request = {
+        id: "rec-pos-" + m.reqSeq.toStr()
+        kind: "setRecordingPosition"
+        params: { id: m.playing.id, positionSec: m.lastPosition }
+    }
+end sub
+
+sub onVideoState()
+    if m.playing = invalid then return
+    st = m.video.state
+    if st = "finished"
+        ' The end is saved, so the next open starts over (resumeDecision).
+        r = m.playing
+        if r.durationSec <> invalid and r.durationSec > m.lastPosition then m.lastPosition = r.durationSec
+        stopPlayback()
+    else if st = "error"
+        msg = m.video.errorMsg
+        if msg = invalid then msg = ""
+        stopPlayback()
+        showDialog("error", "Playback failed", [msg], ["OK"])
+    end if
+end sub
+
+' ── Dialogs ──────────────────────────────────────────────────────────────────
+
+sub showDialog(mode as string, title as string, message as object, buttons as object)
+    closeDialog()
+    m.dialogMode = mode
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = title
+    dialog.message = message
+    dialog.buttons = buttons
+    dialog.observeField("buttonSelected", "onDialogButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid then scene.dialog = dialog
+end sub
+
+sub onDialogClosed()
+    m.dialog = invalid
+    m.dialogMode = ""
+    m.pendingPlayback = invalid
+    if m.top.visible = true then restoreFocus()
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    m.dialogMode = ""
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+sub restoreFocus()
+    if m.video.visible = true
+        m.video.setFocus(true)
+    else if m.recordingList.visible = true
+        m.recordingList.setFocus(true)
+    else
+        currentTabButton().setFocus(true)
+    end if
+end sub
+
+' ── API responses ────────────────────────────────────────────────────────────
+
+sub onApiResponse()
+    task = m.top.apiTask
+    if task = invalid then return
+    if m.top.visible <> true then return
+    resp = task.response
+    if resp = invalid or resp.id = invalid then return
+    if resp.id = m.pendingListId and m.pendingListId <> ""
+        handleListResponse(resp)
+    else if resp.id = m.pendingActionId and m.pendingActionId <> ""
+        handleActionResponse(resp)
+    else if resp.id = m.pendingPlayId and m.pendingPlayId <> ""
+        handlePlayResponse(resp)
+    end if
+end sub
+
+' ── Keys ─────────────────────────────────────────────────────────────────────
+
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press <> true then return false
+
+    ' Playing: the Video node's trick-play UI takes the transport keys; Back
+    ' saves the position and returns to the list.
+    if m.video.visible = true
+        if key = "back"
+            stopPlayback()
+            return true
+        end if
+        return false
+    end if
+
+    if key = "back"
+        m.top.closed = true
+        return true
+    end if
+
+    if m.recordingList.hasFocus()
+        if key = "options"
+            openOptions(focusedRecording())
+            return true
+        end if
+        ' MarkupList lets "up" through only from its first item.
+        if key = "up"
+            currentTabButton().setFocus(true)
+            return true
+        end if
+        return false
+    end if
+
+    tabIdx = focusedTabIndex()
+    if tabIdx >= 0
+        if key = "left" and tabIdx > 0
+            selectTab(tabIdx - 1)
+            return true
+        end if
+        if key = "right" and tabIdx < m.tabButtons.count() - 1
+            selectTab(tabIdx + 1)
+            return true
+        end if
+        if key = "down" and m.recordingList.visible = true
+            m.recordingList.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+
+    ' Focus stranded on the Group itself: put it back on the tabs.
+    if m.top.hasFocus()
+        currentTabButton().setFocus(true)
+        return true
+    end if
+
+    return false
+end function
+
+' ── Time ─────────────────────────────────────────────────────────────────────
+
+function isoNow() as string
+    dt = CreateObject("roDateTime")
+    dt.Mark()
+    return dt.ToISOString()
+end function
+
+' Local = UTC + this. GetTimeZoneOffset is minutes from local to UTC (CDT → 300).
+function localUtcOffset() as integer
+    dt = CreateObject("roDateTime")
+    return -dt.GetTimeZoneOffset() * 60
+end function

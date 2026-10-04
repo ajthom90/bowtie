@@ -73,6 +73,8 @@ public struct GuideProgram: Codable, Equatable, Sendable {
     public let subtitle: String
     public let description: String
     public let category: String
+    /// Present when this program is scheduled or recorded (DVR servers).
+    public let recording: RecordingMark?
 
     public init(
         start: Date,
@@ -80,7 +82,8 @@ public struct GuideProgram: Codable, Equatable, Sendable {
         title: String,
         subtitle: String,
         description: String,
-        category: String
+        category: String,
+        recording: RecordingMark? = nil
     ) {
         self.start = start
         self.stop = stop
@@ -88,6 +91,7 @@ public struct GuideProgram: Codable, Equatable, Sendable {
         self.subtitle = subtitle
         self.description = description
         self.category = category
+        self.recording = recording
     }
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -25,7 +26,22 @@ const (
 type Auth struct {
 	Secret []byte
 	Store  *store.Store
+
+	// Recently rotated refresh tokens (hash → result), so a repeat refresh
+	// within refreshReuseWindow gets the same new token instead of a 401.
+	mu      sync.Mutex
+	rotated map[string]rotation
 }
+
+type rotation struct {
+	user   store.User
+	newRaw string
+	at     time.Time
+}
+
+// refreshReuseWindow: two tabs (or an app waking twice) refreshing with the
+// same token moments apart must not sign the user out.
+const refreshReuseWindow = 30 * time.Second
 
 // Claims are the identity fields carried by an access JWT.
 type Claims struct {
@@ -116,8 +132,32 @@ func (a *Auth) NewRefreshToken(userID int64, now time.Time) (string, error) {
 
 // Rotate validates raw, deletes it, and issues a new refresh token.
 // Returns the user and new raw token, or an error if unknown/expired.
+//
+// A repeat of the same old token within refreshReuseWindow returns the same
+// user and new token (the first rotation's result).
 func (a *Auth) Rotate(raw string, now time.Time) (store.User, string, error) {
 	hash := hashRefreshToken(raw)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for h, r := range a.rotated {
+		if now.Sub(r.at) > refreshReuseWindow {
+			delete(a.rotated, h)
+		}
+	}
+	if r, ok := a.rotated[hash]; ok && now.Sub(r.at) <= refreshReuseWindow {
+		// Only while the token it was swapped for is still live (not signed
+		// out), and for a user who still exists.
+		if _, err := a.Store.RefreshTokenByHash(hashRefreshToken(r.newRaw)); err != nil {
+			delete(a.rotated, hash)
+			return store.User{}, "", errors.New("refresh token revoked")
+		}
+		u, err := a.Store.UserByID(r.user.ID)
+		if err != nil {
+			delete(a.rotated, hash)
+			return store.User{}, "", err
+		}
+		return u, r.newRaw, nil
+	}
 	tok, err := a.Store.RefreshTokenByHash(hash)
 	if err != nil {
 		return store.User{}, "", err
@@ -137,6 +177,10 @@ func (a *Auth) Rotate(raw string, now time.Time) (store.User, string, error) {
 	if err != nil {
 		return store.User{}, "", err
 	}
+	if a.rotated == nil {
+		a.rotated = map[string]rotation{}
+	}
+	a.rotated[hash] = rotation{user: u, newRaw: newRaw, at: now}
 	return u, newRaw, nil
 }
 

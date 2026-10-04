@@ -44,8 +44,11 @@ public final class ChannelListModel {
     }
 
     /// Fetches channels + guide(now..now+4h) and joins via `GuideLogic.nowNext`.
+    /// A reload keeps the current rows on screen until the new ones arrive.
     public func load() async {
-        state = .loading
+        if case .loaded = state {} else {
+            state = .loading
+        }
         let at = now()
         let stop = at.addingTimeInterval(guideWindow)
 
@@ -254,6 +257,8 @@ public final class ChannelListModel {
         case .tunersBusy:
             return "All tuners are in use"
         case .negotiationFailed(let message):
+            return message
+        case .recordingConflict(_, _, let message):
             return message
         case .notFound:
             return "Not found"

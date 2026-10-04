@@ -2,7 +2,7 @@
 
 BrighterScript SceneGraph channel for the Bowtie viewer:
 
-**Connect → Login → Channel rail → Live play**
+**Connect → Login → Channel rail → Live play**, plus **Recordings** (DVR)
 
 Single `ApiTask` owns all HTTP and tokens (auth actor). Pure logic
 (`AuthState`, `GuideLogic`, `Caps`, request builders/parsers) is exercised
@@ -64,13 +64,49 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 
 | Key | Action |
 |-----|--------|
-| `*` (Options) on a channel | Star / unstar it. Starred channels move to the top (guide-number order) with a ★; the change is sent to the server and undone if it fails. |
-| Up from the first channel | Recent row (when the server has watch history), then Settings |
-| Down from Settings / Recent | Back toward the rail |
+| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Cancel**. |
+| Up from the first channel | Recent row (when the server has watch history), then the header (Recordings / Settings) |
+| Left / Right in the header | Move between **Recordings** and **Settings** |
+| Down from the header / Recent | Back toward the rail |
+
+**Favorite** stars the channel: starred channels move to the top
+(guide-number order) with a ★; the change is sent to the server and undone if
+it fails. Favorite is left out on a server without favorites.
+
+**Record this program** schedules the current program by its guide start
+(`POST /api/v1/recordings`; capture starts 1 min early and ends 3 min late).
+A warning such as "uses all tuners" is shown with the confirmation. When more
+channels than tuners would be recording at once, the server answers 409 and the
+dialog lists the recordings already holding the tuners with **Record anyway**
+(scheduled at a lower priority; earlier recordings keep their tuners) or
+**Cancel**.
 
 Up/down zapping in the player follows rail order, so it cycles favorites first.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
+
+## Recordings controls
+
+**Recordings** (in the header next to Settings) lists everyone's recordings in
+three tabs: **Upcoming** (scheduled, waiting for a tuner, recording now),
+**Recorded** (converting, ready) and **Missed** (failed, with the reason in
+plain words, e.g. "No tuner was free").
+
+| Key | Action |
+|-----|--------|
+| Left / Right on the tabs | Switch tab |
+| Down / Up | Between the tabs and the list |
+| OK on a recorded item | Play it. Past the first 10 s and before the last 30 s, asks **Resume from m:ss** / **Start over**. |
+| OK on any other item | Same as `*` |
+| `*` (Options) on an item | **Stop recording** (while recording), **Keep / Don't keep** (protect from automatic deletion), **Cancel recording** (upcoming) or **Delete** (asks first: it removes the recording for everyone), **Close**. Only the person who scheduled it or an admin (`canManage`) gets these; others see who scheduled it. |
+| Back | Recordings → channel rail |
+
+### Recording playback
+
+Recordings play as HLS VOD in a `Video` node with Roku's standard trick-play
+UI (OK pause/play, Left/Right and FF/RW to seek, the progress bar; there are no
+BIF thumbnails). The position is saved (`PUT …/position`) every 15 s, when the
+recording ends, and on Back, which returns to the list.
 
 ## Player controls
 
@@ -130,12 +166,13 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, GuideLogic, Registry
+│   ├── lib/                # AuthState, BowtieClient, Caps, Favorites, GuideLogic, Recordings, Registry
 │   └── tests/              # on-device fixtures
 └── components/
-    ├── AppScene            # phase routing (connect/login/checking/home/settings/player)
+    ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
     ├── ConnectScene / LoginScene
-    ├── HomeScene           # MarkupList rail + guide join
+    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record)
+    ├── RecordingsScene     # Upcoming / Recorded / Missed + VOD Video (RecordingItem rows)
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene
