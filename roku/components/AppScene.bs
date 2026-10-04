@@ -172,11 +172,14 @@ sub onSelectedChannel()
     if ch.id <> invalid then cid = ch.id
     if ch.index <> invalid then idx = ch.index
     if ch.channels <> invalid then channels = ch.channels
+    guide = {}
+    if ch.guide <> invalid then guide = ch.guide
     m.playerScene.channelName = name
     m.playerScene.guideNumber = gn
     m.playerScene.channelId = cid
     m.playerScene.channelIndex = idx
     m.playerScene.channels = channels
+    m.playerScene.guide = guide
     setPhase("player")
 end sub
 

@@ -3,6 +3,10 @@
 ' A3 on zap/quality: gen++; DELETE current; debounce 400ms; POST create;
 '   stale-gen create success → orphan DELETE before discard.
 ' A4 ContentNode: url=absolute playlistUrl, streamFormat="hls", Live=true.
+' Sleep timer (bowtie.sleep): Right → Options → Sleep timer. Survives zaps,
+' resets when the player is left, never persisted. The last minute shows
+' "Still watching?" (OK keeps watching); when it runs out the player leaves
+' exactly as Back does (viewer DELETE, tuner freed, back to the rail).
 ' A5: 503 tuners-busy copy+list+retry; 422 Auto-retry once then device-can't-play;
 '   404 channelsStale + inform; mid-play allowlist EMPTY (keyed on Video
 '   errorCode/errorMsg) → else bounded retry 1s/2s/4s ×3 without new sessions.
@@ -10,6 +14,7 @@
 import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Caps.bs"
 import "pkg:/source/lib/GuideLogic.bs"
+import "pkg:/source/lib/SleepTimer.bs"
 
 ' Mid-play auth allowlist: seeded EMPTY (A5). Token-kill capture populates real
 ' Video errorCode/errorMsg entries: { code as integer|invalid, msgContains as string }.
@@ -51,6 +56,9 @@ sub init()
     m.retryTimer = m.top.findNode("retryTimer")
     m.chromeTimer = m.top.findNode("chromeTimer")
     m.heartbeatTimer = m.top.findNode("heartbeatTimer")
+    m.sleepTimer = m.top.findNode("sleepTimer")
+    m.sleepWarning = m.top.findNode("sleepWarning")
+    m.sleepWarningLabel = m.top.findNode("sleepWarningLabel")
 
     m.observing = false
     m.gen = 0
@@ -74,6 +82,9 @@ sub init()
     m.lastErrorCode = 0
     m.lastErrorMsg = ""
     m.lastVideoState = ""
+    m.sleep = bowtie.sleep.newState()
+    ' Options offered by the open Sleep timer dialog (button index → option).
+    m.sleepOptions = []
 
     m.retryButton.observeField("buttonSelected", "onRetryButton")
     m.tunersRetryButton.observeField("buttonSelected", "onRetryButton")
@@ -81,6 +92,7 @@ sub init()
     m.retryTimer.observeField("fire", "onRetryTimerFire")
     m.chromeTimer.observeField("fire", "onChromeTimerFire")
     m.heartbeatTimer.observeField("fire", "onHeartbeatFire")
+    m.sleepTimer.observeField("fire", "onSleepTick")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("errorCode", "onVideoErrorFields")
     m.video.observeField("errorMsg", "onVideoErrorFields")
@@ -130,6 +142,7 @@ sub onVisible()
         m.playlistUrl = ""
         m.pendingCreateId = ""
         m.uiPhase = "idle"
+        resetSleep()
         observeApi()
         updateChromeLabels()
         updateDebugOverlay()
@@ -140,6 +153,7 @@ sub onVisible()
         end if
     else
         ' Leaving: A3 back/stop — DELETE then leave (closed already set by back path).
+        resetSleep()
         teardownSession(false)
         closeDialog()
         unobserveApi()
@@ -175,7 +189,7 @@ function qualityHintText() as string
     if m.selectedProfile <> invalid and m.selectedProfile <> ""
         label = m.selectedProfile
     end if
-    return "Quality: " + label + " · OK play/pause · Right: quality"
+    return "Quality: " + label + " · OK play/pause · Right: options"
 end function
 
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
@@ -754,10 +768,13 @@ sub openQualityDialog()
         end if
     end for
 
+    ' Last button: the sleep timer (its own dialog).
+    buttons.push("Sleep timer")
+
     m.dialogMode = "quality"
     dialog = CreateObject("roSGNode", "StandardMessageDialog")
-    dialog.title = "Quality"
-    dialog.message = ["Current: " + profileDisplay(m.selectedProfile)]
+    dialog.title = "Options"
+    dialog.message = optionsMessage()
     dialog.buttons = buttons
     dialog.observeField("buttonSelected", "onQualityButton")
     dialog.observeField("wasClosed", "onDialogClosed")
@@ -767,6 +784,10 @@ sub openQualityDialog()
         scene.dialog = dialog
     end if
 end sub
+
+function optionsMessage() as object
+    return ["Quality: " + profileDisplay(m.selectedProfile), bowtie.sleep.statusText(m.sleep, nowSec())]
+end function
 
 function profileDisplay(profile as string) as string
     if profile = invalid or profile = "" then return "Auto"
@@ -788,6 +809,11 @@ sub onQualityButton()
     end for
     closeDialog()
 
+    if idx <> invalid and idx = options.count()
+        openSleepDialog()
+        return
+    end if
+
     if idx = invalid or idx < 0 or idx >= options.count()
         m.top.setFocus(true)
         return
@@ -804,6 +830,99 @@ sub onQualityButton()
     scheduleReplace()
     m.top.setFocus(true)
 end sub
+
+' ── Sleep timer ──────────────────────────────────────────────────────────────
+
+sub openSleepDialog()
+    closeDialog()
+    m.sleepOptions = bowtie.sleep.options(currentProgramEndSec(), nowSec())
+    m.dialogMode = "sleep"
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = "Sleep timer"
+    dialog.message = [bowtie.sleep.statusText(m.sleep, nowSec())]
+    dialog.buttons = bowtie.sleep.buttonLabels(m.sleepOptions, m.sleep)
+    dialog.observeField("buttonSelected", "onSleepButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid
+        scene.dialog = dialog
+    end if
+end sub
+
+sub onSleepButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    opts = m.sleepOptions
+    closeDialog()
+    m.top.setFocus(true)
+    if idx = invalid or idx < 0 or idx >= opts.count() then return
+    bowtie.sleep.start(m.sleep, opts[idx].id, nowSec(), currentProgramEndSec())
+    if m.sleep.active = true
+        m.sleepTimer.control = "start"
+    else
+        m.sleepTimer.control = "stop"
+    end if
+    onSleepTick()
+end sub
+
+' Once a second while the timer is on: the warning in the last minute, and
+' leaving the player when it runs out. Menus show the time left as they open.
+sub onSleepTick()
+    if m.top.visible <> true then return
+    r = bowtie.sleep.tick(m.sleep, nowSec())
+    if r.fired = true
+        m.sleepTimer.control = "stop"
+        m.sleepWarning.visible = false
+        leavePlayer()
+        return
+    end if
+    if m.sleep.active <> true then m.sleepTimer.control = "stop"
+    if r.warning = true
+        m.sleepWarningLabel.text = bowtie.sleep.promptText(r.remaining)
+        m.sleepWarning.visible = true
+    else
+        m.sleepWarning.visible = false
+    end if
+end sub
+
+' "Still watching?" → OK: keep watching for the same duration again.
+sub keepWatching()
+    bowtie.sleep.extend(m.sleep)
+    m.sleepWarning.visible = false
+    onSleepTick()
+end sub
+
+sub resetSleep()
+    bowtie.sleep.cancel(m.sleep)
+    m.sleepTimer.control = "stop"
+    m.sleepWarning.visible = false
+end sub
+
+' When the program on now ends (guide from Home), in epoch seconds; 0 unknown.
+function currentProgramEndSec() as integer
+    guide = m.top.guide
+    if guide = invalid or m.top.channelId = invalid then return 0
+    programs = guide[m.top.channelId.toStr()]
+    if programs = invalid then return 0
+    nowProgram = bowtie.guide.nowNext(programs, isoNow()).now
+    if nowProgram = invalid or nowProgram.stop = invalid or nowProgram.stop = "" then return 0
+    dt = CreateObject("roDateTime")
+    dt.FromISO8601String(nowProgram.stop)
+    return dt.AsSeconds()
+end function
+
+function nowSec() as integer
+    dt = CreateObject("roDateTime")
+    dt.Mark()
+    return dt.AsSeconds()
+end function
+
+function isoNow() as string
+    dt = CreateObject("roDateTime")
+    dt.Mark()
+    return dt.ToISOString()
+end function
 
 sub onDialogClosed()
     m.dialog = invalid
@@ -857,6 +976,12 @@ end sub
 function onKeyEvent(key as string, press as boolean) as boolean
     if press <> true then return false
 
+    ' Sleep timer's last minute: OK keeps watching (before play/pause).
+    if key = "OK" and m.sleepWarning.visible = true
+        keepWatching()
+        return true
+    end if
+
     ' While error UI focused, only back + buttons.
     if m.uiPhase = "failed" or m.uiPhase = "tunersBusy"
         if key = "back"
@@ -887,8 +1012,9 @@ function onKeyEvent(key as string, press as boolean) as boolean
         return true
     end if
 
-    ' Right opens quality. * (options) is left to the system: its overlay offers
-    ' the stream's audio tracks (e.g. Español) and closed captioning.
+    ' Right opens Options (quality, sleep timer). * (options) is left to the
+    ' system: its overlay offers the stream's audio tracks (e.g. Español) and
+    ' closed captioning.
     if key = "right" or key = "replay"
         openQualityDialog()
         return true
