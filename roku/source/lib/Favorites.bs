@@ -1,0 +1,205 @@
+' Pure favorites/recents logic for the channel rail (no I/O, no nodes).
+'
+' Rail order: favorites first in guide-number order, then the rest in the
+' order the server sent them (each channel keeps its server index in `order`).
+' Toggles are optimistic: toggle() flips the star and re-sorts at once;
+' resolve() records the server's answer. A failure restores the last state
+' the server CONFIRMED for that channel, so two queued toggles that both fail
+' still end on the server's value.
+'
+' state: { channels: [..rail..], supported: bool, confirmed: { "<id>": bool } }
+' supported = false when the server omits "favorite" (older server): no stars,
+' no toggles, no Recent row.
+
+namespace bowtie.favorites
+
+    ' -1 / 0 / 1 comparing "major.minor" guide numbers numerically.
+    function compareGuideNumbers(a as string, b as string) as integer
+        pa = bowtie.favorites.guideParts(a)
+        pb = bowtie.favorites.guideParts(b)
+        for i = 0 to 1
+            if pa[i] < pb[i] then return -1
+            if pa[i] > pb[i] then return 1
+        end for
+        if a < b then return -1
+        if a > b then return 1
+        return 0
+    end function
+
+    ' "9.1" → [9, 1]; "7" → [7, -1] so a bare major sorts before its subchannels.
+    function guideParts(gn as string) as object
+        parts = gn.split(".")
+        major = 0
+        minor = -1
+        if parts.count() > 0 then major = Val(parts[0])
+        if parts.count() > 1 then minor = Val(parts[1])
+        return [major, minor]
+    end function
+
+    ' raw: /channels body (bare array or {channels: [...]}).
+    ' → { channels: [{id, guideNumber, name, favorite, order}], supported }
+    function normalizeChannels(raw as object) as object
+        list = bowtie.favorites.asArray(raw, "channels")
+        channels = []
+        supported = false
+        for each c in list
+            if c <> invalid and Type(c) = "roAssociativeArray"
+                fav = false
+                if c.DoesExist("favorite")
+                    supported = true
+                    fav = (c.favorite = true)
+                end if
+                channels.push({
+                    id: bowtie.favorites.orZero(c.id)
+                    guideNumber: bowtie.favorites.asString(c.guideNumber)
+                    name: bowtie.favorites.asString(c.name)
+                    favorite: fav
+                    order: channels.count()
+                })
+            end if
+        end for
+        return { channels: channels, supported: supported }
+    end function
+
+    ' Favorites by guide number (ties by server order), then the rest by server order.
+    function sortChannels(channels as object) as object
+        favs = []
+        rest = []
+        if channels = invalid then return []
+        for each c in channels
+            if c.favorite = true
+                bowtie.favorites.insertSorted(favs, c, true)
+            else
+                bowtie.favorites.insertSorted(rest, c, false)
+            end if
+        end for
+        rail = []
+        rail.append(favs)
+        rail.append(rest)
+        return rail
+    end function
+
+    ' Stable insertion: byGuide orders by guide number then order; else by order.
+    sub insertSorted(list as object, ch as object, byGuide as boolean)
+        at = list.count()
+        for i = 0 to list.count() - 1
+            cmp = 0
+            if byGuide then cmp = bowtie.favorites.compareGuideNumbers(ch.guideNumber, list[i].guideNumber)
+            if cmp = 0
+                if ch.order < list[i].order then cmp = -1
+            end if
+            if cmp < 0
+                at = i
+                exit for
+            end if
+        end for
+        list.push(invalid)
+        for i = list.count() - 1 to at + 1 step -1
+            list[i] = list[i - 1]
+        end for
+        list[at] = ch
+    end sub
+
+    function indexOfChannel(channels as object, channelId as dynamic) as integer
+        if channels = invalid or channelId = invalid then return -1
+        key = bowtie.favorites.idKey(channelId)
+        for i = 0 to channels.count() - 1
+            ch = channels[i]
+            if ch <> invalid and ch.id <> invalid and bowtie.favorites.idKey(ch.id) = key then return i
+        end for
+        return -1
+    end function
+
+    ' raw /channels body → toggle state with the sorted rail.
+    function newState(raw as object) as object
+        normalized = bowtie.favorites.normalizeChannels(raw)
+        confirmed = {}
+        for each c in normalized.channels
+            confirmed[bowtie.favorites.idKey(c.id)] = c.favorite
+        end for
+        return {
+            channels: bowtie.favorites.sortChannels(normalized.channels)
+            supported: normalized.supported
+            confirmed: confirmed
+        }
+    end function
+
+    ' Flip channelId's star and re-sort. Returns the new value (true = starred),
+    ' or invalid when the channel is unknown or the server lacks favorites.
+    function toggle(state as object, channelId as dynamic) as dynamic
+        if state = invalid or state.supported <> true then return invalid
+        idx = bowtie.favorites.indexOfChannel(state.channels, channelId)
+        if idx < 0 then return invalid
+        on = (state.channels[idx].favorite <> true)
+        bowtie.favorites.applyFavorite(state, idx, on)
+        return on
+    end function
+
+    ' Record the server's answer for a toggle to `on`. Success makes it the
+    ' confirmed state; failure restores the confirmed state. Returns true when
+    ' the rail changed (re-render needed).
+    function resolve(state as object, channelId as dynamic, on as boolean, success as boolean) as boolean
+        if state = invalid then return false
+        key = bowtie.favorites.idKey(channelId)
+        if success
+            state.confirmed[key] = on
+            return false
+        end if
+        idx = bowtie.favorites.indexOfChannel(state.channels, channelId)
+        if idx < 0 then return false
+        want = (state.confirmed[key] = true)
+        if state.channels[idx].favorite = want then return false
+        bowtie.favorites.applyFavorite(state, idx, want)
+        return true
+    end function
+
+    sub applyFavorite(state as object, idx as integer, on as boolean)
+        state.channels[idx].favorite = on
+        state.channels = bowtie.favorites.sortChannels(state.channels)
+    end sub
+
+    ' raw /me/recents body → [{channelId, guideNumber, name}], entries without
+    ' a channelId dropped. Anything but an array → [].
+    function parseRecents(raw as object) as object
+        recents = []
+        if raw = invalid or Type(raw) <> "roArray" then return recents
+        for each r in raw
+            if r <> invalid and Type(r) = "roAssociativeArray" and r.channelId <> invalid
+                recents.push({
+                    channelId: r.channelId
+                    guideNumber: bowtie.favorites.asString(r.guideNumber)
+                    name: bowtie.favorites.asString(r.name)
+                })
+            end if
+        end for
+        return recents
+    end function
+
+    ' ── helpers ──────────────────────────────────────────────────────────────
+
+    function asArray(raw as object, key as string) as object
+        if raw = invalid then return []
+        if Type(raw) = "roArray" then return raw
+        if Type(raw) = "roAssociativeArray" and raw[key] <> invalid and Type(raw[key]) = "roArray"
+            return raw[key]
+        end if
+        return []
+    end function
+
+    function asString(v as dynamic) as string
+        if v = invalid then return ""
+        t = Type(v)
+        if t = "String" or t = "roString" then return v
+        return v.toStr()
+    end function
+
+    function orZero(v as dynamic) as dynamic
+        if v = invalid then return 0
+        return v
+    end function
+
+    function idKey(v as dynamic) as string
+        return bowtie.favorites.asString(v)
+    end function
+
+end namespace
