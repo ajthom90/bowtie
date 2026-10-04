@@ -374,11 +374,15 @@ type channelIngest struct {
 	subs map[*IngestSub]struct{}
 
 	// join buffer state
-	lastPAT  []byte
-	lastPMT  []byte
-	pmtPIDs  map[uint16]struct{}
-	sincePAT []byte // non-table packets since last PAT
-	tsScrap  []byte // partial packet across chunk boundaries
+	lastPAT []byte
+	lastPMT []byte
+	// videoPID and sourceHeight come from the PMT and the first MPEG-2
+	// sequence header; sessions size their quality ladder from them.
+	videoPID     uint16
+	sourceHeight int
+	pmtPIDs      map[uint16]struct{}
+	sincePAT     []byte // non-table packets since last PAT
+	tsScrap      []byte // partial packet across chunk boundaries
 
 	// tail: after last Close, keep device open this long
 	tailCancel chan struct{}
@@ -832,9 +836,14 @@ func (c *channelIngest) handleTSPacketLocked(pkt []byte) {
 		c.capJoinLocked()
 	case c.isPMTPID(pid):
 		c.lastPMT = pkt
+		c.videoPID = parsePMT(pkt).VideoPID
 		// Tables are served from lastPAT/lastPMT; do not duplicate into sincePAT.
 		c.capJoinLocked()
 	default:
+		if c.sourceHeight == 0 && c.videoPID != 0 && pid == c.videoPID {
+			// A header split across packets only delays detection.
+			c.sourceHeight = sequenceHeaderHeight(pkt[4:])
+		}
 		c.sincePAT = append(c.sincePAT, pkt...)
 		c.capJoinLocked()
 	}
@@ -912,4 +921,30 @@ func parsePATPMTPIDs(pkt []byte) map[uint16]struct{} {
 		}
 	}
 	return out
+}
+
+// ProgramInfo waits up to timeout for the channel's PMT and source height.
+// ok is false when no PMT arrived (callers assume one unnamed audio track).
+// SourceHeight may still be 0 (H.264 or not seen yet) when ok is true.
+func (m *IngestManager) ProgramInfo(channelID int64, timeout time.Duration) (ProgramInfo, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		m.mu.Lock()
+		c := m.channels[channelID]
+		m.mu.Unlock()
+		if c != nil {
+			c.mu.Lock()
+			pmt, h := c.lastPMT, c.sourceHeight
+			c.mu.Unlock()
+			if pmt != nil && (h > 0 || !time.Now().Before(deadline)) {
+				info := parsePMT(pmt)
+				info.SourceHeight = h
+				return info, true
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return ProgramInfo{}, false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
