@@ -101,6 +101,11 @@ func (l Layout) AC3Indexes() []int {
 	return out
 }
 
+func (l Layout) withRungs(r []Rung) Layout {
+	l.Rungs = r
+	return l
+}
+
 func rungName(r Rung) string { return fmt.Sprintf("v%d", r.Height) }
 
 // TopName is the top rung's variant name (captions ride it).

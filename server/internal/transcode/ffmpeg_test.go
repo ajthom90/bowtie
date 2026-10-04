@@ -34,17 +34,19 @@ func TestBuildArgsSoftwareAAC(t *testing.T) {
 	want := []string{
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "yadif=0:-1:0,scale=-2:480",
-		"-c:v", "libx264",
-		"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-		"-preset", "veryfast", "-profile:v", "high",
-		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+		"-preset", "veryfast",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -66,17 +68,19 @@ func TestBuildArgsSoftwareAudioCopy(t *testing.T) {
 	want := []string{
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "yadif=0:-1:0,scale=-2:720",
-		"-c:v", "libx264",
-		"-b:v", "4000k", "-maxrate", "4800k", "-bufsize", "8000k",
+		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:720[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "4000k", "-maxrate:v:0", "4800k", "-bufsize:v:0", "8000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-		"-preset", "veryfast", "-profile:v", "high",
-		"-c:a", "copy",
+		"-preset", "veryfast",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "160k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v720 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -98,17 +102,19 @@ func TestBuildArgsVideoToolbox(t *testing.T) {
 	want := []string{
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "yadif=0:-1:0,scale=-2:480",
-		"-c:v", "h264_videotoolbox",
-		"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-		"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
-		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+		"-realtime", "1", "-a53cc", "0",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -131,17 +137,19 @@ func TestBuildArgsQSV(t *testing.T) {
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480",
-		"-c:v", "h264_qsv",
-		"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+		"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "veryfast",
-		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -164,16 +172,18 @@ func TestBuildArgsVAAPI(t *testing.T) {
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720",
-		"-c:v", "h264_vaapi",
-		"-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k",
+		"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-		"-c:a", "aac", "-ac", "2", "-b:a", "128k",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v720 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -196,17 +206,19 @@ func TestBuildArgsNVENC(t *testing.T) {
 		"-hide_banner", "-loglevel", "warning", "-nostats",
 		"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
 		"-i", "http://hdhr/auto/v7.1",
-		"-vf", "yadif_cuda=0:-1:0,scale_cuda=-2:480",
-		"-c:v", "h264_nvenc",
-		"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+		"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
+		"-map", "[v0]", "-map", "0:a:0",
+		"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "p4",
-		"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 		"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 		"-hls_flags", "delete_segments+temp_file+omit_endlist",
 		"-hls_segment_type", "mpegts",
-		"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-		filepath.Join(out, "live.m3u8"),
+		"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+		"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+		filepath.Join(out, "%v.m3u8"),
 	}
 	assertArgs(t, got, want)
 }
@@ -303,17 +315,19 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
-				"-vf", "yadif=0:-1:0,scale=-2:480",
-				"-c:v", "libx264",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-preset", "veryfast", "-profile:v", "high",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-preset", "veryfast",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -329,17 +343,19 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
-				"-vf", "yadif=0:-1:0,scale=-2:480",
-				"-c:v", "h264_videotoolbox",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-realtime", "1", "-a53cc", "0",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -356,17 +372,19 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
-				"-vf", "vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480",
-				"-c:v", "h264_qsv",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -383,16 +401,18 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
-				"-vf", "deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720",
-				"-c:v", "h264_vaapi",
-				"-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k",
+				"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v720 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -409,17 +429,19 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
-				"-vf", "yadif_cuda=0:-1:0,scale_cuda=-2:480",
-				"-c:v", "h264_nvenc",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "p4",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 	}
@@ -476,17 +498,19 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-i", "http://hdhr/auto/v7.1",
-				"-vf", "yadif=0:-1:0,scale=-2:480",
-				"-c:v", "libx264",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-preset", "veryfast", "-profile:v", "high",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-preset", "veryfast",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -502,17 +526,19 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-i", "http://hdhr/auto/v7.1",
-				"-vf", "yadif=0:-1:0,scale=-2:480",
-				"-c:v", "h264_videotoolbox",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-realtime", "1", "-profile:v", "high", "-a53cc", "0",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-realtime", "1", "-a53cc", "0",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -529,17 +555,19 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
 				"-i", "http://hdhr/auto/v7.1",
-				"-vf", "vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480",
-				"-c:v", "h264_qsv",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -556,16 +584,18 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
 				"-i", "http://hdhr/auto/v7.1",
-				"-vf", "deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720",
-				"-c:v", "h264_vaapi",
-				"-b:v", "2500k", "-maxrate", "3000k", "-bufsize", "5000k",
+				"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
-				"-c:a", "aac", "-ac", "2", "-b:a", "128k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v720 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 		{
@@ -582,17 +612,19 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
 				"-i", "http://hdhr/auto/v7.1",
-				"-vf", "yadif_cuda=0:-1:0,scale_cuda=-2:480",
-				"-c:v", "h264_nvenc",
-				"-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+				"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
+				"-map", "[v0]", "-map", "0:a:0",
+				"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "p4",
-				"-c:a", "aac", "-ac", "2", "-b:a", "96k",
+				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "225",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist",
 				"-hls_segment_type", "mpegts",
-				"-hls_segment_filename", filepath.Join(out, "seg%05d.ts"),
-				filepath.Join(out, "live.m3u8"),
+				"-hls_segment_filename", filepath.Join(out, "%v_%05d.ts"),
+				"-var_stream_map", "v:0,name:v480 a:0,agroup:aac,name:aac0",
+				filepath.Join(out, "%v.m3u8"),
 			},
 		},
 	}
@@ -663,4 +695,61 @@ func flagValue(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+func TestBuildArgsLadderQSVWithAudioAndCaptions(t *testing.T) {
+	out := "/tmp/out"
+	s := transcode.JobSpec{
+		Stdin: nonNilStdin(), OutDir: out,
+		D: transcode.Decision{VideoCodec: "h264", VideoEncoder: "h264_qsv", Backend: transcode.BackendQSV,
+			Profile: transcode.Profile{Name: "original", Height: 1080, VideoKbps: 8000, AudioKbps: 160}},
+		Layout: transcode.Layout{
+			Rungs:     transcode.Ladder(720),
+			Audio:     []transcode.AudioTrack{{Lang: "eng", AC3: true}, {Lang: "spa", AC3: true}},
+			AudioKbps: 128, Captions: true, AC3Copy: true, VideoCodec: "h264",
+		},
+	}
+	got := transcode.BuildArgs(s)
+	mustContainSeq(t, got, "-data_field", "first", "-f", "lavfi", "-i", "movie='pipe\\:3'[out0+subcc]")
+	mustContainSeq(t, got, "-filter_complex",
+		"[0:v]vpp_qsv=deinterlace=2,split=3[s0][s1][s2];"+
+			"[s0]vpp_qsv=w=trunc(iw*720/ih/2)*2:h=720[v0];"+
+			"[s1]vpp_qsv=w=trunc(iw*480/ih/2)*2:h=480[v1];"+
+			"[s2]vpp_qsv=w=trunc(iw*360/ih/2)*2:h=360[v2]")
+	mustContainSeq(t, got, "-map", "[v0]", "-map", "[v1]", "-map", "[v2]",
+		"-map", "0:a:0", "-map", "0:a:1", "-map", "0:a:0", "-map", "0:a:1", "-map", "1:s:0")
+	mustContainSeq(t, got, "-b:v:2", "700k", "-maxrate:v:2", "840k", "-bufsize:v:2", "1400k")
+	mustContainSeq(t, got, "-forced_idr", "1")
+	mustContainSeq(t, got, "-a53cc", "0")
+	mustContainSeq(t, got, "-c:a:1", "aac", "-ac:a:1", "2", "-b:a:1", "128k", "-c:a:2", "copy", "-c:a:3", "copy")
+	mustContainSeq(t, got, "-c:s", "webvtt")
+	mustContainSeq(t, got, "-var_stream_map", s.Layout.VarStreamMap())
+}
+
+// mustContainSeq fails unless want appears contiguously in got.
+func mustContainSeq(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	for i := 0; i+len(want) <= len(got); i++ {
+		ok := true
+		for j := range want {
+			if got[i+j] != want[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return
+		}
+	}
+	t.Fatalf("args missing %q\n%q", want, got)
+}
+
+func TestBuildArgsSingleRungQSVKeepsNoForcedIDR(t *testing.T) {
+	// Production QSV single-rung path stays as proven; forced IDR only for ladders.
+	s := transcode.JobSpec{Stdin: nonNilStdin(), OutDir: "/tmp/out",
+		D:      transcode.Decision{VideoCodec: "h264", VideoEncoder: "h264_qsv", Backend: transcode.BackendQSV},
+		Layout: transcode.Layout{Rungs: []transcode.Rung{{720, 4000}}, VideoCodec: "h264"}}
+	if containsAdjacent(transcode.BuildArgs(s), "-forced_idr", "1") {
+		t.Fatal("single rung must not change QSV IDR behavior")
+	}
 }

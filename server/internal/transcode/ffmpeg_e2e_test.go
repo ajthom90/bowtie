@@ -126,31 +126,39 @@ func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string, pipe
 		t.Fatalf("ffmpeg %s pipe=%v: %v", backend, pipeInput, err)
 	}
 
-	playlist := filepath.Join(outDir, "live.m3u8")
+	playlist := filepath.Join(outDir, "v480.m3u8")
 	if _, err := os.Stat(playlist); err != nil {
-		t.Fatalf("live.m3u8 missing: %v", err)
+		t.Fatalf("v480.m3u8 missing: %v", err)
 	}
 
-	segs, err := filepath.Glob(filepath.Join(outDir, "seg*.ts"))
+	segs, err := filepath.Glob(filepath.Join(outDir, "v480_*.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(segs) < 1 {
-		t.Fatal("want ≥1 seg*.ts")
+		t.Fatal("want ≥1 v480_*.ts")
+	}
+	audioSegs, err := filepath.Glob(filepath.Join(outDir, "aac0_*.ts"))
+	if err != nil || len(audioSegs) < 1 {
+		t.Fatalf("want ≥1 aac0_*.ts (err %v)", err)
 	}
 
 	// Probe first segment for codecs.
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer probeCancel()
-	probe := exec.CommandContext(probeCtx, ffprobe,
-		"-v", "error",
-		"-show_entries", "stream=codec_name",
-		"-of", "csv=p=0",
-		segs[0],
-	)
-	out, err := probe.Output()
-	if err != nil {
-		t.Fatalf("ffprobe: %v", err)
+	var out []byte
+	for _, f := range []string{segs[0], audioSegs[0]} {
+		probe := exec.CommandContext(probeCtx, ffprobe,
+			"-v", "error",
+			"-show_entries", "stream=codec_name",
+			"-of", "csv=p=0",
+			f,
+		)
+		o, err := probe.Output()
+		if err != nil {
+			t.Fatalf("ffprobe %s: %v", f, err)
+		}
+		out = append(out, o...)
 	}
 	codecs := strings.TrimSpace(string(out))
 	// csv=p=0 prints one codec per line typically.
@@ -169,4 +177,56 @@ func runCommandE2E(t *testing.T, backend transcode.Backend, encoder string, pipe
 		t.Fatalf("segment codecs = %q (lines %v), want h264 and aac", codecs, lines)
 	}
 	t.Logf("backend=%s encoder=%s pipe=%v segs=%d codecs=%v", backend, encoder, pipeInput, len(segs), lines)
+}
+
+// TestLadderSoftwareE2E runs a two-rung ladder and checks the rungs line up:
+// same segment count and a keyframe at the same PTS at each segment start.
+func TestLadderSoftwareE2E(t *testing.T) {
+	ffmpeg, ffprobe := ffmpegBin(), ffprobeBin()
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "input.ts")
+	outDir := filepath.Join(tmp, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gen := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=10:size=720x480:rate=29.97",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+		"-c:v", "mpeg2video", "-b:v", "2M", "-c:a", "ac3", "-b:a", "192k", "-f", "mpegts", input)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate input: %v\n%s", err, out)
+	}
+	spec := transcode.JobSpec{
+		InputURL: input,
+		OutDir:   outDir,
+		D:        transcode.Decision{VideoCodec: "h264", VideoEncoder: "libx264", Backend: transcode.BackendSoftware},
+		Layout:   transcode.Layout{Rungs: transcode.Ladder(480), AudioKbps: 96, VideoCodec: "h264"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if err := transcode.Command(ctx, ffmpeg, spec).Run(); err != nil {
+		t.Fatalf("ffmpeg ladder: %v", err)
+	}
+	count := func(name string) int {
+		b, err := os.ReadFile(filepath.Join(outDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(b), "#EXTINF")
+	}
+	if a, b := count("v480.m3u8"), count("v360.m3u8"); a != b || a < 2 {
+		t.Fatalf("rung segment counts differ: v480=%d v360=%d", a, b)
+	}
+	first := func(seg string) string {
+		out, err := exec.Command(ffprobe, "-v", "error", "-select_streams", "v",
+			"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", filepath.Join(outDir, seg)).Output()
+		if err != nil {
+			t.Fatalf("ffprobe %s: %v", seg, err)
+		}
+		return strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	}
+	a, b := first("v480_00001.ts"), first("v360_00001.ts")
+	if a != b || !strings.Contains(a, "K") {
+		t.Fatalf("segment 1 starts differ or not on a keyframe: v480=%q v360=%q", a, b)
+	}
 }
