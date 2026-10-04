@@ -10,6 +10,8 @@ struct TVPlayerView: View {
     let serverURL: URL
     let maxQuality: String
     var nowTitle: String?
+    /// When the program now on a channel ends (guide), for End of this program.
+    var programEnd: (Channel) -> Date? = { _ in nil }
     @Bindable var playerModel: PlayerModel
 
     @Environment(\.dismiss) private var dismiss
@@ -23,6 +25,8 @@ struct TVPlayerView: View {
     @State private var statsPollTask: Task<Void, Never>?
     @State private var outOfWindowNotice: String?
     @State private var noticeHideTask: Task<Void, Never>?
+    /// Survives channel changes here; gone when the player is.
+    @State private var sleepTimer = SleepTimer()
 
     private static let stallBackoffs: [Duration] = [
         .seconds(1), .seconds(2), .seconds(4),
@@ -42,9 +46,19 @@ struct TVPlayerView: View {
                 droppedFrames: droppedFrames,
                 onSelectProfile: { profile in
                     Task { await playerModel.setProfile(profile) }
-                }
+                },
+                sleepTimer: sleepTimer,
+                sleepProgramEnd: programEnd(playerModel.currentChannel ?? channel),
+                sleepWarning: sleepTimer.isWarning
             )
             .ignoresSafeArea()
+
+            if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                // Keep watching is the player's contextual action (remote focus).
+                SleepWarningBanner(remaining: remaining)
+                    .padding(.top, 60)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
 
             if case .stalled = playerModel.state {
                 stalledSpinner
@@ -117,6 +131,9 @@ struct TVPlayerView: View {
         }
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
+        }
+        .drivesSleepTimer(sleepTimer) {
+            Task { await leave() }
         }
         // SharePlay: bind the group to the AVPlayer, whichever came first.
         .task(id: coordinationKey) {
@@ -655,6 +672,9 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
     var indicatedBitrate: Double?
     var droppedFrames: Int?
     var onSelectProfile: (String) -> Void
+    var sleepTimer: SleepTimer
+    var sleepProgramEnd: Date?
+    var sleepWarning: Bool
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
@@ -662,7 +682,7 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
         vc.showsPlaybackControls = true
         vc.requiresLinearPlayback = false
         vc.player = bridge.player
-        context.coordinator.installInfoPanels(on: vc)
+        context.coordinator.installInfoPanels(on: vc, sleepTimer: sleepTimer, programEnd: sleepProgramEnd)
         return vc
     }
 
@@ -678,6 +698,12 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
             meta: sessionMeta,
             indicatedBitrate: indicatedBitrate,
             droppedFrames: droppedFrames
+        )
+        context.coordinator.sleep.update(
+            vc,
+            timer: sleepTimer,
+            programEnd: sleepProgramEnd,
+            warning: sleepWarning
         )
     }
 
@@ -697,6 +723,7 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
 
         private var qualityHost: UIHostingController<TVQualityPanel>?
         private var statsHost: UIHostingController<TVStatsPanel>?
+        let sleep = TVSleepTimerSupport()
 
         init(
             maxQuality: String,
@@ -708,7 +735,7 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
             self.onSelectProfile = onSelectProfile
         }
 
-        func installInfoPanels(on vc: AVPlayerViewController) {
+        func installInfoPanels(on vc: AVPlayerViewController, sleepTimer: SleepTimer, programEnd: Date?) {
             let quality = UIHostingController(
                 rootView: TVQualityPanel(
                     maxQuality: maxQuality,
@@ -731,7 +758,11 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
 
             qualityHost = quality
             statsHost = stats
-            vc.customInfoViewControllers = [quality, stats]
+            vc.customInfoViewControllers = [
+                quality,
+                sleep.makePanel(timer: sleepTimer, programEnd: programEnd),
+                stats,
+            ]
         }
 
         func refreshQualityPanel() {

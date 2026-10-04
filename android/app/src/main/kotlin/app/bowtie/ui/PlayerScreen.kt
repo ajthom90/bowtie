@@ -85,6 +85,8 @@ fun PlayerScreen(
     nowTitle: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** When the program now on a channel ends (guide, epoch ms), for End of this program. */
+    programEndMs: (Channel) -> Long? = { null },
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -94,6 +96,7 @@ fun PlayerScreen(
     var overlayVisible by remember { mutableStateOf(true) }
     var showStats by remember { mutableStateOf(false) }
     var showQualitySheet by remember { mutableStateOf(false) }
+    var showSleepSheet by remember { mutableStateOf(false) }
     var bitrateBps by remember { mutableStateOf<Int?>(null) }
     var droppedFrames by remember { mutableLongStateOf(0L) }
     var sessionMeta by remember { mutableStateOf<SessionInfoMeta?>(null) }
@@ -170,6 +173,10 @@ fun PlayerScreen(
 
     BackHandler { leave() }
 
+    // Sleep timer: fires the same leave as Back (stops the session, frees the tuner).
+    val sleepTimer = rememberSleepTimer { leave() }
+    val sleepStatus by sleepTimer.status.collectAsStateWithLifecycle()
+
     // Keep screen on while this screen is shown.
     DisposableEffect(activity) {
         val window = activity?.window
@@ -236,8 +243,8 @@ fun PlayerScreen(
     }
 
     // Auto-hide overlay after 3s of idle (while playing).
-    LaunchedEffect(overlayVisible, state, showQualitySheet) {
-        if (!overlayVisible || showQualitySheet) return@LaunchedEffect
+    LaunchedEffect(overlayVisible, state, showQualitySheet, showSleepSheet) {
+        if (!overlayVisible || showQualitySheet || showSleepSheet) return@LaunchedEffect
         if (state !is PlayerViewModel.State.Playing) return@LaunchedEffect
         delay(OVERLAY_HIDE_MS)
         overlayVisible = false
@@ -288,6 +295,16 @@ fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        if (sleepStatus.warning) {
+            SleepWarning(
+                remainingMs = sleepStatus.remainingMs ?: 0L,
+                onKeepWatching = { sleepTimer.extend() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 148.dp, start = 16.dp, end = 16.dp),
+            )
+        }
 
         if (outOfWindowNotice != null) {
             Text(
@@ -397,10 +414,23 @@ fun PlayerScreen(
                     showStats = !showStats
                     overlayVisible = true
                 },
+                sleepLabel = sleepChipLabel(sleepStatus),
+                onSleep = {
+                    overlayVisible = true
+                    showSleepSheet = true
+                },
                 onInteraction = { overlayVisible = true },
                 modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+
+    if (showSleepSheet) {
+        SleepTimerSheet(
+            timer = sleepTimer,
+            programEndMs = programEndMs(playerViewModel.currentChannel.value ?: channel),
+            onDismiss = { showSleepSheet = false },
+        )
     }
 
     if (showQualitySheet) {
@@ -485,6 +515,8 @@ private fun PlayerOverlay(
     onBack: () -> Unit,
     onQuality: () -> Unit,
     onToggleStats: () -> Unit,
+    sleepLabel: String,
+    onSleep: () -> Unit,
     onInteraction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -556,6 +588,7 @@ private fun PlayerOverlay(
             audioLabel?.let { ControlChip(label = it, onClick = onAudio) }
             captionsOn?.let { ControlChip(label = if (it) "CC ✓" else "CC", onClick = onCaptions) }
             ControlChip(label = qualityLabel, onClick = onQuality)
+            ControlChip(label = sleepLabel, onClick = onSleep)
             ControlChip(
                 label = if (showStats) "Stats ✓" else "Stats",
                 onClick = onToggleStats,

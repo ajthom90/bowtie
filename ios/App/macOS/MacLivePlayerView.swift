@@ -13,6 +13,8 @@ struct MacLivePlayerView: View {
     let serverURL: URL
     let maxQuality: String
     let nowTitle: String?
+    /// When the program now on the channel ends (guide), for End of this program.
+    let programEnd: Date?
     @Bindable var playerModel: PlayerModel
     let bridge: PlayerBridge
     /// "Back" on an error panel: stop and clear the selection.
@@ -28,6 +30,8 @@ struct MacLivePlayerView: View {
     @State private var statsPollTask: Task<Void, Never>?
     @State private var outOfWindowNotice: String?
     @State private var noticeHideTask: Task<Void, Never>?
+    /// Survives channel changes (this view stays up); gone when Live TV is left.
+    @State private var sleepTimer = SleepTimer()
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -54,21 +58,28 @@ struct MacLivePlayerView: View {
                 spinner
             }
 
-            if let notice = outOfWindowNotice {
-                Text(notice)
-                    .font(Theme.body(14))
-                    .foregroundStyle(Theme.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Theme.bg.opacity(0.88))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-                    .padding(.bottom, 96)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-                    .accessibilityLabel(notice)
+            VStack(spacing: 8) {
+                if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                    SleepWarningBanner(remaining: remaining) {
+                        sleepTimer.extend()
+                    }
+                }
+                if let notice = outOfWindowNotice {
+                    Text(notice)
+                        .font(Theme.body(14))
+                        .foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Theme.bg.opacity(0.88))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                        .accessibilityLabel(notice)
+                }
             }
+            .padding(.bottom, 96)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
         .onContinuousHover { phase in
             if case .active = phase {
@@ -126,6 +137,15 @@ struct MacLivePlayerView: View {
         }
         .task(id: sessionIdentity) {
             loadPlayerIfNeeded()
+        }
+        .drivesSleepTimer(sleepTimer) {
+            // Stop here, not in onDisappear: that keeps the session for PiP.
+            stallRetryTask?.cancel()
+            bridge.replacePlayer(nil)
+            Task {
+                await playerModel.stop()
+                onLeave()
+            }
         }
     }
 
@@ -187,6 +207,7 @@ struct MacLivePlayerView: View {
             if !isBlockingError {
                 livePill
                 qualityMenu
+                SleepTimerMenu(timer: sleepTimer, programEnd: programEnd)
                 Button {
                     showStats.toggle()
                     bumpChrome()

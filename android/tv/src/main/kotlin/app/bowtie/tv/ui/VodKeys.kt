@@ -5,8 +5,8 @@ import app.bowtie.core.player.VodPlayer
 
 /**
  * Remote keys for recording playback. Unlike live TV ([PlayerKeyHandler]),
- * up/down don't zap: they show the progress bar. Left/right seek and repeat
- * while held, so holding scrubs.
+ * up/down don't zap: up shows the progress bar, down (or Menu) opens the menu
+ * (sleep timer). Left/right seek and repeat while held, so holding scrubs.
  */
 object VodKeys {
     sealed class Action {
@@ -15,6 +15,7 @@ object VodKeys {
         data object Pause : Action()
         data class SeekBy(val ms: Long) : Action()
         data object ShowInfo : Action()
+        data object OpenMenu : Action()
         data object Back : Action()
     }
 
@@ -36,10 +37,11 @@ object VodKeys {
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
             -> Action.SeekBy(VodPlayer.SEEK_FORWARD_MS)
             KeyEvent.KEYCODE_DPAD_UP,
-            KeyEvent.KEYCODE_DPAD_DOWN,
-            KeyEvent.KEYCODE_MENU,
             KeyEvent.KEYCODE_INFO,
             -> Action.ShowInfo
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_MENU,
+            -> Action.OpenMenu
             KeyEvent.KEYCODE_BACK -> Action.Back
             else -> return Result(handled = false, action = null)
         }
