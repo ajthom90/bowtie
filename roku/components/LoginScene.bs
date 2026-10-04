@@ -32,6 +32,7 @@ sub init()
     m.statusLabel = m.top.findNode("statusLabel")
     m.quickButtons = m.top.findNode("quickButtons")
     m.pollTimer = m.top.findNode("pollTimer")
+    m.focusTimer = m.top.findNode("focusTimer")
 
     m.quickButtons.buttons = ["Get a new code", "Use a password instead", "Change server"]
     ' Up/down order of the password screen's buttons.
@@ -58,6 +59,7 @@ sub init()
     m.changeServerButton.observeField("buttonSelected", "onChangeServerButton")
     m.quickButtons.observeField("buttonSelected", "onQuickButton")
     m.pollTimer.observeField("fire", "onPollTimer")
+    m.focusTimer.observeField("fire", "onFocusTimer")
     m.top.observeField("visible", "onVisible")
     m.top.observeField("serverUrl", "onServerUrl")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -121,7 +123,22 @@ sub showQuick()
     m.quickButtons.setFocus(true)
     ' Rest on "Use a password instead"; Get a new code takes focus when needed.
     m.quickButtons.focusButton = 1
+    m.focusTimer.control = "start"
     requestCode()
+end sub
+
+sub onFocusTimer()
+    if m.top.visible = true and m.dialog = invalid then focusControls()
+end sub
+
+' Put focus back on this mode's controls when it sits on the Group itself.
+sub focusControls()
+    if not m.top.hasFocus() then return
+    if m.mode = "quick"
+        m.quickButtons.setFocus(true)
+    else if m.mode = "password"
+        m.usernameButton.setFocus(true)
+    end if
 end sub
 
 ' Stop polling and forget the code (leaving the screen or the phone mode).
@@ -267,6 +284,7 @@ sub showPassword(message as string)
     m.passwordGroup.visible = true
     m.errorLabel.text = message
     m.usernameButton.setFocus(true)
+    m.focusTimer.control = "start"
     if message = ""
         ' TV-friendly: straight into the username keyboard.
         timer = CreateObject("roSGNode", "Timer")
@@ -491,7 +509,13 @@ end sub
 ' Password screen: up/down between its buttons (the phone screen's
 ' ButtonGroup moves focus itself).
 function onKeyEvent(key as string, press as boolean) as boolean
-    if press <> true or m.mode <> "password" then return false
+    if press <> true then return false
+    ' Focus stranded on the Group itself: put it back on the buttons.
+    if m.top.hasFocus() and (key = "up" or key = "down" or key = "left" or key = "right" or key = "OK")
+        focusControls()
+        return true
+    end if
+    if m.mode <> "password" then return false
     if key <> "up" and key <> "down" then return false
     for i = 0 to m.passwordButtons.count() - 1
         if m.passwordButtons[i].hasFocus()

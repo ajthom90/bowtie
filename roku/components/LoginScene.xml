@@ -127,6 +127,10 @@
             <Timer id="pollTimer" duration="5" repeat="false" />
         </Group>
 
+        <!-- AppScene focuses this Group itself right after showing it; hand
+             focus on to the buttons a moment later. -->
+        <Timer id="focusTimer" duration="0.05" repeat="false" />
+
         <!-- Password entry (fallback). -->
         <Group id="passwordGroup" visible="false">
             <LayoutGroup

@@ -63,6 +63,16 @@ test('showing Login starts phone sign-in (the default), not the password keyboar
     assert.match(show, /stopQuick\(\)/);
 });
 
+test('focus lands on the buttons even though AppScene focuses the Group after showing it', () => {
+    assert.match(tag(xml, 'focusTimer'), /^<Timer/);
+    assert.match(body(scene, 'sub showQuick()'), /m\.focusTimer\.control = "start"/);
+    assert.match(body(scene, 'sub showPassword('), /m\.focusTimer\.control = "start"/);
+    const restore = body(scene, 'sub focusControls()');
+    assert.match(restore, /m\.top\.hasFocus\(\)/);
+    assert.match(restore, /m\.quickButtons\.setFocus\(true\)/);
+    assert.match(body(scene, 'function onKeyEvent'), /m\.top\.hasFocus\(\)[\s\S]*?focusControls\(\)/);
+});
+
 test('phone sign-in asks for a code named after this Roku', () => {
     const start = body(scene, 'sub requestCode()');
     assert.match(start, /kind: "deviceStart"/);
