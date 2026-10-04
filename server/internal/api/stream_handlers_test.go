@@ -1643,3 +1643,30 @@ func TestStreamFileNamesValidated(t *testing.T) {
 		}
 	}
 }
+
+// The caption playlist endpoint repairs FFmpeg 5.1's append_list mangling
+// (see repairCaptionPlaylist): names rebuilt, ENDLIST dropped.
+func TestCaptionPlaylistEndpointRepairsFFmpeg51Append(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	for _, name := range []string{"v720_vtt.m3u8", "v720.m3u8"} {
+		b, err := os.ReadFile("testdata/ffmpeg51-append-" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := "aabbccddeeff00112233445566778899"
+	ss.register(v, dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), v, time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "GET", "/api/v1/stream/"+v+"/v720_vtt.m3u8?token="+tok, nil, nil)
+	body := rr.Body.String()
+	if rr.Code != 200 || strings.Contains(body, "#EXT-X-ENDLIST") || !strings.Contains(body, "/api/v1/stream/"+v+"/v7200.vtt?token=") {
+		t.Fatalf("status=%d body:\n%s", rr.Code, body)
+	}
+}

@@ -272,6 +272,12 @@ func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, view
 		writeError(w, http.StatusInternalServerError, "failed to read playlist")
 		return
 	}
+	if rung, ok := strings.CutSuffix(name, "_vtt.m3u8"); ok {
+		// FFmpeg 5.1 mangles caption playlists continued after a restart.
+		if video, err := os.ReadFile(filepath.Join(dir, rung+".m3u8")); err == nil {
+			raw = repairCaptionPlaylist(raw, video, rung)
+		}
+	}
 	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
