@@ -49,8 +49,25 @@ internal object ContinueFocus {
 }
 
 /**
+ * Keys on a focused Continue watching card. ☰ opens the card's options (the
+ * same panel as holding OK) once per press; it never removes the card itself,
+ * so a stray press can't lose someone's place. Its repeats and key-up are
+ * swallowed ([RailKeys]).
+ */
+internal object ContinueCardKeys {
+    enum class Outcome { OpenOptions, Consume, PassThrough }
+
+    fun onKey(keyCode: Int, action: Int, repeatCount: Int): Outcome =
+        when (RailKeys.onKey(keyCode, action, repeatCount)) {
+            RailKeys.Outcome.MenuPress -> Outcome.OpenOptions
+            RailKeys.Outcome.Consume -> Outcome.Consume
+            RailKeys.Outcome.PassThrough -> Outcome.PassThrough
+        }
+}
+
+/**
  * "Continue watching" cards at the top of the home screen. OK resumes; hold
- * OK for options ([onLongPress]); ☰ removes a card ([onMenu]). DPAD up/down
+ * OK or press ☰ for options ([onOptions]: Resume / Remove). DPAD up/down
  * moves to the rows above and below it. [refocusId] asks for that card to take
  * focus (after its neighbor was removed); [onRefocused] clears the request.
  */
@@ -60,8 +77,7 @@ internal fun ContinueRail(
     refocusId: Long?,
     onRefocused: () -> Unit,
     onResume: (Recording) -> Unit,
-    onLongPress: (Recording) -> Unit,
-    onMenu: (Recording) -> Unit,
+    onOptions: (Recording) -> Unit,
 ) {
     Column(modifier = Modifier.padding(top = 12.dp)) {
         Text(
@@ -86,8 +102,7 @@ internal fun ContinueRail(
                 ContinueCard(
                     r = r,
                     onClick = { onResume(r) },
-                    onLongClick = { onLongPress(r) },
-                    onMenu = { onMenu(r) },
+                    onOptions = { onOptions(r) },
                     modifier = Modifier.focusRequester(focusRequester),
                 )
             }
@@ -99,26 +114,25 @@ internal fun ContinueRail(
 private fun ContinueCard(
     r: Recording,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onMenu: () -> Unit,
+    onOptions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val secondLine = r.subtitle.ifEmpty { r.channelName }
     val left = ContinueWatching.remainingText(r)
     Surface(
         onClick = onClick,
-        onLongClick = onLongClick,
+        onLongClick = onOptions,
         modifier = modifier
             .width(280.dp)
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
-                when (RailKeys.onKey(native.keyCode, native.action, native.repeatCount)) {
-                    RailKeys.Outcome.MenuPress -> {
-                        onMenu()
+                when (ContinueCardKeys.onKey(native.keyCode, native.action, native.repeatCount)) {
+                    ContinueCardKeys.Outcome.OpenOptions -> {
+                        onOptions()
                         true
                     }
-                    RailKeys.Outcome.Consume -> true
-                    RailKeys.Outcome.PassThrough -> false
+                    ContinueCardKeys.Outcome.Consume -> true
+                    ContinueCardKeys.Outcome.PassThrough -> false
                 }
             }
             .semantics {

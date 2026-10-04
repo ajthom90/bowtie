@@ -138,10 +138,14 @@ fun ChannelListScreen(
         channelListViewModel.refreshRecents()
     }
 
-    // Back from a recording (or Recordings): it moves to the front, or leaves when finished.
-    LaunchedEffect(continueWatching) {
-        awaitRecordingSaves()
-        continueWatching.refresh()
+    // Shown (incl. back from a recording or Recordings) and every return to the
+    // foreground (ON_RESUME): wait for the player's last position save, then
+    // reload the row; a recording moves to the front, or leaves when finished.
+    LaunchedEffect(continueWatching, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            awaitRecordingSaves()
+            continueWatching.refresh()
+        }
     }
 
     // A remove the server refused.

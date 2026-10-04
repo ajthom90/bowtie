@@ -103,10 +103,14 @@ fun RecordingsScreen(
         viewModel.clearMessage()
     }
 
-    // Back from the player: wait for its last position save, then reload the row.
-    LaunchedEffect(continueWatching) {
-        viewModel.awaitSaves()
-        continueWatching.refresh()
+    // Shown (incl. back from a recording or Recordings) and every return to the
+    // foreground (ON_RESUME): wait for the player's last position save, then
+    // reload the row; a recording moves to the front, or leaves when finished.
+    LaunchedEffect(continueWatching, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.awaitSaves()
+            continueWatching.refresh()
+        }
     }
 
     LaunchedEffect(continueMessage) {
