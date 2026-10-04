@@ -37,6 +37,8 @@ export interface SettingsResponse {
   streaming: SettingsStreaming
   /** Free HDHomeRun guide (absent on older servers). */
   hdhomerun?: { enabled: boolean }
+  /** Recording padding (absent on older servers; edited on the Recordings tab). */
+  dvr?: { padStartSeconds: number; padEndSeconds: number }
 }
 
 export interface SDLineupSummary {

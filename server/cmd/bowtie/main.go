@@ -180,6 +180,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		}},
 		Dir:          cfg.RecordingsDir,
 		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,
+		Padding:      settingsProv.DVRPadding,
 	})
 	go dvrSvc.Run(rootCtx)
 

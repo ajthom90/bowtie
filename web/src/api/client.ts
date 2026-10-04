@@ -388,6 +388,13 @@ export interface SettingsHDHomeRun {
   enabled: boolean
 }
 
+export interface SettingsDVR {
+  /** Start recording this many seconds early (0–1800). */
+  padStartSeconds: number
+  /** Keep recording this many seconds after (0–3600). */
+  padEndSeconds: number
+}
+
 /** GET /api/v1/admin/settings */
 export interface Settings {
   xmltv: SettingsXMLTV
@@ -396,6 +403,8 @@ export interface Settings {
   streaming: SettingsStreaming
   /** Absent on servers older than the HDHomeRun guide. */
   hdhomerun?: SettingsHDHomeRun
+  /** Absent on servers older than recording padding settings. */
+  dvr?: SettingsDVR
 }
 
 /** PUT /api/v1/admin/settings — section merge; omit sections to leave untouched. */
@@ -405,6 +414,21 @@ export interface PutSettingsRequest {
   transcode?: { encoder: string; allowHevc: boolean }
   streaming?: { bufferMinutes: number; adaptive?: boolean }
   hdhomerun?: SettingsHDHomeRun
+  dvr?: SettingsDVR
+}
+
+/** GET /api/v1/admin/dvr/storage (503 when recording isn't available). */
+export interface DVRStorage {
+  dir: string
+  /** Ready recordings plus files of in-progress ones. */
+  usedBytes: number
+  freeBytes: number
+  totalBytes: number
+  /** New captures don't start below this much free space. */
+  floorBytes: number
+  /** The retention sweep deletes old recordings below this (0 = off). */
+  minFreeBytes: number
+  recordings: { ready: number; scheduled: number; recording: number; failed: number }
 }
 
 export interface SDLineupSummary {
@@ -671,6 +695,10 @@ export class ApiClient {
 
   async putSettings(body: PutSettingsRequest): Promise<Settings> {
     return this.request<Settings>('PUT', '/api/v1/admin/settings', body)
+  }
+
+  async getDVRStorage(): Promise<DVRStorage> {
+    return this.request<DVRStorage>('GET', '/api/v1/admin/dvr/storage')
   }
 
   async getEPGLineups(): Promise<SDLineupSummary[]> {

@@ -516,6 +516,96 @@
   min-width: 5.5rem;
 }
 
+/* Recordings tab: storage gauge */
+.dvrDir {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gauge {
+  display: flex;
+  height: 0.85rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.gauge > span {
+  height: 100%;
+  transition: width var(--motion);
+}
+
+.gaugeRecordings {
+  background: var(--accent);
+}
+
+.gaugeOther {
+  background: color-mix(in srgb, var(--text-dim) 45%, var(--surface-raised));
+}
+
+.gaugeFree {
+  background: color-mix(in srgb, var(--signal) 30%, var(--bg));
+}
+
+.gaugeFreeAlert {
+  background: color-mix(in srgb, var(--alert) 45%, var(--bg));
+}
+
+.gaugeLegend {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  font-size: 0.82rem;
+}
+
+.gaugeLegend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+}
+
+.dvrCounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin: 0.85rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.dvrCounts div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dvrCounts dt {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dvrCounts dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 /* —— Mobile (≤640px) —— */
 @media (max-width: 640px) {
   .toolbar {
