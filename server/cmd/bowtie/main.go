@@ -23,6 +23,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/stream"
@@ -131,8 +132,14 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	tuners := tuner.New(st, cfg)
 	go runTunerRefresh(rootCtx, tuners)
 
+	// Admin notifications (ntfy / Discord / webhook); URL and event choices
+	// are read from settingsProv on every event.
+	notifier := notify.New(settingsProv.Notifications, notify.Options{})
+	go notifier.Run(rootCtx)
+
 	// EPG supervisor always-on; sources/intervals from settingsProv (live, no restart).
 	epgSvc := epg.NewService(st, settingsProv)
+	epgSvc.SetNotifier(notifier)
 	go epgSvc.Run(rootCtx)
 
 	// Probe encoders once at startup; cache for negotiation + admin endpoint.
@@ -185,6 +192,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Dir:          cfg.RecordingsDir,
 		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,
 		Padding:      settingsProv.DVRPadding,
+		Notifier:     notifier,
 	})
 	go dvrSvc.Run(rootCtx)
 
@@ -202,6 +210,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		StreamTokenSecret: streamSecret,
 		Settings:          settingsProv,
 		DVR:               dvrSvc,
+		Notifications:     notifier,
 	})
 
 	mux := http.NewServeMux()
