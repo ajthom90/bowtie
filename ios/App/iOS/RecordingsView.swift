@@ -9,6 +9,7 @@ struct RecordingsView: View {
     @Bindable var playerModel: PlayerModel
 
     @State private var model: RecordingsModel?
+    @State private var continueModel: ContinueWatchingModel?
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var activePlayback: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
@@ -22,6 +23,20 @@ struct RecordingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let model {
+                if let continueModel, !continueModel.items.isEmpty {
+                    ContinueWatchingShelf(
+                        items: continueModel.items,
+                        onPlay: { recording in Task { await resume(recording, model: model) } },
+                        onRemove: { recording in
+                            Task {
+                                await continueModel.remove(recording)
+                                await model.load()
+                            }
+                        }
+                    )
+                    .padding(.top, 10)
+                }
+
                 Picker("Show", selection: tabBinding(model)) {
                     ForEach(RecordingsTab.allCases) { tab in
                         Text(tab.title).tag(tab)
@@ -44,8 +59,15 @@ struct RecordingsView: View {
         .task {
             if model == nil {
                 model = RecordingsModel(client: client)
+                continueModel = ContinueWatchingModel(client: client)
             }
             await model?.load()
+        }
+        .task(id: continueModel != nil) {
+            await continueModel?.load()
+        }
+        .bowtieToast(continueModel?.actionError) {
+            continueModel?.actionError = nil
         }
         .task(id: model != nil) {
             while !Task.isCancelled {
@@ -61,7 +83,10 @@ struct RecordingsView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, activePlayback == nil {
-                Task { await model?.load() }
+                Task {
+                    await model?.load()
+                    await continueModel?.load()
+                }
             }
         }
         .confirmationDialog(
@@ -93,7 +118,10 @@ struct RecordingsView: View {
             presenting: confirmDelete
         ) { recording in
             Button("Delete \u{201C}\(recording.title)\u{201D}", role: .destructive) {
-                Task { await model?.delete(recording) }
+                Task {
+                    await model?.delete(recording)
+                    await continueModel?.load()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
@@ -111,7 +139,12 @@ struct RecordingsView: View {
             Text(model?.actionError ?? "")
         }
         .fullScreenCover(item: $activePlayback, onDismiss: {
-            Task { await model?.load() }
+            Task {
+                // The player's last position save, so the lists show it.
+                await model?.waitForSaves()
+                await model?.load()
+                await continueModel?.load()
+            }
         }) { playback in
             if let model {
                 RecordingPlayerView(playback: playback, model: model)
@@ -247,7 +280,10 @@ struct RecordingsView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .refreshable { await model.load() }
+            .refreshable {
+                await model.load()
+                await continueModel?.load()
+            }
         }
     }
 
@@ -346,6 +382,12 @@ struct RecordingsView: View {
         default:
             confirmDelete = recording
         }
+    }
+
+    /// Continue watching: straight to the saved position, no Resume prompt.
+    private func resume(_ recording: Recording, model: RecordingsModel) async {
+        guard let playback = await model.resume(recording, stopping: playerModel) else { return }
+        activePlayback = playback
     }
 
     private func play(_ recording: Recording, model: RecordingsModel) async {

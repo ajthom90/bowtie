@@ -16,6 +16,10 @@ struct ChannelRailView: View {
     @State private var showSearch = false
     @State private var recordFlow: RecordFlow?
     @State private var now = Date()
+    /// Continue watching: its shelf, and the recordings model that plays from it.
+    @State private var continueModel: ContinueWatchingModel?
+    @State private var recordingsModel: RecordingsModel?
+    @State private var activePlayback: RecordingsModel.Playback?
 
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
@@ -91,6 +95,22 @@ struct ChannelRailView: View {
                 .navigationDestination(isPresented: $showSearch) {
                     searchDestination
                 }
+                .navigationDestination(item: $activePlayback) { playback in
+                    if let recordingsModel {
+                        TVRecordingPlayerView(playback: playback, model: recordingsModel)
+                    }
+                }
+                .alert(
+                    "Something Went Wrong",
+                    isPresented: Binding(
+                        get: { recordingsModel?.actionError != nil },
+                        set: { if !$0 { recordingsModel?.actionError = nil } }
+                    )
+                ) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(recordingsModel?.actionError ?? "")
+                }
                 .recordFlowAlerts(recordFlow)
                 .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
                 .sheet(isPresented: $showSettings) {
@@ -110,6 +130,10 @@ struct ChannelRailView: View {
         .task {
             await ensureListModel()
             await listModel?.load()
+        }
+        // Alongside the channel list, not after it.
+        .task(id: continueModel != nil) {
+            await continueModel?.load()
         }
         .task(id: listModel != nil) {
             guard listModel != nil else { return }
@@ -139,6 +163,21 @@ struct ChannelRailView: View {
         .onChange(of: playingChannel) { old, new in
             if old != nil, new == nil {
                 Task { await listModel?.refreshRecents() }
+            }
+        }
+        // Back from a recording: it moves to the front (or leaves if finished).
+        .onChange(of: activePlayback) { old, new in
+            if old != nil, new == nil {
+                Task {
+                    await recordingsModel?.waitForSaves()
+                    await continueModel?.load()
+                }
+            }
+        }
+        // Back from Recordings: something may have been watched or deleted there.
+        .onChange(of: showRecordings) { old, new in
+            if old, !new {
+                Task { await continueModel?.load() }
             }
         }
     }
@@ -228,11 +267,21 @@ struct ChannelRailView: View {
         .focusSection()
     }
 
-    /// Recent cards, then the category chips (each its own focus section, so
-    /// Up from the rail lands on the chips), then the rail; favorites lead it.
+    /// Continue watching, recent cards, then the category chips (each its own
+    /// focus section, so Up from the rail lands on the chips), then the rail;
+    /// favorites lead it.
     private func railView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
         let visible = model.filteredRows(at: now)
         return VStack(alignment: .leading, spacing: 8) {
+            if let continueModel, !continueModel.items.isEmpty {
+                ContinueWatchingShelf(
+                    items: continueModel.items,
+                    onPlay: { recording in Task { await resume(recording) } },
+                    onRemove: { recording in Task { await continueModel.remove(recording) } }
+                )
+                .focusSection()
+            }
+
             if model.showsRecents {
                 RecentCardRow(
                     channels: model.recentChannels,
@@ -294,8 +343,12 @@ struct ChannelRailView: View {
                 .focusSection()
             }
         }
-        .bowtieToast(model.actionError) {
-            model.dismissActionError()
+        .bowtieToast(model.actionError ?? continueModel?.actionError) {
+            if model.actionError != nil {
+                model.dismissActionError()
+            } else {
+                continueModel?.actionError = nil
+            }
         }
     }
 
@@ -318,8 +371,18 @@ struct ChannelRailView: View {
         guard listModel == nil, let client = appModel.client else { return }
         let model = ChannelListModel(client: client)
         listModel = model
+        continueModel = ContinueWatchingModel(client: client)
+        recordingsModel = RecordingsModel(client: client)
         // Reload after scheduling so the program shows its REC mark.
         recordFlow = RecordFlow(client: client) { Task { await model.load() } }
+    }
+
+    /// Continue watching: plays the recording from where it was left.
+    private func resume(_ recording: Recording) async {
+        guard let recordingsModel,
+              let playback = await recordingsModel.resume(recording, stopping: playerModel)
+        else { return }
+        activePlayback = playback
     }
 
     private func open(channel: Channel) {

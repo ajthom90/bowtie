@@ -253,6 +253,32 @@ final class RecordingsModelTests: XCTestCase {
         XCTAssertEqual(try jsonBody(of: req)["positionSec"] as? Int, 615)
     }
 
+    func testWaitForSavesWaitsForTheClosingPlayersSave() async {
+        StubURLProtocol.handler = { _ in (204, Data(), [:]) }
+        StubURLProtocol.delay = { _ in 0.3 }
+        let model = RecordingsModel(client: await makeClient())
+        var saved = false
+
+        // The player queues its last save the way `saveNow` does, then the
+        // screen behind it reloads.
+        Task {
+            await model.savePosition(recordingId: 7, seconds: 900)
+            saved = true
+        }
+        await model.waitForSaves()
+
+        XCTAssertTrue(saved)
+    }
+
+    func testWaitForSavesReturnsAtOnceWhenIdle() async {
+        let model = RecordingsModel(client: await makeClient())
+        let start = ContinuousClock.now
+
+        await model.waitForSaves()
+
+        XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(200))
+    }
+
     // MARK: - Scheduling
 
     func testScheduleOutcomeCarriesWarnings() async {
