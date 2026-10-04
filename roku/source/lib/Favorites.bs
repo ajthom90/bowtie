@@ -124,15 +124,15 @@ namespace bowtie.favorites
         }
     end function
 
-    ' Flip channelId's star and re-sort. Returns the new value (true = starred),
-    ' or invalid when the channel is unknown or the server lacks favorites.
+    ' Flip channelId's star and re-sort. Returns {on} (on = now starred), or
+    ' invalid when the channel is unknown or the server lacks favorites.
     function toggle(state as object, channelId as dynamic) as dynamic
         if state = invalid or state.supported <> true then return invalid
         idx = bowtie.favorites.indexOfChannel(state.channels, channelId)
         if idx < 0 then return invalid
         on = (state.channels[idx].favorite <> true)
         bowtie.favorites.applyFavorite(state, idx, on)
-        return on
+        return { on: on }
     end function
 
     ' Record the server's answer for a toggle to `on`. Success makes it the

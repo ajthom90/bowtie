@@ -1,4 +1,5 @@
-' MarkupList item: big bold channel number, name, now+progress, next dim.
+' MarkupList item: big bold channel number, name, now+progress, next dim,
+' amber star on the trailing edge for favorites.
 
 sub init()
     m.rowBg = m.top.findNode("rowBg")
@@ -8,6 +9,7 @@ sub init()
     m.nextLabel = m.top.findNode("nextLabel")
     m.progressTrack = m.top.findNode("progressTrack")
     m.progressFill = m.top.findNode("progressFill")
+    m.favoriteStar = m.top.findNode("favoriteStar")
 end sub
 
 sub onItemContent()
@@ -27,6 +29,7 @@ sub onItemContent()
 
     m.numberLabel.text = number
     m.nameLabel.text = name
+    m.favoriteStar.visible = (content.favorite = true)
 
     if nowTitle <> ""
         m.nowLabel.text = nowTitle
@@ -56,11 +59,14 @@ sub onSizeChanged()
     m.rowBg.width = w
     m.rowBg.height = h
 
-    textW = w - 220
+    ' Leave room for the star on the trailing edge.
+    textW = w - 300
     if textW < 200 then textW = 200
     m.nameLabel.width = textW
     m.nowLabel.width = textW
     m.nextLabel.width = textW
+
+    m.favoriteStar.translation = [w - 64, (h - 40) / 2]
 
     trackW = 600
     if trackW > textW then trackW = textW

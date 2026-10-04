@@ -73,9 +73,9 @@ test('toggle flips optimistically and re-sorts the rail', () => {
     const out = runBrs(LIB, `
         st = bowtie_favorites_newState(${bs(SERVER)})
         out.initial = snapshot(st.channels)
-        out.on = bowtie_favorites_toggle(st, 2)
+        out.on = bowtie_favorites_toggle(st, 2).on
         out.afterstar = snapshot(st.channels)
-        out.off = bowtie_favorites_toggle(st, 2)
+        out.off = bowtie_favorites_toggle(st, 2).on
         out.afterunstar = snapshot(st.channels)
         out.unknown = bowtie_favorites_toggle(st, 99)
     `);
@@ -105,7 +105,7 @@ test('toggle is a no-op against a server without favorites', () => {
 test('a failed toggle reverts to the confirmed state', () => {
     const out = runBrs(LIB, `
         st = bowtie_favorites_newState(${bs(SERVER)})
-        on = bowtie_favorites_toggle(st, 2)
+        on = bowtie_favorites_toggle(st, 2).on
         out.changed = bowtie_favorites_resolve(st, 2, on, false)
         out.channels = st.channels
     `);
@@ -117,10 +117,10 @@ test('a failed toggle reverts to the confirmed state', () => {
 test('a successful toggle is kept and becomes the confirmed state', () => {
     const out = runBrs(LIB, `
         st = bowtie_favorites_newState(${bs(SERVER)})
-        on = bowtie_favorites_toggle(st, 7)
+        on = bowtie_favorites_toggle(st, 7).on
         out.okchanged = bowtie_favorites_resolve(st, 7, on, true)
         ' A later toggle that fails must fall back to "off", the confirmed state.
-        on2 = bowtie_favorites_toggle(st, 7)
+        on2 = bowtie_favorites_toggle(st, 7).on
         out.failchanged = bowtie_favorites_resolve(st, 7, on2, false)
         out.channels = st.channels
     `);
@@ -133,8 +133,8 @@ test('a successful toggle is kept and becomes the confirmed state', () => {
 test('two queued toggles that both fail leave the server state', () => {
     const out = runBrs(LIB, `
         st = bowtie_favorites_newState(${bs(SERVER)})
-        a = bowtie_favorites_toggle(st, 2) ' PUT
-        b = bowtie_favorites_toggle(st, 2) ' DELETE
+        a = bowtie_favorites_toggle(st, 2).on ' PUT
+        b = bowtie_favorites_toggle(st, 2).on ' DELETE
         bowtie_favorites_resolve(st, 2, a, false)
         bowtie_favorites_resolve(st, 2, b, false)
         out.channels = st.channels
