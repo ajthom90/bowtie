@@ -90,4 +90,21 @@ namespace bowtie.registry
         sec.Flush()
     end function
 
+    ' Device preference: the home screen's guide filter chip ("all", "sports",
+    ' …; "" when never chosen — bowtie.guideFilter.parse reads it). Kept
+    ' through sign-out and change-server like autoSkipAds.
+    function loadGuideFilter() as string
+        sec = bowtie.registry.section()
+        if sec = invalid then return ""
+        if sec.Exists("guideFilter") then return sec.Read("guideFilter")
+        return ""
+    end function
+
+    function saveGuideFilter(filter as string) as void
+        sec = bowtie.registry.section()
+        if sec = invalid then return
+        sec.Write("guideFilter", filter)
+        sec.Flush()
+    end function
+
 end namespace

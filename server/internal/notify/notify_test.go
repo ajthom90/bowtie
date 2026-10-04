@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -288,11 +290,17 @@ func TestSendTimesOut(t *testing.T) {
 type cfgBox struct {
 	mu sync.Mutex
 	n  settings.Notifications
+	// failures: how many reads fail before they work again.
+	failures int
 }
 
 func (c *cfgBox) get() (settings.Notifications, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.failures > 0 {
+		c.failures--
+		return settings.Notifications{}, errors.New("database is locked")
+	}
 	return c.n, nil
 }
 
@@ -496,5 +504,36 @@ func TestCapTitle(t *testing.T) {
 	}
 	if got := capTitle(Event{Title: "short"}).Title; got != "short" {
 		t.Fatalf("short title changed: %q", got)
+	}
+}
+
+// A settings read that fails (a busy database) doesn't lose the event: it's
+// tried again after RetryAfter.
+func TestServiceRetriesWhenSettingsCantBeRead(t *testing.T) {
+	tg := newTarget(t)
+	s, box, _ := startService(t, tg.URL+"/h", Options{})
+	box.mu.Lock()
+	box.failures = 1
+	box.mu.Unlock()
+	s.Notify(failedEvent(7))
+	tg.wait(t, 1)
+}
+
+// The rate-limit memory drops entries once their window has passed.
+func TestServiceForgetsOldRateEntries(t *testing.T) {
+	tg := newTarget(t)
+	s, _, clk := startService(t, tg.URL+"/h", Options{})
+	for i := 0; i < 5; i++ {
+		s.Notify(Event{Kind: EventGuideFailed, Key: fmt.Sprintf("guideFailed:%d", i), Title: "g", Message: "m"})
+	}
+	tg.wait(t, 5)
+	clk.Add(7 * time.Hour)
+	s.Notify(diskLow())
+	tg.wait(t, 1)
+	s.mu.Lock()
+	n := len(s.sent)
+	s.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("rate memory has %d entries, want 1", n)
 	}
 }

@@ -323,22 +323,26 @@ test('startPosition: the play response\'s saved position, else the row\'s; near 
     assert.deepEqual(out, { server: 1500, fallback: 600, missing: 600, tooearly: 0, atend: 0 });
 });
 
-test('home layout: rows stack header → Continue → Recent → rail inside 1080', () => {
+test('home layout: rows stack header → Continue → Recent → filter chips → rail inside 1080', () => {
     const out = runBrs(LIB, `
         out.none = snapshot(bowtie_continueWatching_homeLayout(false, false))
         out.recent = snapshot(bowtie_continueWatching_homeLayout(false, true))
         out.cont = snapshot(bowtie_continueWatching_homeLayout(true, false))
         out.both = snapshot(bowtie_continueWatching_homeLayout(true, true))
     `);
-    // Unchanged from before the Continue row existed.
-    assert.equal(out.none.railY, 160);
-    assert.equal(out.none.railRows, 7);
-    assert.equal(out.recent.railY, 280);
-    assert.equal(out.recent.railRows, 6);
+    // The chips take 72 px (56 + 16) above the rail.
+    assert.equal(out.none.filtersY, 136);
+    assert.equal(out.none.railY, 208);
+    assert.equal(out.none.railRows, 6);
     assert.equal(out.recent.recentY, 172);
+    assert.equal(out.recent.filtersY, 280);
+    assert.equal(out.recent.railY, 352);
+    assert.equal(out.recent.railRows, 5);
+    assert.equal(out.both.railRows, 4);
     const HEADER_BOTTOM = 128;
     const CONTINUE_H = 112;
     const RECENT_H = 88;
+    const CHIPS_H = 56;
     const RAIL_PITCH = 128; // 120 item + 8 spacing
     for (const [name, l, showC, showR] of [
         ['none', out.none, false, false],
@@ -357,8 +361,10 @@ test('home layout: rows stack header → Continue → Recent → rail inside 108
             assert.ok(l.recentY >= l.recentLabelY + 32, `${name}: Recent row overlaps its label`);
             bottom = l.recentY + RECENT_H;
         }
-        assert.ok(l.railY > bottom, `${name}: rail overlaps the row above`);
-        assert.ok(l.railRows >= 5, `${name}: rail shows too few channels`);
+        assert.ok(l.filtersY >= bottom, `${name}: filter chips overlap the row above`);
+        bottom = l.filtersY + CHIPS_H;
+        assert.ok(l.railY > bottom, `${name}: rail overlaps the filter chips`);
+        assert.ok(l.railRows >= (showC && showR ? 4 : 5), `${name}: rail shows too few channels`);
         assert.ok(l.railY + l.railRows * RAIL_PITCH - 8 <= 1080, `${name}: rail runs off the 1080 canvas`);
     }
 });

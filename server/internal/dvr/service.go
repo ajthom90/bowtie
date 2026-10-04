@@ -30,6 +30,9 @@ import (
 
 // Defaults for padding, retries and disk space.
 const (
+	// yieldTail: how long a freed tuner can take to come back (the ingest
+	// keeps a device open a few seconds after its last viewer leaves).
+	yieldTail         = 10 * time.Second
 	DefaultPadStart   = 60 * time.Second
 	DefaultPadEnd     = 3 * time.Minute
 	defaultRetryEvery = 15 * time.Second
@@ -144,8 +147,11 @@ type Service struct {
 	detectRetry map[int64]bool
 	detectOff   bool
 	lastSweep   time.Time
-	stopped     bool
-	onDeleted   func() // test hook: after the sweep deletes a recording
+	// yieldedFor: when end padding last gave way for each waiting recording
+	// (guarded by tickMu, like lastSweep).
+	yieldedFor map[int64]time.Time
+	stopped    bool
+	onDeleted  func() // test hook: after the sweep deletes a recording
 
 	usedMu sync.Mutex // Storage's cached usedBytes
 	used   int64
@@ -193,6 +199,7 @@ func New(deps Deps) *Service {
 		detecting:   map[int64]context.CancelFunc{},
 		detectPoke:  make(chan struct{}, 1),
 		detectRetry: map[int64]bool{},
+		yieldedFor:  map[int64]time.Time{},
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -417,15 +424,39 @@ func (s *Service) Tick() {
 // started but that is waiting for a tuner, stop one capture on another channel
 // that is only in its end padding (its show is over).
 func (s *Service) yieldEndPadding(rows []store.Recording, now time.Time) {
+	// A channel with a capture still inside its show keeps its tuner however
+	// many paddings on it end, so those paddings free nothing.
+	inShow := map[int64]bool{}
+	waiting := map[int64]bool{}
+	for _, r := range rows {
+		if r.State == store.RecRecording && !now.Before(r.WindowStart()) && now.Before(r.Stop) {
+			inShow[r.ChannelID] = true
+		}
+		if r.State == store.RecWaiting {
+			waiting[r.ID] = true
+		}
+	}
+	for id := range s.yieldedFor {
+		if !waiting[id] {
+			delete(s.yieldedFor, id)
+		}
+	}
+	// After a yield, the waiting capture needs a retry (RetryEvery) plus the
+	// tuner's release tail before it can use the tuner: don't cut another
+	// padding for it until then.
+	cooldown := s.deps.RetryEvery + yieldTail
 	stopped := map[int64]bool{}
 	for _, w := range rows {
 		if w.State != store.RecWaiting || w.Failure != "noTuner" || now.Before(w.Start) {
 			continue
 		}
+		if last, ok := s.yieldedFor[w.ID]; ok && now.Sub(last) < cooldown {
+			continue
+		}
 		var pick *store.Recording
 		for i := range rows {
 			r := &rows[i]
-			if r.State != store.RecRecording || r.ChannelID == w.ChannelID || stopped[r.ID] || now.Before(r.Stop) {
+			if r.State != store.RecRecording || r.ChannelID == w.ChannelID || stopped[r.ID] || now.Before(r.Stop) || inShow[r.ChannelID] {
 				continue
 			}
 			s.mu.Lock()
@@ -439,6 +470,7 @@ func (s *Service) yieldEndPadding(rows []store.Recording, now time.Time) {
 			continue
 		}
 		stopped[pick.ID] = true
+		s.yieldedFor[w.ID] = now
 		log.Printf("dvr: recording %d: ending its padding early so recording %d can start", pick.ID, w.ID)
 		if err := s.StopNow(pick.ID); err != nil {
 			log.Printf("dvr: recording %d: %v", pick.ID, err)
@@ -842,6 +874,11 @@ func (s *Service) convert(id int64) {
 		_ = os.RemoveAll(out)
 		cctx, cancel := context.WithCancel(s.ctx)
 		s.mu.Lock()
+		if s.deleting[id] {
+			s.mu.Unlock()
+			cancel()
+			return // Delete is removing it; don't recreate its folder
+		}
 		s.converting[id] = cancel
 		s.mu.Unlock()
 		dur, err = s.deps.Converter.Convert(cctx, parts, out)

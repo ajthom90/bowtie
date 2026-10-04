@@ -10,7 +10,8 @@
 ' Input is recordings normalized by bowtie.recordings.parseList.
 '
 ' Also the home screen's row layout (homeLayout), so the stacking of the
-' Continue, Recent and channel rows is tested here rather than on a device.
+' Continue, Recent, filter chip and channel rows is tested here rather than
+' on a device.
 '
 ' Camel-case keys in returned AAs are quoted so they keep their case.
 
@@ -241,24 +242,25 @@ namespace bowtie.continueWatching
     ' Where HomeScene puts each row (y on the 1080 canvas) and how many
     ' channel rows the rail keeps. Below the header (ends at y=128):
     ' Continue watching (label + 112 px cards), Recent (label + 88 px cards),
-    ' then the rail (120 px rows, 8 apart). Only the shown rows take space.
-    ' (Built as one literal at the end: assigning layout.railY would store
-    ' the key lowercased.)
+    ' the guide filter chips (56 px; always there while the rail is), then the
+    ' rail (120 px rows, 8 apart). Only the shown Continue / Recent rows take
+    ' space; with both, the rail keeps 4 rows. (Built as one literal at the
+    ' end: assigning layout.railY would store the key lowercased.)
     function homeLayout(showContinue as boolean, showRecent as boolean) as object
         y = 136
         continueLabelY = y
         recentLabelY = y
-        railY = 160
         if showContinue
             continueLabelY = y
             y = y + 36 + 112 + 16
-            railY = y
         end if
         if showRecent
             recentLabelY = y
             y = y + 36 + 88 + 20
-            railY = y
         end if
+        ' The filter chips sit directly above the rail.
+        filtersY = y
+        railY = y + 56 + 16
         ' Rows that fit: railY + rows * 128 - 8 <= 1080.
         railRows = (1080 + 8 - railY) \ 128
         return {
@@ -266,6 +268,7 @@ namespace bowtie.continueWatching
             "continueY": continueLabelY + 36
             "recentLabelY": recentLabelY
             "recentY": recentLabelY + 36
+            "filtersY": filtersY
             "railY": railY
             "railRows": railRows
         }

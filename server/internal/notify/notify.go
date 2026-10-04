@@ -79,12 +79,18 @@ type Service struct {
 
 	mu   sync.Mutex
 	sent map[string]time.Time
-	once map[string]bool
+	once map[string]time.Time // recordingFailed keys, forgotten after onceMemory
 }
+
+// onceMemory: how long a failed recording's "already notified" mark is kept.
+const onceMemory = 7 * 24 * time.Hour
 
 type job struct {
 	ev    Event
 	retry bool
+	// settingsRetry: retried because settings couldn't be read, so the event
+	// hasn't been checked against the choices and rate limit yet.
+	settingsRetry bool
 }
 
 // New builds a Service that reads its URL and event choices from cfg on
@@ -113,7 +119,7 @@ func New(cfg func() (settings.Notifications, error), opts Options) *Service {
 		rateWindow: opts.RateWindow,
 		queue:      make(chan job, opts.QueueSize),
 		sent:       map[string]time.Time{},
-		once:       map[string]bool{},
+		once:       map[string]time.Time{},
 	}
 }
 
@@ -154,13 +160,18 @@ func (s *Service) Send(ctx context.Context, rawURL string, ev Event) Result {
 func (s *Service) handle(ctx context.Context, j job) {
 	cfg, err := s.cfg()
 	if err != nil {
-		log.Printf("notify: read settings: %v", err)
+		if j.retry {
+			log.Printf("notify: read settings: %v; dropped %s notification", err, j.ev.Kind)
+			return
+		}
+		log.Printf("notify: read settings: %v (retrying in %s)", err, s.retryAfter)
+		s.retryLater(ctx, job{ev: j.ev, retry: true, settingsRetry: true})
 		return
 	}
 	if cfg.URL == "" {
 		return
 	}
-	if !j.retry && (!enabled(cfg.Events, j.ev.Kind) || !s.allow(j.ev)) {
+	if (!j.retry || j.settingsRetry) && (!enabled(cfg.Events, j.ev.Kind) || !s.allow(j.ev)) {
 		return
 	}
 	res := s.Send(ctx, cfg.URL, j.ev)
@@ -172,14 +183,18 @@ func (s *Service) handle(ctx context.Context, j job) {
 		return
 	}
 	log.Printf("notify: %s notification to %s failed (retrying in %s): %s", j.ev.Kind, Host(cfg.URL), s.retryAfter, res.Error)
-	retry := job{ev: j.ev, retry: true}
+	s.retryLater(ctx, job{ev: j.ev, retry: true})
+}
+
+// retryLater queues j again after retryAfter (without blocking the worker).
+func (s *Service) retryLater(ctx context.Context, j job) {
 	go func() {
 		t := time.NewTimer(s.retryAfter)
 		defer t.Stop()
 		select {
 		case <-ctx.Done():
 		case <-t.C:
-			s.enqueue(retry)
+			s.enqueue(j)
 		}
 	}()
 }
@@ -191,21 +206,37 @@ func (s *Service) allow(ev Event) bool {
 	if key == "" {
 		key = ev.Kind
 	}
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.forgetOldLocked(now)
 	if ev.Kind == EventRecordingFailed {
-		if s.once[key] {
+		if _, ok := s.once[key]; ok {
 			return false
 		}
-		s.once[key] = true
+		s.once[key] = now
 		return true
 	}
-	now := s.now()
 	if last, ok := s.sent[key]; ok && now.Sub(last) < s.rateWindow {
 		return false
 	}
 	s.sent[key] = now
 	return true
+}
+
+// forgetOldLocked drops rate-limit entries whose window has passed, so the
+// maps stay small on a server that runs for months.
+func (s *Service) forgetOldLocked(now time.Time) {
+	for k, t := range s.sent {
+		if now.Sub(t) >= s.rateWindow {
+			delete(s.sent, k)
+		}
+	}
+	for k, t := range s.once {
+		if now.Sub(t) >= onceMemory {
+			delete(s.once, k)
+		}
+	}
 }
 
 func enabled(e settings.NotificationEvents, kind string) bool {

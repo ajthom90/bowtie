@@ -334,7 +334,7 @@ cd web && npm ci && npm test && npm run build
 - **Windows** — native WinUI 3 app (x64 and ARM64) in progress on the `feat/windows` branch; not released yet.
 - **Xbox** — no native app; install Kodi from the Microsoft Store and add your M3U/XMLTV feed (web app → Account → “Use Bowtie in other apps”).
 - **PlayStation** — no way to install third-party apps; not supported.
-- **Any other device** — the web app works in any modern browser, including smart-TV browsers.
+- **Any other device** — the web app works in any modern browser, including smart-TV browsers. On a phone, tablet or computer you can install it (**Add to Home Screen** / **Install app**) to get its own icon and window; browsers offer that over HTTPS (see [Remote access](#remote-access)) or on `localhost`.
 
 ---
 

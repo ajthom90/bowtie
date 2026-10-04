@@ -20,14 +20,37 @@ type Props = {
 export function MultiviewPicker({ title, channels, error, now, onScreen, onPick, onClose }: Props) {
   const [filter, setFilter] = useState('')
   const filterRef = useRef<HTMLInputElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
+  // Focus the filter; give focus back to whatever opened the picker on close.
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
     filterRef.current?.focus()
+    return () => {
+      if (opener && opener.isConnected) opener.focus()
+    }
   }, [])
 
+  // Escape closes; Tab stays inside the dialog (the tiles behind are inert).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      const panel = panelRef.current
+      if (e.key !== 'Tab' || !panel) return
+      const list = Array.from(
+        panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+      )
+      if (list.length === 0) return
+      const first = list[0]
+      const last = list[list.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey ? active === first || !panel.contains(active) : active === last || !panel.contains(active)) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -46,6 +69,7 @@ export function MultiviewPicker({ title, channels, error, now, onScreen, onPick,
   return (
     <div className={styles.backdrop} onClick={onClose}>
       <div
+        ref={panelRef}
         className={styles.sheet}
         role="dialog"
         aria-modal="true"

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="FilterChip" extends="Group">
+    <!-- Guide filter chip in HomeScene's filterList (All · Sports · Movies ·
+         News · Kids · New). The chosen chip (content field "selected") is
+         filled amber; the focused one gets the grid's amber ring. -->
+    <interface>
+        <field id="width" type="float" onChange="onSizeChanged" />
+        <field id="height" type="float" onChange="onSizeChanged" />
+        <field id="itemContent" type="node" onChange="onItemContent" />
+        <field id="focusPercent" type="float" onChange="onFocusChanged" />
+        <field id="gridHasFocus" type="boolean" onChange="onFocusChanged" />
+        <field id="itemHasFocus" type="boolean" onChange="onFocusChanged" />
+    </interface>
+    <script type="text/brightscript" uri="FilterChip.bs" />
+    <children>
+        <Rectangle
+            id="chipBg"
+            width="160"
+            height="56"
+            color="0x1A2028FF"
+        />
+        <Label
+            id="chipLabel"
+            translation="[0, 0]"
+            width="160"
+            height="56"
+            text=""
+            horizAlign="center"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:MediumSystemFont"
+        />
+    </children>
+</component>

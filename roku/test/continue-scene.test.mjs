@@ -85,7 +85,9 @@ test('Home loads the recorded list with the channels (before the guide) and keep
 
 test('the row shows only beside a visible rail with items; focus never stays on a hidden row', () => {
     const rows = body(home, 'sub updateRows(');
-    assert.match(rows, /showContinue = \(m\.channelList\.visible = true and m\.continueItems\.count\(\) > 0\)/);
+    // "Beside a visible rail": while the list (chips + rail, or the filter's
+    // empty state) is shown.
+    assert.match(rows, /showContinue = \(listShown and m\.continueItems\.count\(\) > 0\)/);
     assert.match(rows, /m\.continueList\.visible = showContinue/);
     assert.match(rows, /not showContinue and m\.continueList\.hasFocus\(\)/);
     assert.match(rows, /not showRecent and m\.recentList\.hasFocus\(\)/);
@@ -106,17 +108,22 @@ test('cards carry the title, detail and progress', () => {
 
 // ── Home: keys ──────────────────────────────────────────────────────────────
 
-test('Up/Down chain: header ↔ Continue ↔ Recent ↔ rail, skipping hidden rows', () => {
+test('Up/Down chain: header ↔ Continue ↔ Recent ↔ filter chips ↔ rail, skipping hidden rows', () => {
     const handler = body(home, 'function onKeyEvent');
     const rail = focusBranch(handler, 'channelList');
-    assert.match(rail, /key = "up"[\s\S]*?m\.recentList\.visible = true[\s\S]*?m\.continueList\.visible = true[\s\S]*?m\.continueList\.setFocus\(true\)[\s\S]*?focusHeader\(\)/);
+    assert.match(rail, /key = "up"[\s\S]*?m\.filterList\.setFocus\(true\)/);
+    const chips = focusBranch(handler, 'filterList');
+    assert.match(chips, /key = "up"[\s\S]*?focusAboveFilters\(\)/);
+    const above = body(home, 'sub focusAboveFilters(');
+    assert.match(above, /m\.recentList\.visible = true[\s\S]*?m\.recentList\.setFocus\(true\)[\s\S]*?m\.continueList\.visible = true[\s\S]*?m\.continueList\.setFocus\(true\)[\s\S]*?focusHeader\(\)/);
     const recent = focusBranch(handler, 'recentList');
+    assert.match(recent, /key = "down"[\s\S]*?m\.filterList\.setFocus\(true\)/);
     assert.match(recent, /key = "up"[\s\S]*?m\.continueList\.visible = true[\s\S]*?m\.continueList\.setFocus\(true\)[\s\S]*?focusHeader\(\)/);
     const cont = focusBranch(handler, 'continueList');
-    assert.match(cont, /key = "down"[\s\S]*?m\.recentList\.setFocus\(true\)[\s\S]*?m\.channelList\.setFocus\(true\)/);
+    assert.match(cont, /key = "down"[\s\S]*?m\.recentList\.setFocus\(true\)[\s\S]*?m\.filterList\.setFocus\(true\)[\s\S]*?m\.channelList\.setFocus\(true\)/);
     assert.match(cont, /key = "up"[\s\S]*?focusHeader\(\)/);
     const header = handler.slice(handler.indexOf('m.recordingsButton.hasFocus() or m.settingsButton.hasFocus()'));
-    assert.match(header, /key = "down"[\s\S]*?m\.continueList\.visible = true[\s\S]*?m\.continueList\.setFocus\(true\)[\s\S]*?m\.recentList\.setFocus\(true\)[\s\S]*?m\.channelList\.setFocus\(true\)/);
+    assert.match(header, /key = "down"[\s\S]*?m\.continueList\.visible = true[\s\S]*?m\.continueList\.setFocus\(true\)[\s\S]*?m\.recentList\.setFocus\(true\)[\s\S]*?m\.filterList\.setFocus\(true\)[\s\S]*?m\.channelList\.setFocus\(true\)/);
 });
 
 test('* on a Continue item offers Remove from Continue watching', () => {

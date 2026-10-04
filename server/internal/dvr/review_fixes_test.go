@@ -354,3 +354,30 @@ func TestDeleteDuringConversionStopsFFmpeg(t *testing.T) {
 		t.Fatal("FFmpeg kept running after the recording was deleted")
 	}
 }
+
+// A conversion that would start while the recording is being deleted doesn't
+// (FFmpeg would recreate the folder Delete just removed).
+func TestConvertSkipsARecordingBeingDeleted(t *testing.T) {
+	e := newEnv(t)
+	r := e.schedule(t, "9.1", t0.Add(time.Minute), t0.Add(3*time.Minute))
+	r.State, r.Dir = store.RecConverting, filepath.Join(e.dir, "gone")
+	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.Dir, "part-001.ts"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.UpdateRecording(r); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.mu.Lock()
+	e.svc.deleting[r.ID] = true
+	e.svc.mu.Unlock()
+	e.svc.convert(r.ID)
+	e.conv.mu.Lock()
+	n := len(e.conv.parts)
+	e.conv.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("converter ran %d times for a recording being deleted", n)
+	}
+}

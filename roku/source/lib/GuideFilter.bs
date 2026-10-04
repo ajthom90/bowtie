@@ -1,0 +1,257 @@
+' Guide category filters (All · Sports · Movies · News · Kids · New) for the
+' home screen's chip row (no I/O, no nodes).
+'
+' The guide carries one raw category string per program (XMLTV <category>,
+' Schedules Direct genre, SiliconDust free guide; the server joins several
+' with "; "). These rules map it to coarse buckets and are the same as the
+' other apps' (web/src/guide/guideFilterModel.ts, iOS GuideFilter.swift,
+' Android GuideFilter.kt) — keep them in step:
+' - the category splits on "," ";" "|"; each piece is matched case-insensitively
+'   on whole words (anything but a-z / 0-9 separates words);
+' - Sports / News / Kids: a piece containing one of their words or phrases;
+' - Movies: a piece that is exactly one of the movie phrases ("Movie review"
+'   is not a movie);
+' - Schedules Direct program IDs MV + 8 digits are movies, SP + 8 digits sports;
+' - mature ratings (TV-14, TV-MA, R, NC-17, X) keep a program out of Kids;
+' - New: isNew is true.
+'
+' The rail shows now/next, so a channel stays under a filter when its now or
+' next program (bowtie.guide.nowNext) matches. Filter ids are the lowercase
+' chip names; "new" is always a quoted key (it is a BrighterScript keyword).
+
+import "pkg:/source/lib/GuideLogic.bs"
+
+namespace bowtie.guideFilter
+
+    ' Chip order.
+    function filters() as object
+        return ["all", "sports", "movies", "news", "kids", "new"]
+    end function
+
+    function label(filter as dynamic) as string
+        labels = { "all": "All", "sports": "Sports", "movies": "Movies", "news": "News", "kids": "Kids", "new": "New" }
+        f = bowtie.guideFilter.parse(filter)
+        return labels[f]
+    end function
+
+    ' "No sports on right now" ("" for all).
+    function emptyCopy(filter as dynamic) as string
+        nouns = { "sports": "sports", "movies": "movies", "news": "news", "kids": "kids' shows", "new": "new episodes" }
+        f = bowtie.guideFilter.parse(filter)
+        if f = "all" then return ""
+        return "No " + nouns[f] + " on right now"
+    end function
+
+    ' A stored or chosen value → a filter id; anything unknown is "all".
+    function parse(raw as dynamic) as string
+        s = bowtie.guideFilter.asString(raw)
+        for each f in bowtie.guideFilter.filters()
+            if s = f then return f
+        end for
+        return "all"
+    end function
+
+    ' The chip index for a filter (0, All, when unknown).
+    function indexOf(filter as dynamic) as integer
+        f = bowtie.guideFilter.parse(filter)
+        list = bowtie.guideFilter.filters()
+        for i = 0 to list.count() - 1
+            if list[i] = f then return i
+        end for
+        return 0
+    end function
+
+    ' ── Word lists ──────────────────────────────────────────────────────────
+
+    ' Sport words / phrases matched as whole words ("Sports talk", "College football").
+    function sportsPhrases() as object
+        return [
+            "sport", "sports", "motorsport", "motorsports", "esports",
+            "football", "basketball", "baseball", "soccer", "hockey", "golf", "tennis",
+            "boxing", "wrestling", "racing", "volleyball", "softball", "lacrosse", "rugby",
+            "cricket", "bowling", "skiing", "snowboarding", "skating", "gymnastics",
+            "swimming", "cycling", "track field", "athletics", "olympics",
+            "mixed martial arts", "mma", "rodeo", "curling", "billiards", "darts",
+            "surfing", "triathlon", "polo", "handball", "badminton", "equestrian"
+        ]
+    end function
+
+    ' The whole piece must be one of these ("Movie review" is not a movie).
+    function moviePieces() as object
+        return [
+            "movie", "movies", "film", "films", "feature film", "tv movie", "made for tv movie",
+            "motion picture"
+        ]
+    end function
+
+    function newsPhrases() as object
+        return ["news", "newsmagazine", "newscast", "weather"]
+    end function
+
+    ' "Family" is deliberately absent: family sitcoms and dramas are
+    ' general-audience prime time, not children's programming.
+    function kidsPhrases() as object
+        return [
+            "children", "childrens", "kids", "animated", "animation", "cartoon", "cartoons",
+            "educational", "preschool"
+        ]
+    end function
+
+    ' Ratings that keep a program out of Kids (adult animation); letters/digits only.
+    function matureRatings() as object
+        return ["tv14", "tvma", "r", "nc17", "x"]
+    end function
+
+    ' ── Programs ────────────────────────────────────────────────────────────
+
+    ' Every bucket a program belongs to, as a set: {sports: true, "new": true}.
+    ' May be several, or none ({}).
+    function programBuckets(program as dynamic) as object
+        out = {}
+        if program = invalid or Type(program) <> "roAssociativeArray" then return out
+
+        for each piece in bowtie.guideFilter.splitPieces(bowtie.guideFilter.asString(program.category))
+            w = bowtie.guideFilter.words(piece)
+            if w <> ""
+                if bowtie.guideFilter.hasAny(w, bowtie.guideFilter.sportsPhrases()) then out["sports"] = true
+                if bowtie.guideFilter.contains(bowtie.guideFilter.moviePieces(), Mid(w, 2, Len(w) - 2)) then out["movies"] = true
+                if bowtie.guideFilter.hasAny(w, bowtie.guideFilter.newsPhrases()) then out["news"] = true
+                if bowtie.guideFilter.hasAny(w, bowtie.guideFilter.kidsPhrases()) then out["kids"] = true
+            end if
+        end for
+
+        pid = bowtie.guideFilter.asString(program.programId)
+        if bowtie.guideFilter.hasIdPrefix(pid, "MV") then out["movies"] = true
+        if bowtie.guideFilter.hasIdPrefix(pid, "SP") then out["sports"] = true
+
+        rating = bowtie.guideFilter.alnum(LCase(bowtie.guideFilter.asString(program.rating)))
+        if bowtie.guideFilter.contains(bowtie.guideFilter.matureRatings(), rating) then out.Delete("kids")
+
+        isNew = program.isNew
+        t = Type(isNew)
+        if (t = "Boolean" or t = "roBoolean") and isNew = true then out["new"] = true
+        return out
+    end function
+
+    function programMatches(program as dynamic, filter as dynamic) as boolean
+        f = bowtie.guideFilter.asString(filter)
+        if f = "all" then return true
+        return bowtie.guideFilter.programBuckets(program).DoesExist(f)
+    end function
+
+    ' ── Channels ────────────────────────────────────────────────────────────
+
+    ' Keep a channel under filter: its now or next program at atIso matches.
+    ' "all" keeps every channel, even one without guide data.
+    function channelMatches(programs as dynamic, filter as dynamic, atIso as string) as boolean
+        f = bowtie.guideFilter.parse(filter)
+        if f = "all" then return true
+        if programs = invalid or Type(programs) <> "roArray" then return false
+        nn = bowtie.guide.nowNext(programs, atIso)
+        if nn.now <> invalid and bowtie.guideFilter.programMatches(nn.now, f) then return true
+        if nn.next <> invalid and bowtie.guideFilter.programMatches(nn.next, f) then return true
+        return false
+    end function
+
+    ' The rail under filter: channels (in order) whose guide (guideById,
+    ' keyed by channel id as a string) matches.
+    function channelsMatching(channels as dynamic, guideById as dynamic, filter as dynamic, atIso as string) as object
+        out = []
+        if channels = invalid or Type(channels) <> "roArray" then return out
+        hasGuide = (guideById <> invalid and Type(guideById) = "roAssociativeArray")
+        for each ch in channels
+            if ch <> invalid and ch.id <> invalid
+                programs = invalid
+                if hasGuide then programs = guideById[ch.id.toStr()]
+                if bowtie.guideFilter.channelMatches(programs, filter, atIso) then out.push(ch)
+            end if
+        end for
+        return out
+    end function
+
+    ' ── Text helpers ────────────────────────────────────────────────────────
+
+    function asString(v as dynamic) as string
+        t = Type(v)
+        if t = "String" or t = "roString" then return v
+        return ""
+    end function
+
+    ' Pieces of a category string split on "," ";" "|".
+    function splitPieces(s as string) as object
+        pieces = []
+        current = ""
+        for i = 1 to Len(s)
+            c = Mid(s, i, 1)
+            if c = "," or c = ";" or c = "|"
+                pieces.push(current)
+                current = ""
+            else
+                current = current + c
+            end if
+        end for
+        pieces.push(current)
+        return pieces
+    end function
+
+    ' " word word " (lowercased ASCII letters/digits; everything else
+    ' separates words), or "" when the piece has none.
+    function words(piece as string) as string
+        out = ""
+        current = ""
+        lower = LCase(piece)
+        for i = 1 to Len(lower)
+            c = Mid(lower, i, 1)
+            if bowtie.guideFilter.isAlnum(c)
+                current = current + c
+            else if current <> ""
+                out = out + " " + current
+                current = ""
+            end if
+        end for
+        if current <> "" then out = out + " " + current
+        if out = "" then return ""
+        return out + " "
+    end function
+
+    ' Only a-z and 0-9 of an already lowercased string ("tv-14" → "tv14").
+    function alnum(s as string) as string
+        out = ""
+        for i = 1 to Len(s)
+            c = Mid(s, i, 1)
+            if bowtie.guideFilter.isAlnum(c) then out = out + c
+        end for
+        return out
+    end function
+
+    function isAlnum(c as string) as boolean
+        code = Asc(c)
+        return (code >= 97 and code <= 122) or (code >= 48 and code <= 57)
+    end function
+
+    ' Whether padded (" w1 w2 ") holds one of phrases as whole words.
+    function hasAny(padded as string, phrases as object) as boolean
+        for each p in phrases
+            if Instr(1, padded, " " + p + " ") > 0 then return true
+        end for
+        return false
+    end function
+
+    function contains(list as object, value as string) as boolean
+        for each v in list
+            if v = value then return true
+        end for
+        return false
+    end function
+
+    ' Schedules Direct ID: prefix (case-sensitive) then at least 8 digits.
+    function hasIdPrefix(pid as string, prefix as string) as boolean
+        if Len(pid) < 10 or Left(pid, 2) <> prefix then return false
+        for i = 3 to 10
+            code = Asc(Mid(pid, i, 1))
+            if code < 48 or code > 57 then return false
+        end for
+        return true
+    end function
+
+end namespace

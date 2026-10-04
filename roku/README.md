@@ -86,9 +86,14 @@ a note.
 | Key | Action |
 |-----|--------|
 | `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Record series** (when the guide has a program on now), **Cancel**. |
-| Up from the first channel | Recent row (when the server has watch history), then **Continue watching** (when there is something to continue), then the header (Recordings / Settings) |
+| Up from the first channel | The filter chips, then the Recent row (when the server has watch history), then **Continue watching** (when there is something to continue), then the header (Recordings / Settings) |
+| Left / Right on the filter chips | Move between **All · Sports · Movies · News · Kids · New** |
+| OK on a filter chip | Show only that category's channels (the chosen chip is filled amber) |
+| Down from the filter chips | The rail, or **Show all** when nothing matches |
+| Up from **Show all** | The filter chips |
+| OK on **Show all** | Back to **All** (focus on its chip) |
 | Left / Right in the header | Move between **Recordings** and **Settings** |
-| Down from the header / Continue watching / Recent | Back toward the rail (hidden rows are skipped) |
+| Down from the header / Continue watching / Recent | Back toward the chips and the rail (hidden rows are skipped) |
 | Left / Right on Continue watching | Move along the row (up to 10 recordings) |
 | OK on a Continue watching item | Resume the recording at its saved position (no Resume / Start over question); Back or the end returns here |
 | `*` (Options) on a Continue watching item | **Remove from Continue watching** (sets the saved position back to 0), **Cancel** |
@@ -122,7 +127,21 @@ hidden when empty (or on a server without recordings), and reloads whenever
 the channel rail does, including on the way back from playback. Logic:
 `source/lib/ContinueWatching.bs` (also the row layout).
 
-Up/down zapping in the player follows rail order, so it cycles favorites first.
+**Filter chips** (All · Sports · Movies · News · Kids · New) sit directly
+above the rail. Under a category the rail keeps only the channels whose
+program on now or next (in the guide the rail already loads) is in it; when
+none are, "No sports on right now" (movies, news, kids' shows, new episodes)
+and **Show all** take the rail's place. The rules are the other apps'
+(`web/src/guide/guideFilterModel.ts`): the category string split on `,` `;`
+`|` and matched case-insensitively on whole words, Movies only when a whole
+piece is a movie word ("Movie review" is not), Schedules Direct program IDs
+`MV`/`SP` + 8 digits as movies / sports events, mature ratings (TV-14, TV-MA,
+R, NC-17, X) kept out of Kids, and New for new episodes. The chip is kept on
+this device (registry section `bowtie`, key `guideFilter`) and survives
+sign-out and change server. Logic: `source/lib/GuideFilter.bs`.
+
+Up/down zapping in the player follows rail order, so it cycles favorites
+first; it goes through every channel, whatever the filter.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
 
@@ -263,13 +282,13 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideLogic, Recordings, Registry, SleepTimer
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideFilter, GuideLogic, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
     ├── ConnectScene
     ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
-    ├── HomeScene           # Continue watching (RowList of ContinueItem) + Recent + MarkupList rail + guide join, * dialogs
+    ├── HomeScene           # Continue watching (RowList of ContinueItem) + Recent + filter chips (FilterChip) + MarkupList rail + guide join, * dialogs
     ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows); resume mode for Continue watching
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
