@@ -42,12 +42,14 @@ type stubStreams struct {
 	dirs       map[string]string // viewerID → dir
 	viewers    map[string]bool
 	reception  map[int64]stream.Reception
+	media      map[string]stream.SessionMedia // viewerID → media
 }
 
 func newStubStreams() *stubStreams {
 	return &stubStreams{
 		dirs:    make(map[string]string),
 		viewers: make(map[string]bool),
+		media:   make(map[string]stream.SessionMedia),
 	}
 }
 
@@ -121,10 +123,39 @@ func (s *stubStreams) ChannelReception(id int64) (stream.Reception, bool) {
 }
 
 func (s *stubStreams) register(viewerID, dir string) {
+	s.registerCapped(viewerID, dir, 1080)
+}
+
+// registerCapped registers a viewer of the fixture ladder session whose
+// quality ceiling is maxHeight.
+func (s *stubStreams) registerCapped(viewerID, dir string, maxHeight int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dirs[viewerID] = dir
 	s.viewers[viewerID] = true
+	s.media[viewerID] = stream.SessionMedia{Dir: dir, Layout: fixtureLayout(), MaxHeight: maxHeight}
+}
+
+func (s *stubStreams) SessionMediaOf(viewerID string) (stream.SessionMedia, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.viewers[viewerID] {
+		return stream.SessionMedia{}, false
+	}
+	m, ok := s.media[viewerID]
+	return m, ok
+}
+
+// fixtureLayout matches writeFixtureSession: 720/480/360, eng+spa (AC-3), captions.
+func fixtureLayout() transcode.Layout {
+	return transcode.Layout{
+		Rungs:      transcode.Ladder(720),
+		Audio:      []transcode.AudioTrack{{Lang: "eng", AC3: true}, {Lang: "spa", AC3: true}},
+		AudioKbps:  128,
+		Captions:   true,
+		AC3Copy:    true,
+		VideoCodec: "h264",
+	}
 }
 
 func testAPIWithStreams(t *testing.T, streams api.StreamController) (http.Handler, *store.Store, *auth.Auth) {
@@ -159,34 +190,52 @@ func testAPIWithStreams(t *testing.T, streams api.StreamController) (http.Handle
 	return h, st, a
 }
 
-func fixturePlaylist() string {
+// mediaPlaylist is a two-segment media playlist for rendition name.
+func mediaPlaylist(name, ext string) string {
+	seg := func(i int) string {
+		if ext == "vtt" {
+			return fmt.Sprintf("%s%d.vtt", strings.TrimSuffix(name, "_vtt"), i)
+		}
+		return fmt.Sprintf("%s_%05d.ts", name, i)
+	}
 	return strings.Join([]string{
 		"#EXTM3U",
 		"#EXT-X-VERSION:3",
 		"#EXT-X-TARGETDURATION:4",
 		"#EXT-X-MEDIA-SEQUENCE:0",
 		"#EXTINF:4.000000,",
-		"seg00000.ts",
+		seg(0),
 		"#EXTINF:4.000000,",
-		"seg00001.ts",
-		"#EXT-X-ENDLIST",
+		seg(1),
 		"",
 	}, "\n")
 }
 
+
+// writeFixtureSession writes the fixtureLayout() session files: three rungs,
+// AAC and AC-3 renditions, captions playlist and a WebVTT segment.
 func writeFixtureSession(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "live.m3u8"), []byte(fixturePlaylist()), 0o644); err != nil {
-		t.Fatal(err)
+	files := map[string]string{
+		"v720.m3u8":     mediaPlaylist("v720", "ts"),
+		"v480.m3u8":     mediaPlaylist("v480", "ts"),
+		"v360.m3u8":     mediaPlaylist("v360", "ts"),
+		"aac0.m3u8":     mediaPlaylist("aac0", "ts"),
+		"aac1.m3u8":     mediaPlaylist("aac1", "ts"),
+		"ac30.m3u8":     mediaPlaylist("ac30", "ts"),
+		"v720_vtt.m3u8": mediaPlaylist("v720_vtt", "vtt"),
+		"v7200.vtt":     "WEBVTT\n\n00:00.000 --> 00:02.000\nHello\n",
+		"v720_00000.ts": "TSSEG0",
+		"v720_00001.ts": "TSSEG1",
+		"aac0_00000.ts": "AACSEG0",
 	}
-	if err := os.WriteFile(filepath.Join(dir, "seg00000.ts"), []byte("TSSEG0"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "seg00001.ts"), []byte("TSSEG1"), 0o644); err != nil {
-		t.Fatal(err)
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -201,7 +250,7 @@ func TestPlaylistRewriteAndTouch(t *testing.T) {
 	ss.register(viewerID, dir)
 
 	tok := stream.SignStreamToken([]byte(streamSecret), viewerID, time.Now().UTC().Add(time.Hour))
-	path := "/api/v1/stream/" + viewerID + "/index.m3u8?token=" + tok
+	path := "/api/v1/stream/" + viewerID + "/v720.m3u8?token=" + tok
 	rr := doJSON(t, h, "GET", path, nil, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
@@ -213,12 +262,12 @@ func TestPlaylistRewriteAndTouch(t *testing.T) {
 		t.Errorf("Cache-Control=%q", cc)
 	}
 	body := rr.Body.String()
-	want0 := "/api/v1/stream/" + viewerID + "/seg00000.ts?token=" + tok
-	want1 := "/api/v1/stream/" + viewerID + "/seg00001.ts?token=" + tok
+	want0 := "/api/v1/stream/" + viewerID + "/v720_00000.ts?token=" + tok
+	want1 := "/api/v1/stream/" + viewerID + "/v720_00001.ts?token=" + tok
 	if !strings.Contains(body, want0) || !strings.Contains(body, want1) {
 		t.Fatalf("playlist rewrite missing URLs:\n%s", body)
 	}
-	if strings.Contains(body, "\nseg00000.ts\n") {
+	if strings.Contains(body, "\nv720_00000.ts\n") {
 		t.Fatalf("bare segment name still present:\n%s", body)
 	}
 	if !strings.Contains(body, "#EXTINF:4.000000,") {
@@ -282,7 +331,7 @@ func TestSegmentNameTraversal400(t *testing.T) {
 	}
 
 	// Valid segment serves content.
-	path := "/api/v1/stream/" + viewerID + "/seg00000.ts?token=" + tok
+	path := "/api/v1/stream/" + viewerID + "/v720_00000.ts?token=" + tok
 	rr := doJSON(t, h, "GET", path, nil, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("valid segment status=%d body=%q", rr.Code, rr.Body.String())
@@ -773,12 +822,13 @@ func (r *e2eStubRunner) Start(_ context.Context, spec transcode.JobSpec) (stream
 	if spec.Stdin != nil {
 		go func() { _, _ = io.Copy(io.Discard, spec.Stdin) }()
 	}
-	// Realistic live.m3u8 with EXTINF + segment files.
-	m3u := fixturePlaylist()
-	if err := os.WriteFile(filepath.Join(spec.OutDir, "live.m3u8"), []byte(m3u), 0o644); err != nil {
+	// Realistic ready playlist with EXTINF + segment files.
+	rung := strings.TrimSuffix(spec.Layout.ReadyPlaylist(), ".m3u8")
+	m3u := mediaPlaylist(rung, "ts")
+	if err := os.WriteFile(filepath.Join(spec.OutDir, rung+".m3u8"), []byte(m3u), 0o644); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"seg00000.ts", "seg00001.ts"} {
+	for _, name := range []string{rung + "_00000.ts", rung + "_00001.ts"} {
 		if err := os.WriteFile(filepath.Join(spec.OutDir, name), []byte("FAKE-TS-"+name), 0o644); err != nil {
 			return nil, err
 		}
@@ -1203,13 +1253,28 @@ func TestE2EStreamLifecycle(t *testing.T) {
 		t.Errorf("session.channelName=%q, want WABC", sessResp.Session.ChannelName)
 	}
 
-	// Fetch playlist — assert rewrite.
+	// Fetch the master, then its first variant — assert rewrite.
 	rr = doJSON(t, h, "GET", sessResp.PlaylistURL, nil, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("master status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	var variant string
+	for _, line := range strings.Split(rr.Body.String(), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			variant = line
+			break
+		}
+	}
+	if !strings.HasPrefix(variant, "v") || !strings.Contains(variant, ".m3u8?token=") {
+		t.Fatalf("master has no variant:\n%s", rr.Body.String())
+	}
+	rr = doJSON(t, h, "GET", "/api/v1/stream/"+sessResp.ViewerID+"/"+variant, nil, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("playlist status=%d body=%q", rr.Code, rr.Body.String())
 	}
 	pl := rr.Body.String()
-	if !strings.Contains(pl, "/api/v1/stream/"+sessResp.ViewerID+"/seg00000.ts?token=") {
+	rung := strings.SplitN(variant, ".", 2)[0]
+	if !strings.Contains(pl, "/api/v1/stream/"+sessResp.ViewerID+"/"+rung+"_00000.ts?token=") {
 		t.Fatalf("playlist not rewritten:\n%s", pl)
 	}
 	if !strings.Contains(pl, "#EXTINF") {
@@ -1219,7 +1284,7 @@ func TestE2EStreamLifecycle(t *testing.T) {
 	// Extract first segment URL and fetch.
 	var segURL string
 	for _, line := range strings.Split(pl, "\n") {
-		if strings.HasPrefix(line, "/api/v1/stream/") && strings.Contains(line, "seg00000.ts") {
+		if strings.HasPrefix(line, "/api/v1/stream/") && strings.Contains(line, "_00000.ts") {
 			segURL = line
 			break
 		}
@@ -1235,7 +1300,7 @@ func TestE2EStreamLifecycle(t *testing.T) {
 		t.Errorf("segment Content-Type=%q", rr.Header().Get("Content-Type"))
 	}
 	body, _ := io.ReadAll(rr.Body)
-	if !strings.Contains(string(body), "FAKE-TS-seg00000.ts") {
+	if !strings.Contains(string(body), "FAKE-TS-"+rung+"_00000.ts") {
 		t.Errorf("segment body=%q", body)
 	}
 
@@ -1488,5 +1553,89 @@ func TestChannelsIncludeReception(t *testing.T) {
 	}
 	if fox.Reception != "unknown" || fox.ReceptionCheckedAt != nil {
 		t.Errorf("9.1 = %+v, want unknown with no timestamp", fox)
+	}
+}
+
+func TestIndexIsPerViewerMaster(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	full, capped := "aabbccddeeff00112233445566778899", "bbbbccddeeff00112233445566778899"
+	ss.register(full, dir)
+	ss.registerCapped(capped, dir, 480)
+	get := func(v string) string {
+		tok := stream.SignStreamToken([]byte(streamSecret), v, time.Now().UTC().Add(time.Hour))
+		rr := doJSON(t, h, "GET", "/api/v1/stream/"+v+"/index.m3u8?token="+tok, nil, nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+		}
+		return rr.Body.String()
+	}
+	if body := get(full); !strings.Contains(body, "v720.m3u8?token=") || !strings.Contains(body, `GROUP-ID="ac3"`) || !strings.Contains(body, `SUBTITLES="subs"`) {
+		t.Fatalf("full master:\n%s", body)
+	}
+	if body := get(capped); strings.Contains(body, "\nv720.m3u8") || !strings.Contains(body, "\nv480.m3u8") {
+		t.Fatalf("capped master must omit 720:\n%s", body)
+	}
+	_ = os.Remove(filepath.Join(dir, "v720_vtt.m3u8"))
+	if strings.Contains(get(full), "SUBTITLES") {
+		t.Fatal("captions listed before the caption playlist exists")
+	}
+}
+
+func TestRenditionPlaylistsTouchAndRewrite(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	v := "aabbccddeeff00112233445566778899"
+	ss.register(v, dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), v, time.Now().UTC().Add(time.Hour))
+	for name, seg := range map[string]string{"v720.m3u8": "v720_00000.ts", "aac0.m3u8": "aac0_00000.ts", "v720_vtt.m3u8": "v7200.vtt"} {
+		rr := doJSON(t, h, "GET", "/api/v1/stream/"+v+"/"+name+"?token="+tok, nil, nil)
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "/api/v1/stream/"+v+"/"+seg+"?token="+tok) {
+			t.Fatalf("%s: %d\n%s", name, rr.Code, rr.Body.String())
+		}
+	}
+	ss.mu.Lock()
+	n := len(ss.touchCalls)
+	ss.mu.Unlock()
+	if n != 3 {
+		t.Fatalf("every rendition playlist fetch must Touch; touches=%d", n)
+	}
+}
+
+func TestVTTSegmentGetsTimestampMap(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	v := "aabbccddeeff00112233445566778899"
+	ss.register(v, dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), v, time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "GET", "/api/v1/stream/"+v+"/v7200.vtt?token="+tok, nil, nil)
+	if rr.Code != http.StatusOK || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/vtt") {
+		t.Fatalf("status=%d ct=%q", rr.Code, rr.Header().Get("Content-Type"))
+	}
+	if !strings.HasPrefix(rr.Body.String(), "WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000\n") {
+		t.Fatalf("body=%q", rr.Body.String())
+	}
+}
+
+func TestStreamFileNamesValidated(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	v := "aabbccddeeff00112233445566778899"
+	ss.register(v, t.TempDir())
+	tok := stream.SignStreamToken([]byte(streamSecret), v, time.Now().UTC().Add(time.Hour))
+	for _, bad := range []string{"seg00000.ts", "live.m3u8", "x.m3u8", "v72_00000.ts", "aac9.m3u8", "v720.vtt", "..%2Fv720.m3u8"} {
+		if rr := doJSON(t, h, "GET", "/api/v1/stream/"+v+"/"+bad+"?token="+tok, nil, nil); rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status=%d want 400", bad, rr.Code)
+		}
 	}
 }

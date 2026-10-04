@@ -23,6 +23,8 @@ type scripted struct {
 	startStatus int
 	segStatus   int
 	gone        bool
+	// master: index.m3u8 is a master playlist; media is served as v720.m3u8.
+	master bool
 }
 
 func (s *scripted) handler(t *testing.T) http.Handler {
@@ -43,7 +45,7 @@ func (s *scripted) handler(t *testing.T) http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"viewerId": "v1", "playlistUrl": "/api/v1/stream/v1/index.m3u8?token=tok"})
 	})
-	mux.HandleFunc("GET /api/v1/stream/v1/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
+	media := func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.gone {
@@ -56,7 +58,15 @@ func (s *scripted) handler(t *testing.T) http.Handler {
 		}
 		s.polls++
 		_, _ = w.Write([]byte(s.playlists[i]))
+	}
+	mux.HandleFunc("GET /api/v1/stream/v1/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
+		if s.master {
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv720.m3u8?token=tok\n"))
+			return
+		}
+		media(w, r)
 	})
+	mux.HandleFunc("GET /api/v1/stream/v1/v720.m3u8", media)
 	mux.HandleFunc("GET /api/v1/stream/v1/{seg}", func(w http.ResponseWriter, r *http.Request) {
 		if s.segStatus != 0 {
 			w.WriteHeader(s.segStatus)
@@ -191,5 +201,14 @@ func TestEndListRecorded(t *testing.T) {
 	_, r := run(t, s, 6, 0)
 	if !r.EndList {
 		t.Fatalf("EndList = false, want true (report %+v)", r)
+	}
+}
+
+// A master playlist is followed to its first variant, as real players do.
+func TestFollowsMasterPlaylist(t *testing.T) {
+	s := &scripted{master: true, playlists: []string{playlist(0, 3, -1)}}
+	_, r := run(t, s, 6, 0)
+	if r.SegmentsFetched != 3 || len(r.Errors) != 0 {
+		t.Fatalf("report %+v", r)
 	}
 }

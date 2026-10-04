@@ -757,7 +757,13 @@ paths:
         schema:
           type: string
     get:
-      summary: HLS media playlist (rewritten segment URLs; heartbeats viewer)
+      summary: HLS master playlist for this viewer (heartbeats viewer)
+      description: |
+        Rebuilt on every fetch from the session's layout: one variant per
+        video rung at or below the viewer's quality ceiling (720p or the top
+        rung first), each listed once per audio group (AAC stereo, and AC-3 5.1
+        when the broadcast has it), plus an "English CC" WebVTT rendition once
+        its playlist exists. Every URI carries the stream token.
       operationId: getPlaylist
       tags: [stream]
       responses:
@@ -786,27 +792,37 @@ paths:
       - name: segment
         in: path
         required: true
-        description: Segment filename matching seg#####.ts
+        description: |
+          A session file: rendition playlist (v<height>.m3u8, v<height>_vtt.m3u8,
+          aac<i>.m3u8, ac3<i>.m3u8 — fetching one heartbeats the viewer), MPEG-TS
+          segment (<rendition>_#####.ts) or WebVTT segment (v<height><n>.vtt,
+          served with an X-TIMESTAMP-MAP header). Other names return 400.
         schema:
           type: string
-          pattern: '^seg\d{5}\.ts$'
+          pattern: '^((v\d{3,4}|v\d{3,4}_vtt|aac[0-2]|ac3[0-2])\.m3u8|(v\d{3,4}|aac[0-2]|ac3[0-2])_\d{5}\.ts|v\d{3,4}\d+\.vtt)$'
       - name: token
         in: query
         required: true
         schema:
           type: string
     get:
-      summary: HLS MPEG-TS segment
+      summary: HLS rendition playlist or segment
       operationId: getSegment
       tags: [stream]
       responses:
         '200':
-          description: video/mp2t segment
+          description: Rendition playlist, MPEG-TS segment or WebVTT segment
           content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
             video/mp2t:
               schema:
                 type: string
                 format: binary
+            text/vtt:
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
