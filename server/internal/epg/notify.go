@@ -3,6 +3,7 @@ package epg
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -23,33 +24,34 @@ func (s *Service) SetNotifier(n notify.Notifier) {
 	s.failMu.Unlock()
 }
 
-// trackFailure follows each source's run of failures (in memory: a restart
-// starts the count again) and notifies once per run, after guideFailedAfter.
+// trackFailure follows each source's run of failures and notifies once per
+// run, after guideFailedAfter. The run's start and whether it was reported
+// are kept in the settings table, so restarts neither reset the clock nor
+// repeat the alert.
 func (s *Service) trackFailure(name string, err error) {
 	s.failMu.Lock()
-	if s.failingSince == nil {
-		s.failingSince = map[string]time.Time{}
-		s.failNotified = map[string]bool{}
-	}
+	defer s.failMu.Unlock()
+	sinceKey, notifiedKey := failKeys(name)
 	if err == nil {
-		delete(s.failingSince, name)
-		delete(s.failNotified, name)
-		s.failMu.Unlock()
+		s.clearFailureLocked(name)
 		return
 	}
 	now := s.now()
-	since, failing := s.failingSince[name]
-	if !failing {
-		s.failingSince[name] = now
-	}
-	n := s.notifier
-	due := failing && now.Sub(since) > guideFailedAfter && !s.failNotified[name] && n != nil
-	if due {
-		s.failNotified[name] = true
-	}
-	s.failMu.Unlock()
-	if !due {
+	raw, _ := s.store.GetSetting(sinceKey)
+	since, perr := time.Parse(time.RFC3339, raw)
+	if perr != nil {
+		if serr := s.store.SetSetting(sinceKey, now.UTC().Format(time.RFC3339)); serr != nil {
+			log.Printf("epg %s: persist failingSince: %v", name, serr)
+		}
 		return
+	}
+	notified, _ := s.store.GetSetting(notifiedKey)
+	n := s.notifier
+	if n == nil || notified != "" || now.Sub(since) <= guideFailedAfter {
+		return
+	}
+	if serr := s.store.SetSetting(notifiedKey, "1"); serr != nil {
+		log.Printf("epg %s: persist failNotified: %v", name, serr)
 	}
 	n.Notify(notify.Event{
 		Kind:    notify.EventGuideFailed,
@@ -58,6 +60,27 @@ func (s *Service) trackFailure(name string, err error) {
 		Message: fmt.Sprintf("Guide data hasn't updated for a day: %s: %s", sourceLabel(name), errorText(err)),
 		Time:    now,
 	})
+}
+
+// clearFailure forgets a source's run of failures (it succeeded, or it was
+// turned off — turning it back on starts counting afresh).
+func (s *Service) clearFailure(name string) {
+	s.failMu.Lock()
+	defer s.failMu.Unlock()
+	s.clearFailureLocked(name)
+}
+
+func (s *Service) clearFailureLocked(name string) {
+	since, notified := failKeys(name)
+	for _, k := range []string{since, notified} {
+		if v, _ := s.store.GetSetting(k); v != "" {
+			_ = s.store.SetSetting(k, "")
+		}
+	}
+}
+
+func failKeys(name string) (since, notified string) {
+	return "epg." + name + ".failingSince", "epg." + name + ".failNotified"
 }
 
 func sourceLabel(name string) string {

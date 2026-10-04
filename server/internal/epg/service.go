@@ -56,10 +56,8 @@ type Service struct {
 	lastWait map[string]time.Duration // source name → last computed wait
 
 	// failMu guards the guide-failure notification state (notify.go).
-	failMu       sync.Mutex
-	notifier     notify.Notifier
-	failingSince map[string]time.Time
-	failNotified map[string]bool
+	failMu   sync.Mutex
+	notifier notify.Notifier
 }
 
 // NewService constructs an EPG service backed by store and runtime settings.
@@ -196,6 +194,7 @@ func (s *Service) superviseXMLTV(ctx context.Context) {
 			continue
 		}
 		if strings.TrimSpace(x.Source) == "" {
+			s.clearFailure("xmltv")
 			if !s.sleepOrDone(ctx, "xmltv", unconfiguredPoll) {
 				return
 			}
@@ -233,6 +232,7 @@ func (s *Service) superviseSD(ctx context.Context) {
 			continue
 		}
 		if !sdCredentialsConfigured(sdCfg) {
+			s.clearFailure("sd")
 			if !s.sleepOrDone(ctx, "sd", unconfiguredPoll) {
 				return
 			}

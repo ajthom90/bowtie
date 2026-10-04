@@ -75,18 +75,23 @@ func (s *Service) checkDisk() {
 	if err != nil {
 		return
 	}
-	var msg string
+	var msg, level string
 	switch {
 	case free < diskFloor:
+		level = "floor"
 		msg = fmt.Sprintf("Only %s free for recordings in %s. New recordings won't start until at least %s is free.",
 			gb(free), s.deps.Dir, gb(diskFloor))
 	case free < s.deps.MinFreeBytes:
+		level = "retention"
 		msg = fmt.Sprintf("Only %s free for recordings in %s. Bowtie deletes the oldest unprotected recordings to keep %s free, but couldn't free enough.",
 			gb(free), s.deps.Dir, gb(s.deps.MinFreeBytes))
 	default:
 		return
 	}
-	s.notify(notify.Event{Kind: notify.EventDiskLow, Title: "Bowtie is low on disk space", Message: msg})
+	// Separate keys: reaching the floor (recordings stop) isn't muted by an
+	// earlier retention alert.
+	s.notify(notify.Event{Kind: notify.EventDiskLow, Key: notify.EventDiskLow + ":" + level,
+		Title: "Bowtie is low on disk space", Message: msg})
 }
 
 func showName(r store.Recording) string {

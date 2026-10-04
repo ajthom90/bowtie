@@ -220,7 +220,7 @@ export function notificationTarget(url: string): 'ntfy' | 'discord' | 'webhook' 
   const host = parsed.hostname.toLowerCase()
   if (host.includes('ntfy')) return 'ntfy'
   const discord = ['discord.com', 'discordapp.com'].some((d) => host === d || host.endsWith(`.${d}`))
-  if (discord && parsed.pathname.startsWith('/api/webhooks/')) return 'discord'
+  if (discord && /^\/api\/(v\d+\/)?webhooks\//.test(parsed.pathname)) return 'discord'
   return 'webhook'
 }
 

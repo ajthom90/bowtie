@@ -333,6 +333,7 @@ describe('notifications', () => {
   })
 
   it('detects the target like the server', () => {
+    expect(notificationTarget('https://discord.com/api/v10/webhooks/1/tok')).toBe('discord')
     expect(notificationTarget('https://ntfy.sh/topic')).toBe('ntfy')
     expect(notificationTarget('https://user:pass@ntfy.example.com/t')).toBe('ntfy')
     expect(notificationTarget('https://discord.com/api/webhooks/1/abc')).toBe('discord')

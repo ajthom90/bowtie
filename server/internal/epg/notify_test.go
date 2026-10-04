@@ -133,3 +133,38 @@ func TestGuideFailureMessageHidesURL(t *testing.T) {
 		t.Fatalf("events = %+v", got)
 	}
 }
+
+// The run of failures survives restarts: a server restarted nightly still
+// hears about a guide that's been failing for over a day, and only once.
+func TestGuideFailureSurvivesRestarts(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	missing := filepath.Join(t.TempDir(), "missing.xml")
+	if err := prov.SetXMLTV(settings.XMLTV{Source: missing, RefreshHours: 12}); err != nil {
+		t.Fatal(err)
+	}
+	clk := &stepClock{now: time.Date(2026, 10, 4, 6, 0, 0, 0, time.UTC)}
+	f := &fakeNotifier{}
+	start := func() *Service { // a fresh process on the same database
+		svc := NewService(st, prov)
+		svc.now = clk.Now
+		svc.SetNotifier(f)
+		return svc
+	}
+	_ = start().RefreshAll(context.Background())
+	clk.Add(13 * time.Hour)
+	_ = start().RefreshAll(context.Background())
+	if n := len(f.all()); n != 0 {
+		t.Fatalf("notified within a day: %d", n)
+	}
+	clk.Add(12 * time.Hour)
+	_ = start().RefreshAll(context.Background())
+	if n := len(f.all()); n != 1 {
+		t.Fatalf("after a day across restarts: %d events, want 1", n)
+	}
+	clk.Add(12 * time.Hour)
+	_ = start().RefreshAll(context.Background())
+	if n := len(f.all()); n != 1 {
+		t.Fatalf("a restart repeated the alert: %d events", n)
+	}
+}

@@ -464,3 +464,37 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.b.String()
 }
+
+func TestTargetForVersionedDiscordWebhook(t *testing.T) {
+	if got := TargetFor("https://discord.com/api/v10/webhooks/123/tok"); got != TargetDiscord {
+		t.Fatalf("versioned webhook: %q", got)
+	}
+}
+
+// A redirect isn't followed: a 303 would turn the POST into a bodiless GET
+// (and report success), a 307 would re-send the body to another host.
+func TestSendDoesNotFollowRedirects(t *testing.T) {
+	hit := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/x", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	res := Send(context.Background(), nil, srv.URL+"/hook", Event{Kind: "test", Title: "t", Message: "m"})
+	if res.OK || hit {
+		t.Fatalf("redirect followed: ok=%v hit=%v", res.OK, hit)
+	}
+}
+
+// Very long titles (a recording title is user input) are cut so the ntfy
+// Title header stays small.
+func TestCapTitle(t *testing.T) {
+	ev := capTitle(Event{Title: strings.Repeat("é", 5000)})
+	if n := len([]rune(ev.Title)); n > maxTitleRunes {
+		t.Fatalf("title %d runes, want <= %d", n, maxTitleRunes)
+	}
+	if got := capTitle(Event{Title: "short"}).Title; got != "short" {
+		t.Fatalf("short title changed: %q", got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -83,11 +84,28 @@ func TargetFor(raw string) string {
 	switch {
 	case strings.Contains(host, "ntfy"):
 		return TargetNtfy
-	case isDiscordHost(host) && strings.HasPrefix(u.Path, "/api/webhooks/"):
+	case isDiscordHost(host) && discordWebhookPath.MatchString(u.Path):
 		return TargetDiscord
 	}
 	return TargetWebhook
 }
+
+// discordWebhookPath: /api/webhooks/... or a versioned /api/v10/webhooks/...
+var discordWebhookPath = regexp.MustCompile(`^/api/(v\d+/)?webhooks/`)
+
+// maxTitleRunes caps a notification title (it can carry a recording title,
+// which is user input, into an ntfy header).
+const maxTitleRunes = 200
+
+func capTitle(ev Event) Event {
+	ev.Title = truncateRunes(ev.Title, maxTitleRunes)
+	return ev
+}
+
+// noRedirects: a redirect is an answer, not followed — a 303 would turn the
+// POST into a bodiless GET and look like success; a 307 would re-send the
+// body (and maybe credentials) to another host.
+func noRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 func isDiscordHost(host string) bool {
 	for _, d := range []string{"discord.com", "discordapp.com"} {
@@ -102,8 +120,9 @@ func isDiscordHost(host string) bool {
 // client uses one with SendTimeout.
 func Send(ctx context.Context, client *http.Client, rawURL string, ev Event) Result {
 	if client == nil {
-		client = &http.Client{Timeout: SendTimeout}
+		client = &http.Client{Timeout: SendTimeout, CheckRedirect: noRedirects}
 	}
+	ev = capTitle(ev)
 	if ev.Time.IsZero() {
 		ev.Time = time.Now()
 	}

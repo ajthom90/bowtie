@@ -91,7 +91,7 @@ type job struct {
 // every event (settings changes apply at once). Call Run to deliver.
 func New(cfg func() (settings.Notifications, error), opts Options) *Service {
 	if opts.Client == nil {
-		opts.Client = &http.Client{Timeout: SendTimeout}
+		opts.Client = &http.Client{Timeout: SendTimeout, CheckRedirect: noRedirects}
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now

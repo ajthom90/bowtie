@@ -175,11 +175,12 @@ func TestDiskLowCheck(t *testing.T) {
 		free    int64
 		minFree int64
 		want    string // "" = no event
+		key     string // separate keys: the floor alert isn't muted by an earlier retention one
 	}{
-		{"plenty", 50 << 30, 10 << 30, ""},
-		{"below floor", 1 << 30, 0, "won't start until at least 2.0 GB is free"},
-		{"below retention target", 5 << 30, 10 << 30, "to keep 10.0 GB free, but couldn't free enough"},
-		{"retention off, above floor", 5 << 30, 0, ""},
+		{"plenty", 50 << 30, 10 << 30, "", ""},
+		{"below floor", 1 << 30, 0, "won't start until at least 2.0 GB is free", "diskLow:floor"},
+		{"below retention target", 5 << 30, 10 << 30, "to keep 10.0 GB free, but couldn't free enough", "diskLow:retention"},
+		{"retention off, above floor", 5 << 30, 0, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -194,7 +195,7 @@ func TestDiskLowCheck(t *testing.T) {
 				}
 				return
 			}
-			if len(evs) != 1 || evs[0].Kind != notify.EventDiskLow || !strings.Contains(evs[0].Message, tc.want) {
+			if len(evs) != 1 || evs[0].Kind != notify.EventDiskLow || !strings.Contains(evs[0].Message, tc.want) || evs[0].Key != tc.key {
 				t.Fatalf("events = %+v, want diskLow with %q", evs, tc.want)
 			}
 			// Not again until the next hourly check.
