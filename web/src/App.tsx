@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Admin } from './admin/Admin'
 import type { Recording } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import { LinkPage } from './auth/LinkPage'
+import { isLinkPath } from './auth/linkModel'
 import { Login } from './auth/Login'
 import { Guide, type WatchTarget } from './guide/Guide'
 import { Player } from './player/Player'
@@ -12,8 +14,25 @@ import styles from './App.module.css'
 
 type View = 'guide' | 'admin' | 'recordings'
 
+/** The current path, kept in step with back/forward. No router: only /link is a real route. */
+function usePath(): [string, (to: string) => void] {
+  const [path, setPath] = useState(() => window.location.pathname)
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  const navigate = useCallback((to: string) => {
+    window.history.pushState(null, '', to)
+    setPath(window.location.pathname)
+  }, [])
+  return [path, navigate]
+}
+
 function Shell() {
   const { user, ready } = useAuth()
+  const [path, navigate] = usePath()
+  const onLink = isLinkPath(path)
   const [watching, setWatching] = useState<WatchTarget | null>(null)
   const [view, setView] = useState<View>('guide')
   const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
@@ -27,8 +46,13 @@ function Shell() {
     )
   }
 
+  // /link (quick sign-in for a TV): sign in first, then approve.
   if (!user) {
-    return <Login />
+    return <Login subtitle={onLink ? 'Sign in to approve your TV' : undefined} />
+  }
+
+  if (onLink) {
+    return <LinkPage onDone={() => navigate('/')} />
   }
 
   if (watching) {
