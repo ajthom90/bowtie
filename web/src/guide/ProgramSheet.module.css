@@ -160,3 +160,118 @@
     min-height: 44px;
   }
 }
+
+/* Rating and parental lock */
+.rating {
+  color: var(--text-dim);
+}
+
+.locked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.65rem 0 0;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+
+.lockBadge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Record series form */
+.formLead {
+  margin: 0.6rem 0 0;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+
+.fieldset {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.legend {
+  padding: 0;
+  margin-bottom: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.choice input {
+  accent-color: var(--accent);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.fieldset + .choice {
+  margin-top: 0.5rem;
+}
+
+.numberField {
+  display: grid;
+  grid-template-columns: auto 5.5rem;
+  justify-content: start;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.35rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.fieldHint {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.done {
+  margin: 0.85rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-left: 3px solid var(--signal);
+  background: color-mix(in srgb, var(--signal) 10%, var(--surface-raised));
+  font-size: 0.92rem;
+}
+
+@media (max-width: 640px) {
+  .choice {
+    min-height: 44px;
+  }
+}

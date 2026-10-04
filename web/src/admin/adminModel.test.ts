@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { AdminChannel } from '../api/client'
+import type { AdminChannel, EPGSourceState, EPGSourceStatus } from '../api/client'
 import {
+  anyEpgConfigured,
+  anyEpgStale,
   compareGuideNumbers,
+  epgSources,
   filterAndSortChannels,
   formatTimestamp,
   formatUptime,
@@ -134,5 +137,42 @@ describe('limitLabel', () => {
   it('offers no limit and 1 to 8', () => {
     expect(LIMIT_OPTIONS.map((o) => o.value)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
     expect(LIMIT_OPTIONS[0].label).toBe('No limit')
+  })
+})
+
+describe('EPG sources', () => {
+  const st = (over: Partial<EPGSourceState> = {}): EPGSourceState => ({
+    configured: false,
+    lastSuccess: '0001-01-01T00:00:00Z',
+    lastError: '',
+    stale: false,
+    ...over,
+  })
+  const status = (over: Partial<EPGSourceStatus> = {}): EPGSourceStatus => ({
+    xmltv: st(),
+    sd: st(),
+    hdhomerun: st(),
+    ...over,
+  })
+
+  it('lists HDHomeRun first, then XMLTV and Schedules Direct', () => {
+    expect(epgSources(status()).map((s) => [s.key, s.label])).toEqual([
+      ['hdhomerun', 'HDHomeRun (free guide)'],
+      ['xmltv', 'XMLTV'],
+      ['sd', 'Schedules Direct'],
+    ])
+  })
+
+  it('leaves out HDHomeRun on servers that do not report it', () => {
+    const { hdhomerun: _omit, ...old } = status()
+    expect(epgSources(old).map((s) => s.key)).toEqual(['xmltv', 'sd'])
+  })
+
+  it('anyEpgStale and anyEpgConfigured include HDHomeRun', () => {
+    expect(anyEpgStale(status())).toBe(false)
+    expect(anyEpgStale(status({ hdhomerun: st({ configured: true, stale: true }) }))).toBe(true)
+    expect(anyEpgConfigured(status())).toBe(false)
+    expect(anyEpgConfigured(status({ hdhomerun: st({ configured: true }) }))).toBe(true)
+    expect(anyEpgConfigured(status({ sd: st({ configured: true }) }))).toBe(true)
   })
 })

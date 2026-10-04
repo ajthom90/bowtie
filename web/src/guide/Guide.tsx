@@ -19,7 +19,9 @@ import {
   withFavorite,
   type GuideProgram,
 } from './guideModel'
-import { ProgramSheet } from './ProgramSheet'
+import { GuideSearch } from './GuideSearch'
+import { ProgramSheet, type SheetChannel, type SheetConflict } from './ProgramSheet'
+import { lockText } from './searchModel'
 import { BowtieMark } from '../BowtieMark'
 import styles from './Guide.module.css'
 
@@ -36,11 +38,18 @@ type Props = {
   onAdmin?: () => void
   /** Opens the Recordings page. */
   onRecordings?: () => void
+  /** Opens the Account page (from the username in the header). */
+  onAccount?: () => void
 }
 
-type Selected = { channel: GuideChannel; program: GuideProgram }
+type Selected = {
+  channel: SheetChannel
+  program: GuideProgram
+  initialView?: 'details' | 'series'
+  initialConflict?: SheetConflict
+}
 
-export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
+export function Guide({ onWatch, onAdmin, onRecordings, onAccount }: Props) {
   const { client, user, logout } = useAuth()
   const [{ start, stop }, setWindow] = useState(() => defaultWindow())
   const [channels, setChannels] = useState<GuideChannel[] | null>(null)
@@ -52,6 +61,8 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
   const [actionError, setActionError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Selected | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** Bumped after a recording change so open search results refresh. */
+  const [searchEpoch, setSearchEpoch] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -162,6 +173,14 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
           </span>
           <span className={styles.windowLabel}>{windowLabel}</span>
         </div>
+        <GuideSearch
+          onWatch={onWatch}
+          onOpenSheet={(req) => setSelected(req)}
+          onNotice={(text) => setNotice(text)}
+          onChanged={() => void load()}
+          refreshKey={searchEpoch}
+          suspended={selected !== null}
+        />
         <div className={styles.toolbarRight}>
           <button type="button" className={styles.btn} onClick={() => page(-1)} aria-label="Previous time window">
             Prev
@@ -177,10 +196,23 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
           <button type="button" className={styles.btn} onClick={() => page(1)} aria-label="Next time window">
             Next
           </button>
-          <span className={styles.userMeta}>
-            {user?.username}
-            {user?.role === 'admin' ? ' · admin' : ''}
-          </span>
+          {onAccount ? (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.userBtn}`}
+              onClick={onAccount}
+              aria-label={`Account (${user?.username ?? ''})`}
+              title="Account"
+            >
+              {user?.username}
+              {user?.role === 'admin' ? <span className={styles.userRole}> · admin</span> : null}
+            </button>
+          ) : (
+            <span className={styles.userMeta}>
+              {user?.username}
+              {user?.role === 'admin' ? ' · admin' : ''}
+            </span>
+          )}
           {onRecordings ? (
             <button type="button" className={styles.btn} onClick={onRecordings}>
               Recordings
@@ -306,7 +338,12 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
                   windowStop={stop}
                   now={now}
                   onWatch={onWatch}
-                  onSelect={(program) => setSelected({ channel: ch, program })}
+                  onSelect={(program) =>
+                    setSelected({
+                      channel: { channelId: ch.channelId, guideNumber: ch.guideNumber, name: ch.name },
+                      program,
+                    })
+                  }
                 />
               )
             })}
@@ -318,6 +355,8 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
         <ProgramSheet
           channel={selected.channel}
           program={selected.program}
+          initialView={selected.initialView}
+          initialConflict={selected.initialConflict}
           now={new Date()}
           onClose={() => setSelected(null)}
           onWatch={() => {
@@ -333,6 +372,7 @@ export function Guide({ onWatch, onAdmin, onRecordings }: Props) {
           onChanged={(warning) => {
             setSelected(null)
             setNotice(warning ?? null)
+            setSearchEpoch((n) => n + 1)
             void load()
           }}
           onRecordings={onRecordings}
@@ -465,7 +505,7 @@ function ChannelRow({
                   style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
                   onClick={() => onSelect(cell.program)}
                   aria-haspopup="dialog"
-                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}${recWords ? `, ${recWords.toLowerCase()}` : ''}`}
+                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}${cell.program.locked ? ', blocked by parental controls' : ''}${recWords ? `, ${recWords.toLowerCase()}` : ''}`}
                 >
                   <span className={styles.cellTitle}>
                     {rec ? (
@@ -480,8 +520,11 @@ function ChannelRow({
                   </span>
                   <span className={styles.cellTime}>
                     {formatTimeRange(new Date(cell.program.start), new Date(cell.program.stop))}
+                    {cell.program.locked ? (
+                      <span className={styles.lockMark}> {lockText(cell.program.rating)}</span>
+                    ) : null}
                   </span>
-                  {cell.program.description ? (
+                  {cell.program.description && !cell.program.locked ? (
                     <span className={styles.cellDesc}>{cell.program.description}</span>
                   ) : null}
                 </button>

@@ -1,0 +1,167 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(16, 20, 24, 0.72);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(26rem, 100%);
+  max-height: calc(100% - 2rem);
+  padding: 1.1rem 1.2rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.choice input {
+  accent-color: var(--accent);
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.allChoice {
+  margin-top: 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  border: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.list:disabled .choice {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chNum {
+  min-width: 3rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.chName {
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.chNote {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.disabledCh .chNum {
+  color: var(--text-dim);
+}
+
+.count {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.btn {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.05);
+}
+
+/* Phone: bottom sheet, full-width actions, 44px rows. */
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .sheet {
+    width: 100%;
+    max-height: 88%;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .choice {
+    min-height: 44px;
+  }
+
+  .actions .btn {
+    flex: 1 1 calc(50% - 0.5rem);
+    min-height: 44px;
+  }
+}

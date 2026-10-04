@@ -606,3 +606,28 @@
     font-size: 0.8rem;
   }
 }
+
+/* Tablet: wrap so the search box gets its own row. */
+@media (max-width: 1024px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+/* Username → Account page */
+.userBtn {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userRole {
+  color: var(--text-dim);
+}
+
+/* Parental lock + rating on a blocked program */
+.lockMark {
+  color: var(--text);
+  white-space: nowrap;
+}

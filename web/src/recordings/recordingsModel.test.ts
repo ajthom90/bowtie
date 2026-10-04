@@ -5,7 +5,10 @@ import {
   conflictHeading,
   conflictLine,
   createPositionSaver,
+  failureLine,
   failureText,
+  isListTab,
+  isSeriesRecording,
   formatClock,
   formatDuration,
   formatSize,
@@ -46,8 +49,8 @@ function rec(over: Partial<Recording> = {}): Recording {
 }
 
 describe('tabs', () => {
-  it('lists Upcoming, Recorded, Missed in order', () => {
-    expect(RECORDINGS_TABS.map((t) => t.label)).toEqual(['Upcoming', 'Recorded', 'Missed'])
+  it('lists Upcoming, Recorded, Missed, Shows in order', () => {
+    expect(RECORDINGS_TABS.map((t) => t.label)).toEqual(['Upcoming', 'Recorded', 'Missed', 'Shows'])
   })
 
   it('maps each tab to the server state filter (Missed = failed)', () => {
@@ -414,5 +417,39 @@ describe('createPositionSaver', () => {
     const save = vi.fn().mockRejectedValue(new Error('offline'))
     const saver = createPositionSaver({ save, getPosition: () => 12 })
     await expect(saver.flush()).resolves.toBeUndefined()
+  })
+})
+
+describe('series, skipped and locked recordings', () => {
+  it('adds a Shows tab after the recording lists', () => {
+    expect(RECORDINGS_TABS.map((t) => t.id)).toEqual(['upcoming', 'recorded', 'missed', 'shows'])
+    expect(RECORDINGS_TABS.find((t) => t.id === 'shows')?.label).toBe('Shows')
+  })
+
+  it('isListTab is false only for Shows', () => {
+    expect(isListTab('upcoming')).toBe(true)
+    expect(isListTab('missed')).toBe(true)
+    expect(isListTab('shows')).toBe(false)
+  })
+
+  it('reads skipped as Skipped', () => {
+    expect(failureText('skipped', '')).toBe('Skipped')
+  })
+
+  it('failureLine prefixes real failures with Missed but not skips', () => {
+    expect(failureLine(rec({ state: 'failed', failure: 'noSignal' }))).toBe('Missed: No signal')
+    expect(failureLine(rec({ state: 'failed', failure: 'skipped' }))).toBe('Skipped')
+    expect(failureLine(rec({ state: 'ready', failure: '' }))).toBe('')
+  })
+
+  it('isSeriesRecording is true for a rule id above zero', () => {
+    expect(isSeriesRecording(rec({ ruleId: 4 }))).toBe(true)
+    expect(isSeriesRecording(rec({ ruleId: 0 }))).toBe(false)
+    expect(isSeriesRecording(rec())).toBe(false)
+  })
+
+  it('rowActions keeps Play but marks it locked under parental controls', () => {
+    expect(rowActions(rec({ state: 'ready', locked: true }))).toMatchObject({ play: true, playLocked: true })
+    expect(rowActions(rec({ state: 'ready' }))).toMatchObject({ play: true, playLocked: false })
   })
 })

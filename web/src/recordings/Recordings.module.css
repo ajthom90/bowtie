@@ -220,6 +220,17 @@
   color: var(--accent);
 }
 
+.skipped {
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.badgeLock {
+  color: var(--text);
+  text-transform: none;
+}
+
 .rowActions {
   display: flex;
   flex-wrap: wrap;
