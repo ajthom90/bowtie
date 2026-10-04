@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.RecordingPlayback
 import app.bowtie.core.RecordingRule
 import app.bowtie.core.RecordingLogic.Tab
 import kotlinx.coroutines.CancellationException
@@ -14,7 +15,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Recordings screen: Upcoming / Recorded / Missed tabs, delete (cancel), stop,
@@ -55,6 +59,12 @@ class RecordingsViewModel(
         val offerResume: Boolean,
     )
 
+    /** Continue watching: start at the saved position, or why it can't play. */
+    sealed class Resume {
+        data class Ready(val start: PlayStart, val startAtSec: Int) : Resume()
+        data class Failed(val message: String) : Resume()
+    }
+
     /** "Try again" in the player: a fresh playlist, or why there isn't one. */
     sealed class Retry {
         data class Ready(val playlistUrl: String) : Retry()
@@ -69,6 +79,9 @@ class RecordingsViewModel(
     /** Position saves, sent one at a time in call order (the server keeps the last). */
     private val saves = Channel<Pair<Long, Int>>(Channel.UNLIMITED)
 
+    /** Saves queued or sent but not answered yet. */
+    private val savesInFlight = AtomicInteger(0)
+
     init {
         workScope.launch {
             for ((id, sec) in saves) {
@@ -78,6 +91,8 @@ class RecordingsViewModel(
                     throw e
                 } catch (_: Exception) {
                     // Best-effort: the next save (every 15 s) catches up.
+                } finally {
+                    savesInFlight.decrementAndGet()
                 }
             }
         }
@@ -116,20 +131,27 @@ class RecordingsViewModel(
     /** Fetch the playlist and decide whether to offer resuming; null (with a message) on error. */
     suspend fun play(r: Recording): PlayStart? {
         return try {
-            val p = client.playRecording(r.id)
-            PlayStart(
-                recording = r,
-                playlistUrl = p.playlistUrl,
-                resumeAtSec = p.positionSec,
-                durationSec = p.durationSec,
-                offerResume = RecordingLogic.shouldOfferResume(p.positionSec, p.durationSec),
-            )
+            playStart(r, client.playRecording(r.id))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             _state.update { it.copy(message = RecordingLogic.errorMessage(e)) }
             null
         }
+    }
+
+    /**
+     * Continue watching: plays from the saved position without asking
+     * (from the start when it's too near either end). A failure is returned
+     * for the screen that asked, not left in [UiState.message].
+     */
+    suspend fun resume(r: Recording): Resume = try {
+        val start = playStart(r, client.playRecording(r.id))
+        Resume.Ready(start, startAtSec = if (start.offerResume) start.resumeAtSec else 0)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Resume.Failed(RecordingLogic.errorMessage(e))
     }
 
     /**
@@ -147,8 +169,28 @@ class RecordingsViewModel(
 
     /** Save the resume position (best-effort, in order, never blocks the caller). */
     fun savePosition(recordingId: Long, positionMs: Long) {
-        saves.trySend(recordingId to (positionMs / 1000).toInt().coerceAtLeast(0))
+        savesInFlight.incrementAndGet()
+        val sent = saves.trySend(recordingId to (positionMs / 1000).toInt().coerceAtLeast(0))
+        if (!sent.isSuccess) savesInFlight.decrementAndGet()
     }
+
+    /**
+     * Waits (up to [timeoutMs]) for position saves already queued, such as
+     * the player's last save on close, so a reload right after shows it.
+     */
+    suspend fun awaitSaves(timeoutMs: Long = 3_000) {
+        withTimeoutOrNull(timeoutMs) {
+            while (savesInFlight.get() > 0) delay(50)
+        }
+    }
+
+    private fun playStart(r: Recording, p: RecordingPlayback) = PlayStart(
+        recording = r,
+        playlistUrl = p.playlistUrl,
+        resumeAtSec = p.positionSec,
+        durationSec = p.durationSec,
+        offerResume = RecordingLogic.shouldOfferResume(p.positionSec, p.durationSec),
+    )
 
     fun clearMessage() {
         _state.update { it.copy(message = null) }
