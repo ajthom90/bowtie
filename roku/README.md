@@ -60,11 +60,32 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 
 (`supports_input_launch=1` is set in the channel manifest.)
 
+## Sign in
+
+Login opens on **Sign in with your phone** (quick sign-in): the Roku asks
+for a code (`POST /api/v1/auth/device`, named after the Roku's friendly
+name), shows the server's QR PNG (`qrUrl`, 512 px, shown 1:1) and "Or go to
+`<server>/link` and enter **BCDF-2345**". A phone or browser that is signed
+in approves it. Meanwhile ApiTask polls `POST /api/v1/auth/device/token` every
+`interval` s (one poll at a time): 428 keeps waiting, 200 signs in exactly as a
+password login does (tokens held by ApiTask, refresh token persisted), and 410
+(or the code's `expiresIn` passing) shows **Code expired** with **Get a new
+code** focused. Network trouble keeps polling.
+
+| Button | Action |
+|--------|--------|
+| Get a new code | Drop this code and ask for another |
+| Use a password instead | Username / password keyboards (the old flow); **Sign in with your phone** returns |
+| Change server | Back to Connect |
+
+A server without quick sign-in (404) drops straight to the password form with
+a note.
+
 ## Channel rail controls
 
 | Key | Action |
 |-----|--------|
-| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Cancel**. |
+| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Record series** (when the guide has a program on now), **Cancel**. |
 | Up from the first channel | Recent row (when the server has watch history), then the header (Recordings / Settings) |
 | Left / Right in the header | Move between **Recordings** and **Settings** |
 | Down from the header / Recent | Back toward the rail |
@@ -81,6 +102,12 @@ dialog lists the recordings already holding the tuners with **Record anyway**
 (scheduled at a lower priority; earlier recordings keep their tuners) or
 **Cancel**.
 
+**Record series** records every new episode of the show on this channel
+(`POST /api/v1/recording-rules` with the program's channel and start; the
+server's defaults are this channel, new episodes only). The upcoming airings in
+the next 14 days are scheduled at once and the dialog says **Scheduled N
+episodes**; more are added as the guide refreshes.
+
 Up/down zapping in the player follows rail order, so it cycles favorites first.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
@@ -90,7 +117,12 @@ same account) and is hidden when empty or on a server without favorites.
 **Recordings** (in the header next to Settings) lists everyone's recordings in
 three tabs: **Upcoming** (scheduled, waiting for a tuner, recording now),
 **Recorded** (converting, ready) and **Missed** (failed, with the reason in
-plain words, e.g. "No tuner was free").
+plain words, e.g. "No tuner was free"), plus **Shows**, the series being
+recorded (`GET /api/v1/recording-rules`). Recordings a series scheduled
+(`ruleId` > 0) say **Series**; an episode skipped by deleting it ahead of time
+says **Skipped** (not tinted red like a real miss). A recording parental
+controls block for this account (`locked`) says **Locked** and OK explains
+instead of playing.
 
 | Key | Action |
 |-----|--------|
@@ -99,6 +131,7 @@ plain words, e.g. "No tuner was free").
 | OK on a recorded item | Play it. Past the first 10 s and before the last 30 s, asks **Resume from m:ss** / **Start over**. |
 | OK on any other item | Same as `*` |
 | `*` (Options) on an item | **Stop recording** (while recording), **Keep / Don't keep** (protect from automatic deletion), **Cancel recording** (upcoming) or **Delete** (asks first: it removes the recording for everyone), **Close**. Only the person who scheduled it or an admin (`canManage`) gets these; others see who scheduled it. |
+| `*` or OK on a show (Shows tab) | **Stop recording this show** (`DELETE /recording-rules/{id}`: cancels its upcoming recordings, recorded ones stay), **Close**. Only whoever set it up or an admin (`canManage`). |
 | Back | Recordings → channel rail |
 
 ### Recording playback
@@ -145,6 +178,7 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 503 tuners busy | Full copy + who’s-watching list + Try again |
 | 422 negotiation | Reset quality to Auto, retry once; second → device-can’t-play |
 | 404 | Channel not found; rail refreshes on return |
+| 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
 | Mid-play failure | Bounded retry, then error + Try again |
 
 ## Design tokens
@@ -166,13 +200,14 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Favorites, GuideLogic, Recordings, Registry
+│   ├── lib/                # AuthState, BowtieClient, Caps, DeviceAuth, Favorites, GuideLogic, Recordings, Registry
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
-    ├── ConnectScene / LoginScene
-    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record)
-    ├── RecordingsScene     # Upcoming / Recorded / Missed + VOD Video (RecordingItem rows)
+    ├── ConnectScene
+    ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
+    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record / series)
+    ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows)
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene

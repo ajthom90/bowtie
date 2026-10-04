@@ -139,6 +139,47 @@ test('tabs load with the server state filter', () => {
     assert.match(scene, /bowtie\.recordings\.filterForTab\(/);
 });
 
+// ── Series ──────────────────────────────────────────────────────────────────
+
+test('Home: Record series posts a rule for the current program and says how many were scheduled', () => {
+    const choose = body(home, 'sub onDialogButton(');
+    assert.match(choose, /choice = "series"[\s\S]*?sendSeries\(m\.optionsChannelId, m\.optionsProgram\)/);
+    const send = body(home, 'sub sendSeries(');
+    assert.match(send, /kind: "createRecordingRule"/);
+    assert.match(send, /channelId: channelId, programStart: program\.start/);
+    assert.match(send, /series: true/);
+    const handle = body(home, 'sub handleSeriesResponse(');
+    assert.match(handle, /bowtie\.recordings\.seriesScheduledMessage\(resp\.data\)/);
+    assert.match(handle, /bowtie\.recordings\.seriesErrorText\(/);
+    assert.match(body(home, 'sub onApiResponse('), /pendingRecord\.series = true[\s\S]*?handleSeriesResponse\(resp\)/);
+});
+
+test('Recordings has a fourth tab, Shows, right of Missed', () => {
+    const shows = tag(sceneXml, 'showsTab');
+    assert.match(shows, /text="Shows"/);
+    assert.match(shows, /translation="\[860, 112\]"/);
+    assert.match(body(scene, 'sub init()'), /m\.tabButtons = \[m\.upcomingTab, m\.recordedTab, m\.missedTab, m\.showsTab\]/);
+});
+
+test('Shows lists GET /recording-rules; * offers Stop recording this show (DELETE)', () => {
+    const load = body(scene, 'sub loadTab()');
+    assert.match(load, /bowtie\.recordings\.isRulesTab\(currentTab\(\)\)[\s\S]*?kind: "recordingRules"/);
+    assert.match(body(scene, 'sub handleListResponse('), /bowtie\.recordings\.parseRules\(resp\.data\)/);
+    const keys = body(scene, 'function onKeyEvent');
+    assert.match(keys, /key = "options"[\s\S]*?openRuleOptions\(/);
+    const open = body(scene, 'sub openRuleOptions(');
+    assert.match(open, /bowtie\.recordings\.ruleOptionButtons\(/);
+    assert.match(open, /showDialog\("ruleOptions"/);
+    assert.match(body(scene, 'sub onDialogButton('), /choice = "stopRule"[\s\S]*?sendAction\("deleteRecordingRule", \{ id: m\.target\.id \}\)/);
+});
+
+test('rows: Series / Skipped come from the logic; skipped rows are not tinted red', () => {
+    const render = body(scene, 'sub renderList()');
+    assert.match(render, /bowtie\.recordings\.ruleTitleLine\(/);
+    assert.match(render, /bowtie\.recordings\.ruleDetailLine\(/);
+    assert.match(render, /missed: bowtie\.recordings\.missedTint\(r\)/);
+});
+
 // ── ApiTask ─────────────────────────────────────────────────────────────────
 
 test('ApiTask sends a PATCH with its body', () => {

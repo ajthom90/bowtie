@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- DVR recordings: Upcoming / Recorded / Missed tabs, a MarkupList of
-     recordings, and a full-screen VOD Video node with the standard
+<!-- DVR recordings: Upcoming / Recorded / Missed / Shows tabs, a MarkupList
+     of recordings (or series rules), and a full-screen VOD Video node with the standard
      trick-play UI. Pure logic lives in source/lib/Recordings.bs. -->
 <component name="RecordingsScene" extends="Group">
     <interface>
@@ -49,6 +49,14 @@
             id="missedTab"
             translation="[600, 112]"
             text="Missed"
+            minWidth="240"
+            height="56"
+        />
+        <!-- Series recording rules (GET /recording-rules). -->
+        <Button
+            id="showsTab"
+            translation="[860, 112]"
+            text="Shows"
             minWidth="240"
             height="56"
         />
