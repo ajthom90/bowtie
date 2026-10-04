@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +60,8 @@ import app.bowtie.core.CreatedSession
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.SessionInfoMeta
 import app.bowtie.core.player.PlayerEngine
+import app.bowtie.core.player.TrackPrefsStore
+import app.bowtie.core.player.nextAudio
 import app.bowtie.core.vm.PlayerViewModel
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
@@ -104,10 +108,14 @@ fun PlayerScreen(
         outOfWindowNotice = PlayerViewModel.OUT_OF_WINDOW_NOTICE
     }
 
+    var tracksVersion by remember { mutableIntStateOf(0) }
+    val trackPrefs = remember { TrackPrefsStore(context) }
     val engine = remember {
         PlayerEngine(
             context = context,
             scope = scope,
+            loadPrefs = trackPrefs::load,
+            savePrefs = trackPrefs::save,
             listener = object : PlayerEngine.Listener {
                 override fun onAuthError() {
                     viewModelLatest.value.onPlaybackAuthError()
@@ -135,6 +143,10 @@ fun PlayerScreen(
 
                 override fun onDroppedFrames(total: Long) {
                     setDropped.value.invoke(total)
+                }
+
+                override fun onTracksAvailable() {
+                    tracksVersion++
                 }
 
                 override fun onJumpedToLive() {
@@ -231,6 +243,10 @@ fun PlayerScreen(
         overlayVisible = false
     }
 
+    // PlayerView takes every touch, so Bowtie's overlay shows and hides with
+    // Media3's controller (otherwise it never comes back after the first hide).
+    val setOverlayVisible = rememberUpdatedState { visible: Boolean -> overlayVisible = visible }
+
     // Media3 controller exposes live-window seek / rewind (spec D); custom overlay
     // keeps channel chrome + quality/stats.
     Box(
@@ -254,6 +270,11 @@ fun PlayerScreen(
                     setShowNextButton(false)
                     setShowPreviousButton(false)
                     setShowSubtitleButton(false)
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            setOverlayVisible.value.invoke(visibility == android.view.View.VISIBLE)
+                        },
+                    )
                     keepScreenOn = true
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -345,6 +366,28 @@ fun PlayerScreen(
                 bitrateBps = bitrateBps,
                 droppedFrames = droppedFrames,
                 selectedProfile = playerViewModel.selectedProfile,
+                audioLabel = remember(tracksVersion) {
+                    val opts = engine.audioOptions()
+                    if (opts.size < 2) {
+                        null
+                    } else {
+                        val lang = engine.selectedAudioLanguage()
+                        "Audio: " + (opts.firstOrNull { it.language == lang } ?: opts.first()).label
+                    }
+                },
+                onAudio = {
+                    overlayVisible = true
+                    nextAudio(engine.audioOptions(), engine.selectedAudioLanguage())?.let {
+                        engine.selectAudio(it.language)
+                    }
+                },
+                captionsOn = remember(tracksVersion) {
+                    if (engine.hasCaptions()) engine.captionsOn() else null
+                },
+                onCaptions = {
+                    overlayVisible = true
+                    engine.setCaptions(!engine.captionsOn())
+                },
                 onBack = { leave() },
                 onQuality = {
                     overlayVisible = true
@@ -435,6 +478,10 @@ private fun PlayerOverlay(
     bitrateBps: Int?,
     droppedFrames: Long,
     selectedProfile: String,
+    audioLabel: String?,
+    onAudio: () -> Unit,
+    captionsOn: Boolean?,
+    onCaptions: () -> Unit,
     onBack: () -> Unit,
     onQuality: () -> Unit,
     onToggleStats: () -> Unit,
@@ -481,12 +528,14 @@ private fun PlayerOverlay(
             )
         }
 
-        // Bottom controls
+        // Controls row under the channel name; the bottom edge belongs to
+        // Media3's scrubber. Scrolls sideways on narrow phones.
         Row(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
+                .align(Alignment.TopStart)
+                .padding(top = 120.dp)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.55f))
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -497,7 +546,6 @@ private fun PlayerOverlay(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ControlChip(label = "Back", onClick = onBack)
-            Spacer(Modifier.weight(1f))
             val qualityLabel = if (selectedProfile.isEmpty()) {
                 "Quality: Auto"
             } else {
@@ -505,6 +553,8 @@ private fun PlayerOverlay(
                     if (it.isLowerCase()) it.titlecase() else it.toString()
                 }}"
             }
+            audioLabel?.let { ControlChip(label = it, onClick = onAudio) }
+            captionsOn?.let { ControlChip(label = if (it) "CC ✓" else "CC", onClick = onCaptions) }
             ControlChip(label = qualityLabel, onClick = onQuality)
             ControlChip(
                 label = if (showStats) "Stats ✓" else "Stats",
