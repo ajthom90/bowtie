@@ -1,0 +1,113 @@
+' Quick sign-in ("Sign in with your phone") decisions for LoginScene — pure:
+' no I/O, no nodes, the clock passed in. LoginScene POSTs deviceStart, shows
+' the QR (a PNG the server draws) and the code, then polls deviceToken
+' through ApiTask every intervalSec: 428 pending → wait, 200 → signed in
+' (ApiTask holds the tokens as for a password login), 410 → Code expired.
+'
+' Camel-case keys in returned AAs are quoted so they keep their case.
+
+import "pkg:/source/lib/BowtieClient.bs"
+
+namespace bowtie.deviceauth
+
+    const DEFAULT_INTERVAL_SEC = 5
+    const DEFAULT_EXPIRES_SEC = 600
+
+    ' Shown to the approver: the Roku's friendly name ("Living Room Roku").
+    function deviceName(friendly as dynamic) as string
+        if friendly = invalid then return "Roku"
+        t = Type(friendly)
+        if t <> "String" and t <> "roString" then return "Roku"
+        name = friendly.Trim()
+        if name = "" then return "Roku"
+        return name
+    end function
+
+    ' ApiTask response to deviceStart → { action, message }.
+    ' action: "show" (codes in hand), "password" (an older server without
+    ' quick sign-in), "retry" (offer Get a new code).
+    function startOutcome(resp as dynamic) as object
+        if resp <> invalid and resp.ok = true and resp.data <> invalid
+            code = resp.data.deviceCode
+            if code <> invalid and code <> "" then return { "action": "show", "message": "" }
+            return { "action": "retry", "message": "Couldn't get a sign-in code." }
+        end if
+        code = bowtie.deviceauth.errorCode(resp)
+        if code = 404 then return { "action": "password", "message": "This server doesn't support phone sign-in yet. Sign in with your password." }
+        if code = 429 then return { "action": "retry", "message": "Too many sign-ins are in progress. Try again in a minute." }
+        if code = 0 then return { "action": "retry", "message": "Couldn't reach the server." }
+        return { "action": "retry", "message": "Couldn't get a sign-in code." }
+    end function
+
+    ' deviceStart data → what the screen shows and how it polls.
+    ' nowSec: the clock now (seconds); expiresAtSec is when to stop polling
+    ' even if the server never answers 410.
+    function newSession(data as object, serverUrl as string, nowSec as dynamic) as object
+        interval = bowtie.deviceauth.positive(data.interval, DEFAULT_INTERVAL_SEC)
+        expiresIn = bowtie.deviceauth.positive(data.expiresIn, DEFAULT_EXPIRES_SEC)
+        qrUrl = data.qrUrl
+        if qrUrl = invalid then qrUrl = ""
+        return {
+            "deviceCode": bowtie.client.idString(data.deviceCode)
+            "userCode": bowtie.client.idString(data.userCode)
+            "qrUri": bowtie.client.resolveUrl(qrUrl, serverUrl)
+            "linkText": bowtie.deviceauth.linkText(serverUrl)
+            "intervalSec": interval
+            "expiresAtSec": nowSec + expiresIn
+        }
+    end function
+
+    ' "Or go to http://10.0.0.5:8080/link and enter" — the code shows below it.
+    function linkText(serverUrl as string) as string
+        return "Or go to " + bowtie.client.normalizeBase(serverUrl) + "/link and enter"
+    end function
+
+    function waitingText() as string
+        return "Waiting for you to approve it on your phone…"
+    end function
+
+    function expiredText() as string
+        return "Code expired"
+    end function
+
+    ' ApiTask response to deviceToken → { action, message }.
+    ' action: "signedIn" (tokens held), "wait" (poll again), "expired".
+    ' Trouble reaching the server (no answer, 5xx, 429) keeps polling; any
+    ' other refusal means this code is no good.
+    function pollOutcome(resp as dynamic) as object
+        if resp <> invalid and resp.ok = true then return { "action": "signedIn", "message": "" }
+        if resp = invalid then return { "action": "wait", "message": bowtie.deviceauth.waitingText() }
+        code = bowtie.deviceauth.errorCode(resp)
+        if code = 428 then return { "action": "wait", "message": bowtie.deviceauth.waitingText() }
+        if code = 410 then return { "action": "expired", "message": bowtie.deviceauth.expiredText() }
+        if code = 0 or code = 429 or code >= 500 then return { "action": "wait", "message": "Can't reach the server. Still trying…" }
+        return { "action": "expired", "message": bowtie.deviceauth.expiredText() }
+    end function
+
+    function isExpired(session as dynamic, nowSec as dynamic) as boolean
+        if session = invalid or session.expiresAtSec = invalid then return true
+        return nowSec >= session.expiresAtSec
+    end function
+
+    ' ── helpers ──────────────────────────────────────────────────────────────
+
+    function errorCode(resp as dynamic) as integer
+        if resp = invalid or resp.error = invalid then return 0
+        code = resp.error.code
+        if code = invalid then return 0
+        t = Type(code)
+        if t = "Integer" or t = "roInteger" then return code
+        if t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" then return Int(code)
+        return 0
+    end function
+
+    function positive(v as dynamic, fallback as integer) as integer
+        if v = invalid then return fallback
+        t = Type(v)
+        if t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble"
+            if v >= 1 then return Int(v)
+        end if
+        return fallback
+    end function
+
+end namespace

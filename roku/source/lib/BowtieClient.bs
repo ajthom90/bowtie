@@ -15,6 +15,9 @@
 '   conflicts}; deleteRecording / stopRecording {id} → 204; playRecording {id}
 '   → {playlistUrl (absolute), positionSec, durationSec}; setRecordingPosition
 '   {id, positionSec} → 204; protectRecording {id, keep} → PATCH {protected}.
+' Quick sign-in (no Bearer): deviceStart {deviceName} → {deviceCode, userCode,
+'   verifyUrl, qrUrl (absolute), expiresIn, interval}; deviceToken {deviceCode}
+'   → 200 TokenPair (as login), 428 kind "pending", 410 kind "expired".
 
 namespace bowtie.client
 
@@ -40,6 +43,20 @@ namespace bowtie.client
                 "username": params.username
                 "password": params.password
             })
+
+        else if kind = "deviceStart"
+            url = base + "/api/v1/auth/device"
+            method = "POST"
+            name = params.deviceName
+            if name = invalid then name = ""
+            body = FormatJson({ "deviceName": name })
+
+        else if kind = "deviceToken"
+            url = base + "/api/v1/auth/device/token"
+            method = "POST"
+            code = params.deviceCode
+            if code = invalid then code = ""
+            body = FormatJson({ "deviceCode": code })
 
         else if kind = "refresh"
             url = base + "/api/v1/auth/refresh"
@@ -237,6 +254,13 @@ namespace bowtie.client
             return bowtie.client.parseRecordingConflict(body)
         end if
 
+        if kind = "deviceToken" and httpCode = 428
+            return { ok: false, error: { code: 428, kind: "pending", message: bowtie.client.extractError(body) } }
+        end if
+        if kind = "deviceToken" and httpCode = 410
+            return { ok: false, error: { code: 410, kind: "expired", message: bowtie.client.extractError(body) } }
+        end if
+
         if kind = "createSession" and httpCode = 422
             msg = bowtie.client.extractError(body)
             if msg = "" then msg = "negotiation failed"
@@ -261,8 +285,12 @@ namespace bowtie.client
         end if
 
         ' Success path
-        if kind = "login" or kind = "refresh"
+        if kind = "login" or kind = "refresh" or kind = "deviceToken"
             return bowtie.client.parseTokenResponse(body)
+        end if
+
+        if kind = "deviceStart"
+            return bowtie.client.parseDeviceStart(body, baseUrl)
         end if
 
         if kind = "me"
@@ -353,7 +381,34 @@ namespace bowtie.client
         return { ok: true, data: data }
     end function
 
-    ' 409 from createRecording → { kind: "conflict", message, tunerCount, conflicts }.
+    ' POST /auth/device → codes, with the server-relative qrUrl made absolute.
+    function parseDeviceStart(body as string, baseUrl as string) as object
+        parsed = ParseJson(body)
+        if parsed = invalid or Type(parsed) <> "roAssociativeArray"
+            return { ok: false, error: { code: 200, message: "invalid sign-in code response" } }
+        end if
+        qrUrl = parsed.qrUrl
+        if qrUrl = invalid then qrUrl = ""
+        verifyUrl = parsed.verifyUrl
+        if verifyUrl = invalid then verifyUrl = ""
+        expiresIn = parsed.expiresIn
+        if expiresIn = invalid then expiresIn = 0
+        interval = parsed.interval
+        if interval = invalid then interval = 0
+        return {
+            ok: true
+            data: {
+                "deviceCode": bowtie.client.idString(parsed.deviceCode)
+                "userCode": bowtie.client.idString(parsed.userCode)
+                "verifyUrl": verifyUrl
+                "qrUrl": bowtie.client.resolveUrl(qrUrl, baseUrl)
+                "expiresIn": expiresIn
+                "interval": interval
+            }
+        }
+    end function
+
+    ' 409 from createRecording →{ kind: "conflict", message, tunerCount, conflicts }.
     ' Quoted keys keep their case for callers that serialize the error.
     function parseRecordingConflict(body as string) as object
         parsed = ParseJson(body)

@@ -60,6 +60,27 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 
 (`supports_input_launch=1` is set in the channel manifest.)
 
+## Sign in
+
+Login opens on **Sign in with your phone** (quick sign-in): the Roku asks
+for a code (`POST /api/v1/auth/device`, named after the Roku's friendly
+name), shows the server's QR PNG (`qrUrl`, 512 px, shown 1:1) and "Or go to
+`<server>/link` and enter **BCDF-2345**". A phone or browser that is signed
+in approves it. Meanwhile ApiTask polls `POST /api/v1/auth/device/token` every
+`interval` s (one poll at a time): 428 keeps waiting, 200 signs in exactly as a
+password login does (tokens held by ApiTask, refresh token persisted), and 410
+(or the code's `expiresIn` passing) shows **Code expired** with **Get a new
+code** focused. Network trouble keeps polling.
+
+| Button | Action |
+|--------|--------|
+| Get a new code | Drop this code and ask for another |
+| Use a password instead | Username / password keyboards (the old flow); **Sign in with your phone** returns |
+| Change server | Back to Connect |
+
+A server without quick sign-in (404) drops straight to the password form with
+a note.
+
 ## Channel rail controls
 
 | Key | Action |
@@ -166,11 +187,12 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Favorites, GuideLogic, Recordings, Registry
+│   ├── lib/                # AuthState, BowtieClient, Caps, DeviceAuth, Favorites, GuideLogic, Recordings, Registry
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
-    ├── ConnectScene / LoginScene
+    ├── ConnectScene
+    ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
     ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record)
     ├── RecordingsScene     # Upcoming / Recorded / Missed + VOD Video (RecordingItem rows)
     ├── PlayerScene         # Video + session-replace

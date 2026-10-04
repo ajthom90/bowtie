@@ -1,9 +1,17 @@
-' Login: username + secure password via StandardKeyboardDialog; exact error copy.
+' Login. Opens on "Sign in with your phone" (typing a password with a remote
+' is painful): POST deviceStart → show the server's QR PNG and the code, then
+' poll deviceToken through ApiTask every intervalSec (pollTimer). 428 waits,
+' 200 signs in (ApiTask holds the tokens exactly as for a password login),
+' 410 or the local deadline → "Code expired" with Get a new code focused.
+' Password entry (username + secure password via StandardKeyboardDialog,
+' exact error copy) stays one button away.
 
 import "pkg:/source/lib/Registry.bs"
+import "pkg:/source/lib/DeviceAuth.bs"
 
 ' Spec-mandated auth failure copy (verbatim, Phase 2).
 const LOGIN_ERROR = "Wrong username or password."
+const POLL_ID_PREFIX = "login-device-poll-"
 
 sub init()
     m.errorLabel = m.top.findNode("errorLabel")
@@ -13,8 +21,23 @@ sub init()
     m.usernameButton = m.top.findNode("usernameButton")
     m.passwordButton = m.top.findNode("passwordButton")
     m.signInButton = m.top.findNode("signInButton")
+    m.phoneButton = m.top.findNode("phoneButton")
     m.changeServerButton = m.top.findNode("changeServerButton")
+    m.passwordGroup = m.top.findNode("passwordGroup")
+    m.quickGroup = m.top.findNode("quickGroup")
+    m.qrFrame = m.top.findNode("qrFrame")
+    m.qrPoster = m.top.findNode("qrPoster")
+    m.linkLabel = m.top.findNode("linkLabel")
+    m.codeLabel = m.top.findNode("codeLabel")
+    m.statusLabel = m.top.findNode("statusLabel")
+    m.quickButtons = m.top.findNode("quickButtons")
+    m.pollTimer = m.top.findNode("pollTimer")
 
+    m.quickButtons.buttons = ["Get a new code", "Use a password instead", "Change server"]
+    ' Up/down order of the password screen's buttons.
+    m.passwordButtons = [m.usernameButton, m.passwordButton, m.signInButton, m.phoneButton, m.changeServerButton]
+
+    m.mode = "" ' "quick" | "password"
     m.username = ""
     m.password = ""
     m.busy = false
@@ -22,11 +45,19 @@ sub init()
     m.dialog = invalid
     m.dialogMode = "" ' "username" | "password"
     m.observing = false
+    ' Quick sign-in: bowtie.deviceauth.newSession while a code is shown.
+    m.session = invalid
+    m.deviceSeq = 0
+    m.pendingStartId = ""
+    m.pendingPollId = ""
 
     m.usernameButton.observeField("buttonSelected", "onUsernameButton")
     m.passwordButton.observeField("buttonSelected", "onPasswordButton")
     m.signInButton.observeField("buttonSelected", "onSignInButton")
+    m.phoneButton.observeField("buttonSelected", "onPhoneButton")
     m.changeServerButton.observeField("buttonSelected", "onChangeServerButton")
+    m.quickButtons.observeField("buttonSelected", "onQuickButton")
+    m.pollTimer.observeField("fire", "onPollTimer")
     m.top.observeField("visible", "onVisible")
     m.top.observeField("serverUrl", "onServerUrl")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -43,27 +74,17 @@ sub onVisible()
         m.errorLabel.text = ""
         m.top.signedIn = false
         m.top.changeServer = false
+        m.busy = false
         m.username = ""
         m.password = ""
         updateCredentialLabels()
         onServerUrl()
-        m.usernameButton.setFocus(true)
-        ' Auto-open username keyboard for TV-friendly first focus.
-        timer = CreateObject("roSGNode", "Timer")
-        timer.duration = 0.05
-        timer.repeat = false
-        timer.observeField("fire", "onOpenUsernameTimer")
-        timer.control = "start"
-        m.openTimer = timer
+        observeApi()
+        showQuick()
     else
+        stopQuick()
         closeDialog()
         unobserveApi()
-    end if
-end sub
-
-sub onOpenUsernameTimer()
-    if m.top.visible = true and m.busy <> true
-        openUsernameKeyboard()
     end if
 end sub
 
@@ -87,6 +108,185 @@ sub unobserveApi()
             task.unobserveFieldScoped("response")
         end if
         m.observing = false
+    end if
+end sub
+
+' ── Sign in with your phone ──────────────────────────────────────────────────
+
+sub showQuick()
+    closeDialog()
+    m.mode = "quick"
+    m.passwordGroup.visible = false
+    m.quickGroup.visible = true
+    m.quickButtons.setFocus(true)
+    ' Rest on "Use a password instead"; Get a new code takes focus when needed.
+    m.quickButtons.focusButton = 1
+    requestCode()
+end sub
+
+' Stop polling and forget the code (leaving the screen or the phone mode).
+sub stopQuick()
+    m.pollTimer.control = "stop"
+    m.session = invalid
+    m.pendingStartId = ""
+    m.pendingPollId = ""
+end sub
+
+sub requestCode()
+    task = m.top.apiTask
+    if task = invalid then return
+    stopQuick()
+    clearCode()
+    m.statusLabel.text = "Getting a code…"
+    m.deviceSeq = m.deviceSeq + 1
+    m.pendingStartId = "login-device-start-" + m.deviceSeq.toStr()
+    task.request = {
+        id: m.pendingStartId
+        kind: "deviceStart"
+        params: { deviceName: bowtie.deviceauth.deviceName(friendlyName()) }
+    }
+end sub
+
+' "Living Room Roku" — what the approver sees.
+function friendlyName() as string
+    info = CreateObject("roDeviceInfo")
+    if info = invalid then return ""
+    name = info.GetFriendlyName()
+    if name = invalid then return ""
+    return name
+end function
+
+sub handleStartResponse(resp as object)
+    m.pendingStartId = ""
+    outcome = bowtie.deviceauth.startOutcome(resp)
+    if outcome.action = "password"
+        showPassword(outcome.message)
+        return
+    end if
+    if outcome.action <> "show"
+        m.statusLabel.text = outcome.message
+        m.quickButtons.focusButton = 0
+        return
+    end if
+    m.session = bowtie.deviceauth.newSession(resp.data, serverAddress(), nowSeconds())
+    m.qrPoster.uri = m.session.qrUri
+    m.qrFrame.visible = true
+    m.linkLabel.text = m.session.linkText
+    m.codeLabel.text = m.session.userCode
+    m.statusLabel.text = bowtie.deviceauth.waitingText()
+    schedulePoll()
+end sub
+
+' One poll per interval, and only after the last one answered.
+sub schedulePoll()
+    if m.session = invalid then return
+    m.pollTimer.control = "stop"
+    m.pollTimer.duration = m.session.intervalSec
+    m.pollTimer.control = "start"
+end sub
+
+sub onPollTimer()
+    if m.top.visible <> true or m.mode <> "quick" or m.session = invalid then return
+    if bowtie.deviceauth.isExpired(m.session, nowSeconds())
+        showExpired()
+        return
+    end if
+    task = m.top.apiTask
+    if task = invalid then return
+    m.deviceSeq = m.deviceSeq + 1
+    m.pendingPollId = POLL_ID_PREFIX + m.deviceSeq.toStr()
+    task.request = {
+        id: m.pendingPollId
+        kind: "deviceToken"
+        params: { deviceCode: m.session.deviceCode }
+    }
+end sub
+
+sub handlePollResponse(resp as object)
+    m.pendingPollId = ""
+    outcome = bowtie.deviceauth.pollOutcome(resp)
+    if outcome.action = "signedIn"
+        stopQuick()
+        m.top.signedIn = true
+    else if outcome.action = "wait"
+        m.statusLabel.text = outcome.message
+        schedulePoll()
+    else if outcome.action = "expired"
+        showExpired()
+    end if
+end sub
+
+' The code is dead: hide it (nobody should scan it) and offer a new one.
+sub showExpired()
+    m.pollTimer.control = "stop"
+    m.session = invalid
+    m.pendingPollId = ""
+    clearCode()
+    m.statusLabel.text = bowtie.deviceauth.expiredText()
+    m.quickButtons.focusButton = 0
+end sub
+
+sub clearCode()
+    m.qrFrame.visible = false
+    m.qrPoster.uri = ""
+    m.linkLabel.text = ""
+    m.codeLabel.text = ""
+end sub
+
+sub onQuickButton()
+    idx = m.quickButtons.buttonSelected
+    if idx = 0
+        requestCode()
+    else if idx = 1
+        showPassword("")
+    else if idx = 2
+        onChangeServerButton()
+    end if
+end sub
+
+function serverAddress() as string
+    url = m.top.serverUrl
+    if url = invalid or url = "" then url = bowtie.registry.loadServer()
+    if url = invalid then url = ""
+    return url
+end function
+
+function nowSeconds() as integer
+    dt = CreateObject("roDateTime")
+    dt.Mark()
+    return dt.AsSeconds()
+end function
+
+' ── Password ─────────────────────────────────────────────────────────────────
+
+' message: why we're here when it isn't the user's choice (older server).
+sub showPassword(message as string)
+    stopQuick()
+    m.mode = "password"
+    m.quickGroup.visible = false
+    m.passwordGroup.visible = true
+    m.errorLabel.text = message
+    m.usernameButton.setFocus(true)
+    if message = ""
+        ' TV-friendly: straight into the username keyboard.
+        timer = CreateObject("roSGNode", "Timer")
+        timer.duration = 0.05
+        timer.repeat = false
+        timer.observeField("fire", "onOpenUsernameTimer")
+        timer.control = "start"
+        m.openTimer = timer
+    end if
+end sub
+
+sub onPhoneButton()
+    if m.busy = true then return
+    m.errorLabel.text = ""
+    showQuick()
+end sub
+
+sub onOpenUsernameTimer()
+    if m.top.visible = true and m.mode = "password" and m.busy <> true
+        openUsernameKeyboard()
     end if
 end sub
 
@@ -120,6 +320,7 @@ end sub
 
 sub onChangeServerButton()
     if m.busy = true then return
+    stopQuick()
     closeDialog()
     bowtie.registry.clearAll()
     m.top.changeServer = true
@@ -196,7 +397,7 @@ end sub
 sub onKeyboardClosed()
     m.dialog = invalid
     m.dialogMode = ""
-    if m.top.visible = true
+    if m.top.visible = true and m.mode = "password"
         m.usernameButton.setFocus(true)
     end if
 end sub
@@ -243,13 +444,35 @@ sub submitLogin()
     }
 end sub
 
+' ── Responses and keys ───────────────────────────────────────────────────────
+
 sub onApiResponse()
     task = m.top.apiTask
     if task = invalid then return
+    if m.top.visible <> true then return
     resp = task.response
-    if resp = invalid then return
-    if resp.id <> m.pendingId then return
+    if resp = invalid or resp.id = invalid then return
+    rid = resp.id
 
+    if rid = m.pendingStartId and m.pendingStartId <> ""
+        handleStartResponse(resp)
+    else if rid = m.pendingPollId and m.pendingPollId <> ""
+        handlePollResponse(resp)
+    else if Left(rid, Len(POLL_ID_PREFIX)) = POLL_ID_PREFIX
+        ' A poll answered after leaving the phone mode: if it was approved,
+        ' ApiTask already holds the tokens — finish signing in.
+        if resp.ok = true
+            stopQuick()
+            closeDialog()
+            m.busy = false
+            m.top.signedIn = true
+        end if
+    else if rid = m.pendingId and m.pendingId <> ""
+        handleLoginResponse(resp)
+    end if
+end sub
+
+sub handleLoginResponse(resp as object)
     m.busy = false
     m.pendingId = ""
 
@@ -264,3 +487,19 @@ sub onApiResponse()
         m.passwordButton.setFocus(true)
     end if
 end sub
+
+' Password screen: up/down between its buttons (the phone screen's
+' ButtonGroup moves focus itself).
+function onKeyEvent(key as string, press as boolean) as boolean
+    if press <> true or m.mode <> "password" then return false
+    if key <> "up" and key <> "down" then return false
+    for i = 0 to m.passwordButtons.count() - 1
+        if m.passwordButtons[i].hasFocus()
+            j = i + 1
+            if key = "up" then j = i - 1
+            if j >= 0 and j < m.passwordButtons.count() then m.passwordButtons[j].setFocus(true)
+            return true
+        end if
+    end for
+    return false
+end function
