@@ -1227,7 +1227,7 @@ components:
           description: Map of backend name → HEVC support
     SettingsStreaming:
       type: object
-      required: [bufferMinutes]
+      required: [bufferMinutes, adaptive]
       properties:
         bufferMinutes:
           type: integer
@@ -1237,6 +1237,13 @@ components:
             Live pause/rewind buffer length in minutes. Default 15.
             FFmpeg -hls_list_size = bufferMinutes*60/4 (4s segments).
             Read at session start; not live-mutable mid-session.
+        adaptive:
+          type: boolean
+          description: |
+            One shared multi-quality transcode per channel (1080/720/480/360,
+            never above the broadcast); every viewer of a channel shares it and
+            players pick the quality. More GPU. Off: one stream per quality.
+            Default false. Applies to new sessions.
     PutSettingsRequest:
       type: object
       description: |
@@ -1290,6 +1297,9 @@ components:
           type: integer
           minimum: 2
           maximum: 60
+        adaptive:
+          type: boolean
+          description: Optional; omit to keep the stored value.
     SDLineupSummary:
       type: object
       required: [lineupId, name, location, transport]

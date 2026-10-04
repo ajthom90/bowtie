@@ -25,6 +25,8 @@ export interface SettingsTranscode {
 
 export interface SettingsStreaming {
   bufferMinutes: number
+  /** One shared multi-quality transcode per channel (absent on older servers). */
+  adaptive?: boolean
 }
 
 /** GET /api/v1/admin/settings response shape. */
@@ -62,6 +64,7 @@ export interface SettingsFormState {
   }
   streaming: {
     bufferMinutes: string
+    adaptive: boolean
   }
 }
 
@@ -69,7 +72,7 @@ export type PutSettingsRequest = {
   xmltv?: { source: string; refreshHours: number }
   schedulesDirect?: { username: string; password?: string; lineupId: string }
   transcode?: { encoder: string; allowHevc: boolean }
-  streaming?: { bufferMinutes: number }
+  streaming?: { bufferMinutes: number; adaptive: boolean }
 }
 
 /** Seed form state from a GET response. Password field starts empty. */
@@ -92,6 +95,7 @@ export function settingsToForm(s: SettingsResponse): SettingsFormState {
     },
     streaming: {
       bufferMinutes: String(s.streaming?.bufferMinutes ?? 15),
+      adaptive: Boolean(s.streaming?.adaptive),
     },
   }
 }
@@ -161,6 +165,7 @@ export function buildStreamingPayload(form: SettingsFormState): PutSettingsReque
   return {
     streaming: {
       bufferMinutes: mins ?? 15,
+      adaptive: form.streaming.adaptive,
     },
   }
 }
