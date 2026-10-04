@@ -83,6 +83,7 @@ fun ChannelListScreen(
     onOpenChannel: (Channel) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecordings: () -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -179,6 +180,9 @@ fun ChannelListScreen(
                     )
                 }
                 Row {
+                    TextButton(onClick = onOpenSearch) {
+                        Text("Search", color = BowtieColors.amber)
+                    }
                     TextButton(onClick = onOpenRecordings) {
                         Text("Recordings", color = BowtieColors.amber)
                     }

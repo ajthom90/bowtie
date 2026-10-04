@@ -100,6 +100,29 @@ data class GuideProgram(
     val locked: Boolean = false,
 )
 
+/** One airing from `GET /guide/search`: the program plus the channel it's on. */
+@Serializable
+data class GuideSearchResult(
+    val channelId: Long,
+    val guideNumber: String = "",
+    val channelName: String = "",
+    val logoUrl: String = "",
+    @Serializable(with = InstantIso8601Serializer::class)
+    val start: Instant,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val stop: Instant,
+    val title: String,
+    /** Episode title. */
+    val subtitle: String = "",
+    val description: String = "",
+    val category: String = "",
+    val rating: String = "",
+    /** Parental controls block this program for the caller (description is hidden). */
+    val locked: Boolean = false,
+    /** Present when this airing is scheduled or recorded. */
+    val recording: GuideRecordingMark? = null,
+)
+
 /** A guide program's DVR mark: which recording covers it, and its state. */
 @Serializable
 data class GuideRecordingMark(

@@ -237,6 +237,8 @@ object RecordingLogic {
 
     fun lockLabel(p: GuideProgram): String? = lockLabel(p.locked, p.rating)
 
+    fun lockLabel(p: GuideSearchResult): String? = lockLabel(p.locked, p.rating)
+
     /** Generic error copy for DVR actions. */
     fun errorMessage(e: Throwable): String = when (e) {
         is BowtieError.Parental -> e.message

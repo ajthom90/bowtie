@@ -115,6 +115,17 @@ class BowtieClient(
         }
 
     /**
+     * Upcoming and on-now programs whose title, episode or description contains
+     * [query] (case-insensitive); title matches first, then by start time.
+     */
+    suspend fun searchGuide(query: String, limit: Int = 50): List<GuideSearchResult> =
+        withContext(Dispatchers.IO) {
+            // Query is spliced as an encoded query: encode it, with %20 rather than '+'.
+            val q = java.net.URLEncoder.encode(query, Charsets.UTF_8.name()).replace("+", "%20")
+            BowtieJson.decodeFromString(authed("GET", "/api/v1/guide/search?q=$q&limit=$limit"))
+        }
+
+    /**
      * Star ([on]) or unstar a channel for the signed-in user (PUT / DELETE, 204, idempotent).
      * Throws [BowtieError.NotFound] when the channel is unknown or disabled.
      */
