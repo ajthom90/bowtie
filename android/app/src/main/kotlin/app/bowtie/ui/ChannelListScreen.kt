@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -62,6 +64,7 @@ import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.vm.SeriesResult
 import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
+import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.RecordingLogic
@@ -95,6 +98,7 @@ fun ChannelListScreen(
     val channelsStale by playerViewModel.channelsStale.collectAsStateWithLifecycle()
     val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
     val message by channelListViewModel.message.collectAsStateWithLifecycle()
+    val filter by channelListViewModel.filter.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -194,6 +198,11 @@ fun ChannelListScreen(
 
             HorizontalDivider(color = BowtieColors.line)
 
+            if (state is ChannelListViewModel.LoadState.Loaded) {
+                GuideFilterChips(selected = filter, onSelect = channelListViewModel::setFilter)
+                HorizontalDivider(color = BowtieColors.line)
+            }
+
             PullToRefreshBox(
                 isRefreshing = refreshing || state is ChannelListViewModel.LoadState.Loading,
                 onRefresh = {
@@ -252,14 +261,17 @@ fun ChannelListScreen(
                         }
                     }
                     is ChannelListViewModel.LoadState.Loaded -> {
-                        val favorites = s.favorites
-                        val others = s.others
+                        val at = Instant.now()
+                        val visible = channelListViewModel.visibleRows(s.rows, filter, at)
+                        val favorites = visible.filter { it.isFavorite }
+                        val others = visible.filterNot { it.isFavorite }
                         val showStars = s.favoritesSupported
                         val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
                             ChannelRow(
                                 row = row,
                                 isPlaying = playingChannel?.id == row.channel.id,
                                 showStar = showStars,
+                                highlight = channelListViewModel.highlight(row, filter, at),
                                 onClick = { onOpenChannel(row.channel) },
                                 onToggleFavorite = { channelListViewModel.toggleFavorite(row.id) },
                                 onLongClick = { actionSheetId = row.id },
@@ -288,6 +300,13 @@ fun ChannelListScreen(
                                 }
                             }
                             items(others, key = { it.id }) { channelRow(it) }
+                            if (visible.isEmpty() && filter != GuideFilter.ALL) {
+                                item(key = "filter-empty") {
+                                    FilterEmpty(filter = filter, onShowAll = {
+                                        channelListViewModel.setFilter(GuideFilter.ALL)
+                                    })
+                                }
+                            }
                         }
                     }
                 }
@@ -444,6 +463,54 @@ private fun SheetItem(text: String, detail: String? = null, onClick: (() -> Unit
 }
 
 /** Pinned section label ("Favorites", "Channels"); opaque so rows scroll under it. */
+/** Category chips: All · Sports · Movies · News · Kids · New (toggle semantics). */
+@Composable
+private fun GuideFilterChips(selected: GuideFilter, onSelect: (GuideFilter) -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = BowtieDimens.screenPadding, vertical = 4.dp),
+        modifier = Modifier.semantics { contentDescription = "Show programs" },
+    ) {
+        items(GuideFilter.entries, key = { it.name }) { f ->
+            FilterChip(
+                selected = f == selected,
+                onClick = { onSelect(f) },
+                label = { Text(f.label, style = BowtieType.label) },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = BowtieColors.bg,
+                    labelColor = BowtieColors.dim,
+                    selectedContainerColor = BowtieColors.amber,
+                    selectedLabelColor = BowtieColors.bg,
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = f == selected,
+                    borderColor = BowtieColors.line,
+                    selectedBorderColor = BowtieColors.amber,
+                ),
+            )
+        }
+    }
+}
+
+/** "No sports on in this time window" with a way back. */
+@Composable
+private fun FilterEmpty(filter: GuideFilter, onShowAll: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(BowtieDimens.screenPadding),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(32.dp))
+        Text(text = filter.emptyCopy, style = BowtieType.body, color = BowtieColors.dim)
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = onShowAll) {
+            Text("Show all channels", color = BowtieColors.amber)
+        }
+    }
+}
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(
@@ -527,6 +594,7 @@ private fun ChannelRow(
     row: ChannelListViewModel.Row,
     isPlaying: Boolean,
     showStar: Boolean,
+    highlight: GuideFilter.RowHighlight,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
     onLongClick: () -> Unit,
@@ -579,7 +647,10 @@ private fun ChannelRow(
             }
             if (now != null) {
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.alpha(if (highlight.nowMatches) 1f else 0.4f),
+                ) {
                     RecordMark(now)
                     Text(
                         text = now.title,
@@ -602,7 +673,10 @@ private fun ChannelRow(
             }
             if (next != null) {
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.alpha(if (highlight.nextMatches) 1f else 0.4f),
+                ) {
                     RecordMark(next)
                     Text(
                         text = "Next: ${next.title}",
@@ -614,6 +688,16 @@ private fun ChannelRow(
                     )
                     LockMark(next)
                 }
+            }
+            highlight.later?.let { later ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = GuideFilter.laterLine(later),
+                    style = BowtieType.label,
+                    color = BowtieColors.amber,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         if (showStar) {
