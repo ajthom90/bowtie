@@ -18,6 +18,46 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Episode and series IDs and new/repeat flags come along, so series
   recordings work with it too.
 
+- **Mac app.** A native macOS app (sidebar with Favorites, Recent, Channels
+  and Recordings; full screen, picture in picture; Space, L for live,
+  ⌘↑/⌘↓ to change channel). Built in CI alongside iOS; see `ios/README.md`
+  for adding it to App Store Connect or notarizing it.
+- **Sign in with your phone on TVs.** Apple TV, Android TV / Fire TV and Roku
+  open on a QR code: scan it, approve on your phone, and the TV is signed in —
+  no typing a password with a remote. Or open `<server>/link` and enter the
+  code. (Account → Enter a TV code in the web app.)
+- **Record a series.** "Record series" next to Record (web, iPhone/iPad,
+  Apple TV, Mac, Android, Fire TV, Roku) records every new episode on that
+  channel (web: any channel, all episodes, keep the latest N). Shows you
+  record are under Recordings → Shows. Skipping an upcoming episode keeps it
+  skipped.
+- **Search the guide.** Search titles, episodes and descriptions from the
+  web, iPhone/iPad, Mac, Apple TV and Android, then watch or record (or
+  record the series) from the results.
+- **Parental controls.** In Admin → Users, limit an account to some channels,
+  a maximum rating (TV-Y … TV-MA) and optionally block unrated programs.
+  Blocked programs show 🔒 in the guide and recordings; starting one is
+  refused, and a show that changes into a blocked rating stops. Ratings come
+  from the guide (Schedules Direct has them; the free HDHomeRun guide
+  doesn't). Admins are never limited.
+- **Use Bowtie in other apps (Xbox via Kodi, VLC, TiviMate, Plex,
+  Jellyfin).** Account → "Use Bowtie in other apps" gives you a personal M3U
+  playlist and XMLTV guide link. Kodi's IPTV Simple Client on an Xbox, VLC,
+  TiviMate, Plex and Jellyfin can then watch through Bowtie (with your
+  account's limits and parental controls).
+- **SharePlay on iPhone, iPad and Apple TV.** Watch a channel together on a
+  FaceTime call: everyone joins the sharer's stream, and pause, rewind and
+  Live stay in sync. Each person signs in to your server with their own
+  account. (Needs the Group Activities capability on the App ID; test on
+  real devices.)
+
+### Fixed
+
+- Clearing a channel's guide mapping now means "no guide" (automatic
+  mapping won't fill it back in).
+- Android: "Try again" on a recording gets a fresh link (it failed after the
+  link expired).
+
 ### Changed
 
 - **New logo.** The icon is now an old-school UHF bowtie TV antenna instead
