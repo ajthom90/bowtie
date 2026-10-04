@@ -21,6 +21,9 @@ type DiscoverInfo struct {
 	BaseURL         string `json:"BaseURL"`
 	LineupURL       string `json:"LineupURL"`
 	TunerCount      int    `json:"TunerCount"`
+	// DeviceAuth authorizes SiliconDust's guide API for this tuner. It
+	// rotates every 16-24 h, so read it fresh before each guide fetch.
+	DeviceAuth string `json:"DeviceAuth"`
 }
 
 // LineupEntry is one channel from /lineup.json.

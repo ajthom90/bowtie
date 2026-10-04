@@ -2205,12 +2205,19 @@ components:
           type: string
     EPGSourceStatus:
       type: object
-      required: [xmltv, sd]
+      required: [xmltv, sd, hdhomerun]
       properties:
         xmltv:
           $ref: '#/components/schemas/EPGSourceState'
         sd:
           $ref: '#/components/schemas/EPGSourceState'
+        hdhomerun:
+          allOf:
+            - $ref: '#/components/schemas/EPGSourceState'
+          description: |
+            Free guide from SiliconDust's HDHomeRun XMLTV API. configured is
+            true when the hdhomerun.enabled setting is on and at least one
+            tuner is known. Refreshes every 20-28 h at a random time.
     EPGSourceState:
       type: object
       required: [configured, lastSuccess, lastError, stale]
@@ -2241,7 +2248,8 @@ components:
           type: string
         source:
           type: string
-          enum: [xmltv, sd]
+          enum: [xmltv, sd, hdhomerun]
+          description: hdhomerun channel ids are prefixed "hdhomerun:"
     TranscodeStatus:
       type: object
       required: [available, hevc, ffmpegVersion, selected]
@@ -2276,6 +2284,18 @@ components:
           $ref: '#/components/schemas/SettingsTranscode'
         streaming:
           $ref: '#/components/schemas/SettingsStreaming'
+        hdhomerun:
+          $ref: '#/components/schemas/SettingsHDHomeRun'
+    SettingsHDHomeRun:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            Fetch the free TV guide from SiliconDust's HDHomeRun XMLTV API
+            (no account needed) and map unmapped channels to it by guide
+            number. Existing mappings are never changed. Default true.
     SettingsXMLTV:
       type: object
       required: [source, refreshHours]
@@ -2351,6 +2371,8 @@ components:
           $ref: '#/components/schemas/PutSettingsTranscode'
         streaming:
           $ref: '#/components/schemas/PutSettingsStreaming'
+        hdhomerun:
+          $ref: '#/components/schemas/SettingsHDHomeRun'
     PutSettingsXMLTV:
       type: object
       required: [source, refreshHours]

@@ -306,3 +306,31 @@ func TestStreamingAdaptiveSeededOffAndRoundTrips(t *testing.T) {
 		t.Fatalf("raw = %q, want true", raw)
 	}
 }
+
+// The free HDHomeRun guide is on by default (absent key and first-boot seed)
+// and can be turned off.
+func TestHDHomeRunGuideDefaultOnAndRoundTrips(t *testing.T) {
+	p, st := openProvider(t)
+	if g, err := p.HDHomeRunGuide(); err != nil || !g.Enabled {
+		t.Fatalf("absent key = %+v err=%v, want enabled", g, err)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := st.GetSetting(settings.KeyEPGHDHomeRun); raw != "true" {
+		t.Fatalf("raw seed = %q, want true", raw)
+	}
+	if err := p.SetHDHomeRunGuide(settings.HDHomeRunGuide{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := p.HDHomeRunGuide(); err != nil || g.Enabled {
+		t.Fatalf("after off = %+v err=%v", g, err)
+	}
+	// A restart's re-seed never turns it back on.
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := p.HDHomeRunGuide(); g.Enabled {
+		t.Fatal("re-seed must not re-enable")
+	}
+}

@@ -212,9 +212,17 @@ func TestAdminEPGStatusAndChannels(t *testing.T) {
 		SD struct {
 			Configured bool `json:"configured"`
 		} `json:"sd"`
+		// The free HDHomeRun guide: on by default, but no tuner is stored.
+		HDHomeRun *struct {
+			Configured bool   `json:"configured"`
+			LastError  string `json:"lastError"`
+		} `json:"hdhomerun"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&status); err != nil {
 		t.Fatalf("decode status: %v", err)
+	}
+	if status.HDHomeRun == nil || status.HDHomeRun.Configured {
+		t.Errorf("hdhomerun status = %+v, want present and not configured", status.HDHomeRun)
 	}
 	if !status.XMLTV.Configured {
 		t.Error("xmltv should be configured")

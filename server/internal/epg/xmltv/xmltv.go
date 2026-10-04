@@ -22,7 +22,10 @@ type TV struct {
 type Channel struct {
 	ID           string   `xml:"id,attr"`
 	DisplayNames []string `xml:"display-name"`
-	Icon         struct {
+	// LCNs are logical channel numbers ("9.1"); SiliconDust's guide may
+	// carry the guide number here as well as in a display-name.
+	LCNs []string `xml:"lcn"`
+	Icon struct {
 		Src string `xml:"src,attr"`
 	} `xml:"icon"`
 }
@@ -47,7 +50,12 @@ type Programme struct {
 		System string `xml:"system,attr"`
 		Value  string `xml:",chardata"`
 	} `xml:"episode-num"`
-	New *struct{} `xml:"new"`
+	SeriesIDs []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:",chardata"`
+	} `xml:"series-id"`
+	New             *struct{} `xml:"new"`
+	PreviouslyShown *struct{} `xml:"previously-shown"`
 }
 
 // Parse streams an XMLTV document from r, decoding channel and programme
@@ -152,8 +160,8 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			IconURL:      p.Icon.Src,
 			Rating:       rating(p),
 			ProgramID:    pid,
-			SeriesID:     store.SeriesIDOf(pid),
-			IsNew:        p.New != nil,
+			SeriesID:     seriesID(p, pid),
+			IsNew:        p.New != nil && p.PreviouslyShown == nil,
 		})
 	}
 	return chans, progs, skipped
@@ -184,6 +192,19 @@ func rating(p Programme) string {
 		rs = append(rs, parental.Rated{System: r.System, Code: r.Value})
 	}
 	return parental.Pick(rs)
+}
+
+// seriesID prefers SiliconDust's <series-id system="cseries">, else derives
+// the show ID from the program ID.
+func seriesID(p Programme, programID string) string {
+	for _, s := range p.SeriesIDs {
+		if s.System == "cseries" {
+			if v := strings.TrimSpace(s.Value); v != "" {
+				return v
+			}
+		}
+	}
+	return store.SeriesIDOf(programID)
 }
 
 // programID is the Schedules Direct program ID from a dd_progid episode-num

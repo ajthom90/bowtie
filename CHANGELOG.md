@@ -5,6 +5,19 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Free TV guide from your HDHomeRun (no account needed).** Bowtie now
+  fetches the guide SiliconDust gives every HDHomeRun owner (about 2-3 days
+  ahead; 14 with an HDHomeRun DVR subscription) and matches it to your
+  channels by number, so the guide fills in on its own. Channels you already
+  mapped are left alone, and it refreshes once a day at a random time. It is
+  on by default; turn it off with the `hdhomerun.enabled` admin setting.
+  Episode and series IDs and new/repeat flags come along, so series
+  recordings work with it too.
+
 ## [0.9.0] — 2026-10-03
 
 ### Added

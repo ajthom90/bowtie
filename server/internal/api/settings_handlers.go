@@ -37,11 +37,17 @@ type settingsStreamingJSON struct {
 	Adaptive      bool `json:"adaptive"`
 }
 
+// settingsHDHomeRunJSON is the free SiliconDust guide section.
+type settingsHDHomeRunJSON struct {
+	Enabled bool `json:"enabled"`
+}
+
 type settingsResponseJSON struct {
 	XMLTV           settingsXMLTVJSON     `json:"xmltv"`
 	SchedulesDirect settingsSDJSON        `json:"schedulesDirect"`
 	Transcode       settingsTranscodeJSON `json:"transcode"`
 	Streaming       settingsStreamingJSON `json:"streaming"`
+	HDHomeRun       settingsHDHomeRunJSON `json:"hdhomerun"`
 }
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
@@ -52,6 +58,12 @@ type putSettingsRequest struct {
 	SchedulesDirect *putSDSection        `json:"schedulesDirect"`
 	Transcode       *putTranscodeSection `json:"transcode"`
 	Streaming       *putStreamingSection `json:"streaming"`
+	HDHomeRun       *putHDHomeRunSection `json:"hdhomerun"`
+}
+
+type putHDHomeRunSection struct {
+	// Enabled is required within the section.
+	Enabled *bool `json:"enabled"`
 }
 
 type putXMLTVSection struct {
@@ -199,6 +211,10 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 	if err != nil {
 		return settingsResponseJSON{}, err
 	}
+	hdhrGuide, err := s.deps.Settings.HDHomeRunGuide()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
 
 	caps := s.probeCaps()
 	available := make([]string, 0, len(caps.Available))
@@ -230,6 +246,7 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 			BufferMinutes: stream.BufferMinutes,
 			Adaptive:      stream.Adaptive,
 		},
+		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
 	}, nil
 }
 
@@ -294,6 +311,13 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 		if req.Streaming.Adaptive != nil {
 			kv[settings.KeyStreamingAdaptive] = strconv.FormatBool(*req.Streaming.Adaptive)
 		}
+	}
+
+	if req.HDHomeRun != nil {
+		if req.HDHomeRun.Enabled == nil {
+			return nil, "hdhomerun.enabled is required"
+		}
+		kv[settings.KeyEPGHDHomeRun] = strconv.FormatBool(*req.HDHomeRun.Enabled)
 	}
 
 	return kv, ""
