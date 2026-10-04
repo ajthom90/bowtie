@@ -227,9 +227,10 @@ Default listen address: `:8400`. Health check: `GET /healthz` → `ok`.
 ## Commercial detection
 
 When [Comskip](https://github.com/erikkaashoek/Comskip) is available, Bowtie
-finds the commercial breaks in each finished recording, and the web player
-shows **Skip ad ▸** while you're in one (or press **S**); **Auto-skip ads**
-skips each break once. Detection runs in the background after a recording is
+finds the commercial breaks in each finished recording, and every app's
+recording player shows **Skip ad** while you're in one (web and Mac: or press
+**S**). Turn on **Skip ads automatically** (web player header; app Settings →
+Playback; Roku Settings) to skip each break once. Detection runs in the background after a recording is
 ready, one at a time at low CPU priority, and never holds up recording or
 conversion. Recordings made before Comskip was available are scanned too,
 newest first. The breaks are in the recording API as `commercials`.
@@ -239,11 +240,14 @@ For other installs, put `comskip` on the `PATH` or point to it:
 
 | Env | |
 |-----|---|
-| `BOWTIE_COMSKIP_PATH` | Comskip binary (default `comskip` on the `PATH`; not found = detection off) |
+| `BOWTIE_COMSKIP_PATH` | Comskip binary (default `comskip` on the `PATH`; not found = detection off; `off` turns it off, e.g. in Docker) |
 | `BOWTIE_COMSKIP_INI` | Your own `comskip.ini` (default: Bowtie writes its settings to `<data>/comskip.ini` on first use; edit that file to tune detection) |
 
 Detection is heuristic (black frames, the station logo, aspect ratio
-changes), so it can miss a break or mark part of the show.
+changes), so it can miss a break or mark part of the show. If Comskip can't
+run at all (missing library, an ini without `output_edl=1`), detection stops
+until the next restart and nothing is marked; a recording it fails on is
+tried again after a restart.
 
 ## Backup and restore
 

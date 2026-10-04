@@ -473,7 +473,9 @@ sub onVideoPosition()
     if m.playing = invalid then return
     p = m.video.position
     if p <> invalid and p > 0 then m.lastPosition = Int(p)
-    if p <> invalid then updateAds(p)
+    ' Only while playing: before a resume seek takes effect the position can
+    ' read 0, which would skip a break at the start and lose the resume point.
+    if p <> invalid and m.video.state = "playing" then updateAds(p)
 end sub
 
 sub onPositionTimer()

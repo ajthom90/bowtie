@@ -163,3 +163,28 @@ func TestBootstrapAdminIdempotent(t *testing.T) {
 		t.Fatalf("unexpected hash prefix: %s", u.PasswordHash[:min(20, len(u.PasswordHash))])
 	}
 }
+
+// BOWTIE_COMSKIP_PATH=off turns detection off even when comskip is on PATH
+// (the Docker image has it).
+func TestCommercialDetectorOff(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "comskip")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if d := commercialDetector(config.Config{ComskipPath: bin}); d == nil {
+		t.Fatal("found binary: want a detector")
+	}
+	// Even if something named "off" is on PATH.
+	dir := t.TempDir()
+	for _, n := range []string{"off", "OFF", "none"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	for _, v := range []string{"off", "OFF", "none"} {
+		if d := commercialDetector(config.Config{ComskipPath: v}); d != nil {
+			t.Fatalf("%q: want detection off", v)
+		}
+	}
+}

@@ -12,10 +12,11 @@
 
 namespace bowtie.ads
 
-    ' A seek lands on a keyframe, often a little short of the target. Inside
-    ' this many seconds before the end we just skipped to, stay quiet.
+    ' A seek lands on a keyframe, often short of the target (the server's VOD
+    ' has one every 4 s). Inside this many seconds before the end we just
+    ' skipped to, stay quiet.
     function landingGraceSec() as float
-        return 2.0
+        return 5.0
     end function
 
     function hintText() as string

@@ -3,6 +3,7 @@ package dvr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -168,8 +169,15 @@ func TestComskipDetectorFailures(t *testing.T) {
 		t.Fatal("exit 2: want an error")
 	}
 	bin, _ = fakeComskip(t, "", 0, false)
-	if _, err := (ComskipDetector{Path: bin, DataDir: t.TempDir()}).Detect(context.Background(), "/x/index.m3u8", t.TempDir()); err == nil {
-		t.Fatal("no .edl written: want an error")
+	if _, err := (ComskipDetector{Path: bin, DataDir: t.TempDir()}).Detect(context.Background(), "/x/index.m3u8", t.TempDir()); !errors.Is(err, ErrDetectorSetup) {
+		t.Fatalf("no .edl written (ini without output_edl): err=%v, want ErrDetectorSetup", err)
+	}
+	missing := filepath.Join(t.TempDir(), "nope")
+	if _, err := (ComskipDetector{Path: missing, DataDir: t.TempDir()}).Detect(context.Background(), "/x/index.m3u8", t.TempDir()); !errors.Is(err, ErrDetectorSetup) {
+		t.Fatalf("missing binary: err=%v, want ErrDetectorSetup", err)
+	}
+	if _, err := (ComskipDetector{Path: bin, DataDir: filepath.Join(missing, "dir")}).Detect(context.Background(), "/x/index.m3u8", t.TempDir()); !errors.Is(err, ErrDetectorSetup) {
+		t.Fatalf("unwritable ini: err=%v, want ErrDetectorSetup", err)
 	}
 }
 
@@ -269,21 +277,49 @@ func TestDetectionRunsAfterReadyAndStoresCleanSegments(t *testing.T) {
 	}
 }
 
-func TestDetectionFailureStoresNoneAndDoesNotRetry(t *testing.T) {
+// A failed run stores nothing (the recording isn't marked "no commercials"):
+// it isn't tried again in this process, but a restart tries again.
+func TestDetectionFailureStoresNothingAndRetriesAfterRestart(t *testing.T) {
 	e := newEnv(t)
 	d := newFakeDetector()
 	d.err = errors.New("comskip crashed")
 	e.withDetector(t, d)
 	r := e.record(t, "9.1", t0.Add(time.Minute))
-	got := waitDetected(t, e.st, r.ID)
-	if len(got.Commercials) != 0 {
-		t.Fatalf("commercials %v after a failure", got.Commercials)
+	<-d.started
+	e.svc.pokeDetect()
+	time.Sleep(50 * time.Millisecond)
+	if got, _ := e.st.RecordingByID(r.ID); got.CommercialsDetected {
+		t.Fatal("a failed run was stored as detected")
 	}
-	// A restart doesn't run it again.
+	if n := len(d.Calls()); n != 1 {
+		t.Fatalf("detector ran %d times in one process", n)
+	}
+	d.mu.Lock()
+	d.err = nil
+	d.mu.Unlock()
 	e.withDetector(t, d)
+	waitDetected(t, e.st, r.ID)
+}
+
+// A setup problem (bad ini, binary that won't start) stops detection until
+// restart instead of marking the whole library "no commercials".
+func TestDetectionSetupErrorPausesWorker(t *testing.T) {
+	e := newEnv(t)
+	a := e.readyRow(t, "a", t0.Add(-2*time.Hour))
+	b := e.readyRow(t, "b", t0.Add(-time.Hour))
+	d := newFakeDetector()
+	d.err = fmt.Errorf("%w: exec: no such file", ErrDetectorSetup)
+	e.withDetector(t, d)
+	<-d.started
+	e.svc.pokeDetect()
 	time.Sleep(50 * time.Millisecond)
 	if n := len(d.Calls()); n != 1 {
-		t.Fatalf("detector ran %d times", n)
+		t.Fatalf("detector ran %d times after a setup error", n)
+	}
+	for _, r := range []store.Recording{a, b} {
+		if got, _ := e.st.RecordingByID(r.ID); got.CommercialsDetected {
+			t.Fatalf("recording %d marked detected after a setup error", r.ID)
+		}
 	}
 }
 

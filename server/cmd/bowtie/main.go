@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -373,8 +374,13 @@ func randomPassword(n int) (string, error) {
 }
 
 // commercialDetector returns the Comskip detector, or nil (detection off)
-// when the binary isn't found.
+// when the binary isn't found or BOWTIE_COMSKIP_PATH is "off".
 func commercialDetector(cfg config.Config) dvr.Detector {
+	switch strings.ToLower(strings.TrimSpace(cfg.ComskipPath)) {
+	case "off", "none", "false", "0":
+		log.Printf("commercial detection off (BOWTIE_COMSKIP_PATH=%s)", cfg.ComskipPath)
+		return nil
+	}
 	path, err := exec.LookPath(cfg.ComskipPath)
 	if err != nil {
 		log.Printf("commercial detection off: comskip not found (%s); set BOWTIE_COMSKIP_PATH to enable it", cfg.ComskipPath)

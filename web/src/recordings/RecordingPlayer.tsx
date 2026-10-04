@@ -86,7 +86,8 @@ export function RecordingPlayer({ recording, onBack }: Props) {
     if (startedRef.current) lastPosRef.current = v.currentTime
     // readyState 0: the element is being reset (currentTime jumps to 0).
     if (skipper.breaks.length === 0 || v.readyState === 0) return
-    const d = skipper.update(v.currentTime, autoSkipRef.current)
+    // Auto-skip only while playing: scrubbing or pausing into a break doesn't jump.
+    const d = skipper.update(v.currentTime, autoSkipRef.current && !v.paused && !v.seeking)
     if (d.seekTo != null) {
       v.currentTime = d.seekTo
       setCurrentBreak(null)

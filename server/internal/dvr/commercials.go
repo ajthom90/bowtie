@@ -153,6 +153,11 @@ delete_logo_file=1
 live_tv=0
 `
 
+// ErrDetectorSetup marks a detection failure that isn't about one recording
+// (bad ini, a binary that won't run): detection pauses until restart rather
+// than marking every recording "no commercials".
+var ErrDetectorSetup = errors.New("commercial detection is misconfigured")
+
 // ComskipDetector runs the comskip binary (at low CPU priority where nice
 // exists).
 type ComskipDetector struct {
@@ -168,7 +173,10 @@ type ComskipDetector struct {
 func (d ComskipDetector) Detect(ctx context.Context, playlist, workDir string) ([]store.Commercial, error) {
 	ini, err := d.ini()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrDetectorSetup, err)
+	}
+	if _, err := exec.LookPath(d.Path); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDetectorSetup, err)
 	}
 	args := []string{"--ini=" + ini, "--output=" + workDir, playlist}
 	name := d.Path
@@ -186,13 +194,19 @@ func (d ComskipDetector) Detect(ctx context.Context, playlist, workDir string) (
 		return nil, ctx.Err()
 	}
 	var exit *exec.ExitError
-	noneFound := errors.As(err, &exit) && exit.ExitCode() == 1
+	isExit := errors.As(err, &exit)
+	noneFound := isExit && exit.ExitCode() == 1
 	if err != nil && !noneFound {
+		if !isExit || exit.ExitCode() == 126 || exit.ExitCode() == 127 {
+			// Couldn't run at all (missing library, not executable).
+			return nil, fmt.Errorf("%w: comskip: %v: %s", ErrDetectorSetup, err, strings.TrimSpace(out.String()))
+		}
 		return nil, fmt.Errorf("comskip: %w: %s", err, strings.TrimSpace(out.String()))
 	}
 	edls, _ := filepath.Glob(filepath.Join(workDir, "*.edl"))
 	if len(edls) == 0 {
-		return nil, fmt.Errorf("comskip wrote no .edl: %s", strings.TrimSpace(out.String()))
+		// It ran but wrote no EDL: the ini has output_edl off.
+		return nil, fmt.Errorf("%w: comskip wrote no .edl (output_edl=1 in the ini?): %s", ErrDetectorSetup, strings.TrimSpace(out.String()))
 	}
 	f, err := os.Open(edls[0])
 	if err != nil {
@@ -242,8 +256,8 @@ func (s *Service) pokeDetect() {
 }
 
 // detectWorker runs detection one recording at a time, newest first, on
-// ready recordings it hasn't run on. A recording it already tried in this
-// process (say the result couldn't be stored) isn't tried again until restart.
+// ready recordings it hasn't run on. A recording that failed in this process
+// isn't tried again until restart; a setup error stops the worker.
 func (s *Service) detectWorker() {
 	defer s.wg.Done()
 	tried := map[int64]bool{}
@@ -254,19 +268,27 @@ func (s *Service) detectWorker() {
 			case <-s.ctx.Done():
 				return
 			case <-s.detectPoke:
+			case <-time.After(detectIdlePoll):
 			}
 			continue
 		}
 		tried[id] = true
-		s.detect(id)
+		if err := s.detect(id); errors.Is(err, ErrDetectorSetup) {
+			log.Printf("dvr: commercial detection off until restart: %v", err)
+			return
+		}
 		if s.ctx.Err() != nil {
 			return
 		}
 	}
 }
 
+// detectIdlePoll: an idle worker also looks for work this often (a missed
+// poke or a transient store error doesn't stall the backlog).
+const detectIdlePoll = 10 * time.Minute
+
 func (s *Service) nextDetect(tried map[int64]bool) (int64, bool) {
-	ids, err := s.deps.Store.RecordingsNeedingCommercials(detectBatch)
+	ids, err := s.deps.Store.RecordingsNeedingCommercials(detectBatch + len(tried))
 	if err != nil {
 		log.Printf("dvr: commercial detection: %v", err)
 		return 0, false
@@ -280,12 +302,12 @@ func (s *Service) nextDetect(tried map[int64]bool) (int64, bool) {
 }
 
 // detect runs the detector on one ready recording and stores the cleaned
-// breaks. A failure stores "ran, none" so it isn't retried forever; a delete
-// or shutdown stores nothing (a restart runs it again).
-func (s *Service) detect(id int64) {
+// breaks. A failure, delete or shutdown stores nothing (a restart runs it
+// again); it returns the detector's error.
+func (s *Service) detect(id int64) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil || r.State != store.RecReady || r.CommercialsDetected || r.Dir == "" {
-		return
+		return nil
 	}
 	dur := vodDuration(r)
 	ctx, cancel := context.WithTimeout(s.ctx, detectTimeout(dur))
@@ -293,7 +315,7 @@ func (s *Service) detect(id int64) {
 	s.mu.Lock()
 	if s.deleting[id] || s.stopped {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	s.detecting[id] = cancel
 	s.mu.Unlock()
@@ -303,7 +325,9 @@ func (s *Service) detect(id int64) {
 	var segs []store.Commercial
 	if _, err = os.Stat(playlist); err == nil {
 		_ = os.RemoveAll(work)
-		if err = os.MkdirAll(work, 0o755); err == nil {
+		// Mkdir, not MkdirAll: if a delete removed the recording meanwhile,
+		// don't bring its folder back.
+		if err = os.Mkdir(work, 0o755); err == nil {
 			began := time.Now()
 			segs, err = s.deps.Detector.Detect(ctx, playlist, work)
 			if err == nil {
@@ -316,15 +340,18 @@ func (s *Service) detect(id int64) {
 	delete(s.detecting, id)
 	s.mu.Unlock()
 	if s.ctx.Err() != nil || errors.Is(ctx.Err(), context.Canceled) {
-		return // shutting down, or deleted
+		return nil // shutting down, or deleted
 	}
 	if err != nil {
-		log.Printf("dvr: recording %d: commercial detection failed: %v", id, err)
-		segs = nil
+		if !errors.Is(err, ErrDetectorSetup) {
+			log.Printf("dvr: recording %d: commercial detection failed: %v", id, err)
+		}
+		return err
 	}
 	if err := s.deps.Store.SetRecordingCommercials(id, CleanSegments(segs, dur)); err != nil {
 		log.Printf("dvr: recording %d: store commercials: %v", id, err)
 	}
+	return nil
 }
 
 // vodDuration is a ready recording's playback length in seconds (from its

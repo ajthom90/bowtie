@@ -102,6 +102,8 @@ test('a seek that lands just short of the end does not flash the hint or skip ag
         mem = bowtie_ads_newMemory()
         out.skip = bowtie_ads_decide(segs, 610, true, mem)
         out.short = bowtie_ads_decide(segs, 779, true, mem)
+        ' VOD keyframes are every 4 s: a seek can land up to ~4 s short.
+        out.keyframeShort = bowtie_ads_decide(segs, 776.5, true, mem)
         m2 = bowtie_ads_newMemory()
         out.hint = bowtie_ads_decide(segs, 700, false, m2)
         bowtie_ads_noteSkip(m2, out.hint.target)
@@ -110,6 +112,7 @@ test('a seek that lands just short of the end does not flash the hint or skip ag
     `);
     assert.equal(out.skip.action, 'skip');
     assert.equal(out.short.action, 'none');
+    assert.equal(out.keyframeshort.action, 'none');
     assert.equal(out.manualshort.action, 'none');
     assert.equal(out.wayback.action, 'hint');
 });
