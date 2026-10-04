@@ -64,7 +64,12 @@ public final class ContinueWatchingModel {
     public var actionError: String?
 
     private let client: BowtieClient
+    /// Bumped per load and per remove, so an older fetch can't land.
     private var generation: UInt64 = 0
+    /// Removed recordings → their position when removed. A list read still
+    /// showing that position hasn't caught up with the reset; any other
+    /// position (0, or watched again) confirms it and the id is forgotten.
+    private var removedAt: [Int64: Int] = [:]
 
     public init(client: BowtieClient) {
         self.client = client
@@ -76,13 +81,28 @@ public final class ContinueWatchingModel {
         let gen = generation
         guard let rows = try? await client.recordings(filter: .recorded) else { return }
         guard gen == generation else { return }
-        items = ContinueWatching.items(from: rows)
+        items = ContinueWatching.items(from: dropStaleRemoved(rows))
+    }
+
+    private func dropStaleRemoved(_ rows: [Recording]) -> [Recording] {
+        guard !removedAt.isEmpty else { return rows }
+        var stillStale: [Int64: Int] = [:]
+        let kept = rows.filter { row in
+            guard let old = removedAt[row.id], old == row.positionSec else { return true }
+            stillStale[row.id] = old
+            return false
+        }
+        removedAt = stillStale
+        return kept
     }
 
     /// "Remove from Continue watching": resets the saved position to 0.
     public func remove(_ recording: Recording) async {
         do {
             try await client.saveRecordingPosition(id: recording.id, positionSec: 0)
+            // A load already under way may have read the old position.
+            generation &+= 1
+            removedAt[recording.id] = recording.positionSec
             items.removeAll { $0.id == recording.id }
         } catch {
             actionError = RecordingErrorCopy.message(for: error)

@@ -89,11 +89,9 @@ final class RecordingPlayerController {
     /// Saves the current position now (e.g. the app is going to the background).
     func saveNow() {
         guard hasStarted, let player else { return }
-        let seconds = player.currentTime().seconds
-        let id = playback.recording.id
-        let model = model
-        // Unstructured: must outlive the view that triggered it.
-        Task { await model.savePosition(recordingId: id, seconds: seconds) }
+        // Counted synchronously, so a screen already waiting on
+        // `waitForSaves` (the player just closed) reloads after it lands.
+        model.queueSavePosition(recordingId: playback.recording.id, seconds: player.currentTime().seconds)
     }
 
     /// Stops playback and saves the final position.
