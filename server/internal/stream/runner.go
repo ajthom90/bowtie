@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -26,8 +27,28 @@ func (r *FFmpegRunner) Start(ctx context.Context, spec transcode.JobSpec) (Proce
 	cmd := transcode.Command(ctx, path, spec)
 	tail := &stderrTail{max: 3}
 	cmd.Stderr = io.MultiWriter(cmd.Stderr, tail)
+	var capW *os.File
+	if spec.CaptionInput != nil {
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		cmd.ExtraFiles = []*os.File{pr}   // fd 3 in the child
+		defer func() { _ = pr.Close() }() // the child holds its own copy after Start
+		capW = pw
+	}
 	if err := cmd.Start(); err != nil {
+		if capW != nil {
+			_ = capW.Close()
+		}
 		return nil, err
+	}
+	if capW != nil {
+		// Ends when the caption sub closes (EOF) or FFmpeg exits (EPIPE).
+		go func() {
+			_, _ = io.Copy(capW, spec.CaptionInput)
+			_ = capW.Close()
+		}()
 	}
 	p := &cmdProcess{
 		cmd:  cmd,

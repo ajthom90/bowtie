@@ -39,3 +39,34 @@ func TestFFmpegRunnerExitErrorIncludesStderrTail(t *testing.T) {
 		t.Fatal("process did not exit")
 	}
 }
+
+// The caption tap reaches FFmpeg on fd 3 and closes there when its source ends.
+func TestRunnerFeedsCaptionInputOnFD3(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "fd3.out")
+	t.Setenv("FD3_OUT", out)
+	script, err := filepath.Abs("testdata/fd3cat.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &FFmpegRunner{Path: script}
+	p, err := r.Start(context.Background(), transcode.JobSpec{
+		Stdin: strings.NewReader(""), OutDir: t.TempDir(),
+		Layout:       transcode.Layout{Captions: true},
+		CaptionInput: strings.NewReader("caption-bytes"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-p.Done():
+		if err != nil {
+			t.Fatalf("fake ffmpeg: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		p.Stop()
+		t.Fatal("fd 3 never reached EOF")
+	}
+	if got, _ := os.ReadFile(out); string(got) != "caption-bytes" {
+		t.Fatalf("fd3 got %q", got)
+	}
+}
