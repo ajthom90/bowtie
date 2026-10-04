@@ -86,9 +86,12 @@ a note.
 | Key | Action |
 |-----|--------|
 | `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Record series** (when the guide has a program on now), **Cancel**. |
-| Up from the first channel | Recent row (when the server has watch history), then the header (Recordings / Settings) |
+| Up from the first channel | Recent row (when the server has watch history), then **Continue watching** (when there is something to continue), then the header (Recordings / Settings) |
 | Left / Right in the header | Move between **Recordings** and **Settings** |
-| Down from the header / Recent | Back toward the rail |
+| Down from the header / Continue watching / Recent | Back toward the rail (hidden rows are skipped) |
+| Left / Right on Continue watching | Move along the row (up to 10 recordings) |
+| OK on a Continue watching item | Resume the recording at its saved position (no Resume / Start over question); Back or the end returns here |
+| `*` (Options) on a Continue watching item | **Remove from Continue watching** (sets the saved position back to 0), **Cancel** |
 
 **Favorite** stars the channel: starred channels move to the top
 (guide-number order) with a ★; the change is sent to the server and undone if
@@ -107,6 +110,17 @@ dialog lists the recordings already holding the tuners with **Record anyway**
 server's defaults are this channel, new episodes only). The upcoming airings in
 the next 14 days are scheduled at once and the dialog says **Scheduled N
 episodes**; more are added as the guide refreshes.
+
+**Continue watching** sits above Recent and lists recordings you started and
+haven't finished, the same as the other apps: ready, not blocked by parental
+controls, at least 1 minute watched and more than 2 minutes left; the most
+recently watched first (`positionUpdatedAt`; recordings without one, from an
+older server, follow newest-recording first); at most 10. Each card shows the
+title, the episode, the time left ("37 min left", "1 hr 5 min left") and a
+progress bar. The row comes from `GET /api/v1/recordings?state=recorded`, is
+hidden when empty (or on a server without recordings), and reloads whenever
+the channel rail does, including on the way back from playback. Logic:
+`source/lib/ContinueWatching.bs` (also the row layout).
 
 Up/down zapping in the player follows rail order, so it cycles favorites first.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
@@ -150,7 +164,7 @@ recording ends, and on Back, which returns to the list.
 | Play on **Skip ad** | Play / pause |
 | Down | **Sleep timer** menu |
 | OK on **Still watching?** | Keep watching (same duration again) |
-| Back | Save the position and return to the list |
+| Back | Save the position and return to the list (to the channel rail when started from Continue watching) |
 
 **Skip ad.** A recording may carry `commercials: [{start, end}]` (seconds on
 its timeline; missing or empty means none). While the position is inside one
@@ -249,14 +263,14 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, DeviceAuth, Favorites, GuideLogic, Recordings, Registry, SleepTimer
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideLogic, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
     ├── ConnectScene
     ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
-    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record / series)
-    ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows)
+    ├── HomeScene           # Continue watching (RowList of ContinueItem) + Recent + MarkupList rail + guide join, * dialogs
+    ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows); resume mode for Continue watching
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene

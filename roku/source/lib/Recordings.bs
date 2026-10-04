@@ -94,6 +94,8 @@ namespace bowtie.recordings
             "sizeBytes": bowtie.recordings.asNumber(r.sizeBytes)
             "protected": (r.protected = true)
             "positionSec": bowtie.recordings.asNumber(r.positionSec)
+            ' When this account last saved a position (RFC 3339); "" on older servers.
+            "positionUpdatedAt": bowtie.recordings.asString(r.positionUpdatedAt)
             "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
             "canManage": (r.canManage = true)
             "ruleId": bowtie.recordings.asNumber(r.ruleId)
