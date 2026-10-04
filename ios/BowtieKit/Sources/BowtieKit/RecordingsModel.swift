@@ -38,8 +38,17 @@ public final class RecordingsModel {
         }
     }
 
+    /// The Shows tab's series rules.
+    public enum RulesState: Equatable {
+        case loading
+        case loaded([RecordingRule])
+        case empty
+        case failed(String)
+    }
+
     public private(set) var tab: RecordingsTab
     public private(set) var state: LoadState = .loading
+    public private(set) var rulesState: RulesState = .loading
     /// Last failed action (delete, stop, keep, play), for an alert.
     public var actionError: String?
 
@@ -63,16 +72,20 @@ public final class RecordingsModel {
         await load()
     }
 
+    /// Loads the current tab: recordings, or the Shows tab's rules.
     public func load() async {
         generation &+= 1
         let gen = generation
-        let tab = self.tab
+        guard let filter = tab.filter else {
+            await loadRules(generation: gen)
+            return
+        }
         // A refresh of the same tab keeps its rows on screen.
         if case .loaded = state {} else {
             state = .loading
         }
         do {
-            let rows = try await client.recordings(filter: tab.filter)
+            let rows = try await client.recordings(filter: filter)
             guard gen == generation else { return }
             state = rows.isEmpty ? .empty : .loaded(rows)
         } catch {
@@ -81,7 +94,34 @@ public final class RecordingsModel {
         }
     }
 
+    private func loadRules(generation gen: UInt64) async {
+        if case .loaded = rulesState {} else {
+            rulesState = .loading
+        }
+        do {
+            let rules = try await client.recordingRules()
+            guard gen == generation else { return }
+            rulesState = rules.isEmpty ? .empty : .loaded(rules)
+        } catch {
+            guard gen == generation else { return }
+            rulesState = .failed(RecordingErrorCopy.message(for: error))
+        }
+    }
+
     // MARK: - Manage
+
+    /// "Stop Recording This Show": its upcoming recordings are cancelled;
+    /// recorded ones stay.
+    public func deleteRule(_ rule: RecordingRule) async {
+        do {
+            try await client.deleteRecordingRule(id: rule.id)
+            guard case .loaded(let rules) = rulesState else { return }
+            let kept = rules.filter { $0.id != rule.id }
+            rulesState = kept.isEmpty ? .empty : .loaded(kept)
+        } catch {
+            actionError = RecordingErrorCopy.message(for: error)
+        }
+    }
 
     public func delete(_ recording: Recording) async {
         do {
@@ -185,6 +225,41 @@ public enum RecordingScheduler {
     }
 }
 
+/// "Record Series" result.
+public enum SeriesScheduleOutcome: Equatable, Sendable {
+    /// `count` upcoming episodes were scheduled now (more follow as the guide fills).
+    case scheduled(RecordingRule, count: Int)
+    case failed(String)
+}
+
+extension RecordingScheduler {
+    /// Records a show from one of its guide programs. Defaults: this channel,
+    /// new episodes only, keep them all.
+    public static func scheduleSeries(
+        client: BowtieClient,
+        channelId: Int64,
+        programStart: Date,
+        anyChannel: Bool = false,
+        newOnly: Bool = true,
+        keepLatest: Int = 0
+    ) async -> SeriesScheduleOutcome {
+        do {
+            let created = try await client.createRecordingRule(
+                channelId: channelId,
+                programStart: programStart,
+                anyChannel: anyChannel,
+                newOnly: newOnly,
+                keepLatest: keepLatest
+            )
+            return .scheduled(created.rule, count: created.scheduled)
+        } catch BowtieError.notFound {
+            return .failed("That program is no longer in the guide.")
+        } catch {
+            return .failed(RecordingErrorCopy.message(for: error))
+        }
+    }
+}
+
 // MARK: - Error copy
 
 enum RecordingErrorCopy {
@@ -203,6 +278,8 @@ enum RecordingErrorCopy {
             return sentence(message)
         case .notFound:
             return "That recording is gone."
+        case .parental(let message):
+            return message
         case .server(_, let message):
             return sentence(message)
         case .network(let message):

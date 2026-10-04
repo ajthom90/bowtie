@@ -47,6 +47,25 @@ private struct RecordingConflictBody: Decodable {
 
 private struct ErrorBody: Decodable {
     let error: String
+    /// Machine-readable reason, e.g. "parental" on a 403.
+    let code: String?
+}
+
+private struct DeviceStartBody: Encodable {
+    let deviceName: String
+}
+
+private struct DeviceTokenBody: Encodable {
+    let deviceCode: String
+}
+
+private struct CreateRuleBody: Encodable {
+    let channelId: Int64
+    /// RFC 3339, whole seconds: the guide program's exact start.
+    let programStart: String
+    let anyChannel: Bool
+    let newOnly: Bool
+    let keepLatest: Int
 }
 
 private struct TunersBusyBody: Decodable {
@@ -233,22 +252,32 @@ public actor BowtieClient {
     }
 
     /// Session liveness beat (spec C). Auth is the stream token query param only —
-    /// never Bearer (avoids racing access-token refresh mid-session). Best-effort.
-    public func heartbeat(viewerId: String, token: String) async {
+    /// never Bearer (avoids racing access-token refresh mid-session). Best-effort:
+    /// never throws, but returns why the server refused the beat (nil on success)
+    /// so the player can end on `.parental`.
+    @discardableResult
+    public func heartbeat(viewerId: String, token: String) async -> BowtieError? {
         let encoded = viewerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? viewerId
         var components = URLComponents(
             url: ServerURL.resolve(path: "/api/v1/sessions/\(encoded)/heartbeat", against: server),
             resolvingAgainstBaseURL: false
         )!
         components.queryItems = [URLQueryItem(name: "token", value: token)]
-        guard let url = components.url else { return }
-        _ = try? await sendRawURL(
-            url: url,
-            method: "POST",
-            body: nil as EmptyBody?,
-            authorize: false,
-            retryOn401: false
-        )
+        guard let url = components.url else { return .invalidServerURL }
+        do {
+            _ = try await sendRawURL(
+                url: url,
+                method: "POST",
+                body: nil as EmptyBody?,
+                authorize: false,
+                retryOn401: false
+            )
+            return nil
+        } catch let error as BowtieError {
+            return error
+        } catch {
+            return .network(error.localizedDescription)
+        }
     }
 
     // MARK: - Favorites / recents
@@ -389,6 +418,119 @@ public actor BowtieClient {
             path: "/api/v1/recordings/\(id)/position",
             method: "PUT",
             body: RecordingPositionBody(positionSec: max(0, positionSec)),
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    // MARK: - Quick sign-in (TV apps)
+
+    /// `POST /auth/device`: a code for a signed-in phone or browser to approve.
+    public func startDeviceSignIn(deviceName: String) async throws -> DeviceSignInCode {
+        try await send(
+            path: "/api/v1/auth/device",
+            method: "POST",
+            body: DeviceStartBody(deviceName: deviceName),
+            authorize: false,
+            retryOn401: false
+        )
+    }
+
+    /// `POST /auth/device/token`: 428 pending, 410 expired, 200 signs in (the
+    /// tokens are kept exactly as after a password sign-in).
+    public func pollDeviceSignIn(deviceCode: String) async throws -> DeviceSignInPoll {
+        let url = ServerURL.resolve(path: "/api/v1/auth/device/token", against: server)
+        let bodyData = try encoder.encode(DeviceTokenBody(deviceCode: deviceCode))
+        let request = makeRequest(url: url, method: "POST", bodyData: bodyData, authorize: false)
+        let (data, response) = try await perform(request)
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 428:
+            return .pending
+        case 410:
+            return .expired
+        default:
+            let body = try mapSuccess(data: data, response: response)
+            let pair: TokenPair
+            do {
+                pair = try decoder.decode(TokenPair.self, from: body)
+            } catch {
+                throw BowtieError.network("decode failed: \(error.localizedDescription)")
+            }
+            applyTokens(pair)
+            return .approved(pair.user)
+        }
+    }
+
+    // MARK: - Guide search
+
+    /// `GET /guide/search`: upcoming and on-now programs matching `query`.
+    public func searchGuide(query: String, limit: Int = 50) async throws -> [GuideSearchResult] {
+        var components = URLComponents(
+            url: ServerURL.resolve(path: "/api/v1/guide/search", against: server),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        // A literal `+` would read as a space on the server.
+        components.percentEncodedQuery = components.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
+        guard let url = components.url else {
+            throw BowtieError.invalidServerURL
+        }
+        return try await sendURL(
+            url: url,
+            method: "GET",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    // MARK: - Series recording rules
+
+    /// Everyone's series rules ("Shows").
+    public func recordingRules() async throws -> [RecordingRule] {
+        try await send(
+            path: "/api/v1/recording-rules",
+            method: "GET",
+            body: nil as EmptyBody?,
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Records a show from one of its guide programs; upcoming episodes are
+    /// scheduled at once (`scheduled` of them).
+    public func createRecordingRule(
+        channelId: Int64,
+        programStart: Date,
+        anyChannel: Bool,
+        newOnly: Bool,
+        keepLatest: Int
+    ) async throws -> CreatedRecordingRule {
+        try await send(
+            path: "/api/v1/recording-rules",
+            method: "POST",
+            body: CreateRuleBody(
+                channelId: channelId,
+                programStart: isoFormatter.string(from: programStart),
+                anyChannel: anyChannel,
+                newOnly: newOnly,
+                keepLatest: max(0, keepLatest)
+            ),
+            authorize: true,
+            retryOn401: true
+        )
+    }
+
+    /// Stops recording a show: cancels its upcoming recordings; recorded ones stay.
+    public func deleteRecordingRule(id: Int64) async throws {
+        _ = try await sendRaw(
+            path: "/api/v1/recording-rules/\(id)",
+            method: "DELETE",
+            body: nil as EmptyBody?,
             authorize: true,
             retryOn401: true
         )
@@ -634,6 +776,13 @@ public actor BowtieClient {
             return data
         case 401:
             throw BowtieError.unauthorized
+        case 403:
+            let body = try? decoder.decode(ErrorBody.self, from: data)
+            let message = body?.error ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            if body?.code == "parental" {
+                throw BowtieError.parental(message)
+            }
+            throw BowtieError.server(status: status, message: message)
         case 404:
             throw BowtieError.notFound
         case 409:

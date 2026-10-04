@@ -262,6 +262,8 @@ public final class ChannelListModel {
             return message
         case .notFound:
             return "Not found"
+        case .parental(let message):
+            return message
         case .server(_, let message):
             return message
         case .network(let message):

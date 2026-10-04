@@ -12,6 +12,9 @@ public enum BowtieError: Error, Equatable {
     /// time. `message` is the server's copy; retry with `force` to record anyway.
     case recordingConflict(tunerCount: Int, conflicts: [Recording], message: String)
     case notFound
+    /// 403 `code: "parental"`: parental controls block this channel, program
+    /// or recording. The message is the server's, ready to show.
+    case parental(String)
     case server(status: Int, message: String)
     case network(String)
     case invalidServerURL
