@@ -26,6 +26,7 @@ type Program struct {
 	Description  string
 	Category     string
 	IconURL      string
+	Rating       string // e.g. "TV-14" (see internal/parental); "" = not rated
 }
 
 // ReplaceEPG transactionally replaces all EPG data for the given source.
@@ -61,10 +62,10 @@ func (s *Store) ReplaceEPG(source string, chans []EPGChannel, progs []Program) e
 	for _, p := range progs {
 		if _, err := tx.Exec(`
 			INSERT INTO programs (
-				epg_channel_id, start, stop, title, subtitle, description, category, icon_url
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				epg_channel_id, start, stop, title, subtitle, description, category, icon_url, rating
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, p.EPGChannelID, formatTime(p.Start), formatTime(p.Stop),
-			p.Title, p.Subtitle, p.Description, p.Category, p.IconURL); err != nil {
+			p.Title, p.Subtitle, p.Description, p.Category, p.IconURL, p.Rating); err != nil {
 			return fmt.Errorf("insert program %q: %w", p.Title, err)
 		}
 	}
@@ -110,7 +111,7 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 	args = append(args, formatTime(start), formatTime(stop))
 
 	q := fmt.Sprintf(`
-		SELECT id, epg_channel_id, start, stop, title, subtitle, description, category, icon_url
+		SELECT id, epg_channel_id, start, stop, title, subtitle, description, category, icon_url, rating
 		FROM programs
 		WHERE epg_channel_id IN (%s)
 		  AND stop > ?
@@ -130,7 +131,7 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 		var startS, stopS string
 		if err := rows.Scan(
 			&p.ID, &p.EPGChannelID, &startS, &stopS,
-			&p.Title, &p.Subtitle, &p.Description, &p.Category, &p.IconURL,
+			&p.Title, &p.Subtitle, &p.Description, &p.Category, &p.IconURL, &p.Rating,
 		); err != nil {
 			return nil, err
 		}

@@ -626,3 +626,37 @@ func TestUserLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("updated: %+v err=%v", users, err)
 	}
 }
+
+func TestProgramRatingRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	st := time.Date(2026, 10, 4, 6, 0, 0, 0, time.UTC)
+	if err := s.ReplaceEPG("xmltv", []store.EPGChannel{{ID: "e", Source: "xmltv"}},
+		[]store.Program{{EPGChannelID: "e", Start: st, Stop: st.Add(time.Hour), Title: "Late Show", Rating: "TV-14"}}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ProgramsInRange([]string{"e"}, st, st.Add(time.Hour))
+	if err != nil || len(ps) != 1 || ps[0].Rating != "TV-14" {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}
+
+func TestUserParentalRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	id, err := s.CreateUser(store.User{Username: "kid", PasswordHash: "h", Role: "viewer",
+		AllowedChannels: []int64{3, 7}, MaxRating: 4, BlockUnrated: true, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := s.UserByID(id)
+	if len(u.AllowedChannels) != 2 || u.AllowedChannels[1] != 7 || u.MaxRating != 4 || !u.BlockUnrated {
+		t.Fatalf("created %+v", u)
+	}
+	u.AllowedChannels, u.MaxRating, u.BlockUnrated = nil, 0, false
+	if err := s.UpdateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	u, _ = s.UserByID(id)
+	if u.AllowedChannels != nil || u.MaxRating != 0 || u.BlockUnrated {
+		t.Fatalf("cleared %+v", u)
+	}
+}

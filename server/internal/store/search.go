@@ -24,7 +24,7 @@ func (s *Store) SearchPrograms(q string, now time.Time, limit int) ([]ProgramHit
 	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%"
 	rows, err := s.db.Query(`
 		SELECT p.id, p.epg_channel_id, p.start, p.stop, p.title, p.subtitle, p.description,
-		       p.category, p.icon_url, c.id, c.guide_number, c.name
+		       p.category, p.icon_url, p.rating, c.id, c.guide_number, c.name
 		FROM programs p JOIN channels c ON c.epg_channel_id = p.epg_channel_id
 		WHERE c.enabled = 1 AND p.stop > ?
 		  AND (p.title LIKE ? ESCAPE '\' OR p.subtitle LIKE ? ESCAPE '\' OR p.description LIKE ? ESCAPE '\')
@@ -40,7 +40,7 @@ func (s *Store) SearchPrograms(q string, now time.Time, limit int) ([]ProgramHit
 		var h ProgramHit
 		var start, stop string
 		if err := rows.Scan(&h.ID, &h.EPGChannelID, &start, &stop, &h.Title, &h.Subtitle, &h.Description,
-			&h.Category, &h.IconURL, &h.ChannelID, &h.GuideNumber, &h.ChannelName); err != nil {
+			&h.Category, &h.IconURL, &h.Rating, &h.ChannelID, &h.GuideNumber, &h.ChannelName); err != nil {
 			return nil, err
 		}
 		if h.Start, err = parseTime(start); err != nil {
