@@ -41,20 +41,39 @@ enum class GuideFilter(val label: String, val bucket: GuideBucket?) {
             NEW -> "No new episodes on in this time window"
         }
 
-    /** [ALL] matches everything; otherwise the program is in this bucket. */
-    fun matches(program: GuideProgram): Boolean =
-        bucket == null || bucket in buckets(program)
+    /**
+     * [ALL] matches everything; otherwise the program is in this bucket.
+     * Classifies [program]; rows carry their programs' buckets already.
+     */
+    fun matches(program: GuideProgram): Boolean = matches(buckets(program))
+
+    /** [ALL] matches everything; otherwise [buckets] holds this one. */
+    fun matches(buckets: Set<GuideBucket>): Boolean = bucket == null || bucket in buckets
 
     /**
-     * Some program overlapping `[from, to)` matches. [ALL] keeps every
-     * channel, even one without guide data.
+     * Some program overlapping `[from, to)` matches. [buckets] are
+     * [programs]' buckets, same order, worked out once when the guide loaded.
+     * [ALL] keeps every channel, even one without guide data.
      */
-    fun matches(programs: List<GuideProgram>, from: Instant, to: Instant): Boolean =
-        this == ALL || programs.any { it.overlaps(from, to) && matches(it) }
+    fun matches(
+        programs: List<GuideProgram>,
+        buckets: List<Set<GuideBucket>>,
+        from: Instant,
+        to: Instant,
+    ): Boolean =
+        this == ALL || programs.indices.any { programs[it].overlaps(from, to) && matches(buckets[it]) }
 
-    /** The earliest matching program overlapping `[from, to)`. */
-    fun firstMatch(programs: List<GuideProgram>, from: Instant, to: Instant): GuideProgram? =
-        programs.filter { it.overlaps(from, to) && matches(it) }.minByOrNull { it.start }
+    /** The earliest matching program overlapping `[from, to)` ([buckets] as for [matches]). */
+    fun firstMatch(
+        programs: List<GuideProgram>,
+        buckets: List<Set<GuideBucket>>,
+        from: Instant,
+        to: Instant,
+    ): GuideProgram? =
+        programs.indices
+            .filter { programs[it].overlaps(from, to) && matches(buckets[it]) }
+            .map { programs[it] }
+            .minByOrNull { it.start }
 
     /** How a now/next row reads: which lines stay bright, and a later match when neither does. */
     data class RowHighlight(
@@ -63,16 +82,18 @@ enum class GuideFilter(val label: String, val bucket: GuideBucket?) {
         val later: GuideProgram?,
     )
 
+    /** Reads the precomputed [buckets] ([programs]' buckets, same order). */
     fun highlight(
         nowNext: GuideLogic.NowNext,
         programs: List<GuideProgram>,
+        buckets: List<Set<GuideBucket>>,
         from: Instant,
         to: Instant,
     ): RowHighlight {
         if (this == ALL) return RowHighlight(nowMatches = true, nextMatches = true, later = null)
-        val nowMatches = nowNext.now?.let(::matches) ?: false
-        val nextMatches = nowNext.next?.let(::matches) ?: false
-        val later = if (nowMatches || nextMatches) null else firstMatch(programs, from, to)
+        val nowMatches = nowNext.now?.let { matches(bucketsOf(it, programs, buckets)) } ?: false
+        val nextMatches = nowNext.next?.let { matches(bucketsOf(it, programs, buckets)) } ?: false
+        val later = if (nowMatches || nextMatches) null else firstMatch(programs, buckets, from, to)
         return RowHighlight(nowMatches, nextMatches, later)
     }
 
@@ -140,6 +161,19 @@ enum class GuideFilter(val label: String, val bucket: GuideBucket?) {
             if (program.rating.lowercase().replace(NON_WORD, "") in MATURE_RATINGS) out -= GuideBucket.KIDS
             if (program.isNew == true) out += GuideBucket.NEW
             return out
+        }
+
+        /**
+         * [program]'s buckets from the precomputed list, found by start time
+         * (now / next may carry a newer recording mark than [programs]).
+         */
+        private fun bucketsOf(
+            program: GuideProgram,
+            programs: List<GuideProgram>,
+            buckets: List<Set<GuideBucket>>,
+        ): Set<GuideBucket> {
+            val i = programs.indexOfFirst { it.start == program.start }
+            return if (i >= 0) buckets[i] else buckets(program)
         }
 
         /** "Later: Title · 8:00 PM" for a match that isn't on now or next. */

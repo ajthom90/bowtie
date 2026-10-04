@@ -348,9 +348,16 @@ fun ChannelRailScreen(
                 }
                 is ChannelListViewModel.LoadState.Loaded -> {
                     val supported = s.favoritesSupported
-                    val at = Instant.now()
-                    val visible = channelListViewModel.visibleRows(s.rows, filter, at)
+                    // Worked out when the rows or the chip change, not on every
+                    // recomposition. "Now" is fixed with them; the 5-minute
+                    // reload bounds how stale it gets.
+                    val filtered = remember(s.rows, filter) {
+                        channelListViewModel.filtered(s.rows, filter, Instant.now())
+                    }
+                    val visible = filtered.rows
                     val listState = rememberLazyListState()
+                    // "Show all channels" leaves the screen; focus lands on All, not the top bar.
+                    val allChipFocus = remember { FocusRequester() }
                     // A toggled row moves (favorites first); keep it on screen and focused.
                     var refocusId by remember { mutableStateOf<Long?>(null) }
                     LaunchedEffect(visible, refocusId) {
@@ -370,9 +377,15 @@ fun ChannelRailScreen(
                         )
                     }
                     // Directly above the rail so DPAD up from the first row lands here.
-                    GuideFilterChips(selected = filter, onSelect = channelListViewModel::setFilter)
+                    GuideFilterChips(
+                        selected = filter,
+                        onSelect = channelListViewModel::setFilter,
+                        allFocusRequester = allChipFocus,
+                    )
                     if (visible.isEmpty() && filter != GuideFilter.ALL) {
                         FilterEmpty(filter = filter, onShowAll = {
+                            // Move focus while the button still exists, then drop it.
+                            runCatching { allChipFocus.requestFocus() }
                             channelListViewModel.setFilter(GuideFilter.ALL)
                         })
                     }
@@ -403,7 +416,7 @@ fun ChannelRailScreen(
                                 row = row,
                                 isPlaying = playingChannel?.id == row.channel.id,
                                 showStar = supported,
-                                highlight = channelListViewModel.highlight(row, filter, at),
+                                highlight = filtered.highlight(row),
                                 onClick = { onOpenChannel(row.channel) },
                                 onLongClick = { openChannelMenu(row, toggle) },
                                 onToggleFavorite = toggle,
@@ -436,7 +449,11 @@ fun ChannelRailScreen(
  * buttons, the chosen one amber and announced as selected.
  */
 @Composable
-private fun GuideFilterChips(selected: GuideFilter, onSelect: (GuideFilter) -> Unit) {
+private fun GuideFilterChips(
+    selected: GuideFilter,
+    onSelect: (GuideFilter) -> Unit,
+    allFocusRequester: FocusRequester,
+) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
@@ -446,10 +463,12 @@ private fun GuideFilterChips(selected: GuideFilter, onSelect: (GuideFilter) -> U
             Button(
                 onClick = { onSelect(f) },
                 colors = tvButtonColors(selected = on),
-                modifier = Modifier.semantics {
-                    this.selected = on
-                    stateDescription = if (on) "Selected" else "Not selected"
-                },
+                modifier = Modifier
+                    .then(if (f == GuideFilter.ALL) Modifier.focusRequester(allFocusRequester) else Modifier)
+                    .semantics {
+                        this.selected = on
+                        stateDescription = if (on) "Selected" else "Not selected"
+                    },
             ) {
                 Text(
                     text = f.label,

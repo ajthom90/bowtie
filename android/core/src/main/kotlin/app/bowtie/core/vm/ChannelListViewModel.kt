@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
+import app.bowtie.core.GuideBucket
 import app.bowtie.core.GuideFilter
 import app.bowtie.core.GuideFilterPrefs
 import app.bowtie.core.GuideLogic
@@ -51,6 +52,12 @@ class ChannelListViewModel(
         val nowNext: GuideLogic.NowNext,
         /** The channel's programs in the loaded guide window (category filters). */
         val programs: List<GuideProgram> = emptyList(),
+        /**
+         * Each of [programs]' category buckets, same order. Worked out once
+         * when the row is built (on guide load), not on every recomposition;
+         * `copy()` keeps it.
+         */
+        val programBuckets: List<Set<GuideBucket>> = programs.map(GuideFilter::buckets),
     ) {
         val id: Long get() = channel.id
 
@@ -113,12 +120,34 @@ class ChannelListViewModel(
     fun visibleRows(rows: List<Row>, filter: GuideFilter, at: Instant = now()): List<Row> {
         if (filter == GuideFilter.ALL) return rows
         val to = windowEndFrom(at)
-        return rows.filter { filter.matches(it.programs, at, to) }
+        return rows.filter { filter.matches(it.programs, it.programBuckets, at, to) }
     }
 
     /** How [row] reads under [filter] at [at] (dimmed lines, a later match). */
     fun highlight(row: Row, filter: GuideFilter, at: Instant = now()): GuideFilter.RowHighlight =
-        filter.highlight(row.nowNext, row.programs, at, windowEndFrom(at))
+        filter.highlight(row.nowNext, row.programs, row.programBuckets, at, windowEndFrom(at))
+
+    /** What a list shows under a chip: [visibleRows] and each one's [highlight]. */
+    data class Filtered(
+        val rows: List<Row>,
+        val highlights: Map<Long, GuideFilter.RowHighlight>,
+    ) {
+        val favorites: List<Row> get() = rows.filter { it.isFavorite }
+        val others: List<Row> get() = rows.filterNot { it.isFavorite }
+
+        fun highlight(row: Row): GuideFilter.RowHighlight =
+            highlights[row.id] ?: GuideFilter.RowHighlight(nowMatches = true, nextMatches = true, later = null)
+    }
+
+    /**
+     * [visibleRows] plus every shown row's [highlight], worked out together.
+     * Screens keep the answer in `remember(rows, filter)` so a recomposition
+     * doesn't redo it.
+     */
+    fun filtered(rows: List<Row>, filter: GuideFilter, at: Instant = now()): Filtered {
+        val visible = visibleRows(rows, filter, at)
+        return Filtered(visible, visible.associate { it.id to highlight(it, filter, at) })
+    }
 
     /** Channel id → position in the last server response; "the rest" keeps this order. */
     @Volatile

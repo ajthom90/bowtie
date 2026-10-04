@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -103,6 +104,14 @@ fun ChannelListScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    // A new chip starts the list from the top (not wherever the old one was scrolled).
+    val selectFilter: (GuideFilter) -> Unit = { f ->
+        if (f != filter) {
+            channelListViewModel.setFilter(f)
+            scope.launch { listState.scrollToItem(0) }
+        }
+    }
 
     // Foreground + 5-minute refresh while STARTED.
     LaunchedEffect(channelListViewModel, lifecycleOwner) {
@@ -199,7 +208,7 @@ fun ChannelListScreen(
             HorizontalDivider(color = BowtieColors.line)
 
             if (state is ChannelListViewModel.LoadState.Loaded) {
-                GuideFilterChips(selected = filter, onSelect = channelListViewModel::setFilter)
+                GuideFilterChips(selected = filter, onSelect = selectFilter)
                 HorizontalDivider(color = BowtieColors.line)
             }
 
@@ -261,24 +270,29 @@ fun ChannelListScreen(
                         }
                     }
                     is ChannelListViewModel.LoadState.Loaded -> {
-                        val at = Instant.now()
-                        val visible = channelListViewModel.visibleRows(s.rows, filter, at)
-                        val favorites = visible.filter { it.isFavorite }
-                        val others = visible.filterNot { it.isFavorite }
+                        // Worked out when the rows or the chip change, not on every
+                        // recomposition. "Now" is fixed with them; the 5-minute
+                        // reload bounds how stale it gets.
+                        val filtered = remember(s.rows, filter) {
+                            channelListViewModel.filtered(s.rows, filter, Instant.now())
+                        }
+                        val visible = filtered.rows
+                        val favorites = remember(filtered) { filtered.favorites }
+                        val others = remember(filtered) { filtered.others }
                         val showStars = s.favoritesSupported
                         val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
                             ChannelRow(
                                 row = row,
                                 isPlaying = playingChannel?.id == row.channel.id,
                                 showStar = showStars,
-                                highlight = channelListViewModel.highlight(row, filter, at),
+                                highlight = filtered.highlight(row),
                                 onClick = { onOpenChannel(row.channel) },
                                 onToggleFavorite = { channelListViewModel.toggleFavorite(row.id) },
                                 onLongClick = { actionSheetId = row.id },
                             )
                             HorizontalDivider(color = BowtieColors.line)
                         }
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             if (showStars && recents.isNotEmpty()) {
                                 item(key = "recent-row") {
                                     RecentRow(
@@ -303,7 +317,7 @@ fun ChannelListScreen(
                             if (visible.isEmpty() && filter != GuideFilter.ALL) {
                                 item(key = "filter-empty") {
                                     FilterEmpty(filter = filter, onShowAll = {
-                                        channelListViewModel.setFilter(GuideFilter.ALL)
+                                        selectFilter(GuideFilter.ALL)
                                     })
                                 }
                             }

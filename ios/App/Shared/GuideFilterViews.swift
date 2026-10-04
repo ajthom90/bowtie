@@ -31,7 +31,7 @@ struct GuideFilterBar: View {
             selection = filter
         } label: {
             #if os(tvOS)
-            // System button style gives the focus platter; amber + check marks the choice.
+            // TVChipButtonStyle draws focus and the choice (amber + check).
             HStack(spacing: 8) {
                 if on {
                     Image(systemName: "checkmark")
@@ -39,8 +39,6 @@ struct GuideFilterBar: View {
                 }
                 Text(filter.label)
             }
-            .font(Theme.label(24))
-            .foregroundStyle(on ? Theme.amber : Theme.text)
             #else
             Text(filter.label)
                 .font(Theme.label(fontSize))
@@ -52,7 +50,9 @@ struct GuideFilterBar: View {
                 .contentShape(Capsule())
             #endif
         }
-        #if !os(tvOS)
+        #if os(tvOS)
+        .buttonStyle(TVChipButtonStyle(isSelected: on))
+        #else
         .buttonStyle(.plain)
         #endif
         .accessibilityLabel(filter.label)
@@ -91,9 +91,14 @@ struct GuideFilterEmptyView: View {
                 .font(Theme.body(textSize))
                 .foregroundStyle(Theme.dim)
                 .multilineTextAlignment(.center)
+            #if os(tvOS)
+            Button("Show all channels", action: onShowAll)
+                .buttonStyle(TVChipButtonStyle(isSelected: false))
+            #else
             Button("Show all channels", action: onShowAll)
                 .font(Theme.label(textSize))
                 .foregroundStyle(Theme.amber)
+            #endif
         }
         .padding(32)
         .frame(maxWidth: .infinity)
@@ -107,6 +112,68 @@ struct GuideFilterEmptyView: View {
     private let textSize: CGFloat = 16
     #endif
 }
+
+#if os(tvOS)
+/// tvOS chip that draws its own focus state. The system platter turns white
+/// on focus, which hid our light (and amber) label; here every state pairs
+/// its own background and text: focused is dark text on a light pill (amber
+/// when it's the chosen chip), lifted; resting is light text on a dark pill,
+/// amber with an amber ring when chosen.
+struct TVChipButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        TVChipButtonBody(configuration: configuration, isSelected: isSelected)
+    }
+}
+
+private struct TVChipButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let isSelected: Bool
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        TVChipLook(isFocused: isFocused, isSelected: isSelected, isPressed: configuration.isPressed) {
+            configuration.label
+        }
+    }
+}
+
+/// The chip's drawing for a given state (kept apart from the focus reading).
+struct TVChipLook<Label: View>: View {
+    let isFocused: Bool
+    let isSelected: Bool
+    let isPressed: Bool
+    @ViewBuilder let label: Label
+
+    var body: some View {
+        label
+            .font(Theme.label(24))
+            .foregroundStyle(foreground)
+            // One line at its natural width: a chip never wraps or truncates.
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 28)
+            .padding(.vertical, 14)
+            .background(background, in: Capsule())
+            .overlay(Capsule().stroke(isSelected && !isFocused ? Theme.amber : Color.clear, lineWidth: 2))
+            .scaleEffect(isFocused ? (isPressed ? 1.04 : 1.1) : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 14, y: 8)
+            .animation(.easeInOut(duration: 0.12), value: isFocused)
+            .animation(.easeInOut(duration: 0.08), value: isPressed)
+    }
+
+    private var foreground: Color {
+        if isFocused { return Theme.bg }
+        return isSelected ? Theme.amber : Theme.text
+    }
+
+    private var background: Color {
+        if isFocused { return isSelected ? Theme.amber : Theme.text }
+        return Theme.raised
+    }
+}
+#endif
 
 /// "Later: Title · 8:00 PM" when neither now nor next matches the filter.
 struct GuideFilterLaterLine: View {

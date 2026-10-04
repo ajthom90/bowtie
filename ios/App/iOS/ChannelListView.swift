@@ -314,14 +314,16 @@ struct ChannelListView: View {
     }
 
     private func channelRow(_ row: ChannelListModel.Row, model: ChannelListModel) -> some View {
-        Button {
+        // Once per row: the view and its VoiceOver label read the same answer.
+        let highlight = model.highlight(for: row, at: now)
+        return Button {
             open(channel: row.channel)
         } label: {
             ChannelRowView(
                 row: row,
                 now: now,
                 isPlaying: playerModel.currentChannel?.id == row.channel.id,
-                highlight: model.highlight(for: row, at: now)
+                highlight: highlight
             )
             .opacity(row.channel.hasNoSignal ? 0.55 : 1)
         }
@@ -346,7 +348,7 @@ struct ChannelListView: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel(for: row, highlight: model.highlight(for: row, at: now)))
+        .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
         .accessibilityHint("Play this channel")
         .accessibilityAddTraits(.isButton)
         .accessibilityActions {
