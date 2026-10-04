@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 	"github.com/ajthom90/bowtie/server/internal/transcode"
@@ -42,6 +44,14 @@ type Deps struct {
 	SDHTTP    *http.Client
 	// DVR schedules and records (nil: recording endpoints answer 503).
 	DVR *dvr.Service
+	// Notifications sends the admin's test notification (nil: a default
+	// client with notify.SendTimeout).
+	Notifications NotificationSender
+}
+
+// NotificationSender delivers one notification now (*notify.Service).
+type NotificationSender interface {
+	Send(ctx context.Context, rawURL string, ev notify.Event) notify.Result
 }
 
 // Server is the HTTP API surface.
@@ -152,6 +162,9 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	// Admin product settings (v0.4.0 Task 4).
 	handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminGetSettings)))
 	handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminPutSettings)))
+
+	// Admin notifications: send a test message.
+	handle("POST /api/v1/admin/notifications/test", admin(http.HandlerFunc(s.handleAdminTestNotification)))
 
 	// Admin transcode probe (Task 11).
 	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))

@@ -457,3 +457,37 @@ func TestDVRPaddingClampsStoredValues(t *testing.T) {
 		t.Fatalf("DVRPadding = %v %v %v; want 0 1h", start, end, err)
 	}
 }
+
+// Notifications: absent keys read as the defaults (no URL; failures, low disk
+// and guide failures on, ready off), the section round-trips, and the seed
+// never writes (or logs) the URL.
+func TestNotificationsDefaultsAndRoundTrip(t *testing.T) {
+	p, st := openProvider(t)
+	n, err := p.Notifications()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := settings.Notifications{Events: settings.NotificationEvents{RecordingFailed: true, DiskLow: true, GuideFailed: true}}
+	if n != want {
+		t.Fatalf("absent = %+v, want %+v", n, want)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := st.HasSetting(settings.KeyNotifyURL); has {
+		t.Fatal("seed must not write notifications.url")
+	}
+	v := settings.Notifications{URL: "https://ntfy.sh/topic", Events: settings.NotificationEvents{RecordingReady: true}}
+	if err := p.SetNotifications(v); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.Notifications(); err != nil || got != v {
+		t.Fatalf("round trip = %+v err=%v, want %+v", got, err, v)
+	}
+	if err := st.SetSetting(settings.KeyNotifyDiskLow, "nope"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Notifications(); err == nil {
+		t.Fatal("bad stored bool must error")
+	}
+}
