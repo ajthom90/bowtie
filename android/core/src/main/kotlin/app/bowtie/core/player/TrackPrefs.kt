@@ -20,7 +20,8 @@ data class TrackPrefs(val audioLanguage: String? = null, val captionsOn: Boolean
     }
 }
 
-data class AudioOption(val language: String?, val label: String)
+/** One playable audio track; [id] ("group:track") identifies it among tracks of the same language. */
+data class AudioOption(val id: String, val language: String?, val label: String)
 
 fun audioLabel(language: String?, label: String?, index: Int): String =
     label?.takeIf { it.isNotBlank() } ?: language?.takeIf { it.isNotBlank() } ?: "Audio ${index + 1}"
@@ -40,9 +41,9 @@ class TrackPrefsStore(context: android.content.Context) {
     }
 }
 
-/** The audio choice after [current] (wraps); null when there is nothing to switch to. */
-fun nextAudio(options: List<AudioOption>, current: String?): AudioOption? {
+/** The audio choice after the one with id [currentId] (wraps); null when there is nothing to switch to. */
+fun nextAudio(options: List<AudioOption>, currentId: String?): AudioOption? {
     if (options.size < 2) return null
-    val i = options.indexOfFirst { it.language == current }
+    val i = options.indexOfFirst { it.id == currentId }
     return options[(i + 1).mod(options.size)]
 }

@@ -26,17 +26,25 @@ class TrackPrefsTest {
 
 class NextAudioTest {
     private val opts = listOf(
-        app.bowtie.core.player.AudioOption("en", "English"),
-        app.bowtie.core.player.AudioOption("es", "Español"),
+        app.bowtie.core.player.AudioOption("0:0", "en", "English"),
+        app.bowtie.core.player.AudioOption("1:0", "es", "Español"),
     )
 
     @Test fun cyclesAndWraps() {
-        assertEquals("es", app.bowtie.core.player.nextAudio(opts, "en")?.language)
-        assertEquals("en", app.bowtie.core.player.nextAudio(opts, "es")?.language)
-        assertEquals("en", app.bowtie.core.player.nextAudio(opts, null)?.language)
+        assertEquals("1:0", app.bowtie.core.player.nextAudio(opts, "0:0")?.id)
+        assertEquals("0:0", app.bowtie.core.player.nextAudio(opts, "1:0")?.id)
+        assertEquals("0:0", app.bowtie.core.player.nextAudio(opts, null)?.id)
     }
 
     @Test fun singleOptionHasNoNext() {
-        assertEquals(null, app.bowtie.core.player.nextAudio(opts.take(1), "en"))
+        assertEquals(null, app.bowtie.core.player.nextAudio(opts.take(1), "0:0"))
+    }
+
+    @Test fun twoTracksInOneLanguageAreBothReachable() {
+        val same = listOf(
+            app.bowtie.core.player.AudioOption("0:0", "en", "English"),
+            app.bowtie.core.player.AudioOption("1:0", "en", "Described video"),
+        )
+        assertEquals("1:0", app.bowtie.core.player.nextAudio(same, "0:0")?.id)
     }
 }

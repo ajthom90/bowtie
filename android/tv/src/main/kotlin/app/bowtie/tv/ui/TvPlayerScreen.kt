@@ -464,13 +464,13 @@ fun TvPlayerScreen(
                     if (opts.size < 2) {
                         null
                     } else {
-                        val lang = engine.selectedAudioLanguage()
-                        "Audio: " + (opts.firstOrNull { it.language == lang } ?: opts.first()).label
+                        val current = engine.selectedAudioId()
+                        "Audio: " + (opts.firstOrNull { it.id == current } ?: opts.first()).label
                     }
                 },
                 onAudio = {
-                    nextAudio(engine.audioOptions(), engine.selectedAudioLanguage())?.let {
-                        engine.selectAudio(it.language)
+                    nextAudio(engine.audioOptions(), engine.selectedAudioId())?.let {
+                        engine.selectAudio(it)
                     }
                 },
                 captionsOn = remember(tracksVersion) {

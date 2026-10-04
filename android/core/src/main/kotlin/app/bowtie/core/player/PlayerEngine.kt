@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -147,29 +148,47 @@ class PlayerEngine(
     fun audioOptions(): List<AudioOption> {
         val seen = mutableSetOf<String>()
         val out = mutableListOf<AudioOption>()
-        for (group in player.currentTracks.groups) {
-            if (group.type != C.TRACK_TYPE_AUDIO) continue
+        player.currentTracks.groups.forEachIndexed { gi, group ->
+            if (group.type != C.TRACK_TYPE_AUDIO) return@forEachIndexed
             for (i in 0 until group.length) {
                 if (!group.isTrackSupported(i)) continue
                 val f = group.getTrackFormat(i)
                 val label = audioLabel(f.language, f.label, out.size)
-                if (seen.add((f.language ?: "") + "|" + label)) {
-                    out += AudioOption(f.language, label)
+                // The AAC and 5.1 copies of one track share a label: one choice.
+                if (seen.add(label)) {
+                    out += AudioOption("$gi:$i", f.language, label)
                 }
             }
         }
         return out
     }
 
-    /** Language of the playing audio track, if known. */
-    fun selectedAudioLanguage(): String? = player.currentTracks.groups
-        .firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
-        ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).language } }
+    /** Id ("group:track") of the playing audio track, if any. */
+    fun selectedAudioId(): String? {
+        player.currentTracks.groups.forEachIndexed { gi, g ->
+            if (g.type == C.TRACK_TYPE_AUDIO && g.isSelected) {
+                for (i in 0 until g.length) {
+                    if (g.isTrackSelected(i)) return "$gi:$i"
+                }
+            }
+        }
+        return null
+    }
 
-    fun selectAudio(language: String?) {
-        val p = loadPrefs().copy(audioLanguage = language)
+    /**
+     * Play [option]'s track exactly (two tracks can share a language, e.g.
+     * main and described audio) and remember its language for later items.
+     */
+    fun selectAudio(option: AudioOption) {
+        val p = loadPrefs().copy(audioLanguage = option.language)
         savePrefs(p)
-        applyPrefs(p)
+        val (gi, ti) = option.id.split(':').map { it.toInt() }
+        val group = player.currentTracks.groups.getOrNull(gi) ?: return applyPrefs(p)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguage(option.language)
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(group.mediaTrackGroup, ti))
+            .build()
     }
 
     fun hasCaptions(): Boolean = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
