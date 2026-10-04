@@ -216,13 +216,20 @@ final class PlayerModelSharePlayTests: XCTestCase {
 
         await runThroughDebounce {
             group.remoteUpdate(self.activity(channelId: 20, channelName: "WXYZ", sessionId: "sess-next"))
-            // The follow runs on its own task; wait for its create.
-            while model.currentChannel?.id != 20 || model.state == .starting {
-                await Task.yield()
+            // The follow runs on its own task; wait for its create request
+            // for channel 20 (the state alone can read "playing" before it).
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                let creates = (try? self.sessionCreateRequests().map { try self.jsonBody(of: $0) }) ?? []
+                if creates.contains(where: { ($0["channelId"] as? NSNumber)?.intValue == 20 }) {
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(5))
             }
         }
 
-        let body = try jsonBody(of: sessionCreateRequests().last!)
+        let body = try XCTUnwrap(try sessionCreateRequests().map { try jsonBody(of: $0) }
+            .last { ($0["channelId"] as? NSNumber)?.intValue == 20 })
         XCTAssertEqual(body["joinSessionId"] as? String, "sess-next")
         XCTAssertEqual((body["channelId"] as? NSNumber)?.intValue, 20)
         XCTAssertEqual(group.leaveCount, 0)
