@@ -307,6 +307,8 @@ struct PlayerView: View {
 
     private var qualityMenu: some View {
         Menu {
+            // Choices are a ceiling: playback adapts below it.
+            Text("The most this player will use")
             Button {
                 Task { await playerModel.setProfile("") }
             } label: {

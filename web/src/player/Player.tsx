@@ -11,7 +11,7 @@ import { ApiError, type CreateSessionResponse, type SessionMeta } from '../api/c
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
-import { QualitySheet, useIsNarrow } from './QualitySheet'
+import { QUALITY_HINT, QualitySheet, useIsNarrow } from './QualitySheet'
 import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from './tracksModel'
 import { SeekBar } from './SeekBar'
 import {
@@ -822,6 +822,7 @@ export function Player({ target, onBack }: Props) {
                     value={profile}
                     onChange={onQualitySelect}
                     aria-label="Quality"
+                    title={QUALITY_HINT}
                   >
                     {QUALITY_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>

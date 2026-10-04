@@ -728,6 +728,10 @@ private struct TVQualityPanel: View {
 
     var body: some View {
         List {
+            // Choices are a ceiling: playback adapts below it.
+            Text("The most this player will use")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Button {
                 onSelect("")
             } label: {

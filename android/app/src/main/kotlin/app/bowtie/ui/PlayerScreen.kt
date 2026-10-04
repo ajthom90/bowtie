@@ -381,6 +381,13 @@ fun PlayerScreen(
                     text = "Quality",
                     style = BowtieType.title,
                     color = BowtieColors.text,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                // Choices are a ceiling: playback adapts below it.
+                Text(
+                    text = "The most this player will use",
+                    style = BowtieType.label,
+                    color = BowtieColors.dim,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 profiles.forEach { profile ->

@@ -487,7 +487,7 @@ private fun TransportDrawer(
             modifier = Modifier.padding(bottom = 8.dp),
         )
         Text(
-            text = "Quality",
+            text = "Quality (the most this player will use)",
             style = BowtieType.label,
             color = BowtieColors.dim,
         )
