@@ -141,14 +141,18 @@ func (s *Server) handleIPTVStream(w http.ResponseWriter, r *http.Request) {
 	}
 	caps := transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: r.URL.Query().Get("quality")}
 	h, err := s.deps.Streams.Start(r.Context(), u, id, caps)
+	// IPTV players can't say they stopped: at the account's limit, a channel
+	// change replaces this account's oldest IPTV stream. Tracked viewers may
+	// have ended on their own already (stopping those frees nothing), so walk
+	// from oldest to newest until the start fits.
 	var limitErr *stream.UserLimitError
-	if errors.As(err, &limitErr) {
-		// IPTV players can't say they stopped: at the account's limit, a
-		// channel change replaces this account's oldest IPTV stream.
-		if old, ok := s.iptv.oldest(u.ID); ok {
-			s.deps.Streams.StopViewer(old)
-			h, err = s.deps.Streams.Start(r.Context(), u, id, caps)
+	for errors.As(err, &limitErr) {
+		old, ok := s.iptv.oldest(u.ID)
+		if !ok {
+			break
 		}
+		s.deps.Streams.StopViewer(old)
+		h, err = s.deps.Streams.Start(r.Context(), u, id, caps)
 	}
 	if err != nil {
 		s.writeStartError(w, err, u)

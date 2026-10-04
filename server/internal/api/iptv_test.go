@@ -145,3 +145,56 @@ func TestIPTVChannelChangeAtLimitReplacesOldStream(t *testing.T) {
 		t.Fatalf("zap at limit %d active=%v", c, active)
 	}
 }
+
+// Viewers that ended on their own (closed, timed out) are skipped: the oldest
+// still-live IPTV stream is the one replaced.
+func TestIPTVChannelChangeAtLimitSkipsEndedViewers(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ss := newStubStreams()
+	active := map[string]bool{}
+	n := 0
+	ss.startFn = func(context.Context, store.User, int64, transcode.ClientCaps) (stream.ViewerHandle, error) {
+		if len(active) >= 1 {
+			return stream.ViewerHandle{}, &stream.UserLimitError{Kind: "streams", Limit: 1}
+		}
+		n++
+		id := fmt.Sprintf("v%d", n)
+		active[id] = true
+		ss.register(id, t.TempDir())
+		return stream.ViewerHandle{ViewerID: id, SessionID: "s"}, nil
+	}
+	ss.onStop = func(id string) { delete(active, id) }
+	h := api.New(api.Deps{Cfg: config.Config{}, Store: st, Streams: ss,
+		Auth:              &auth.Auth{Secret: []byte("0123456789abcdef0123456789abcdef"), Store: st},
+		StreamTokenSecret: []byte(streamSecret)})
+	seedUser(t, st, "tv", "pw", "viewer")
+	tok := decodeLogin(t, doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": "tv", "password": "pw"}, nil))
+	rr := doJSON(t, h, "POST", "/api/v1/me/feed", nil, map[string]string{"Authorization": "Bearer " + tok.AccessToken})
+	var feed struct {
+		M3U string `json:"m3uUrl"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &feed)
+	base := strings.TrimSuffix(strings.TrimPrefix(feed.M3U, "http://example.com"), "/playlist.m3u")
+	get := func(path string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec.Code
+	}
+	// v1 and v2 each end on their own (idle timeout), never via StopViewer.
+	for i, ch := range []string{"1", "2"} {
+		if c := get(base + "/stream/" + ch); c != http.StatusFound {
+			t.Fatalf("start %s: %d", ch, c)
+		}
+		delete(active, fmt.Sprintf("v%d", i+1))
+	}
+	if c := get(base + "/stream/3"); c != http.StatusFound || !active["v3"] {
+		t.Fatalf("v3 %d active=%v", c, active)
+	}
+	if c := get(base + "/stream/4"); c != http.StatusFound || active["v3"] || !active["v4"] {
+		t.Fatalf("zap past ended viewers %d active=%v", c, active)
+	}
+}

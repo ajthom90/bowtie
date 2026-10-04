@@ -753,12 +753,16 @@ func (s *Service) convert(id int64) {
 		s.converting[id] = cancel
 		s.mu.Unlock()
 		dur, err = s.deps.Converter.Convert(cctx, parts, out)
+		stopped := cctx.Err() != nil
 		s.mu.Lock()
 		delete(s.converting, id)
 		s.mu.Unlock()
 		cancel()
 		if s.ctx.Err() != nil {
 			return // shutting down: convert again after restart
+		}
+		if stopped {
+			return // deleted: Delete removes the row and the files
 		}
 		if err != nil {
 			r, gerr := s.deps.Store.RecordingByID(id)
