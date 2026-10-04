@@ -1,0 +1,555 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.toolbarLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.subtitle {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.hint {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.btn {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.05);
+}
+
+/* ── Tile grid ─────────────────────────────────────────────────────────── */
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--mv-cols, 1), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--mv-rows, 1), minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+}
+
+.tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #000;
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--motion);
+}
+
+.tile:hover {
+  border-color: var(--text-dim);
+}
+
+.tileAudio,
+.tileAudio:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.tile:fullscreen {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.tileTop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem 1.5rem;
+  background: linear-gradient(rgba(16, 20, 24, 0.85), rgba(16, 20, 24, 0));
+  pointer-events: none;
+}
+
+.tileIndex {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  background: rgba(16, 20, 24, 0.6);
+}
+
+.tileAudio .tileIndex {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tileNum {
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.tileMeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.tileName {
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.tileProgram {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.soundBadge {
+  flex-shrink: 0;
+  padding: 0.12rem 0.45rem;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tileControls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 1.5rem 0.55rem 0.55rem;
+  background: linear-gradient(rgba(16, 20, 24, 0), rgba(16, 20, 24, 0.85));
+  opacity: 0;
+  transition: opacity var(--motion);
+  cursor: default;
+}
+
+.tile:hover .tileControls,
+.tile:focus-within .tileControls {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tileControls {
+    opacity: 1;
+  }
+}
+
+.ctl {
+  appearance: none;
+  background: rgba(35, 43, 52, 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.ctl:hover {
+  background: var(--line);
+}
+
+.ctlOn,
+.ctlOn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tileStatus {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+
+.tileError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 3rem 1rem 1rem;
+  text-align: center;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.tileErrorMsg {
+  max-width: 24rem;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.tileErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* The error box covers the video; keep the header above it, drop the tile controls. */
+.tileError ~ .tileTop {
+  z-index: 2;
+}
+
+.tileError ~ .tileControls {
+  display: none;
+}
+
+.emptySlot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 0;
+  padding: 1rem;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.addBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.6rem 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.addBtn:hover {
+  background: var(--line);
+  border-color: var(--accent);
+}
+
+.addPlus {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.emptyHint {
+  margin: 0;
+  max-width: 22rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* ── Channel picker ────────────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(16, 20, 24, 0.72);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(26rem, 100%);
+  max-height: calc(100% - 2rem);
+  padding: 1.1rem 1.2rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.sheetTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.sheetHint {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.filter {
+  margin-top: 0.75rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+.pickList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pickRow {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.35rem 0.4rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion);
+}
+
+.pickRow:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.pickRow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pickNum {
+  min-width: 3rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.pickMeta {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.pickName {
+  font-weight: 500;
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+}
+
+.pickFav {
+  color: var(--accent);
+}
+
+.pickProgram {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pickNote {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.sheetActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.85rem;
+}
+
+/* Phone: tiles stack (16:9 each, page scrolls); picker is a bottom sheet. */
+@media (max-width: 640px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.55rem 0.75rem;
+  }
+
+  .toolbarLeft {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .toolbarRight {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .btn {
+    min-height: 44px;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .grid {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tile {
+    flex-shrink: 0;
+    aspect-ratio: 16 / 9;
+  }
+
+  .tile:fullscreen {
+    aspect-ratio: auto;
+  }
+
+  .emptySlot {
+    flex-shrink: 0;
+    min-height: 12rem;
+  }
+
+  .ctl {
+    min-height: 44px;
+    padding: 0.3rem 0.7rem;
+  }
+
+  .backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .sheet {
+    width: 100%;
+    max-height: 88%;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .pickRow {
+    min-height: 44px;
+  }
+}

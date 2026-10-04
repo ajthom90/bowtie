@@ -15,6 +15,7 @@ import { isParentalBlock, startErrorFrom, type StartError } from './errorModel'
 import { QUALITY_HINT, QualitySheet, useIsNarrow } from './QualitySheet'
 import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from './tracksModel'
 import { SeekBar } from './SeekBar'
+import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -63,15 +64,6 @@ function formatBuffer(sec: number | null): string {
   return `${sec.toFixed(1)} s`
 }
 
-function streamTokenFromPlaylist(playlistUrl: string): string | null {
-  try {
-    const u = new URL(playlistUrl, window.location.origin)
-    return u.searchParams.get('token')
-  } catch {
-    return null
-  }
-}
-
 /**
  * Build adapter LiveWindow from hls.js levelDetails + liveSyncPosition +
  * video.currentTime (A8). Falls back to video.seekable for native HLS.
@@ -117,34 +109,6 @@ function buildLiveWindow(hls: Hls | null, video: HTMLVideoElement): LiveWindow |
     }
   }
   return null
-}
-
-/** Best-effort session stop when the page is unloading (DELETE cannot use sendBeacon). */
-function bestEffortDelete(viewerId: string, accessToken: string | null, streamToken: string | null) {
-  let url = `/api/v1/sessions/${encodeURIComponent(viewerId)}`
-  if (streamToken) {
-    url += `?token=${encodeURIComponent(streamToken)}`
-  }
-  try {
-    void fetch(url, {
-      method: 'DELETE',
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-      keepalive: true,
-    })
-  } catch {
-    // ignore
-  }
-  // sendBeacon is POST-only; some browsers still fire it as a secondary signal
-  // when a stream token is present (server ignores unknown methods). Prefer keepalive DELETE.
-  if (streamToken && typeof navigator.sendBeacon === 'function') {
-    try {
-      navigator.sendBeacon(
-        `/api/v1/sessions/${encodeURIComponent(viewerId)}?token=${encodeURIComponent(streamToken)}`,
-      )
-    } catch {
-      // ignore
-    }
-  }
 }
 
 export function Player({ target, onBack }: Props) {
