@@ -95,6 +95,8 @@ public final class ChannelListModel {
             return "All tuners are in use"
         case .negotiationFailed(let message):
             return message
+        case .recordingConflict(_, _, let message):
+            return message
         case .notFound:
             return "Not found"
         case .server(_, let message):

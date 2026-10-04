@@ -8,10 +8,16 @@ import XCTest
 final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var recorded: [URLRequest] = []
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (Int, Data, [String: String]))?
+    /// Seconds to hold a response without blocking the loading thread
+    /// (other requests keep flowing), for out-of-order response tests.
+    nonisolated(unsafe) static var delay: (@Sendable (URLRequest) -> TimeInterval)?
+
+    private var delayTimer: Timer?
 
     static func reset() {
         recorded = []
         handler = nil
+        delay = nil
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -31,15 +37,27 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
                 httpVersion: "HTTP/1.1",
                 headerFields: headers.merging(["Content-Type": "application/json"]) { _, new in new }
             )!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            let deliver = { [self] in
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            }
+            let wait = Self.delay?(request) ?? 0
+            if wait > 0 {
+                let timer = Timer(timeInterval: wait, repeats: false) { _ in deliver() }
+                delayTimer = timer
+                RunLoop.current.add(timer, forMode: .common)
+            } else {
+                deliver()
+            }
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        delayTimer?.invalidate()
+    }
 }
 
 // MARK: - Shared client test helpers
