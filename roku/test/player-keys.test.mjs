@@ -15,3 +15,7 @@ test('Right opens the quality dialog during playback', () => {
 test('chrome hint names the Right key for quality', () => {
     assert.match(src, /"Quality: " \+ label \+ " · OK play\/pause · Right: quality"/);
 });
+
+test('* (options) reaches the system menu (audio tracks, closed captioning)', () => {
+    assert.doesNotMatch(handler, /key = "options"/);
+});

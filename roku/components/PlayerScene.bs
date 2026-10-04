@@ -849,9 +849,9 @@ function onKeyEvent(key as string, press as boolean) as boolean
         return true
     end if
 
-    ' Right opens quality: Roku TVs take * (options) during playback for their own
-    ' picture menu, so the app only sees "options" on streaming sticks.
-    if key = "right" or key = "options" or key = "replay"
+    ' Right opens quality. * (options) is left to the system: its overlay offers
+    ' the stream's audio tracks (e.g. Español) and closed captioning.
+    if key = "right" or key = "replay"
         openQualityDialog()
         return true
     end if
