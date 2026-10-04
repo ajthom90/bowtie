@@ -110,6 +110,64 @@ export function anyEpgConfigured(status: EPGSourceStatus): boolean {
   return epgSources(status).some((s) => s.state.configured)
 }
 
+/**
+ * A source's state in words. The server calls a source that has never
+ * succeeded "stale"; here that's "never" (no error yet) or "failing".
+ */
+export type EPGHealth = 'off' | 'ok' | 'stale' | 'never' | 'failing'
+
+export function epgHealth(state: EPGSourceState): EPGHealth {
+  if (!state.configured) return 'off'
+  if (isZeroTime(state.lastSuccess)) return state.lastError.trim() ? 'failing' : 'never'
+  return state.stale ? 'stale' : 'ok'
+}
+
+export function epgHealthLabel(h: EPGHealth): string {
+  switch (h) {
+    case 'off':
+      return 'Not configured'
+    case 'ok':
+      return 'Up to date'
+    case 'stale':
+      return 'Stale'
+    case 'never':
+      return 'Never fetched yet'
+    case 'failing':
+      return 'Failing'
+  }
+}
+
+/** The free guide's rate limit, as the HDHomeRun source reports it. */
+const HDHR_REFUSED = /\bHTTP 403\b/
+
+/** A source's last error in plain words ("" when there is none). */
+export function epgErrorText(key: EPGSourceKey, raw: string): string {
+  const err = raw.trim()
+  if (!err) return ''
+  if (key === 'hdhomerun' && HDHR_REFUSED.test(err)) {
+    return (
+      'SiliconDust allows about one guide download a day per tuner and refused this one (HTTP 403). ' +
+      'Bowtie tries again every hour; the guide fills in once a download succeeds.'
+    )
+  }
+  return `The last guide download failed: ${err}`
+}
+
+/** The banner above the source cards, or null when all is well. */
+export function epgSummaryBanner(status: EPGSourceStatus): string | null {
+  const health = epgSources(status)
+    .map((s) => epgHealth(s.state))
+    .filter((h) => h !== 'off')
+  if (health.length === 0) return null
+  if (health.every((h) => h === 'never' || h === 'failing')) {
+    return 'No guide data has been downloaded yet. The viewer guide stays empty until a download succeeds.'
+  }
+  if (health.includes('stale')) {
+    return 'One or more EPG sources are stale. Viewer guide data may be incomplete.'
+  }
+  return null
+}
+
 /** Clamp a percent for signal bars; null/undefined → 0. */
 export function signalPercent(v: number | undefined | null): number {
   if (v == null || !Number.isFinite(v)) return 0

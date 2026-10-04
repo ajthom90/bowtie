@@ -9,6 +9,7 @@ import {
   GUIDE_COPY,
   halfHourTicks,
   layoutRow,
+  noGuideDataHint,
   nowLinePct,
   selectGuidePageState,
   type GuideProgram,
@@ -264,6 +265,24 @@ describe('selectGuidePageState', () => {
 
   it('exposes program-less cell copy constant', () => {
     expect(GUIDE_COPY.noGuideData).toBe('No guide data — press to watch')
+  })
+})
+
+describe('noGuideDataHint', () => {
+  const withProgs = { programs: [prog('2026-01-01T10:00:00Z', '2026-01-01T11:00:00Z')] }
+  const none = { programs: [] as GuideProgram[] }
+
+  it('admins get a pointer to Admin → EPG when no channel has any programs', () => {
+    expect(noGuideDataHint([none, none], 'admin')).toBe('No guide data yet — see Admin → EPG')
+  })
+
+  it('viewers get the short line', () => {
+    expect(noGuideDataHint([none], 'viewer')).toBe('No guide data yet')
+  })
+
+  it('says nothing when some channel has data, or there are no channels', () => {
+    expect(noGuideDataHint([none, withProgs], 'admin')).toBeNull()
+    expect(noGuideDataHint([], 'admin')).toBeNull()
   })
 })
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HEARTBEAT_INTERVAL_MS,
   OUT_OF_WINDOW_NOTICE,
+  behindLabel,
   behindSeconds,
   clampSeek,
   createHeartbeatController,
@@ -49,6 +50,22 @@ describe('formatBehind', () => {
   it('floors fractional seconds and treats negatives as zero', () => {
     expect(formatBehind(5.9)).toBe('-00:05')
     expect(formatBehind(-3)).toBe('-00:00')
+  })
+})
+
+describe('behindLabel', () => {
+  it('reads the distance behind live in words', () => {
+    expect(behindLabel(4)).toBe('4 seconds behind live')
+    expect(behindLabel(1)).toBe('1 second behind live')
+    expect(behindLabel(60)).toBe('1 minute behind live')
+    expect(behindLabel(65)).toBe('1 minute 5 seconds behind live')
+    expect(behindLabel(121)).toBe('2 minutes 1 second behind live')
+  })
+
+  it('floors fractions and treats zero or less as zero seconds', () => {
+    expect(behindLabel(4.9)).toBe('4 seconds behind live')
+    expect(behindLabel(0)).toBe('0 seconds behind live')
+    expect(behindLabel(-2)).toBe('0 seconds behind live')
   })
 })
 

@@ -3,8 +3,11 @@ import { ApiError, type EPGSourceState, type EPGSourceStatus } from '../api/clie
 import { useAuth } from '../auth/AuthContext'
 import {
   anyEpgConfigured,
-  anyEpgStale,
+  epgErrorText,
+  epgHealth,
+  epgHealthLabel,
   epgSources,
+  epgSummaryBanner,
   formatTimestamp,
   isZeroTime,
   type EPGSourceKey,
@@ -15,16 +18,28 @@ const SOURCE_NOTES: Partial<Record<EPGSourceKey, string>> = {
   hdhomerun: 'From SiliconDust, no account needed. Refreshes about once a day. No ratings.',
 }
 
-function SourceCard({ name, note, state }: { name: string; note?: string; state: EPGSourceState }) {
+function SourceCard({
+  sourceKey,
+  name,
+  note,
+  state,
+}: {
+  sourceKey: EPGSourceKey
+  name: string
+  note?: string
+  state: EPGSourceState
+}) {
   const lastSuccess = isZeroTime(state.lastSuccess)
     ? 'never'
     : formatTimestamp(state.lastSuccess)
+  const health = epgHealth(state)
+  const errorText = epgErrorText(sourceKey, state.lastError)
 
   return (
     <article className={styles.card}>
       <h3 className={styles.cardTitle}>{name}</h3>
       <div className={styles.cardMeta}>
-        {state.configured ? 'Configured' : 'Not configured'}
+        {health === 'off' ? 'Not configured' : `Configured · ${epgHealthLabel(health)}`}
       </div>
       {note ? (
         <div className={styles.dim} style={{ fontSize: '0.82rem' }}>
@@ -35,12 +50,17 @@ function SourceCard({ name, note, state }: { name: string; note?: string; state:
         <span className={styles.dim}>Last success </span>
         <span className={styles.mono}>{lastSuccess}</span>
       </div>
-      {state.lastError ? (
+      {errorText ? (
         <p className={styles.alertText} role="status">
-          {state.lastError}
+          {errorText}
         </p>
       ) : null}
-      {state.stale ? (
+      {health === 'never' ? (
+        <div className={styles.dim} role="status">
+          Never fetched yet. Refresh now to try a download.
+        </div>
+      ) : null}
+      {health === 'stale' ? (
         <div className={styles.banner} role="alert">
           Guide data is stale. Refresh now or check the source configuration.
         </div>
@@ -89,7 +109,7 @@ export function Epg() {
     }
   }
 
-  const anyStale = status ? anyEpgStale(status) : false
+  const summary = status ? epgSummaryBanner(status) : null
 
   return (
     <div>
@@ -108,9 +128,9 @@ export function Epg() {
         </div>
       </div>
 
-      {anyStale ? (
+      {summary ? (
         <div className={styles.banner} role="alert">
-          One or more EPG sources are stale. Viewer guide data may be incomplete.
+          {summary}
         </div>
       ) : null}
 
@@ -120,7 +140,7 @@ export function Epg() {
       {status ? (
         <div className={styles.cardGrid}>
           {epgSources(status).map((s) => (
-            <SourceCard key={s.key} name={s.label} note={SOURCE_NOTES[s.key]} state={s.state} />
+            <SourceCard key={s.key} sourceKey={s.key} name={s.label} note={SOURCE_NOTES[s.key]} state={s.state} />
           ))}
         </div>
       ) : null}

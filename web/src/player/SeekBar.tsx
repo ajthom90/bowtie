@@ -1,5 +1,6 @@
 import type { ChangeEvent } from 'react'
 import {
+  behindLabel,
   behindSeconds,
   formatBehind,
   isAtLiveEdge,
@@ -49,7 +50,7 @@ export function SeekBar({
     <div className={styles.bar} role="group" aria-label="Live seek">
       <span
         className={`${styles.liveBadge} ${atEdge ? styles.liveAtEdge : styles.liveBehind}`}
-        aria-label={atEdge ? 'Live' : `Behind live ${formatBehind(behind)}`}
+        aria-label={atEdge ? 'Live' : behindLabel(behind)}
       >
         {atEdge ? 'LIVE' : formatBehind(behind)}
       </span>

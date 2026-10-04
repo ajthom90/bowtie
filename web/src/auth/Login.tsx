@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react'
-import { ApiError } from '../api/client'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from './AuthContext'
+import { loginErrorText } from './authErrors'
 import { BowtieMark } from '../BowtieMark'
 import styles from './Login.module.css'
 
@@ -15,6 +15,13 @@ export function Login({ subtitle = 'Sign in to watch live TV' }: Props = {}) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const passwordRef = useRef<HTMLInputElement | null>(null)
+
+  // After a failed sign-in, keep the cursor in the password field (it was
+  // disabled while busy, which drops focus).
+  useEffect(() => {
+    if (error && !busy) passwordRef.current?.focus()
+  }, [error, busy])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -23,11 +30,7 @@ export function Login({ subtitle = 'Sign in to watch live TV' }: Props = {}) {
     try {
       await login(username.trim(), password)
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message || 'Login failed')
-      } else {
-        setError('Login failed')
-      }
+      setError(loginErrorText(err))
     } finally {
       setBusy(false)
     }
@@ -56,6 +59,7 @@ export function Login({ subtitle = 'Sign in to watch live TV' }: Props = {}) {
         <label className={styles.label}>
           Password
           <input
+            ref={passwordRef}
             className={styles.input}
             name="password"
             type="password"
@@ -64,9 +68,15 @@ export function Login({ subtitle = 'Sign in to watch live TV' }: Props = {}) {
             onChange={(e) => setPassword(e.target.value)}
             disabled={busy}
             required
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'login-error' : undefined}
           />
         </label>
-        {error ? <p className={styles.error}>{error}</p> : null}
+        {error ? (
+          <p id="login-error" className={styles.error} role="alert">
+            {error}
+          </p>
+        ) : null}
         <button className={styles.button} type="submit" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>

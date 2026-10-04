@@ -455,7 +455,7 @@
 
 .createForm {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
   gap: 0.5rem;
   align-items: end;
   margin-bottom: 1rem;
@@ -463,6 +463,13 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+}
+
+/* Fields fill their grid column instead of overflowing into the next one. */
+.createForm .input,
+.createForm .select {
+  min-width: 0;
+  width: 100%;
 }
 
 .createForm .btn {
