@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_NOTIFICATION_EVENTS,
+  NOTIFICATIONS_HINT,
+  NOTIFICATIONS_PLACEHOLDER,
+  NOTIFICATION_EVENT_OPTIONS,
   buildSectionPayload,
+  describeTestResult,
+  notificationTarget,
+  notificationTargetLabel,
+  validateNotificationsHint,
   buildSchedulesDirectPayload,
   buildStreamingPayload,
   buildTranscodePayload,
@@ -268,5 +276,92 @@ describe('HDHomeRun free guide setting', () => {
     const form = formFrom(sampleSettings({ hdhomerun: { enabled: true } }))
     form.hdhomerun = { enabled: false }
     expect(buildSectionPayload('hdhomerun', form)).toEqual({ hdhomerun: { enabled: false } })
+  })
+})
+
+describe('notifications', () => {
+  const withNotifications = (url: string, events = DEFAULT_NOTIFICATION_EVENTS) =>
+    formFrom(sampleSettings({ notifications: { url, events } }))
+
+  it('form is null on servers without notifications', () => {
+    expect(formFrom().notifications).toBeNull()
+  })
+
+  it('maps the section and fills missing events with the defaults', () => {
+    const form = formFrom(
+      sampleSettings({
+        notifications: {
+          url: 'https://ntfy.sh/bowtie',
+          events: { recordingReady: true } as unknown as typeof DEFAULT_NOTIFICATION_EVENTS,
+        },
+      }),
+    )
+    expect(form.notifications).toEqual({
+      url: 'https://ntfy.sh/bowtie',
+      events: { recordingFailed: true, diskLow: true, recordingReady: true, guideFailed: true },
+    })
+  })
+
+  it('payload sends only notifications, trimmed url and every event', () => {
+    const form = withNotifications('  https://ntfy.sh/bowtie  ', {
+      recordingFailed: false,
+      diskLow: true,
+      recordingReady: true,
+      guideFailed: false,
+    })
+    expect(buildSectionPayload('notifications', form)).toEqual({
+      notifications: {
+        url: 'https://ntfy.sh/bowtie',
+        events: { recordingFailed: false, diskLow: true, recordingReady: true, guideFailed: false },
+      },
+    })
+  })
+
+  it('empty url is allowed (turns notifications off)', () => {
+    expect(validateNotificationsHint('')).toBeNull()
+    expect(validateNotificationsHint('   ')).toBeNull()
+    expect(buildSectionPayload('notifications', withNotifications('')).notifications?.url).toBe('')
+  })
+
+  it('url must be http(s)', () => {
+    expect(validateNotificationsHint('https://ntfy.sh/x')).toBeNull()
+    expect(validateNotificationsHint('http://10.0.0.5:8080/hook')).toBeNull()
+    expect(validateNotificationsHint('https://u:p@ntfy.example.com/t')).toBeNull()
+    for (const bad of ['ntfy.sh/x', 'ftp://ntfy.sh/x', '/var/hook', 'javascript:alert(1)', 'https://']) {
+      expect(validateNotificationsHint(bad)).toBe('Notification URL must be an http(s) URL')
+    }
+  })
+
+  it('detects the target like the server', () => {
+    expect(notificationTarget('https://ntfy.sh/topic')).toBe('ntfy')
+    expect(notificationTarget('https://user:pass@ntfy.example.com/t')).toBe('ntfy')
+    expect(notificationTarget('https://discord.com/api/webhooks/1/abc')).toBe('discord')
+    expect(notificationTarget('https://canary.discordapp.com/api/webhooks/1/abc')).toBe('discord')
+    expect(notificationTarget('https://discord.com/channels/1')).toBe('webhook')
+    expect(notificationTarget('https://notdiscord.com/api/webhooks/1')).toBe('webhook')
+    expect(notificationTarget('https://hooks.example.com/x')).toBe('webhook')
+    expect(notificationTarget('')).toBeNull()
+    expect(notificationTarget('not a url')).toBeNull()
+    expect(notificationTargetLabel('https://ntfy.sh/t')).toBe('Sends as an ntfy notification.')
+    expect(notificationTargetLabel('')).toBeNull()
+  })
+
+  it('describes test results', () => {
+    expect(describeTestResult({ target: 'ntfy', ok: true, status: 200 })).toBe('Test sent.')
+    expect(
+      describeTestResult({ target: 'webhook', ok: false, status: 404, error: 'h answered 404 Not Found' }),
+    ).toBe('Test failed: h answered 404 Not Found')
+    expect(describeTestResult({ target: 'webhook', ok: false, status: 500 })).toBe('Test failed: HTTP 500')
+    expect(describeTestResult({ target: 'webhook', ok: false })).toBe('Test failed: no answer')
+  })
+
+  it('event options cover every event once, with the hint copy', () => {
+    expect(NOTIFICATION_EVENT_OPTIONS.map((o) => o.key).sort()).toEqual(
+      Object.keys(DEFAULT_NOTIFICATION_EVENTS).sort(),
+    )
+    expect(NOTIFICATIONS_PLACEHOLDER).toBe('https://ntfy.sh/your-topic')
+    expect(NOTIFICATIONS_HINT).toBe(
+      'Works with ntfy (free phone app), Discord webhooks, or any URL that accepts a JSON POST.',
+    )
   })
 })

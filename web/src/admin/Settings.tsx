@@ -9,6 +9,12 @@ import {
   encoderOptions,
   lineupOptionLabel,
   settingsToForm,
+  NOTIFICATIONS_HINT,
+  NOTIFICATIONS_PLACEHOLDER,
+  NOTIFICATION_EVENT_OPTIONS,
+  describeTestResult,
+  notificationTargetLabel,
+  validateNotificationsHint,
   validateStreamingHint,
   validateTranscodeHint,
   validateXmltvHint,
@@ -30,6 +36,8 @@ export function Settings() {
   const [lineupBusy, setLineupBusy] = useState(false)
   const [lineupError, setLineupError] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
+  const [testBusy, setTestBusy] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -77,6 +85,13 @@ export function Settings() {
     }
     if (section === 'streaming') {
       const h = validateStreamingHint(form.streaming.bufferMinutes)
+      if (h) {
+        setHint(h)
+        return
+      }
+    }
+    if (section === 'notifications' && form.notifications) {
+      const h = validateNotificationsHint(form.notifications.url)
       if (h) {
         setHint(h)
         return
@@ -135,6 +150,35 @@ export function Settings() {
   function onHdhomerunSubmit(e: FormEvent) {
     e.preventDefault()
     void saveSection('hdhomerun')
+  }
+
+  function onNotificationsSubmit(e: FormEvent) {
+    e.preventDefault()
+    void saveSection('notifications')
+  }
+
+  /** Sends a test to the URL in the field (saved or not). */
+  async function onSendTest() {
+    if (!form?.notifications) return
+    const url = form.notifications.url.trim()
+    setTestResult(null)
+    const h = validateNotificationsHint(url)
+    if (url === '' || h) {
+      setTestResult({ ok: false, text: h ?? 'Enter a notification URL first.' })
+      return
+    }
+    setTestBusy(true)
+    try {
+      const r = await client.testNotification(url)
+      setTestResult({ ok: r.ok, text: describeTestResult(r) })
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        text: err instanceof ApiError ? err.message || 'Test failed' : 'Test failed',
+      })
+    } finally {
+      setTestBusy(false)
+    }
   }
 
   if (loading && !form) {
@@ -506,6 +550,102 @@ export function Settings() {
         </div>
       </form>
 
+      {/* Notifications (servers that support them) */}
+      {form.notifications ? (
+        <form className={styles.settingsCard} onSubmit={onNotificationsSubmit}>
+          <div className={styles.sectionHead}>
+            <h3 className={styles.cardTitle}>Notifications</h3>
+          </div>
+          <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+            {NOTIFICATIONS_HINT}
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '40rem' }}>
+            <label className={styles.label}>
+              URL
+              <input
+                className={styles.input}
+                type="url"
+                value={form.notifications.url}
+                onChange={(e) => {
+                  const url = e.target.value
+                  setTestResult(null)
+                  setForm((f) =>
+                    f && f.notifications ? { ...f, notifications: { ...f.notifications, url } } : f,
+                  )
+                }}
+                placeholder={NOTIFICATIONS_PLACEHOLDER}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={saving === 'notifications'}
+              />
+            </label>
+            {notificationTargetLabel(form.notifications.url) ? (
+              <p className={styles.dim} style={{ margin: 0, fontSize: '0.8rem' }}>
+                {notificationTargetLabel(form.notifications.url)}
+              </p>
+            ) : null}
+            {NOTIFICATION_EVENT_OPTIONS.map((opt) => (
+              <label
+                key={opt.key}
+                className={styles.label}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}
+              >
+                <input
+                  className={styles.toggle}
+                  type="checkbox"
+                  checked={form.notifications?.events[opt.key] ?? false}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    setForm((f) =>
+                      f && f.notifications
+                        ? {
+                            ...f,
+                            notifications: {
+                              ...f.notifications,
+                              events: { ...f.notifications.events, [opt.key]: on },
+                            },
+                          }
+                        : f,
+                    )
+                  }}
+                  disabled={saving === 'notifications'}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+          {testResult ? (
+            <p
+              className={testResult.ok ? styles.savedFlash : styles.statusError}
+              role="status"
+              style={{ margin: '0.5rem 0 0' }}
+            >
+              {testResult.text}
+            </p>
+          ) : null}
+          <div className={styles.settingsFooter}>
+            {saved === 'notifications' ? (
+              <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span>
+            ) : null}
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => void onSendTest()}
+              disabled={testBusy || form.notifications.url.trim() === ''}
+            >
+              {testBusy ? 'Sending…' : 'Send test'}
+            </button>
+            <button
+              type="submit"
+              className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+              disabled={saving === 'notifications'}
+            >
+              {saving === 'notifications' ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       <BackupCard />
     </div>
   )
@@ -543,8 +683,8 @@ function BackupCard() {
       </div>
       <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
         Saves accounts, channels, guide matches, series rules, the recording list and these
-        settings (not recorded video). It includes password hashes and the Schedules Direct
-        password, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
+        settings (not recorded video). It includes password hashes, the Schedules Direct
+        password and the notification URL, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
         folder with this file (delete any bowtie.db-journal or -wal file next to it) and
         start Bowtie; everyone signs in again.
       </p>
