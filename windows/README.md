@@ -2,7 +2,7 @@
 
 A native Windows app for watching your Bowtie server: live TV with
 favorites, Recent, guide filters, pause/rewind, Go Live and a sleep timer,
-and DVR recordings with resume and Skip ad.
+and DVR recordings with Continue watching, resume and Skip ad.
 Windows 10 version 1809 or later and Windows 11, on **x64** (Intel/AMD) and
 **ARM64** (Snapdragon, Surface Pro X, Copilot+ PCs).
 
@@ -76,6 +76,10 @@ in the app first).
 
 ## Using it
 
+- **Continue watching** (top of Live TV and Recordings): recordings you've
+  started and not finished, most recent first. Click one to pick up where you
+  stopped; right-click (or Shift+F10) → **Remove from Continue watching**
+  starts it over next time.
 - **Live TV**: favorites first, then every channel; **Recent** shows what you
   watched lately. Click ☆ to star a channel. F5 refreshes. **All · Sports ·
   Movies · News · Kids · New** filter by what's on in the next four hours:

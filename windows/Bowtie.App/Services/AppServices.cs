@@ -23,6 +23,7 @@ public static class AppServices
 {
     private static ChannelListViewModel? s_channels;
     private static RecordingsViewModel? s_recordings;
+    private static ContinueWatchingViewModel? s_continue;
     private static BowtieClient? s_forClient;
 
     public static AppViewModel App { get; private set; } = null!;
@@ -64,6 +65,28 @@ public static class AppServices
         }
     }
 
+    /// <summary>The "Continue watching" strip shown on Live TV and Recordings.</summary>
+    public static ContinueWatchingViewModel Continue
+    {
+        get
+        {
+            EnsureForCurrentClient();
+            return s_continue ??= new ContinueWatchingViewModel(Client);
+        }
+    }
+
+    /// <summary>
+    /// Reload the strip once the player's last position save has landed (up
+    /// to a few seconds), so the item just watched shows where it stopped.
+    /// </summary>
+    public static async Task ReloadContinueAfterPlayerAsync()
+    {
+        var recordings = Recordings;
+        var strip = Continue;
+        await recordings.SavesSettledAsync(TimeSpan.FromSeconds(3));
+        await strip.LoadAsync();
+    }
+
     /// <summary>Screen view models belong to one client (server + sign-in); drop them when it changes.</summary>
     private static void EnsureForCurrentClient()
     {
@@ -71,6 +94,7 @@ public static class AppServices
         s_recordings?.Dispose();
         s_recordings = null;
         s_channels = null;
+        s_continue = null;
         s_forClient = App.Client;
     }
 
@@ -80,6 +104,7 @@ public static class AppServices
         s_recordings?.Dispose();
         s_recordings = null;
         s_channels = null;
+        s_continue = null;
         s_forClient = null;
     }
 }

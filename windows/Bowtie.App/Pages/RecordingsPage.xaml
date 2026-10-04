@@ -42,6 +42,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -56,13 +57,16 @@
             </Button>
         </Grid>
 
-        <SelectorBar x:Name="Tabs" Grid.Row="1" Margin="16,8,16,0" SelectionChanged="OnTabChanged">
+        <!-- Part-watched recordings; hides itself when empty. -->
+        <local:ContinueWatchingStrip x:Name="ContinueStrip" Grid.Row="1" Margin="24,12,24,0" />
+
+        <SelectorBar x:Name="Tabs" Grid.Row="2" Margin="16,8,16,0" SelectionChanged="OnTabChanged">
             <SelectorBarItem x:Name="UpcomingTab" Text="Upcoming" />
             <SelectorBarItem x:Name="RecordedTab" Text="Recorded" IsSelected="True" />
             <SelectorBarItem x:Name="MissedTab" Text="Missed" />
         </SelectorBar>
 
-        <ScrollViewer Grid.Row="2">
+        <ScrollViewer Grid.Row="3">
             <StackPanel Padding="24,8,24,24" Spacing="8">
                 <InfoBar x:Name="MessageBar" IsOpen="False" Severity="Error" IsClosable="True"
                          Closed="OnMessageClosed" />

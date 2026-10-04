@@ -118,6 +118,9 @@
                 <TextBlock x:Name="EmptyLabel" Visibility="Collapsed" TextWrapping="Wrap"
                            Text="No channels yet. An admin can turn channels on in the web app under Admin → Channels." />
 
+                <!-- Part-watched recordings; hides itself when empty. -->
+                <local:ContinueWatchingStrip x:Name="ContinueStrip" />
+
                 <StackPanel x:Name="RecentPanel" Spacing="8" Visibility="Collapsed">
                     <TextBlock Text="Recent" Style="{StaticResource SubtitleTextBlockStyle}" />
                     <ScrollViewer HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto"

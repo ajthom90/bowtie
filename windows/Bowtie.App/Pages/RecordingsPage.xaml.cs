@@ -23,6 +23,8 @@ public sealed partial class RecordingsPage : Page
             Render();
         };
         Unloaded += (_, _) => _vm.PropertyChanged -= OnVmChanged;
+        // Removing from Continue watching resets the position: the "stopped at" line changes.
+        ContinueStrip.ItemRemoved += (_, _) => _ = _vm.RefreshAsync();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -35,10 +37,17 @@ public sealed partial class RecordingsPage : Page
             _ => RecordedTab,
         };
         _ = _vm.SelectTabAsync(_vm.Tab);
+        ContinueStrip.Reload();
     }
 
     /// <summary>Called by the shell when the player closes: positions changed.</summary>
-    public void OnReturnedFromPlayer() => _ = _vm.RefreshAsync();
+    public async void OnReturnedFromPlayer()
+    {
+        ContinueStrip.ReloadAfterPlayer();
+        // Let the player's last position save land so "stopped at" is current.
+        await _vm.SavesSettledAsync(TimeSpan.FromSeconds(3));
+        await _vm.RefreshAsync();
+    }
 
     private void OnVmChanged(object? sender, PropertyChangedEventArgs e) => DispatcherQueue.TryEnqueue(Render);
 
@@ -78,7 +87,11 @@ public sealed partial class RecordingsPage : Page
         if (tab != _vm.Tab) _ = _vm.SelectTabAsync(tab);
     }
 
-    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = _vm.RefreshAsync();
+    private void OnRefreshClick(object sender, RoutedEventArgs e)
+    {
+        _ = _vm.RefreshAsync();
+        ContinueStrip.Reload();
+    }
 
     private void OnMessageClosed(InfoBar sender, InfoBarClosedEventArgs args) => _vm.ClearMessage();
 
@@ -137,6 +150,6 @@ public sealed partial class RecordingsPage : Page
             };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         }
-        await _vm.DeleteAsync(r);
+        if (await _vm.DeleteAsync(r)) ContinueStrip.Reload();
     }
 }

@@ -41,10 +41,15 @@ public sealed partial class ChannelsPage : Page
     {
         base.OnNavigatedTo(e);
         _ = _vm.RefreshIfStaleAsync();
+        ContinueStrip.Reload();
     }
 
-    /// <summary>Called by the shell when the player closes: the Recent row may have changed.</summary>
-    public void OnReturnedFromPlayer() => _ = _vm.RefreshRecentsAsync();
+    /// <summary>Called by the shell when the player closes: the Recent row and saved positions may have changed.</summary>
+    public void OnReturnedFromPlayer()
+    {
+        _ = _vm.RefreshRecentsAsync();
+        ContinueStrip.ReloadAfterPlayer();
+    }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -101,7 +106,11 @@ public sealed partial class ChannelsPage : Page
         AllHeader.Visibility = showLists && favorites.Count > 0 && others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = _vm.RefreshAsync();
+    private void OnRefreshClick(object sender, RoutedEventArgs e)
+    {
+        _ = _vm.RefreshAsync();
+        ContinueStrip.Reload();
+    }
 
     /// <summary>Select the chip for <paramref name="filter"/> without treating it as a user pick.</summary>
     private void SyncFilterBar(GuideFilter filter)
