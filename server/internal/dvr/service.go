@@ -298,7 +298,7 @@ func (s *Service) padding() (time.Duration, time.Duration) {
 }
 
 // overlapping returns pending recordings whose show times overlap r's
-// (padding is soft and ignored).
+// (padding is soft and ignored: end padding gives way, see yieldEndPadding).
 func (s *Service) overlapping(r store.Recording) ([]store.Recording, error) {
 	pending, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
 	if err != nil {
@@ -384,10 +384,44 @@ func (s *Service) Tick() {
 			s.startCapture(r)
 		}
 	}
+	s.yieldEndPadding(rows, now)
 	if now.Sub(s.lastSweep) >= sweepEvery {
 		s.lastSweep = now
 		s.ApplyRules()
 		s.sweep()
+	}
+}
+
+// yieldEndPadding keeps padding soft: for each recording whose show has
+// started but that is waiting for a tuner, stop one capture on another channel
+// that is only in its end padding (its show is over).
+func (s *Service) yieldEndPadding(rows []store.Recording, now time.Time) {
+	stopped := map[int64]bool{}
+	for _, w := range rows {
+		if w.State != store.RecWaiting || w.Failure != "noTuner" || now.Before(w.Start) {
+			continue
+		}
+		var pick *store.Recording
+		for i := range rows {
+			r := &rows[i]
+			if r.State != store.RecRecording || r.ChannelID == w.ChannelID || stopped[r.ID] || now.Before(r.Stop) {
+				continue
+			}
+			s.mu.Lock()
+			_, active := s.captures[r.ID]
+			s.mu.Unlock()
+			if active && (pick == nil || r.Stop.Before(pick.Stop)) {
+				pick = r
+			}
+		}
+		if pick == nil {
+			continue
+		}
+		stopped[pick.ID] = true
+		log.Printf("dvr: recording %d: ending its padding early so recording %d can start", pick.ID, w.ID)
+		if err := s.StopNow(pick.ID); err != nil {
+			log.Printf("dvr: recording %d: %v", pick.ID, err)
+		}
 	}
 }
 
@@ -470,6 +504,9 @@ func (s *Service) delete(id int64, allowSkip bool) error {
 			log.Printf("dvr: remove %s: %v", r.Dir, err)
 		}
 	}
+	s.usedMu.Lock()
+	s.usedAt = time.Time{} // the storage figure is stale now
+	s.usedMu.Unlock()
 	return nil
 }
 

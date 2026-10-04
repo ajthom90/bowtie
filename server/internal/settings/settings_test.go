@@ -382,3 +382,18 @@ func TestDVRPaddingDurations(t *testing.T) {
 		t.Fatalf("DVRPadding = %v %v %v", start, end, err)
 	}
 }
+
+// Values edited straight into the database are kept within the allowed range.
+func TestDVRPaddingClampsStoredValues(t *testing.T) {
+	p, st := openProvider(t)
+	if err := st.SetSetting(settings.KeyDVRPadStartSeconds, "-50"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(settings.KeyDVRPadEndSeconds, "999999"); err != nil {
+		t.Fatal(err)
+	}
+	start, end, err := p.DVRPadding()
+	if err != nil || start != 0 || end != time.Hour {
+		t.Fatalf("DVRPadding = %v %v %v; want 0 1h", start, end, err)
+	}
+}

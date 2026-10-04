@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -353,10 +354,10 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 			return nil, "dvr.padStartSeconds is required"
 		case end == nil:
 			return nil, "dvr.padEndSeconds is required"
-		case *start < 0 || *start > 1800:
-			return nil, "dvr.padStartSeconds must be between 0 and 1800"
-		case *end < 0 || *end > 3600:
-			return nil, "dvr.padEndSeconds must be between 0 and 3600"
+		case *start < 0 || *start > settings.MaxPadStartSeconds:
+			return nil, fmt.Sprintf("dvr.padStartSeconds must be between 0 and %d", settings.MaxPadStartSeconds)
+		case *end < 0 || *end > settings.MaxPadEndSeconds:
+			return nil, fmt.Sprintf("dvr.padEndSeconds must be between 0 and %d", settings.MaxPadEndSeconds)
 		}
 		kv[settings.KeyDVRPadStartSeconds] = strconv.Itoa(*start)
 		kv[settings.KeyDVRPadEndSeconds] = strconv.Itoa(*end)

@@ -121,6 +121,19 @@ func TestStorage(t *testing.T) {
 	if got, _ = e.svc.Storage(); got.UsedBytes != want.UsedBytes+5000 {
 		t.Fatalf("after cache expiry usedBytes = %d", got.UsedBytes)
 	}
+
+	// Deleting a recording refreshes the figure right away.
+	ready, _ := e.st.ListRecordings(store.RecReady)
+	for _, r := range ready {
+		if r.SizeBytes == 5000 {
+			if err := e.svc.Delete(r.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got, _ = e.svc.Storage(); got.UsedBytes != want.UsedBytes {
+		t.Fatalf("after delete usedBytes = %d, want %d", got.UsedBytes, want.UsedBytes)
+	}
 }
 
 func TestDiskSpaceOfRealDir(t *testing.T) {

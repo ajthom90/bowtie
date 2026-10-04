@@ -124,8 +124,15 @@ func (p *Provider) DVRPadding() (start, end time.Duration, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	return time.Duration(d.PadStartSeconds) * time.Second, time.Duration(d.PadEndSeconds) * time.Second, nil
+	clamp := func(n, hi int) time.Duration { return time.Duration(min(max(n, 0), hi)) * time.Second }
+	return clamp(d.PadStartSeconds, MaxPadStartSeconds), clamp(d.PadEndSeconds, MaxPadEndSeconds), nil
 }
+
+// Padding limits (seconds) for the admin setting.
+const (
+	MaxPadStartSeconds = 1800
+	MaxPadEndSeconds   = 3600
+)
 
 func (p *Provider) intOr(key string, def int) (int, error) {
 	raw, err := p.st.GetSetting(key)

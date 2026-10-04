@@ -451,3 +451,42 @@ func waitPartData(t *testing.T, st *store.Store, id int64, name string) {
 	}
 	t.Fatalf("recording %d: %s never got data", id, name)
 }
+
+// End padding gives way: when a recording is waiting for a tuner and its show
+// has started, a capture on another channel that is only in its end padding
+// stops (not marked partial) so the tuner frees up.
+func TestEndPaddingYieldsToWaitingRecording(t *testing.T) {
+	e := newEnv(t)
+	a := e.schedule(t, "5.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	b := e.schedule(t, "9.1", t0.Add(30*time.Minute), t0.Add(60*time.Minute))
+	e.clock.Set(a.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, a.ID, store.RecRecording)
+
+	e.src.mu.Lock()
+	e.src.busy = 1 << 20 // every other tuner is in use
+	e.src.mu.Unlock()
+	e.clock.Set(b.WindowStart()) // B's start padding: A's show is still on
+	e.svc.Tick()
+	waitState(t, e.st, b.ID, store.RecWaiting)
+	if r, _ := e.st.RecordingByID(a.ID); r.State != store.RecRecording {
+		t.Fatalf("A stopped during its show: %q", r.State)
+	}
+
+	e.clock.Set(b.Start) // A's show is over; only its end padding remains
+	e.svc.Tick()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r, _ := e.st.RecordingByID(a.ID)
+		if r.State == store.RecConverting || r.State == store.RecReady {
+			if r.PadEndSec != 0 || r.Partial {
+				t.Fatalf("A pad_end=%d partial=%v", r.PadEndSec, r.Partial)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("A still %q: its end padding kept the tuner", r.State)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
