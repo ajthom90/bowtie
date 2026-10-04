@@ -606,3 +606,21 @@
     font-size: 0.8rem;
   }
 }
+
+/* Username → Account page */
+.userBtn {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userRole {
+  color: var(--text-dim);
+}
+
+/* Parental lock + rating on a blocked program */
+.lockMark {
+  color: var(--text);
+  white-space: nowrap;
+}
