@@ -29,7 +29,9 @@ struct LoginView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     fieldBlock(title: "Username", field: .username) {
                         TextField("Username", text: $username)
+                            #if !os(macOS)
                             .textInputAutocapitalization(.never)
+                            #endif
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textContentType(.username)
