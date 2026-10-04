@@ -10,6 +10,7 @@ import {
   formatDuration,
   formatSize,
   formatWhen,
+  guideMarkText,
   guideRecLabel,
   programRecordAction,
   recordingBadges,
@@ -197,6 +198,17 @@ describe('guideRecLabel', () => {
     expect(guideRecLabel({ id: 1, state: 'scheduled' })).toBe('●')
     expect(guideRecLabel({ id: 1, state: 'waiting' })).toBe('●')
     expect(guideRecLabel({ id: 1, state: 'ready' })).toBe('●')
+  })
+})
+
+describe('guideMarkText', () => {
+  it('describes a guide mark in words', () => {
+    expect(guideMarkText('scheduled')).toBe('Recording scheduled')
+    expect(guideMarkText('waiting')).toBe('Waiting for a tuner')
+    expect(guideMarkText('recording')).toBe('Recording now')
+    expect(guideMarkText('converting')).toBe('Recorded')
+    expect(guideMarkText('ready')).toBe('Recorded')
+    expect(guideMarkText('something')).toBe('')
   })
 })
 

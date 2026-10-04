@@ -147,6 +147,23 @@ export function guideRecLabel(mark: GuideRecordingMark | undefined): string | nu
   return mark.state === 'recording' ? '● REC' : '●'
 }
 
+/** A guide mark's state in words, for the program popover. */
+export function guideMarkText(state: string): string {
+  switch (state) {
+    case 'scheduled':
+      return 'Recording scheduled'
+    case 'waiting':
+      return 'Waiting for a tuner'
+    case 'recording':
+      return 'Recording now'
+    case 'converting':
+    case 'ready':
+      return 'Recorded'
+    default:
+      return ''
+  }
+}
+
 export type ProgramRecordAction = 'record' | 'cancel' | 'stop' | 'recorded'
 
 /** What the guide popover offers for a program, or null for nothing. */
