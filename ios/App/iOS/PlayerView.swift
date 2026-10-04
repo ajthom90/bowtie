@@ -355,9 +355,11 @@ struct PlayerView: View {
                 programEnd: { programEnd(shownChannel) },
                 onOpen: { bumpChrome(for: Self.menuOpenDelay) }
             )
+            #if SHAREPLAY
             if canShare || playerModel.groupRole != nil {
                 sharePlayButton
             }
+            #endif
 
             Button {
                 showStats.toggle()
