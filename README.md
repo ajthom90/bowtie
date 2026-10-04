@@ -61,6 +61,9 @@ Each GitHub Release attaches pre-built `bowtie` binaries (web UI embedded, `CGO_
 | `bowtie-<version>.apk`, `bowtie-android.apk` | Android phone/tablet APK ([install guide](docs/install/android.md)) |
 | `bowtie-tv-<version>.apk`, `bowtie-tv.apk` | Fire TV / Android TV APK |
 | `bowtie-roku-<version>.zip` | Roku channel sideload zip |
+| `bowtie-windows-<version>.msixbundle`, `bowtie-windows.msixbundle` | Windows 10/11 app, x64 + ARM64 ([install guide](windows/README.md#install)) |
+| `bowtie-windows-<version>.cer`, `bowtie-windows.cer` | Certificate the Windows bundle is signed with (trust it once per release before installing) |
+| `bowtie-windows-<version>-x64.zip`, `-arm64.zip` | Windows app without installing (unzip and run `Bowtie.exe`) |
 
 ```bash
 # Example: latest Linux amd64
@@ -205,7 +208,7 @@ Default listen address: `:8400`. Health check: `GET /healthz` → `ok`.
 
 ## API
 
-All JSON API routes live under `/api/v1`. The OpenAPI 3.0 document is the **client contract** for the Phase 2/3 native apps (iOS/tvOS, Android, Roku, Fire TV) and any third-party client:
+All JSON API routes live under `/api/v1`. The OpenAPI 3.0 document is the **client contract** for the Phase 2/3 native apps (iOS/tvOS, Android, Roku, Fire TV, Windows) and any third-party client:
 
 **[docs/api/openapi.yaml](docs/api/openapi.yaml)**
 
@@ -218,6 +221,7 @@ A server test (`TestOpenAPICoversRoutes`) asserts that every registered `/api/v1
 ```bash
 cd server && CGO_ENABLED=0 go test ./...   # no real HDHomeRun / FFmpeg required
 cd web && npm ci && npm test && npm run build
+cd windows && dotnet test Bowtie.Core.Tests   # Windows app's client + view models; any OS
 ```
 
 ---
@@ -227,6 +231,7 @@ cd web && npm ci && npm test && npm run build
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
+- **Windows** — native WinUI 3 app for Windows 10 (1809+) and 11 on x64 and ARM64: see [`windows/README.md`](windows/README.md) (install the `.msixbundle` from a release, or unzip and run; build with Visual Studio 2022).
 
 ---
 
