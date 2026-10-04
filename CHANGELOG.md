@@ -5,6 +5,17 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] — 2026-10-04
+
+### Added
+
+- **Notifications (Admin → Settings → Notifications).** Get a message on
+  your phone when a recording fails, the disk is nearly full, or the guide
+  hasn't updated for a day (and optionally when a recording is ready). Paste
+  an [ntfy](https://ntfy.sh) topic URL (free phone app), a Discord webhook,
+  or any URL that accepts a JSON POST, and press **Send test**. See README →
+  Notifications.
+
 ## [0.15.0] — 2026-10-04
 
 ### Added

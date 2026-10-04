@@ -22,7 +22,9 @@ requests that come up most in their forums and subreddits.
 | Watch together remotely | SharePlay on Apple devices |
 | Fall asleep with the TV on | Sleep timer in every TV and mobile app |
 | Don't lose my setup | Admin → Settings → Download backup |
-| Know when the disk is filling up | Admin → Recordings storage gauge |
+| Know when the disk is filling up | Admin → Recordings storage gauge, plus a phone notification |
+| Hear when a recording fails | Notifications to ntfy, Discord or any webhook |
+| Guide by genre | All · Sports · Movies · News · Kids · New filters in every app |
 
 ## Next, in order
 
@@ -32,10 +34,11 @@ requests that come up most in their forums and subreddits.
    phone browser. Chromecast needs the Cast SDK and a device to test on.
 3. **Multiview on TVs.** Apple TV and Android TV, 2–4 tiles; limited by tuner
    count and by the boxes' decoders.
-4. **Notifications.** "Your recording failed", "disk almost full", "a show you
-   like starts in 5 minutes" — push on Apple/Android, email optional.
-5. **Recording quality options.** Keep the original broadcast (MPEG-2, large)
-   or re-encode to H.264/HEVC to save space.
+4. **Reminders in the apps.** Server notifications (ntfy/Discord/webhook)
+   shipped in 0.16.0; next is "a show you like starts in 5 minutes" as a
+   native push on Apple/Android.
+5. **HEVC recordings.** Recording quality (720p / up to 1080p) shipped in
+   0.15.0; HEVC would roughly halve the size where every client can play it.
 6. **More free guide data.** Over-the-air PSIP/EIT from the tuner itself
    (about 12 hours, no account) as a last-resort fallback.
 
