@@ -5,6 +5,21 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.1] — 2026-10-04
+
+### Fixed
+
+- **Web: leaving a channel while it's still starting** no longer leaves a
+  tuner busy for a couple of minutes.
+- **Web guide with no listings** now says so ("No guide data yet"; admins
+  get a link to Admin → EPG), and Admin → EPG explains the free HDHomeRun
+  guide's once-a-day limit instead of showing "stale" and "HTTP 403".
+- **Web guide search** also finds channels by name or number.
+- Web: focus returns to where you were after closing a player; clearer
+  sign-in and TV-code errors; Admin → Users form fields no longer overlap;
+  Multiview explains that each channel uses a tuner; one request (not two)
+  to stop a stream; screen readers hear "4 seconds behind live".
+
 ## [0.18.0] — 2026-10-04
 
 ### Added
