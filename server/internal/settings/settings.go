@@ -342,23 +342,26 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		encoder = DefaultEncoder
 	}
 
+	// fromConfig: the value comes from config/env (not just a default), so a
+	// different database value is worth a log line.
 	seeds := []struct {
-		key string
-		val string
+		key        string
+		val        string
+		fromConfig bool
 	}{
-		{KeyXMLTVSource, cfg.XMLTV.Source},
-		{KeyXMLTVRefreshHours, strconv.Itoa(refreshHours)},
-		{KeySDUsername, cfg.SchedulesDirect.Username},
-		{KeySDPassword, cfg.SchedulesDirect.Password},
-		{KeySDLineupID, cfg.SchedulesDirect.LineupID},
-		{KeyTranscodeEncoder, encoder},
-		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC)},
-		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes)},
-		{KeyStreamingAdaptive, "false"},
-		{KeyEPGHDHomeRun, "true"},
-		{KeyDVRPadStartSeconds, strconv.Itoa(DefaultPadStartSeconds)},
-		{KeyDVRPadEndSeconds, strconv.Itoa(DefaultPadEndSeconds)},
-		{KeyDVRQuality, DVRQuality720p},
+		{KeyXMLTVSource, cfg.XMLTV.Source, true},
+		{KeyXMLTVRefreshHours, strconv.Itoa(refreshHours), true},
+		{KeySDUsername, cfg.SchedulesDirect.Username, true},
+		{KeySDPassword, cfg.SchedulesDirect.Password, true},
+		{KeySDLineupID, cfg.SchedulesDirect.LineupID, true},
+		{KeyTranscodeEncoder, encoder, true},
+		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC), true},
+		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes), false},
+		{KeyStreamingAdaptive, "false", false},
+		{KeyEPGHDHomeRun, "true", false},
+		{KeyDVRPadStartSeconds, strconv.Itoa(DefaultPadStartSeconds), false},
+		{KeyDVRPadEndSeconds, strconv.Itoa(DefaultPadEndSeconds), false},
+		{KeyDVRQuality, DVRQuality720p, false},
 	}
 
 	for _, s := range seeds {
@@ -376,7 +379,7 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		if err != nil {
 			return fmt.Errorf("GetSetting %s: %w", s.key, err)
 		}
-		if cur != s.val {
+		if cur != s.val && s.fromConfig {
 			// Do not log secret values (password); key name is enough.
 			if s.key == KeySDPassword {
 				log.Printf("settings: %s is set in the database; config/env value ignored (Admin → Settings is the control plane)", s.key)

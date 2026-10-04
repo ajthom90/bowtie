@@ -569,7 +569,7 @@ function ChannelRow({
                   style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
                   onClick={() => onSelect(cell.program)}
                   aria-haspopup="dialog"
-                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}${cell.program.locked ? ', blocked by parental controls' : ''}${recWords ? `, ${recWords.toLowerCase()}` : ''}`}
+                  aria-label={`${cell.program.title}, channel ${channel.guideNumber}${cell.program.locked ? ', blocked by parental controls' : ''}${recWords ? `, ${recWords.toLowerCase()}` : ''}${dimmed ? `, not in ${filterLabel(filter)}` : ''}`}
                 >
                   <span className={styles.cellTitle}>
                     {rec ? (

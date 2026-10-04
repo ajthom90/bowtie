@@ -1,7 +1,11 @@
 package settings_test
 
 import (
+	"bytes"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,5 +459,30 @@ func TestDVRPaddingClampsStoredValues(t *testing.T) {
 	start, end, err := p.DVRPadding()
 	if err != nil || start != 0 || end != time.Hour {
 		t.Fatalf("DVRPadding = %v %v %v; want 0 1h", start, end, err)
+	}
+}
+
+// Settings with no config/env source (padding, recording quality, ...) don't
+// log "config/env value ignored" on every start once an admin changes them.
+func TestSeedLogsOnlyKeysWithAConfigSource(t *testing.T) {
+	p, st := openProvider(t)
+	if err := st.SetSetting(settings.KeyDVRQuality, settings.DVRQuality1080p); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(settings.KeyTranscodeEncoder, "software"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	if err := p.SeedFromConfig(config.Config{Encoder: "auto"}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, settings.KeyDVRQuality) {
+		t.Errorf("logged a key with no config source: %s", out)
+	}
+	if !strings.Contains(out, settings.KeyTranscodeEncoder) {
+		t.Errorf("config-backed key not logged: %q", out)
 	}
 }

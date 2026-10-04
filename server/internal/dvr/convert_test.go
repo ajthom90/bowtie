@@ -48,8 +48,9 @@ func TestVODRung(t *testing.T) {
 		// 1080p keeps a 1080-line broadcast (some encoders write 1088).
 		{settings.DVRQuality1080p, 1080, transcode.Rung{Height: 1080, VideoKbps: 8000}},
 		{settings.DVRQuality1080p, 1088, transcode.Rung{Height: 1080, VideoKbps: 8000}},
-		// Unknown height (H.264 video): as the live single-rung rule.
-		{settings.DVRQuality1080p, 0, transcode.Rung{Height: 1080, VideoKbps: 8000}},
+		// Unknown height (H.264 video, no sequence header seen): assumed 720
+		// like live streaming (transcode.UnknownSourceHeight) — no upscale.
+		{settings.DVRQuality1080p, 0, transcode.Rung{Height: 720, VideoKbps: 6000}},
 		// 720p broadcasts aren't upscaled; they get more bits instead.
 		{settings.DVRQuality1080p, 720, transcode.Rung{Height: 720, VideoKbps: 6000}},
 		// Never worse than 720p mode.

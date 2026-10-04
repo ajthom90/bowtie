@@ -33,9 +33,12 @@ const probeLimit = 8 << 20
 // 1080-line broadcast (1080i is deinterlaced to 1080p), gives a 720p
 // broadcast more bits instead of upscaling it, and is never worse than 720p.
 func vodRung(quality string, srcHeight int) transcode.Rung {
+	if srcHeight <= 0 {
+		srcHeight = transcode.UnknownSourceHeight // as live: never upscale a guess
+	}
 	if quality == settings.DVRQuality1080p {
 		switch {
-		case srcHeight <= 0 || srcHeight >= 1080:
+		case srcHeight >= 1080:
 			return transcode.Rung{Height: 1080, VideoKbps: 8000}
 		case srcHeight >= 720:
 			return transcode.Rung{Height: 720, VideoKbps: 6000}
