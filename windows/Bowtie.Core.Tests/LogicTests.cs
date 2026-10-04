@@ -122,6 +122,17 @@ public class RecordingLogicTests
     }
 
     [Fact]
+    public void Locked_recordings_cannot_play_and_show_a_lock_badge()
+    {
+        var locked = R("ready") with { Locked = true, Rating = "TV-MA" };
+        Assert.Equal(new[] { RecordingAction.Keep, RecordingAction.Delete }, RecordingLogic.Actions(locked));
+        Assert.Equal("🔒 TV-MA", RecordingLogic.LockLabel(locked));
+        Assert.Contains(new Badge("🔒 TV-MA", BadgeTone.Alert), RecordingLogic.Badges(locked));
+        Assert.Equal("🔒 Not rated", RecordingLogic.LockLabel(R("ready") with { Locked = true }));
+        Assert.Null(RecordingLogic.LockLabel(R("ready")));
+    }
+
+    [Fact]
     public void Labels_and_confirmation()
     {
         Assert.Equal("Cancel", RecordingLogic.DeleteLabel(R("scheduled")));

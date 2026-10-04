@@ -75,6 +75,7 @@ public static class RecordingLogic
         }
         if (r.Partial) output.Add(new Badge("Partial", BadgeTone.Warn));
         if (r.IsProtected) output.Add(new Badge("Kept", BadgeTone.Good));
+        if (LockLabel(r) is { } lockLabel) output.Add(new Badge(lockLabel, BadgeTone.Alert));
         return output;
     }
 
@@ -91,11 +92,15 @@ public static class RecordingLogic
         _ => r.Partial ? "Part of this program is missing" : null,
     };
 
-    /// <summary>Play when ready; stop/keep/delete only when the caller can manage it.</summary>
+    /// <summary>"🔒 TV-MA" when parental controls block it for the caller; null otherwise.</summary>
+    public static string? LockLabel(Recording r) =>
+        r.Locked ? "🔒 " + (r.Rating.Length > 0 ? r.Rating : "Not rated") : null;
+
+    /// <summary>Play when ready (and not locked by parental controls); stop/keep/delete only when the caller can manage it.</summary>
     public static IReadOnlyList<RecordingAction> Actions(Recording r)
     {
         var output = new List<RecordingAction>();
-        if (r.State == Recording.Ready) output.Add(RecordingAction.Play);
+        if (r.State == Recording.Ready && !r.Locked) output.Add(RecordingAction.Play);
         if (!r.CanManage) return output;
         if (r.State == Recording.InProgress) output.Add(RecordingAction.Stop);
         if (r.State is Recording.Ready or Recording.Converting) output.Add(RecordingAction.Keep);

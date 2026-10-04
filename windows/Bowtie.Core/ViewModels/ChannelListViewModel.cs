@@ -1,10 +1,13 @@
 namespace Bowtie.Core.ViewModels;
 
-/// <summary>A channel row joined with the guide's now/next.</summary>
-public sealed record ChannelRow(Channel Channel, GuideLogic.NowNext NowNext)
+/// <summary>A channel row joined with the guide's now/next (and its programs in the loaded window, for filters).</summary>
+public sealed record ChannelRow(Channel Channel, GuideLogic.NowNext NowNext, IReadOnlyList<GuideProgram>? Programs = null)
 {
     public long Id => Channel.Id;
     public bool IsFavorite => Channel.IsFavorite;
+
+    /// <summary>The channel's programs in the loaded guide window (empty without guide data).</summary>
+    public IReadOnlyList<GuideProgram> GuidePrograms => Programs ?? Array.Empty<GuideProgram>();
 }
 
 public enum ChannelListStatus { Loading, Loaded, Empty, Failed }
@@ -12,7 +15,8 @@ public enum ChannelListStatus { Loading, Loaded, Empty, Failed }
 /// <summary>
 /// Channel list: channels joined with a 4-hour guide window, favorites
 /// first (guide-number order) then the rest in server order, the Recent row,
-/// and optimistic star toggles that revert with a message when refused.
+/// optimistic star toggles that revert with a message when refused, and the
+/// guide category chip (remembered per device).
 /// A server without favorites omits <c>favorite</c>: stars and Recent hide.
 /// Mirrors the Android ChannelListViewModel.
 /// </summary>
@@ -28,6 +32,7 @@ public sealed class ChannelListViewModel : ObservableObject
 
     private readonly BowtieClient _client;
     private readonly Func<DateTimeOffset> _now;
+    private readonly AppPreferences _prefs;
 
     private ChannelListStatus _status = ChannelListStatus.Loading;
     private IReadOnlyList<ChannelRow> _rows = Array.Empty<ChannelRow>();
@@ -37,11 +42,56 @@ public sealed class ChannelListViewModel : ObservableObject
     private string? _message;
     private Dictionary<long, int> _serverOrder = new();
     private DateTimeOffset? _lastLoadedAt;
+    private DateTimeOffset? _windowEnd;
+    private GuideFilter _filter;
 
-    public ChannelListViewModel(BowtieClient client, Func<DateTimeOffset>? now = null)
+    public ChannelListViewModel(BowtieClient client, Func<DateTimeOffset>? now = null, AppPreferences? prefs = null)
     {
         _client = client;
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        _prefs = prefs ?? new AppPreferences(new InMemoryPreferences());
+        _filter = _prefs.GuideFilter;
+    }
+
+    /// <summary>The guide category chip (All · Sports · Movies · News · Kids · New).</summary>
+    public GuideFilter Filter
+    {
+        get => _filter;
+        private set => SetProperty(ref _filter, value);
+    }
+
+    /// <summary>Pick a chip and remember it on this device.</summary>
+    public void SetFilter(GuideFilter filter)
+    {
+        Filter = filter;
+        _prefs.GuideFilter = filter;
+    }
+
+    /// <summary>End of the loaded guide window (its start is "now").</summary>
+    private DateTimeOffset WindowEnd(DateTimeOffset at) => _windowEnd ?? at + GuideWindow;
+
+    /// <summary>
+    /// <paramref name="rows"/> with something matching <see cref="Filter"/>
+    /// between <paramref name="at"/> and the end of the loaded window, order
+    /// kept. All returns every row.
+    /// </summary>
+    public IReadOnlyList<ChannelRow> VisibleRows(IReadOnlyList<ChannelRow> rows, DateTimeOffset at)
+    {
+        var filter = Filter;
+        if (filter == GuideFilter.All) return rows;
+        var to = WindowEnd(at);
+        return rows.Where(r => filter.Matches(r.GuidePrograms, at, to)).ToList();
+    }
+
+    /// <summary>How <paramref name="row"/> reads under <see cref="Filter"/> (dimmed lines, a later match).</summary>
+    public GuideFilters.RowHighlight Highlight(ChannelRow row, DateTimeOffset at) =>
+        Filter.Highlight(row.NowNext, row.GuidePrograms, at, WindowEnd(at));
+
+    /// <summary>When the program on <paramref name="channelId"/> at <paramref name="at"/> ends; null when unknown.</summary>
+    public DateTimeOffset? ProgramEndFor(long channelId, DateTimeOffset at)
+    {
+        var row = Rows.FirstOrDefault(r => r.Id == channelId);
+        return row == null ? null : GuideLogic.ComputeNowNext(row.GuidePrograms, at).Now?.Stop;
     }
 
     public ChannelListStatus Status
@@ -131,9 +181,13 @@ public sealed class ChannelListViewModel : ObservableObject
             var byId = new Dictionary<long, GuideChannel>();
             foreach (var g in guide) byId[g.ChannelId] = g;
             var rows = channels
-                .Select(c => new ChannelRow(c, GuideLogic.ComputeNowNext(
-                    byId.TryGetValue(c.Id, out var g) ? g.Programs : Array.Empty<GuideProgram>(), at)))
+                .Select(c =>
+                {
+                    var programs = byId.TryGetValue(c.Id, out var g) ? g.Programs : Array.Empty<GuideProgram>();
+                    return new ChannelRow(c, GuideLogic.ComputeNowNext(programs, at), programs);
+                })
                 .ToList();
+            _windowEnd = at + GuideWindow;
             supported = channels.Any(c => c.Favorite != null);
             _serverOrder = channels.Select((c, i) => (c.Id, i)).ToDictionary(t => t.Id, t => t.i);
             FavoritesSupported = supported;

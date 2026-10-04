@@ -88,7 +88,16 @@ public sealed record GuideProgram
     public string Title { get; init; } = "";
     public string Subtitle { get; init; } = "";
     public string Description { get; init; } = "";
+    /// <summary>Raw guide category; newer servers join several with "; ".</summary>
     public string Category { get; init; } = "";
+    /// <summary>Guide program ID of the episode (Schedules Direct: MV… movies, SP… sports).</summary>
+    public string? ProgramId { get; init; }
+    /// <summary>First airing; null when the guide doesn't say.</summary>
+    public bool? IsNew { get; init; }
+    /// <summary>Rating from the guide (e.g. "TV-14"); "" = not rated.</summary>
+    public string Rating { get; init; } = "";
+    /// <summary>Parental controls block this program for the caller.</summary>
+    public bool Locked { get; init; }
     public GuideRecordingMark? Recording { get; init; }
 }
 
@@ -177,7 +186,22 @@ public sealed record Recording
     public string ScheduledBy { get; init; } = "";
     /// <summary>The caller may stop, delete or keep it.</summary>
     public bool CanManage { get; init; }
+    /// <summary>The program's rating when scheduled; "" = not rated.</summary>
+    public string Rating { get; init; } = "";
+    /// <summary>Parental controls block it for the caller (play is refused).</summary>
+    public bool Locked { get; init; }
+    /// <summary>
+    /// Detected commercial breaks on the playback timeline; null when none
+    /// were found, detection hasn't run, or the server doesn't detect them.
+    /// </summary>
+    public IReadOnlyList<Commercial>? Commercials { get; init; }
 }
+
+/// <summary>
+/// One detected commercial break: seconds on the recording's playback
+/// timeline, <see cref="Start"/> inclusive, <see cref="End"/> exclusive.
+/// </summary>
+public sealed record Commercial(double Start, double End);
 
 /// <summary>POST /recordings/{id}/play: server-relative, token-signed VOD playlist.</summary>
 public sealed record RecordingPlayback
