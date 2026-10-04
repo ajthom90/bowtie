@@ -119,7 +119,7 @@ export function DvrAdmin() {
           </p>
           <div className={styles.settingsFields}>
             <label className={styles.label}>
-              Start recording N minutes early
+              Minutes to start early
               <input
                 className={styles.input}
                 type="number"
@@ -133,7 +133,7 @@ export function DvrAdmin() {
               />
             </label>
             <label className={styles.label}>
-              Keep recording N minutes after
+              Minutes to keep recording after the end
               <input
                 className={styles.input}
                 type="number"
