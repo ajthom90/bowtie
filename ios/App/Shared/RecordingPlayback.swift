@@ -90,7 +90,8 @@ final class RecordingPlayerController {
                 } catch {
                     return
                 }
-                self?.saveNow()
+                guard let self else { return }
+                self.saveNow()
             }
         }
     }
