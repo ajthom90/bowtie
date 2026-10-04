@@ -17,6 +17,7 @@ struct PlayerView: View {
     @State private var bridge = PlayerBridge()
     @State private var showChrome = true
     @State private var showStats = false
+    @State private var showAudioChoices = false
     @State private var isStopping = false
     @State private var hideChromeTask: Task<Void, Never>?
     @State private var stallRetryTask: Task<Void, Never>?
@@ -33,6 +34,7 @@ struct PlayerView: View {
     ]
 
     private static let chromeHideDelay: Duration = .seconds(3)
+    private static let menuOpenDelay: Duration = .seconds(20)
     private static let noticeHideDelay: Duration = .seconds(4)
 
     var body: some View {
@@ -290,6 +292,9 @@ struct PlayerView: View {
     private var playerButtons: some View {
         HStack(spacing: 10) {
             qualityMenu
+            if bridge.audioOptionNames.count > 1 {
+                audioMenu
+            }
 
             Button {
                 showStats.toggle()
@@ -302,6 +307,35 @@ struct PlayerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(showStats ? "Hide stats" : "Show stats")
+        }
+    }
+
+    /// Broadcast audio language (e.g. Español). AVKit's inline controls on
+    /// iPhone have no audio choice, so Bowtie offers one. A dialog (not a
+    /// Menu) so the chrome's auto-hide can't close it mid-choice.
+    private var audioMenu: some View {
+        Button {
+            showAudioChoices = true
+            bumpChrome(for: Self.menuOpenDelay)
+        } label: {
+            Image(systemName: "waveform")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Theme.amber)
+                .frame(width: 44, height: 44)
+                .background(Theme.raised.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Audio")
+        .accessibilityIdentifier("bowtie.audio")
+        .accessibilityValue(bridge.selectedAudioIndex.map { bridge.audioOptionNames[$0] } ?? "")
+        .confirmationDialog("Audio", isPresented: $showAudioChoices, titleVisibility: .visible) {
+            ForEach(Array(bridge.audioOptionNames.enumerated()), id: \.offset) { index, name in
+                Button(bridge.selectedAudioIndex == index ? "\(name) ✓" : name) {
+                    bridge.selectAudio(index)
+                    bumpChrome()
+                }
+            }
         }
     }
 
@@ -588,13 +622,15 @@ struct PlayerView: View {
         }
     }
 
-    private func bumpChrome() {
+    /// Show the chrome and restart its hide timer. Opening a menu passes a
+    /// longer delay: hiding the chrome would close the menu mid-choice.
+    private func bumpChrome(for delay: Duration = Self.chromeHideDelay) {
         showChrome = true
         hideChromeTask?.cancel()
         guard !isBlockingError else { return }
         hideChromeTask = Task { @MainActor in
             do {
-                try await Task.sleep(for: Self.chromeHideDelay)
+                try await Task.sleep(for: delay)
             } catch {
                 return
             }
@@ -660,6 +696,10 @@ final class PlayerBridge {
     var playerDidJumpToLive = false
     /// Seconds behind the live point; nil until the seekable range is known.
     var secondsBehindLive: Double?
+    /// Broadcast audio choices (AVKit's inline controls offer none on iPhone).
+    var audioOptionNames: [String] = []
+    var selectedAudioIndex: Int?
+    @ObservationIgnored private var audibleGroup: AVMediaSelectionGroup?
 
     private var itemStatusObs: NSKeyValueObservation?
     private var itemKeepUpObs: NSKeyValueObservation?
@@ -668,6 +708,12 @@ final class PlayerBridge {
     private var timeControlObs: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var failedObserver: NSObjectProtocol?
+    /// Saved audio language / captions choice, applied per item.
+    @ObservationIgnored private lazy var mediaMemory: MediaSelectionMemory = {
+        let memory = MediaSelectionMemory()
+        memory.onSelectionChange = { [weak self] item in self?.refreshAudio(item) }
+        return memory
+    }()
     private var boundaryTimeObserver: Any?
     private var periodicTimeObserver: Any?
     /// Startup buffering is not a stall; StallGate decides (shared with tvOS).
@@ -725,6 +771,7 @@ final class PlayerBridge {
 
     private func observe(item: AVPlayerItem) {
         tearDownObservers()
+        mediaMemory.watch(item)
 
         itemStatusObs = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             Task { @MainActor in
@@ -802,6 +849,29 @@ final class PlayerBridge {
         return offset.isNumeric ? offset.seconds : 0
     }
 
+    /// Refresh the audio choices and the selected one from the item.
+    func refreshAudio(_ item: AVPlayerItem) {
+        Task {
+            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible) else {
+                audibleGroup = nil
+                audioOptionNames = []
+                selectedAudioIndex = nil
+                return
+            }
+            audibleGroup = group
+            audioOptionNames = group.options.map(\.displayName)
+            let current = item.currentMediaSelection.selectedMediaOption(in: group)
+            selectedAudioIndex = current.flatMap { group.options.firstIndex(of: $0) }
+        }
+    }
+
+    /// Select broadcast audio track `index` (MediaSelectionMemory saves it).
+    func selectAudio(_ index: Int) {
+        guard let item = player?.currentItem, let group = audibleGroup,
+              group.options.indices.contains(index) else { return }
+        item.select(group.options[index], in: group)
+    }
+
     /// Seek to where AVPlayer plays live (its recommended offset from the edge).
     func jumpToLive() {
         guard let player, let item = player.currentItem,
@@ -845,6 +915,7 @@ final class PlayerBridge {
             handleFailure(item.error)
         case .readyToPlay:
             playerDidRecover = true
+            mediaMemory.itemReady(item)
         case .unknown:
             break
         @unknown default:
@@ -910,6 +981,7 @@ final class PlayerBridge {
     }
 
     private func tearDownObservers() {
+        mediaMemory.stop()
         stallTicker?.cancel()
         stallTicker = nil
         itemStatusObs?.invalidate()
