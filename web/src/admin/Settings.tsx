@@ -564,7 +564,8 @@ export function Settings() {
               URL
               <input
                 className={styles.input}
-                type="url"
+                type="text"
+                inputMode="url"
                 value={form.notifications.url}
                 onChange={(e) => {
                   const url = e.target.value
