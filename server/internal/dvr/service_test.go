@@ -425,3 +425,23 @@ func TestRetentionDeletesOldestUnprotectedWhenLowOnSpace(t *testing.T) {
 		}
 	}
 }
+
+// "Record now": the early padding is already in the past when scheduled, and
+// can't count as missed.
+func TestRecordNowIsNotPartial(t *testing.T) {
+	e := newEnv(t)
+	r := e.schedule(t, "9.1", t0, t0.Add(10*time.Minute))
+	e.svc.Tick()
+	rec := waitState(t, e.st, r.ID, store.RecRecording)
+	if rec.MissedSec != 0 {
+		t.Fatalf("missedSec=%d", rec.MissedSec)
+	}
+	time.Sleep(10 * time.Millisecond)
+	e.clock.Set(t0.Add(2 * time.Minute))
+	if err := e.svc.StopNow(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if done := waitState(t, e.st, r.ID, store.RecReady); done.Partial {
+		t.Fatalf("record-now + stop marked partial: %+v", done)
+	}
+}

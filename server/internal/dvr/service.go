@@ -483,7 +483,7 @@ func (s *Service) noteRecording(id int64, gapFrom time.Time) {
 	switch {
 	case r.ActualStart.IsZero():
 		r.ActualStart = now
-		if late := now.Sub(r.WindowStart()); late > 0 {
+		if late := now.Sub(captureFrom(r)); late > 0 {
 			r.MissedSec = int(late / time.Second)
 		}
 	case !gapFrom.IsZero():
@@ -600,7 +600,7 @@ func (s *Service) convert(id int64) {
 	r.DurationSec = int(dur / time.Second)
 	r.SizeBytes = dirSize(out)
 	captured := r.ActualStop.Sub(r.ActualStart)
-	window := r.WindowStop().Sub(r.WindowStart())
+	window := r.WindowStop().Sub(captureFrom(r))
 	r.Partial = time.Duration(r.MissedSec)*time.Second > partialAfter || window-captured > partialAfter
 	r.State = store.RecReady
 	if err := s.deps.Store.UpdateRecording(r); err != nil {
@@ -632,6 +632,15 @@ func (s *Service) sweep() {
 			s.onDeleted()
 		}
 	}
+}
+
+// captureFrom is when capture could first have started: the padded start,
+// or when the recording was scheduled if that was later ("record now").
+func captureFrom(r store.Recording) time.Time {
+	if from := r.WindowStart(); from.After(r.CreatedAt) {
+		return from
+	}
+	return r.CreatedAt
 }
 
 // PlaylistDir is where a ready recording's HLS VOD lives.
