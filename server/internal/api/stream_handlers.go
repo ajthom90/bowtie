@@ -116,7 +116,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // (admin preview of disabled channels must not leak unlisted names to viewers).
 func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.User) {
 	msg := err.Error()
+	var limitErr *stream.UserLimitError
 	switch {
+	case errors.As(err, &limitErr):
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"error": limitErr.Error(),
+			"code":  "user_limit",
+			"kind":  limitErr.Kind,
+			"limit": limitErr.Limit,
+		})
 	case errors.Is(err, stream.ErrTunersBusy):
 		sessions := []stream.SessionInfo{}
 		if s.deps.Streams != nil {
