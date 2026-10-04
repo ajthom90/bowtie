@@ -85,9 +85,10 @@ type Manager struct {
 	trackProbe time.Duration
 
 	mu       sync.Mutex
-	sessions map[string]*session // by session ID
-	byKey    map[string]*session // by SessionKey
-	viewers  map[string]*Viewer  // by viewer ID
+	sessions map[string]*session       // by session ID
+	byKey    map[string]*session       // by SessionKey
+	viewers  map[string]*Viewer        // by viewer ID
+	pending  map[*reservation]struct{} // limited accounts' in-flight starts (limits.go)
 
 	wg sync.WaitGroup // session supervisors
 }
@@ -123,6 +124,7 @@ func NewManager(deps ManagerDeps) *Manager {
 		sessions:   make(map[string]*session),
 		byKey:      make(map[string]*session),
 		viewers:    make(map[string]*Viewer),
+		pending:    make(map[*reservation]struct{}),
 	}
 }
 
@@ -189,6 +191,13 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 	if !ch.Enabled && user.Role != "admin" {
 		return ViewerHandle{}, fmt.Errorf("channel %d is disabled", channelID)
 	}
+	m.mu.Lock()
+	res, err := m.reserveLocked(user, channelID)
+	m.mu.Unlock()
+	if err != nil {
+		return ViewerHandle{}, err
+	}
+	defer m.releaseReservation(res)
 
 	encoder, allowHEVC, err := m.transcodePrefs()
 	if err != nil {
@@ -220,7 +229,7 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 	var lastErr error
 	for attempt := 0; attempt < startMaxAttempts; attempt++ {
 		tracks := m.multitrack && !fallback
-		h, err, retry := m.startAttempt(ctx, user, ch, key, decision, inputURL, adaptive, tracks)
+		h, err, retry := m.startAttempt(ctx, user, res, ch, key, decision, inputURL, adaptive, tracks)
 		if err == nil {
 			return h, nil
 		}
@@ -256,10 +265,10 @@ func (m *Manager) Start(ctx context.Context, user store.User, channelID int64, c
 //	Close(old sub if any) → Attach → JobSpec.Stdin=sub.R → runner.Start
 //
 // Close on: proc-death, abandon, waitPlaylist failure, Terminate, teardown.
-func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Channel, key string, decision transcode.Decision, inputURL string, adaptive, tracks bool) (ViewerHandle, error, bool) {
+func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reservation, ch store.Channel, key string, decision transcode.Decision, inputURL string, adaptive, tracks bool) (ViewerHandle, error, bool) {
 	m.mu.Lock()
 	if existing, ok := m.byKey[key]; ok && !existing.terminated {
-		h, err := m.addViewerLocked(existing, user.Username, decision.Profile.Height)
+		h, err := m.addViewerLocked(existing, user, res, decision.Profile.Height)
 		m.mu.Unlock()
 		return h, err, false
 	}
@@ -356,7 +365,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 		_ = os.RemoveAll(dir)
 		m.mu.Lock()
 		if existing, ok := m.byKey[key]; ok && !existing.terminated {
-			h, err := m.addViewerLocked(existing, user.Username, decision.Profile.Height)
+			h, err := m.addViewerLocked(existing, user, res, decision.Profile.Height)
 			m.mu.Unlock()
 			return h, err, false
 		}
@@ -367,7 +376,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 	}
 	m.sessions[sessionID] = sess
 	m.byKey[key] = sess
-	h, err := m.addViewerLocked(sess, user.Username, decision.Profile.Height)
+	h, err := m.addViewerLocked(sess, user, res, decision.Profile.Height)
 	m.mu.Unlock()
 	if err != nil {
 		// Unlikely (randomID failure); tear down what we registered.
@@ -383,7 +392,10 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, ch store.Ch
 	return h, nil, false
 }
 
-func (m *Manager) addViewerLocked(sess *session, username string, maxHeight int) (ViewerHandle, error) {
+// addViewerLocked adds user's viewer to sess and consumes res (the start's
+// limit reservation) in the same critical section, so the slot is never
+// counted twice.
+func (m *Manager) addViewerLocked(sess *session, user store.User, res *reservation, maxHeight int) (ViewerHandle, error) {
 	viewerID, err := randomID()
 	if err != nil {
 		return ViewerHandle{}, err
@@ -392,13 +404,15 @@ func (m *Manager) addViewerLocked(sess *session, username string, maxHeight int)
 	v := &Viewer{
 		ID:        viewerID,
 		SessionID: sess.id,
-		Username:  username,
+		UserID:    user.ID,
+		Username:  user.Username,
 		LastSeen:  now,
 		MaxHeight: maxHeight,
 	}
 	sess.viewers[viewerID] = v
 	sess.emptySince = time.Time{}
 	m.viewers[viewerID] = v
+	delete(m.pending, res)
 	return ViewerHandle{
 		ViewerID:   viewerID,
 		SessionID:  sess.id,
