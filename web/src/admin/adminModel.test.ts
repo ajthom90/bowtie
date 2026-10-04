@@ -4,6 +4,10 @@ import {
   anyEpgConfigured,
   anyEpgStale,
   compareGuideNumbers,
+  epgErrorText,
+  epgHealth,
+  epgHealthLabel,
+  epgSummaryBanner,
   epgSources,
   filterAndSortChannels,
   formatTimestamp,
@@ -174,5 +178,69 @@ describe('EPG sources', () => {
     expect(anyEpgConfigured(status())).toBe(false)
     expect(anyEpgConfigured(status({ hdhomerun: st({ configured: true }) }))).toBe(true)
     expect(anyEpgConfigured(status({ sd: st({ configured: true }) }))).toBe(true)
+  })
+})
+
+describe('EPG health and wording', () => {
+  const st = (over: Partial<EPGSourceState> = {}): EPGSourceState => ({
+    configured: true,
+    lastSuccess: '0001-01-01T00:00:00Z',
+    lastError: '',
+    stale: true,
+    ...over,
+  })
+  const ok = '2026-10-03T10:00:00Z'
+
+  it('a source that never succeeded is "never" or "failing", not stale', () => {
+    expect(epgHealth(st())).toBe('never')
+    expect(epgHealth(st({ lastError: 'fetch: HTTP 403' }))).toBe('failing')
+    expect(epgHealthLabel('never')).toBe('Never fetched yet')
+    expect(epgHealthLabel('failing')).toBe('Failing')
+  })
+
+  it('stale only after a success; ok when fresh; off when not configured', () => {
+    expect(epgHealth(st({ lastSuccess: ok }))).toBe('stale')
+    expect(epgHealth(st({ lastSuccess: ok, stale: false }))).toBe('ok')
+    expect(epgHealth(st({ lastSuccess: ok, stale: false, lastError: 'boom' }))).toBe('ok')
+    expect(epgHealth(st({ configured: false, stale: false }))).toBe('off')
+    expect(epgHealthLabel('stale')).toBe('Stale')
+  })
+
+  it('explains the HDHomeRun guide refusing a download (HTTP 403)', () => {
+    expect(epgErrorText('hdhomerun', 'fetch: HTTP 403')).toBe(
+      'SiliconDust allows about one guide download a day per tuner and refused this one (HTTP 403). ' +
+        'Bowtie tries again every hour; the guide fills in once a download succeeds.',
+    )
+  })
+
+  it('keeps other errors, prefixed with plain words', () => {
+    expect(epgErrorText('hdhomerun', 'fetch: HTTP 500')).toBe(
+      'The last guide download failed: fetch: HTTP 500',
+    )
+    expect(epgErrorText('xmltv', 'fetch: HTTP 403')).toBe(
+      'The last guide download failed: fetch: HTTP 403',
+    )
+    expect(epgErrorText('sd', '')).toBe('')
+    expect(epgErrorText('sd', '  ')).toBe('')
+  })
+
+  it('summary banner separates never-downloaded from stale', () => {
+    const status = (over: Partial<EPGSourceStatus>): EPGSourceStatus => ({
+      xmltv: st({ configured: false, stale: false }),
+      sd: st({ configured: false, stale: false }),
+      ...over,
+    })
+    expect(epgSummaryBanner(status({ hdhomerun: st({ lastError: 'fetch: HTTP 403' }) }))).toBe(
+      'No guide data has been downloaded yet. The viewer guide stays empty until a download succeeds.',
+    )
+    expect(epgSummaryBanner(status({ hdhomerun: st({ lastSuccess: ok }) }))).toBe(
+      'One or more EPG sources are stale. Viewer guide data may be incomplete.',
+    )
+    // Another source already has data: the guide isn't empty.
+    expect(
+      epgSummaryBanner(status({ hdhomerun: st(), xmltv: st({ lastSuccess: ok, stale: false }) })),
+    ).toBeNull()
+    expect(epgSummaryBanner(status({ hdhomerun: st({ lastSuccess: ok, stale: false }) }))).toBeNull()
+    expect(epgSummaryBanner(status({}))).toBeNull()
   })
 })
