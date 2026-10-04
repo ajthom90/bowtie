@@ -9,12 +9,15 @@ public final class ChannelListModel {
     public struct Row: Equatable, Identifiable {
         public let channel: Channel
         public let nowNext: GuideLogic.NowNext
+        /// The channel's programs in the loaded guide window (category filters).
+        public let programs: [GuideProgram]
 
         public var id: Int64 { channel.id }
 
-        public init(channel: Channel, nowNext: GuideLogic.NowNext) {
+        public init(channel: Channel, nowNext: GuideLogic.NowNext, programs: [GuideProgram] = []) {
             self.channel = channel
             self.nowNext = nowNext
+            self.programs = programs
         }
     }
 
@@ -38,9 +41,42 @@ public final class ChannelListModel {
     /// Guide request window length: now … now+4h (matches design default).
     private let guideWindow: TimeInterval = 4 * 60 * 60
 
-    public init(client: BowtieClient, now: @escaping () -> Date = Date.init) {
+    public init(
+        client: BowtieClient,
+        now: @escaping () -> Date = Date.init,
+        defaults: UserDefaults = .standard
+    ) {
         self.client = client
         self.now = now
+        self.defaults = defaults
+        self.filter = GuideFilter.load(from: defaults)
+    }
+
+    // MARK: - Category filter
+
+    private let defaults: UserDefaults
+
+    /// The guide category chip; remembered on this device.
+    public var filter: GuideFilter {
+        didSet { filter.save(to: defaults) }
+    }
+
+    /// End of the loaded guide window (start is "now").
+    public private(set) var windowEnd: Date?
+
+    /// Loaded rows with something matching `filter` between `date` and the
+    /// end of the loaded window. `.all` returns every row.
+    public func filteredRows(at date: Date) -> [Row] {
+        filter.visibleRows(rows, from: date, to: windowEnd(from: date))
+    }
+
+    /// How `row` reads under `filter` at `date` (dimmed lines, a later match).
+    public func highlight(for row: Row, at date: Date) -> GuideFilter.RowHighlight {
+        filter.highlight(nowNext: row.nowNext, programs: row.programs, from: date, to: windowEnd(from: date))
+    }
+
+    private func windowEnd(from date: Date) -> Date {
+        windowEnd ?? date.addingTimeInterval(guideWindow)
     }
 
     /// Fetches channels + guide(now..now+4h) and joins via `GuideLogic.nowNext`.
@@ -75,9 +111,11 @@ public final class ChannelListModel {
                 let programs = byId[channel.id]?.programs ?? []
                 return Row(
                     channel: channel,
-                    nowNext: GuideLogic.nowNext(programs: programs, at: at)
+                    nowNext: GuideLogic.nowNext(programs: programs, at: at),
+                    programs: programs
                 )
             }
+            windowEnd = stop
             state = .loaded(sorted(rows))
             lastLoadedAt = at
         } catch {
@@ -148,7 +186,7 @@ public final class ChannelListModel {
             guard row.channel.id == channelId else { return row }
             var channel = row.channel
             channel.favorite = favorite
-            return Row(channel: channel, nowNext: row.nowNext)
+            return Row(channel: channel, nowNext: row.nowNext, programs: row.programs)
         }
         state = .loaded(sorted(updated))
     }
