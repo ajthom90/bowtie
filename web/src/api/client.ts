@@ -709,6 +709,11 @@ export class ApiClient {
     return this.request<Settings>('PUT', '/api/v1/admin/settings', body)
   }
 
+  /** Admin: run commercial detection on a recording again. */
+  async redetectCommercials(id: number): Promise<void> {
+    await this.request<void>('POST', `/api/v1/recordings/${id}/commercials/detect`)
+  }
+
   async getDVRStorage(): Promise<DVRStorage> {
     return this.request<DVRStorage>('GET', '/api/v1/admin/dvr/storage')
   }

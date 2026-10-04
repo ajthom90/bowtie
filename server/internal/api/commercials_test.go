@@ -76,3 +76,25 @@ func TestRecordingJSONCommercials(t *testing.T) {
 		t.Fatalf("patch %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+// POST /api/v1/recordings/{id}/commercials/detect: admins only; 409 when
+// detection isn't available.
+func TestRedetectEndpoint(t *testing.T) {
+	e := newDVREnv(t)
+	id, err := e.st.CreateRecording(store.Recording{UserID: e.aliceID, ChannelID: e.ids["9.1"], ChannelName: "9.1 B",
+		Title: "show", Start: e.showAt, Stop: e.showAt.Add(time.Hour), State: store.RecScheduled, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/v1/recordings/%d/commercials/detect", id)
+	if rr := doJSON(t, e.h, "POST", path, nil, e.alice); rr.Code != http.StatusForbidden {
+		t.Fatalf("viewer %d", rr.Code)
+	}
+	if rr := doJSON(t, e.h, "POST", "/api/v1/recordings/99999/commercials/detect", nil, e.admin); rr.Code != http.StatusNotFound {
+		t.Fatalf("missing %d", rr.Code)
+	}
+	rr := doJSON(t, e.h, "POST", path, nil, e.admin)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("no detector %d %s", rr.Code, rr.Body.String())
+	}
+}

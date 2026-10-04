@@ -158,6 +158,43 @@ live_tv=0
 // than marking every recording "no commercials".
 var ErrDetectorSetup = errors.New("commercial detection is misconfigured")
 
+// ErrDetectionOff: commercial detection isn't available (no Comskip, or it
+// stopped on a setup error until restart).
+var ErrDetectionOff = errors.New("commercial detection isn't available")
+
+// ErrNotReady: the recording hasn't finished converting.
+var ErrNotReady = errors.New("this recording isn't ready yet")
+
+// Redetect runs commercial detection on a ready recording again (say after
+// comskip.ini was edited). A run already in progress just finishes.
+func (s *Service) Redetect(id int64) error {
+	r, err := s.deps.Store.RecordingByID(id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	off := s.deps.Detector == nil || s.detectOff
+	_, running := s.detecting[id]
+	s.mu.Unlock()
+	if off {
+		return ErrDetectionOff
+	}
+	if r.State != store.RecReady {
+		return ErrNotReady
+	}
+	if running {
+		return nil
+	}
+	if err := s.deps.Store.ClearRecordingCommercials(id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.detectRetry[id] = true
+	s.mu.Unlock()
+	s.pokeDetect()
+	return nil
+}
+
 // ComskipDetector runs the comskip binary (at low CPU priority where nice
 // exists).
 type ComskipDetector struct {
@@ -262,6 +299,12 @@ func (s *Service) detectWorker() {
 	defer s.wg.Done()
 	tried := map[int64]bool{}
 	for {
+		s.mu.Lock()
+		for id := range s.detectRetry {
+			delete(tried, id)
+		}
+		clear(s.detectRetry)
+		s.mu.Unlock()
 		id, ok := s.nextDetect(tried)
 		if !ok {
 			select {
@@ -275,6 +318,9 @@ func (s *Service) detectWorker() {
 		tried[id] = true
 		if err := s.detect(id); errors.Is(err, ErrDetectorSetup) {
 			log.Printf("dvr: commercial detection off until restart: %v", err)
+			s.mu.Lock()
+			s.detectOff = true
+			s.mu.Unlock()
 			return
 		}
 		if s.ctx.Err() != nil {

@@ -740,6 +740,38 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/recordings/{id}/commercials/detect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Find commercial breaks again (admin)
+      description: |
+        Clears a ready recording's breaks and queues commercial detection
+        (say after editing comskip.ini). A run already in progress finishes.
+      operationId: redetectCommercials
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Queued
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Detection isn't available, or the recording isn't ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/recordings/{id}/play:
     parameters:
       - name: id

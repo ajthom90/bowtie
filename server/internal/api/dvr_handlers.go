@@ -315,6 +315,30 @@ func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleRedetectCommercials serves POST
+// /api/v1/recordings/{id}/commercials/detect (admin): run commercial
+// detection on a ready recording again.
+func (s *Server) handleRedetectCommercials(w http.ResponseWriter, r *http.Request) {
+	if !s.dvrReady(w) {
+		return
+	}
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid recording id")
+		return
+	}
+	switch err := s.deps.DVR.Redetect(id); {
+	case err == nil:
+		w.WriteHeader(http.StatusAccepted)
+	case errors.Is(err, sql.ErrNoRows):
+		writeError(w, http.StatusNotFound, "recording not found")
+	case errors.Is(err, dvr.ErrDetectionOff), errors.Is(err, dvr.ErrNotReady):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "failed to start detection")
+	}
+}
+
 // handlePatchRecording serves PATCH /api/v1/recordings/{id} ({protected}).
 func (s *Server) handlePatchRecording(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.recordingForManage(w, r)

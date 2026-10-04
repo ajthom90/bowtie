@@ -26,8 +26,8 @@ requests that come up most in their forums and subreddits.
 
 ## Next, in order
 
-1. **Commercial detection tuning.** Shipped in 0.14.0; next is a per-show
-   "re-detect" button and a way to correct a break by hand.
+1. **Commercial detection tuning.** Shipped in 0.14.0 with "Find ads
+   again"; next is a way to correct a break by hand.
 2. **Chromecast and AirPlay from the web app.** Send a channel to a TV from a
    phone browser. Chromecast needs the Cast SDK and a device to test on.
 3. **Multiview on TVs.** Apple TV and Android TV, 2–4 tiles; limited by tuner

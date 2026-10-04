@@ -135,9 +135,13 @@ type Service struct {
 	queued     map[int64]bool
 	detecting  map[int64]context.CancelFunc // running commercial detection (Delete stops it)
 	detectPoke chan struct{}
-	lastSweep  time.Time
-	stopped    bool
-	onDeleted  func() // test hook: after the sweep deletes a recording
+	// detectRetry: ids Redetect asked for again (the worker forgets it tried
+	// them); detectOff: the worker stopped on a setup error. Guarded by mu.
+	detectRetry map[int64]bool
+	detectOff   bool
+	lastSweep   time.Time
+	stopped     bool
+	onDeleted   func() // test hook: after the sweep deletes a recording
 
 	usedMu sync.Mutex // Storage's cached usedBytes
 	used   int64
@@ -176,16 +180,17 @@ func New(deps Deps) *Service {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		deps:       deps,
-		captures:   map[int64]*capture{},
-		deleting:   map[int64]bool{},
-		converting: map[int64]context.CancelFunc{},
-		convQueue:  make(chan int64, 256),
-		queued:     map[int64]bool{},
-		detecting:  map[int64]context.CancelFunc{},
-		detectPoke: make(chan struct{}, 1),
-		ctx:        ctx,
-		cancel:     cancel,
+		deps:        deps,
+		captures:    map[int64]*capture{},
+		deleting:    map[int64]bool{},
+		converting:  map[int64]context.CancelFunc{},
+		convQueue:   make(chan int64, 256),
+		queued:      map[int64]bool{},
+		detecting:   map[int64]context.CancelFunc{},
+		detectPoke:  make(chan struct{}, 1),
+		detectRetry: map[int64]bool{},
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	s.wg.Add(1)
 	go s.convertWorker()

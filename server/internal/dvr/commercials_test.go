@@ -427,3 +427,44 @@ func TestNoDetectorNoDetection(t *testing.T) {
 		t.Fatal("detection ran without a detector")
 	}
 }
+
+// Redetect runs detection again (say after editing comskip.ini) and stores
+// the new breaks.
+func TestRedetectRunsAgain(t *testing.T) {
+	e := newEnv(t)
+	r := e.readyRow(t, "show", t0.Add(-time.Hour))
+	d := newFakeDetector()
+	d.segs = []seg{c(100, 200)}
+	e.withDetector(t, d)
+	waitDetected(t, e.st, r.ID)
+
+	d.mu.Lock()
+	d.segs = []seg{c(300, 400)}
+	d.mu.Unlock()
+	if err := e.svc.Redetect(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, _ := e.st.RecordingByID(r.ID)
+		if reflect.DeepEqual(got.Commercials, []seg{c(300, 400)}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("commercials %v after redetect", got.Commercials)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestRedetectRefusals(t *testing.T) {
+	e := newEnv(t)
+	sched := e.schedule(t, "9.1", t0.Add(time.Hour), t0.Add(2*time.Hour))
+	if err := e.svc.Redetect(sched.ID); !errors.Is(err, ErrDetectionOff) {
+		t.Fatalf("no detector: err=%v, want ErrDetectionOff", err)
+	}
+	e.withDetector(t, newFakeDetector())
+	if err := e.svc.Redetect(sched.ID); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("scheduled recording: err=%v, want ErrNotReady", err)
+	}
+}

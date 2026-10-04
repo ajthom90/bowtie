@@ -244,7 +244,9 @@ For other installs, put `comskip` on the `PATH` or point to it:
 | `BOWTIE_COMSKIP_INI` | Your own `comskip.ini` (default: Bowtie writes its settings to `<data>/comskip.ini` on first use; edit that file to tune detection) |
 
 Detection is heuristic (black frames, the station logo, aspect ratio
-changes), so it can miss a break or mark part of the show. If Comskip can't
+changes), so it can miss a break or mark part of the show. After editing
+`comskip.ini`, an admin can press **Find ads again** in the web recording
+player (or `POST /api/v1/recordings/{id}/commercials/detect`). If Comskip can't
 run at all (missing library, an ini without `output_edl=1`), detection stops
 until the next restart and nothing is marked; a recording it fails on is
 tried again after a restart.

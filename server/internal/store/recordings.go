@@ -229,6 +229,13 @@ func (s *Store) SetRecordingCommercials(id int64, segs []Commercial) error {
 	return err
 }
 
+// ClearRecordingCommercials marks a recording as not yet scanned for
+// commercials (detection runs on it again).
+func (s *Store) ClearRecordingCommercials(id int64) error {
+	_, err := s.db.Exec(`UPDATE recordings SET commercials = NULL WHERE id = ?`, id)
+	return err
+}
+
 // RecordingsNeedingCommercials returns up to limit ready recordings that
 // commercial detection hasn't run on, newest first.
 func (s *Store) RecordingsNeedingCommercials(limit int) ([]int64, error) {

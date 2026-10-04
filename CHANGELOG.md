@@ -15,8 +15,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   player — web, iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and
   Roku — shows **Skip ad** while you're in one. Turn on **Skip ads
   automatically** to skip each break once. Older recordings are scanned too,
-  newest first. Set `BOWTIE_COMSKIP_PATH=off` to turn it off. See README →
-  Commercial detection.
+  newest first. Set `BOWTIE_COMSKIP_PATH=off` to turn it off. After tuning
+  `comskip.ini`, admins can press **Find ads again** in the web recording
+  player. See README → Commercial detection.
 - **Sleep timer on Roku** (live TV and recordings), like the other apps.
 
 ### Changed

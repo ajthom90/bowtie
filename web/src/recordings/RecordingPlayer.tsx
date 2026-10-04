@@ -49,7 +49,19 @@ function keepaliveSavePosition(id: number, positionSec: number) {
  * position saved every 15 s and on close. No live edge, no heartbeat.
  */
 export function RecordingPlayer({ recording, onBack }: Props) {
-  const { client } = useAuth()
+  const { client, user } = useAuth()
+  const [redetect, setRedetect] = useState<'idle' | 'busy' | 'queued' | 'error'>('idle')
+  const [redetectError, setRedetectError] = useState('')
+  const findAdsAgain = async () => {
+    setRedetect('busy')
+    try {
+      await client.redetectCommercials(recording.id)
+      setRedetect('queued')
+    } catch (err) {
+      setRedetectError(err instanceof Error ? err.message : 'Could not start')
+      setRedetect('error')
+    }
+  }
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
   /** Playback actually started — positions before that would clobber the saved one. */
@@ -292,6 +304,21 @@ export function RecordingPlayer({ recording, onBack }: Props) {
             />
             Auto-skip ads
           </label>
+        ) : null}
+        {user?.role === 'admin' ? (
+          <button
+            type="button"
+            className={playerStyles.btn}
+            onClick={() => void findAdsAgain()}
+            disabled={redetect === 'busy' || redetect === 'queued'}
+            title="Run commercial detection on this recording again"
+          >
+            {redetect === 'queued'
+              ? 'Finding ads… reopen in a few minutes'
+              : redetect === 'error'
+                ? redetectError
+                : 'Find ads again'}
+          </button>
         ) : null}
       </header>
 
