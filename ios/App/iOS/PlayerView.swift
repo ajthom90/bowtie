@@ -844,7 +844,11 @@ final class PlayerBridge {
         secondsBehindLive = nil
         stallGate.loaded(at: now)
         startStallTicker()
-        player?.play()
+        // In a SharePlay group with others, the coordinator applies the group's
+        // play/pause state; an autoplay here would un-pause everyone.
+        if player?.playbackCoordinator.otherParticipants.isEmpty ?? true {
+            player?.play()
+        }
     }
 
     private func startStallTicker() {
