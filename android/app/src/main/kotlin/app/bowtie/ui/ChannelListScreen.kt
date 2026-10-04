@@ -412,6 +412,9 @@ private fun ChannelActionSheet(
                     onClick = { onRecord(program) },
                 )
             }
+        }
+        // One per show (now and next are often the same show); offered even if this airing is set.
+        programs.map { it.second }.distinctBy { it.title }.forEach { program ->
             SheetItem(
                 text = "Record series \"${program.title}\"",
                 detail = "Every new episode on ${row.channel.guideNumber} ${row.channel.name}",

@@ -138,6 +138,7 @@ class SearchViewModel(
         is BowtieError.Server -> if (e.status == 503) "Search isn't available on this server." else e.message
         is BowtieError.Network -> "Couldn't reach the server."
         is BowtieError.Unauthorized -> "Your session ended. Sign in again."
+        is BowtieError.NotFound -> "Search isn't available on this server."
         else -> ChannelListViewModel.messageFor(e)
     }
 
