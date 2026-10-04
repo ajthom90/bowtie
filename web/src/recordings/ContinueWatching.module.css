@@ -1,0 +1,308 @@
+/* Continue watching: a horizontal strip of resume cards. */
+.section {
+  margin: 0 0 1.25rem;
+  max-width: 56rem;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.heading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.hide {
+  flex-shrink: 0;
+  padding: 0.25rem 0.35rem;
+  appearance: none;
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.hide:hover {
+  color: var(--text);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.25rem;
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+.item {
+  position: relative;
+  flex: 0 0 15rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  scroll-snap-align: start;
+  overflow: hidden;
+  transition: border-color var(--motion);
+}
+
+.item:hover {
+  border-color: var(--text-dim);
+}
+
+.play {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  /* Room on the right for the remove button. */
+  padding: 0.6rem 2.6rem 0.55rem 0.7rem;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.play:focus-visible {
+  outline-offset: -2px;
+}
+
+.title,
+.sub,
+.meta {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.inlineSub {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.sub {
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.left {
+  margin-top: auto;
+  padding-top: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.bar {
+  height: 4px;
+  background: var(--line);
+  flex-shrink: 0;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.remove {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion), color var(--motion);
+}
+
+.remove:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--line);
+}
+
+.remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Compact: one strip above the guide grid, styled like the Recent row. */
+.compact {
+  max-width: none;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.compact .head {
+  display: contents;
+}
+
+.compact .heading {
+  flex-shrink: 0;
+  order: 0;
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  max-width: 5.5rem;
+  line-height: 1.2;
+}
+
+.compact .list {
+  order: 1;
+  flex: 1;
+  min-width: 0;
+  gap: 0.4rem;
+  padding: 0;
+  scrollbar-width: none;
+}
+
+.compact .list::-webkit-scrollbar {
+  display: none;
+}
+
+.compact .hide {
+  order: 2;
+}
+
+.compact .item {
+  flex-basis: 15rem;
+}
+
+.compact .play {
+  padding: 0.3rem 2.2rem 0.3rem 0.55rem;
+  gap: 0.05rem;
+}
+
+.compact .title {
+  font-size: 0.82rem;
+}
+
+.compact .meta {
+  font-size: 0.66rem;
+}
+
+.compact .bar {
+  height: 3px;
+}
+
+.compact .remove {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 1rem;
+}
+
+/* Phone: bigger touch targets; the heading sits above the strip. */
+@media (max-width: 640px) {
+  .item {
+    flex-basis: 78%;
+  }
+
+  .remove {
+    width: 44px;
+    height: 44px;
+    top: 0;
+    right: 0;
+  }
+
+  .play {
+    min-height: 44px;
+    padding-right: 3rem;
+  }
+
+  .hide {
+    min-height: 44px;
+  }
+
+  .compact {
+    flex-wrap: wrap;
+    padding: 0.4rem 0.75rem;
+    gap: 0.25rem 0.6rem;
+  }
+
+  .compact .heading {
+    max-width: none;
+    flex: 1;
+  }
+
+  .compact .hide {
+    order: 0;
+  }
+
+  .compact .list {
+    order: 1;
+    flex-basis: 100%;
+  }
+
+  .compact .item {
+    flex-basis: 72%;
+  }
+
+  .compact .play {
+    padding-right: 2.9rem;
+  }
+
+  .compact .remove {
+    width: 44px;
+    height: 44px;
+    top: 50%;
+  }
+}

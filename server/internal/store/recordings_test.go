@@ -81,3 +81,63 @@ func TestSetRecordingProtectedOnly(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestRecordingPositionsForUser(t *testing.T) {
+	s := openTestStore(t)
+	t0 := time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC)
+	mk := func(title string) int64 {
+		id, err := s.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: title,
+			Start: t0, Stop: t0.Add(time.Hour), State: store.RecReady, CreatedAt: t0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a, b, c := mk("a"), mk("b"), mk("c")
+	before := time.Now().UTC().Add(-time.Second)
+	if err := s.SetRecordingPosition(a, 1, 412); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRecordingPosition(b, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRecordingPosition(c, 2, 99); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Add(time.Second)
+
+	got, err := s.RecordingPositions(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("user 1 positions %+v", got)
+	}
+	if p := got[a]; p.Sec != 412 || p.UpdatedAt.Before(before) || p.UpdatedAt.After(after) {
+		t.Fatalf("a %+v", p)
+	}
+	if p, ok := got[b]; !ok || p.Sec != 0 || p.UpdatedAt.IsZero() {
+		t.Fatalf("b (reset to 0 still counts as saved) %+v ok=%v", p, ok)
+	}
+	if _, ok := got[c]; ok {
+		t.Fatal("another user's position leaked")
+	}
+
+	one, err := s.RecordingPositionInfo(a, 1)
+	if err != nil || one.Sec != 412 || !one.UpdatedAt.Equal(got[a].UpdatedAt) {
+		t.Fatalf("single %+v err=%v", one, err)
+	}
+	if none, err := s.RecordingPositionInfo(a, 2); err != nil || none.Sec != 0 || !none.UpdatedAt.IsZero() {
+		t.Fatalf("never saved %+v err=%v", none, err)
+	}
+
+	if err := s.DeleteRecording(a); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.RecordingPositions(1); len(got) != 1 {
+		t.Fatalf("after delete %+v", got)
+	}
+	if empty, err := s.RecordingPositions(42); err != nil || len(empty) != 0 {
+		t.Fatalf("no positions %+v err=%v", empty, err)
+	}
+}

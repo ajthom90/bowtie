@@ -40,6 +40,16 @@ function Shell() {
   const [view, setView] = useState<View>('guide')
   const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
   const [playingRecording, setPlayingRecording] = useState<Recording | null>(null)
+  /** Continue watching: start at the saved position without asking. */
+  const [autoResume, setAutoResume] = useState(false)
+  const playRecording = (rec: Recording) => {
+    setAutoResume(false)
+    setPlayingRecording(rec)
+  }
+  const resumeRecording = (rec: Recording) => {
+    setAutoResume(true)
+    setPlayingRecording(rec)
+  }
   const inMultiview = isMultiviewPath(path)
   useEffect(() => {
     // Multiview replaces any player (e.g. via browser Back): that player must
@@ -88,10 +98,14 @@ function Shell() {
     return <Player target={watching} onBack={() => setWatching(null)} />
   }
 
-  // Recording playback returns to the Recordings page (same tab).
+  // Recording playback returns to where it started (Recordings tab or guide).
   if (playingRecording) {
     return (
-      <RecordingPlayer recording={playingRecording} onBack={() => setPlayingRecording(null)} />
+      <RecordingPlayer
+        recording={playingRecording}
+        autoResume={autoResume}
+        onBack={() => setPlayingRecording(null)}
+      />
     )
   }
 
@@ -119,7 +133,8 @@ function Shell() {
         onMultiview={onMultiview}
         onAdmin={onAdmin}
         onAccount={onAccount}
-        onPlay={setPlayingRecording}
+        onPlay={playRecording}
+        onResume={resumeRecording}
       />
     )
   }
@@ -141,6 +156,7 @@ function Shell() {
   return (
     <Guide
       onWatch={setWatching}
+      onResumeRecording={resumeRecording}
       onMultiview={onMultiview}
       onAdmin={onAdmin}
       onRecordings={() => setView('recordings')}

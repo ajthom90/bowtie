@@ -40,7 +40,9 @@ type recordingJSON struct {
 	SizeBytes     int64     `json:"sizeBytes"`
 	Protected     bool      `json:"protected"`
 	PositionSec   int       `json:"positionSec"`
-	ScheduledBy   string    `json:"scheduledBy"`
+	// PositionUpdatedAt: when the caller last saved a position (omitted if never).
+	PositionUpdatedAt *time.Time `json:"positionUpdatedAt,omitempty"`
+	ScheduledBy       string     `json:"scheduledBy"`
 	// CanManage: the caller may stop, delete or protect it (owner or admin).
 	CanManage bool   `json:"canManage"`
 	Rating    string `json:"rating"`
@@ -52,16 +54,38 @@ type recordingJSON struct {
 	Commercials []store.Commercial `json:"commercials,omitempty"`
 }
 
-func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names map[int64]string) recordingJSON {
-	pos, _ := s.deps.Store.RecordingPosition(r.ID, claims.UserID)
-	return recordingJSON{
+// recordingToJSON renders r for the caller; pos is the caller's saved
+// position for it (zero value when none).
+func recordingToJSON(r store.Recording, claims auth.Claims, names map[int64]string, pos store.PlaybackPosition) recordingJSON {
+	j := recordingJSON{
 		ID: r.ID, Title: r.Title, Subtitle: r.Subtitle, Description: r.Description, Category: r.Category,
 		ChannelID: r.ChannelID, ChannelName: r.ChannelName, Start: r.Start.UTC(), Stop: r.Stop.UTC(),
 		State: r.State, Partial: r.Partial, Failure: r.Failure, FailureDetail: r.FailureDetail,
-		DurationSec: r.DurationSec, SizeBytes: r.SizeBytes, Protected: r.Protected, PositionSec: pos,
+		DurationSec: r.DurationSec, SizeBytes: r.SizeBytes, Protected: r.Protected, PositionSec: pos.Sec,
 		ScheduledBy: names[r.UserID], CanManage: claims.Role == "admin" || claims.UserID == r.UserID,
 		Rating: r.Rating, RuleID: r.RuleID, Commercials: r.Commercials,
 	}
+	if !pos.UpdatedAt.IsZero() {
+		at := pos.UpdatedAt.UTC()
+		j.PositionUpdatedAt = &at
+	}
+	return j
+}
+
+// oneRecordingJSON renders a single recording (one position lookup).
+func (s *Server) oneRecordingJSON(r store.Recording, claims auth.Claims, names map[int64]string) recordingJSON {
+	pos, _ := s.deps.Store.RecordingPositionInfo(r.ID, claims.UserID)
+	return recordingToJSON(r, claims, names, pos)
+}
+
+// positionsFor loads all of the caller's saved positions in one query, for
+// lists (empty on error: positions are a nicety, not a reason to fail a list).
+func (s *Server) positionsFor(userID int64) map[int64]store.PlaybackPosition {
+	m, err := s.deps.Store.RecordingPositions(userID)
+	if err != nil {
+		return map[int64]store.PlaybackPosition{}
+	}
+	return m
 }
 
 func (s *Server) userNames() map[int64]string {
@@ -108,13 +132,14 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Start.After(rows[j].Start) })
 	}
 	names := s.userNames()
+	positions := s.positionsFor(claims.UserID)
 	policy := s.callerPolicy(r)
 	out := make([]recordingJSON, 0, len(rows))
 	for _, rec := range rows {
 		if !policy.ChannelAllowed(rec.ChannelID) {
 			continue
 		}
-		j := s.recordingToJSON(rec, claims, names)
+		j := recordingToJSON(rec, claims, names, positions[rec.ID])
 		if !policy.ProgramAllowed(rec.Rating) {
 			j.Locked, j.Description = true, ""
 		}
@@ -190,10 +215,11 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.As(err, &conflict):
 		names := s.userNames()
+		positions := s.positionsFor(claims.UserID)
 		list := make([]recordingJSON, 0, len(conflict.Conflicts))
 		pol := policyFor(u)
 		for _, c := range conflict.Conflicts {
-			j := s.recordingToJSON(c, claims, names)
+			j := recordingToJSON(c, claims, names, positions[c.ID])
 			if !pol.ChannelAllowed(c.ChannelID) || !pol.ProgramAllowed(c.Rating) {
 				j.Title, j.Subtitle, j.Description, j.Locked = "Another recording", "", "", true
 			}
@@ -213,7 +239,7 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 		warnings = []dvr.Warning{}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"recording": s.recordingToJSON(rec, claims, s.userNames()),
+		"recording": s.oneRecordingJSON(rec, claims, s.userNames()),
 		"warnings":  warnings,
 	})
 }
@@ -360,7 +386,7 @@ func (s *Server) handlePatchRecording(w http.ResponseWriter, r *http.Request) {
 		rec.Protected = *req.Protected
 	}
 	claims, _ := auth.ClaimsFrom(r.Context())
-	writeJSON(w, http.StatusOK, s.recordingToJSON(rec, claims, s.userNames()))
+	writeJSON(w, http.StatusOK, s.oneRecordingJSON(rec, claims, s.userNames()))
 }
 
 func recTokenSubject(id int64) string { return fmt.Sprintf("rec-%d", id) }

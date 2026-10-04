@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ApiError, type GuideChannel, type RecentChannel } from '../api/client'
+import { ApiError, type GuideChannel, type RecentChannel, type Recording } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { guideMarkText, guideRecLabel } from '../recordings/recordingsModel'
+import { ContinueWatching } from '../recordings/ContinueWatching'
+import {
+  guideRowVisible,
+  hiddenStamp,
+  loadHiddenAt,
+  saveHiddenAt,
+  selectContinueWatching,
+  withPositionReset,
+} from '../recordings/continueModel'
 import {
   GUIDE_COPY,
   currentProgramTitle,
@@ -44,6 +53,8 @@ export type WatchTarget = {
 
 type Props = {
   onWatch: (target: WatchTarget) => void
+  /** Plays a recording from its saved position (Continue watching row). */
+  onResumeRecording?: (rec: Recording) => void
   /** Opens Multiview (several live channels at once). */
   onMultiview?: () => void
   /** Present only for admins — opens the admin area. Viewers never receive this. */
@@ -61,7 +72,14 @@ type Selected = {
   initialConflict?: SheetConflict
 }
 
-export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }: Props) {
+export function Guide({
+  onWatch,
+  onResumeRecording,
+  onMultiview,
+  onAdmin,
+  onRecordings,
+  onAccount,
+}: Props) {
   const { client, user, logout } = useAuth()
   const [{ start, stop }, setWindow] = useState(() => defaultWindow())
   const [channels, setChannels] = useState<GuideChannel[] | null>(null)
@@ -77,6 +95,11 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
   const [searchEpoch, setSearchEpoch] = useState(0)
   /** Category chip; remembered per browser. */
   const [filter, setFilter] = useState<GuideFilter>(() => loadGuideFilter())
+  /** Finished recordings, for the Continue watching row. */
+  const [recorded, setRecorded] = useState<Recording[]>([])
+  const [continueBusy, setContinueBusy] = useState<number | null>(null)
+  /** Hidden from the guide until something newer is watched; remembered per browser. */
+  const [continueHiddenAt, setContinueHiddenAt] = useState<string | null>(() => loadHiddenAt())
 
   function chooseFilter(next: GuideFilter) {
     setFilter(next)
@@ -160,6 +183,50 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
   useEffect(() => {
     void load()
   }, [load])
+
+  // Continue watching: best effort (older servers / no DVR just get no row).
+  const canResume = onResumeRecording !== undefined
+  useEffect(() => {
+    if (!canResume) return
+    let cancelled = false
+    client.listRecordings('recorded').then(
+      (rows) => {
+        if (!cancelled) setRecorded(rows)
+      },
+      () => {
+        if (!cancelled) setRecorded([])
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [client, canResume])
+
+  const continueItems = useMemo(() => selectContinueWatching(recorded), [recorded])
+  const showContinue = canResume && guideRowVisible(continueItems, continueHiddenAt)
+
+  function hideContinue() {
+    const stamp = hiddenStamp(continueItems)
+    saveHiddenAt(stamp)
+    setContinueHiddenAt(stamp)
+  }
+
+  async function forgetRecording(rec: Recording) {
+    setContinueBusy(rec.id)
+    setActionError(null)
+    try {
+      await client.setRecordingPosition(rec.id, 0)
+      setRecorded((rs) => rs.map((r) => (r.id === rec.id ? withPositionReset(r) : r)))
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError && err.message
+          ? err.message
+          : 'Could not remove it from Continue watching',
+      )
+    } finally {
+      setContinueBusy(null)
+    }
+  }
 
   // Tick "now" every 30s for the NOW line.
   useEffect(() => {
@@ -297,6 +364,17 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
         <p className={styles.actionError} role="alert">
           {actionError}
         </p>
+      ) : null}
+
+      {pageState.kind === 'ready' && showContinue && onResumeRecording ? (
+        <ContinueWatching
+          compact
+          items={continueItems}
+          onPlay={onResumeRecording}
+          onRemove={(rec) => void forgetRecording(rec)}
+          busyId={continueBusy}
+          onHide={hideContinue}
+        />
       ) : null}
 
       {pageState.kind === 'ready' && recents.length > 0 ? (

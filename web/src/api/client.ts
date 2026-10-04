@@ -113,6 +113,8 @@ export interface Recording {
   protected: boolean
   /** The caller's resume position. */
   positionSec: number
+  /** When the caller last saved a position (RFC 3339); absent if never (or an older server). */
+  positionUpdatedAt?: string
   scheduledBy: string
   /** The caller may stop, delete or protect it (scheduler or admin). */
   canManage: boolean
