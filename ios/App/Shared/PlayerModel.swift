@@ -325,7 +325,7 @@ public final class PlayerModel {
         case .unauthorized:
             state = .failed("Signed out")
 
-        case .server(_, let message):
+        case .server(_, let message), .recordingConflict(_, _, let message):
             state = .failed(message)
 
         case .network(let message):
