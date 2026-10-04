@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, type Recording, type RecordingRule } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { lockText } from '../guide/searchModel'
@@ -130,15 +130,20 @@ function RecordingList({
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  // Bumped by every load and every local change: a list that was already on
+  // its way (say the 20 s refresh) can't undo a change made since it left.
+  const generation = useRef(0)
 
   const load = useCallback(
     async (opts?: { quiet?: boolean }) => {
+      const mine = ++generation.current
       if (!opts?.quiet) {
         setLoading(true)
         setError(null)
       }
       try {
         const data = await client.listRecordings(tabQuery(tab))
+        if (mine !== generation.current) return
         setRows(data)
         setError(null)
       } catch (err) {
@@ -196,6 +201,7 @@ function RecordingList({
       rec,
       async () => {
         await client.deleteRecording(rec.id)
+        generation.current++
         setRows((rs) => rs?.filter((r) => r.id !== rec.id) ?? rs)
       },
       kind === 'cancel' ? 'Could not cancel the recording.' : 'Could not delete the recording.',
@@ -207,6 +213,7 @@ function RecordingList({
       rec,
       async () => {
         const updated = await client.patchRecording(rec.id, { protected: !rec.protected })
+        generation.current++
         setRows((rs) => rs?.map((r) => (r.id === rec.id ? { ...r, ...updated } : r)) ?? rs)
       },
       'Could not update the recording.',
@@ -219,6 +226,7 @@ function RecordingList({
       rec,
       async () => {
         await client.setRecordingPosition(rec.id, 0)
+        generation.current++
         setRows((rs) => rs?.map((r) => (r.id === rec.id ? withPositionReset(r) : r)) ?? rs)
       },
       'Could not remove it from Continue watching.',
