@@ -351,10 +351,14 @@ struct TVRecordingsView: View {
     }
 
     private func play(_ recording: Recording, model: RecordingsModel) async {
-        if playerModel.currentChannel != nil {
-            await playerModel.stop()
-        }
-        guard let playback = await model.play(recording) else { return }
+        // One stream at a time: a live session (maybe in PiP) ends, but only
+        // once /play succeeds. On failure live TV keeps playing and the
+        // error alert explains.
+        guard let playback = await model.play(recording, beforeStart: {
+            if playerModel.currentChannel != nil {
+                await playerModel.stop()
+            }
+        }) else { return }
         if playback.resumeAt != nil {
             pendingResume = playback
         } else {
