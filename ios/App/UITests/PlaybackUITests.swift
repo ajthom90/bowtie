@@ -121,6 +121,25 @@ final class PlaybackUITests: XCTestCase {
         waitForExpectations(timeout: 8)
     }
 
+    /// Live TV keeps streaming with the app in the background (the same path
+    /// AirPlay uses): after 45 s on the Home Screen the player is still
+    /// running, with no error, when the app comes back.
+    func testLiveKeepsPlayingInBackground() throws {
+        try testPlayChannel()
+        attach("before-background")
+        XCUIDevice.shared.press(.home)
+        RunLoop.current.run(until: Date().addingTimeInterval(45))
+        app.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(3))
+        attach("after-background")
+        let failed = [app.buttons["Try again"], app.staticTexts["Not connected to a server"]]
+        XCTAssertFalse(failed.contains(where: \.exists), "playback failed while in the background")
+        if !app.buttons["Done"].exists {
+            app.tap()
+        }
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3), "the player closed while in the background")
+    }
+
     /// The sleep timer is reachable from the live player chrome and shows the
     /// time left once set.
     func testSleepTimerFromPlayer() throws {
