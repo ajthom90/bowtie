@@ -10,6 +10,7 @@ package settings
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"time"
 
@@ -35,7 +36,27 @@ const (
 	// DVR padding applied to recordings scheduled from now on.
 	KeyDVRPadStartSeconds = "dvr.padStartSeconds"
 	KeyDVRPadEndSeconds   = "dvr.padEndSeconds"
+	// KeyDVRQuality is the resolution recordings are converted at (applies
+	// to recordings converted afterwards).
+	KeyDVRQuality = "dvr.quality"
 )
+
+// Recording qualities (dvr.quality).
+const (
+	// DVRQuality720p converts every recording to 720p (the default).
+	DVRQuality720p = "720p"
+	// DVRQuality1080p keeps up to the broadcast's resolution (1080i is
+	// deinterlaced to 1080p) at a higher bitrate.
+	DVRQuality1080p = "1080p"
+)
+
+// DVRQualities are the allowed dvr.quality values, default first.
+var DVRQualities = []string{DVRQuality720p, DVRQuality1080p}
+
+// ValidDVRQuality reports whether q is an allowed dvr.quality value.
+func ValidDVRQuality(q string) bool {
+	return slices.Contains(DVRQualities, q)
+}
 
 // Default product values used when seeding from empty/zero config.
 const (
@@ -90,14 +111,16 @@ type HDHomeRunGuide struct {
 	Enabled bool
 }
 
-// DVR is the recording padding section.
+// DVR is the recording section: padding and conversion quality.
 type DVR struct {
 	PadStartSeconds int
 	PadEndSeconds   int
+	// Quality is one of DVRQualities ("" in SetDVR keeps the stored value).
+	Quality string
 }
 
-// DVR returns the recording padding. An absent or empty key reads as its
-// default (0 is a real value).
+// DVR returns the recording section. An absent or empty key reads as its
+// default (0 is a real padding value).
 func (p *Provider) DVR() (DVR, error) {
 	start, err := p.intOr(KeyDVRPadStartSeconds, DefaultPadStartSeconds)
 	if err != nil {
@@ -107,15 +130,36 @@ func (p *Provider) DVR() (DVR, error) {
 	if err != nil {
 		return DVR{}, err
 	}
-	return DVR{PadStartSeconds: start, PadEndSeconds: end}, nil
+	quality, err := p.DVRQuality()
+	if err != nil {
+		return DVR{}, err
+	}
+	return DVR{PadStartSeconds: start, PadEndSeconds: end, Quality: quality}, nil
 }
 
-// SetDVR writes the full DVR section atomically.
+// DVRQuality is the recording conversion quality (the converter's hook). An
+// absent, empty or unknown stored value reads as DVRQuality720p.
+func (p *Provider) DVRQuality() (string, error) {
+	raw, err := p.st.GetSetting(KeyDVRQuality)
+	if err != nil {
+		return "", err
+	}
+	if !ValidDVRQuality(raw) {
+		return DVRQuality720p, nil
+	}
+	return raw, nil
+}
+
+// SetDVR writes the DVR section atomically; an empty Quality is left as stored.
 func (p *Provider) SetDVR(v DVR) error {
-	return p.st.SetSettings(map[string]string{
+	kv := map[string]string{
 		KeyDVRPadStartSeconds: strconv.Itoa(v.PadStartSeconds),
 		KeyDVRPadEndSeconds:   strconv.Itoa(v.PadEndSeconds),
-	})
+	}
+	if v.Quality != "" {
+		kv[KeyDVRQuality] = v.Quality
+	}
+	return p.st.SetSettings(kv)
 }
 
 // DVRPadding is DVR as durations (the dvr.Deps.Padding hook).
@@ -287,7 +331,7 @@ func (p *Provider) Apply(kv map[string]string) error {
 // notice is logged (DB is the sole source of truth after first seed).
 //
 // Defaults applied when cfg leaves fields zero: refreshHours=12, encoder=auto,
-// allowHevc=false, bufferMinutes=15, dvr padding 60 s / 180 s.
+// allowHevc=false, bufferMinutes=15, dvr padding 60 s / 180 s, dvr quality 720p.
 func (p *Provider) SeedFromConfig(cfg config.Config) error {
 	refreshHours := cfg.XMLTV.RefreshHours
 	if refreshHours == 0 {
@@ -314,6 +358,7 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		{KeyEPGHDHomeRun, "true"},
 		{KeyDVRPadStartSeconds, strconv.Itoa(DefaultPadStartSeconds)},
 		{KeyDVRPadEndSeconds, strconv.Itoa(DefaultPadEndSeconds)},
+		{KeyDVRQuality, DVRQuality720p},
 	}
 
 	for _, s := range seeds {

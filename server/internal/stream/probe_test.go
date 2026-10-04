@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -151,5 +152,38 @@ func TestProgramInfoDoesNotWaitForH264Height(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Fatalf("waited %v for an H.264 height", time.Since(start))
+	}
+}
+
+func TestSourceHeightTS(t *testing.T) {
+	// A capture part: PAT, PMT (MPEG-2 video on 0x31), the 720p header.
+	if h := SourceHeightTS(bytes.NewReader(probeBody(audioES(0x81, 0x34, "eng", 0))), 1<<20); h != 720 {
+		t.Fatalf("height=%d, want 720", h)
+	}
+	// Leading junk before the first sync byte is skipped.
+	junk := append([]byte{1, 2, 3}, probeBody()...)
+	if h := SourceHeightTS(bytes.NewReader(junk), 1<<20); h != 720 {
+		t.Fatalf("after junk: height=%d", h)
+	}
+	// H.264 video has no MPEG-2 sequence header: unknown.
+	if h := SourceHeightTS(bytes.NewReader(newTSBuilder().StreamPATPMTOnceThenMedia(5)), 1<<20); h != 0 {
+		t.Fatalf("h264: height=%d, want 0", h)
+	}
+	// A header further in is found, unless it's past the read limit.
+	b := newTSBuilder()
+	b.pmtPID = 0x30
+	body := append(append([]byte{}, b.PAT()...), pmtPacket()...)
+	for range 10 {
+		body = append(body, b.packet(0x31, false, []byte{9, 9, 9})...)
+	}
+	body = append(body, b.packet(0x31, true, []byte{0, 0, 1, 0xB3, 0x78, 0x04, 0x38})...)
+	if h := SourceHeightTS(bytes.NewReader(body), 1<<20); h != 1080 {
+		t.Fatalf("height=%d, want 1080", h)
+	}
+	if h := SourceHeightTS(bytes.NewReader(body), 5*tsPacketSize); h != 0 {
+		t.Fatalf("past limit: height=%d, want 0", h)
+	}
+	if h := SourceHeightTS(bytes.NewReader(nil), 1<<20); h != 0 {
+		t.Fatalf("empty: height=%d", h)
 	}
 }

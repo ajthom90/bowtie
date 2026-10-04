@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -148,6 +149,27 @@ func TestConvertingWithVODButNoPartsBecomesReady(t *testing.T) {
 	done := waitState(t, e.st, id, store.RecReady)
 	if _, err := os.Stat(filepath.Join(done.Dir, hlsDir, MasterName)); err != nil {
 		t.Fatalf("VOD deleted: %v", err)
+	}
+}
+
+// The same restart path for a 1080p VOD: its v1080 rendition is found through
+// the master (there is no v720.m3u8).
+func TestConverting1080VODWithNoPartsBecomesReady(t *testing.T) {
+	e := newEnv(t)
+	id, _ := e.st.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "t",
+		Start: t0, Stop: t0.Add(time.Hour), State: store.RecScheduled, CreatedAt: t0})
+	r, _ := e.st.RecordingByID(id)
+	r.Dir = filepath.Join(e.dir, "1-t")
+	hls := filepath.Join(r.Dir, hlsDir)
+	_ = os.MkdirAll(hls, 0o755)
+	_ = os.WriteFile(filepath.Join(hls, "v1080.m3u8"), []byte("#EXTM3U\n#EXTINF:6.0,\nv1080_00000.ts\n#EXTINF:6.0,\nv1080_00001.ts\n#EXT-X-ENDLIST\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(hls, MasterName), []byte(vodMaster(vodLayout(vodRung(settings.DVRQuality1080p, 1080)))), 0o644)
+	r.State = store.RecConverting
+	_ = e.st.UpdateRecording(r)
+	e.svc.Tick()
+	done := waitState(t, e.st, id, store.RecReady)
+	if done.DurationSec != 12 {
+		t.Fatalf("duration %d, want 12", done.DurationSec)
 	}
 }
 

@@ -165,7 +165,8 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 	go streamMgr.Run(rootCtx)
 
 	// DVR: records from the shared ingest into RecordingsDir, converts with
-	// the configured encoder (720p H.264, like a "high" live viewer).
+	// the configured encoder to H.264 at the dvr.quality setting (720p, or up
+	// to 1080p), read when each recording is converted.
 	if err := os.MkdirAll(cfg.RecordingsDir, 0o755); err != nil {
 		log.Printf("dvr: recordings dir %s: %v", cfg.RecordingsDir, err)
 	}
@@ -179,7 +180,7 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 			}
 			return transcode.Negotiate(transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: "high"},
 				"", caps, encoder, false, transcode.DefaultProfiles())
-		}},
+		}, Quality: settingsProv.DVRQuality},
 		Detector:     commercialDetector(cfg),
 		Dir:          cfg.RecordingsDir,
 		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,

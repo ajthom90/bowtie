@@ -820,7 +820,7 @@ func (s *Service) convert(id int64) {
 	var dur time.Duration
 	if len(parts) == 0 {
 		// Converted before, but the "ready" write didn't land: keep the VOD.
-		video, rerr := os.ReadFile(filepath.Join(out, vodLayout.TopName()+".m3u8"))
+		video, rerr := os.ReadFile(vodVideoPlaylist(out))
 		if _, merr := os.Stat(filepath.Join(out, MasterName)); rerr != nil || merr != nil || !strings.Contains(string(video), "#EXT-X-ENDLIST") {
 			r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "nothing was recorded"
 			_ = s.deps.Store.UpdateRecording(r)

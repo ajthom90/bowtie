@@ -71,6 +71,59 @@ func TestPutSettingsDVR(t *testing.T) {
 	}
 }
 
+// dvr.quality: GET reports it (720p by default); PUT sets it, a padding-only
+// section keeps it, and a bad value writes nothing.
+func TestPutSettingsDVRQuality(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+	if d := section(decodeSettings(t, doJSON(t, h, "GET", "/api/v1/admin/settings", nil, authHeader(tok))), "dvr"); d["quality"] != "720p" {
+		t.Fatalf("default dvr = %v, want quality 720p", d)
+	}
+	rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"dvr": map[string]any{"padStartSeconds": 60, "padEndSeconds": 180, "quality": "1080p"},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT = %d %s", rr.Code, rr.Body.String())
+	}
+	if d := section(decodeSettings(t, rr), "dvr"); d["quality"] != "1080p" {
+		t.Fatalf("response dvr = %v", d)
+	}
+	if q, _ := prov.DVRQuality(); q != settings.DVRQuality1080p {
+		t.Fatalf("stored quality %q", q)
+	}
+
+	// Older clients send only the padding: the quality stays.
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"dvr": map[string]any{"padStartSeconds": 120, "padEndSeconds": 300},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("padding-only PUT = %d %s", rr.Code, rr.Body.String())
+	}
+	if d, _ := prov.DVR(); d.Quality != settings.DVRQuality1080p || d.PadStartSeconds != 120 {
+		t.Fatalf("after padding-only PUT = %+v", d)
+	}
+
+	for name, body := range map[string]map[string]any{
+		"unknown quality":     {"padStartSeconds": 60, "padEndSeconds": 180, "quality": "original"},
+		"empty quality":       {"padStartSeconds": 60, "padEndSeconds": 180, "quality": ""},
+		"quality without pad": {"quality": "720p"},
+	} {
+		rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+			"dvr":       body,
+			"streaming": map[string]any{"bufferMinutes": 40},
+		}, authHeader(tok))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status %d, want 400", name, rr.Code)
+		}
+	}
+	if d, _ := prov.DVR(); d.Quality != settings.DVRQuality1080p || d.PadStartSeconds != 120 || d.PadEndSeconds != 300 {
+		t.Fatalf("invalid PUT changed dvr: %+v", d)
+	}
+	if s, _ := prov.Streaming(); s.BufferMinutes != settings.DefaultBufferMinutes {
+		t.Fatalf("invalid PUT changed streaming: %+v", s)
+	}
+}
+
 // New manual recordings use the padding set in Admin; existing ones keep
 // theirs.
 func TestManualRecordingUsesPaddingSetting(t *testing.T) {

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, type DVRStorage } from '../api/client'
+import { ApiError, type DVRStorage, type RecordingQuality } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import {
   DISK_FULL_WARNING,
   DISK_LOW_NOTE,
+  RECORDING_QUALITIES,
   buildPaddingPayload,
   formatBytes,
   gaugeSegments,
   paddingToForm,
+  qualityOptionLabel,
+  qualitySizeHint,
   storageWarning,
   type PaddingForm,
 } from './dvrModel'
@@ -88,7 +91,7 @@ export function DvrAdmin() {
   return (
     <div>
       <div className={styles.sectionHead}>
-        <h2 className={styles.sectionTitle}>Recording storage &amp; padding</h2>
+        <h2 className={styles.sectionTitle}>Recording storage &amp; settings</h2>
         <button type="button" className={styles.btn} onClick={() => void loadStorage()}>
           Refresh
         </button>
@@ -111,7 +114,7 @@ export function DvrAdmin() {
       {form ? (
         <form className={styles.settingsCard} onSubmit={onSave}>
           <div className={styles.sectionHead}>
-            <h3 className={styles.cardTitle}>Padding</h3>
+            <h3 className={styles.cardTitle}>{form.quality !== null ? 'Padding & quality' : 'Padding'}</h3>
           </div>
           <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
             Shows often start early or run late. Changes apply to recordings scheduled from now
@@ -146,7 +149,31 @@ export function DvrAdmin() {
                 disabled={saving}
               />
             </label>
+            {form.quality !== null ? (
+              <label className={styles.label}>
+                Recording quality
+                <select
+                  className={styles.select}
+                  value={form.quality}
+                  onChange={(e) =>
+                    setForm((f) => (f ? { ...f, quality: e.target.value as RecordingQuality } : f))
+                  }
+                  disabled={saving}
+                >
+                  {RECORDING_QUALITIES.map((q) => (
+                    <option key={q.value} value={q.value}>
+                      {qualityOptionLabel(q)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
+          {form.quality !== null ? (
+            <p className={styles.dim} style={{ margin: '0.5rem 0 0', fontSize: '0.85rem' }}>
+              {qualitySizeHint(form.quality)} Applies to recordings that finish from now on.
+            </p>
+          ) : null}
           {saveError ? (
             <p className={styles.statusError} style={{ margin: '0.75rem 0 0' }}>
               {saveError}
