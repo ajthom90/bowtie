@@ -5,6 +5,31 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] — 2026-10-04
+
+### Added
+
+- **Install the web app.** Phones, tablets and computers can add Bowtie to
+  the home screen or install it as an app with its own icon and window
+  (over HTTPS, or on `localhost`).
+- **Guide filters on Roku** — All · Sports · Movies · News · Kids · New, like
+  the other apps (Left/Right on the chip row above the channels).
+
+### Fixed
+
+- **Recording padding:** a recording's end padding now gives way only when
+  that frees a tuner (not while another show on the same channel is still
+  recording), and only one at a time.
+- **Find ads again** restarts a scan that's already running, so edits to
+  `comskip.ini` take effect; a recording with no ads no longer turns
+  commercial detection off.
+- Saving a playback position needs the same access as playing the
+  recording.
+- A recording deleted just as it finished could leave an empty folder.
+- Notifications: a busy database no longer drops a notification.
+- Web Multiview: the channel picker keeps keyboard focus inside it and gives
+  it back when closed.
+
 ## [0.17.0] — 2026-10-04
 
 ### Added
