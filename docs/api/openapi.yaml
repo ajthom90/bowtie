@@ -1394,8 +1394,10 @@ paths:
         A consistent snapshot of the SQLite database (accounts, channels,
         guide, recording list, rules and settings — not the recorded video).
         It contains password hashes and the Schedules Direct password, so
-        store it safely. Restore: stop Bowtie, replace `bowtie.db` in the data
-        directory with the file, start Bowtie.
+        store it safely. Token-signing secrets and refresh tokens are removed.
+        Restore: stop Bowtie, replace `bowtie.db` in the data directory with
+        the file (removing any `-journal`/`-wal` file), start Bowtie; everyone
+        signs in again.
       operationId: adminBackup
       tags: [admin]
       security:

@@ -16,7 +16,8 @@ var migrationFS embed.FS
 
 // Store is a SQLite-backed persistence layer.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Open opens (or creates) the database at path and applies embedded migrations.
@@ -34,7 +35,7 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("pragma: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err

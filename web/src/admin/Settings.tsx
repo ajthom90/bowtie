@@ -544,8 +544,9 @@ function BackupCard() {
       <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
         Saves accounts, channels, guide matches, series rules, the recording list and these
         settings (not recorded video). It includes password hashes and the Schedules Direct
-        password, so keep it private. To restore, stop Bowtie and replace bowtie.db in the
-        data folder with this file.
+        password, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
+        folder with this file (delete any bowtie.db-journal or -wal file next to it) and
+        start Bowtie; everyone signs in again.
       </p>
       {error ? <p className={styles.statusError}>{error}</p> : null}
       <div className={styles.settingsFooter}>

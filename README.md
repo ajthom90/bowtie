@@ -232,10 +232,15 @@ mappings, series rules, the recording list and settings. It is taken safely
 while Bowtie runs. Recorded video is not included — back up
 `<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
 The file holds password hashes and the Schedules Direct password; keep it
-private.
+private. Token-signing keys and sign-in sessions are left out, so a restored
+server makes new keys and everyone signs in again.
+
+The snapshot is written next to `bowtie.db` while the download is prepared
+(other requests wait a moment on a large guide).
 
 To restore, stop Bowtie, replace `<data>/bowtie.db` with the backup file
-(delete any `bowtie.db-wal` / `bowtie.db-shm` next to it), and start Bowtie.
+(delete any `bowtie.db-journal`, `bowtie.db-wal` or `bowtie.db-shm` next to
+it), and start Bowtie.
 
 ---
 
