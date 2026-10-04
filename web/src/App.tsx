@@ -1,23 +1,54 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { Account } from './account/Account'
 import { Admin } from './admin/Admin'
 import type { Recording } from './api/client'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import { LinkPage } from './auth/LinkPage'
+import { isLinkPath } from './auth/linkModel'
 import { Login } from './auth/Login'
 import { Guide, type WatchTarget } from './guide/Guide'
+import { Multiview } from './multiview/Multiview'
+import { MULTIVIEW_PATH, isMultiviewPath } from './multiview/multiviewModel'
 import { Player } from './player/Player'
 import { RecordingPlayer } from './recordings/RecordingPlayer'
 import { Recordings } from './recordings/Recordings'
 import type { RecordingsTab } from './recordings/recordingsModel'
 import styles from './App.module.css'
 
-type View = 'guide' | 'admin' | 'recordings'
+type View = 'guide' | 'admin' | 'recordings' | 'account'
+
+/** The current path, kept in step with back/forward. No router: only /link and /multiview are real routes. */
+function usePath(): [string, (to: string) => void] {
+  const [path, setPath] = useState(() => window.location.pathname)
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  const navigate = useCallback((to: string) => {
+    window.history.pushState(null, '', to)
+    setPath(window.location.pathname)
+  }, [])
+  return [path, navigate]
+}
 
 function Shell() {
   const { user, ready } = useAuth()
+  const [path, navigate] = usePath()
+  const onLink = isLinkPath(path)
   const [watching, setWatching] = useState<WatchTarget | null>(null)
   const [view, setView] = useState<View>('guide')
   const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
   const [playingRecording, setPlayingRecording] = useState<Recording | null>(null)
+  const inMultiview = isMultiviewPath(path)
+  useEffect(() => {
+    // Multiview replaces any player (e.g. via browser Back): that player must
+    // not come back, and start its stream again, when the guide returns.
+    if (inMultiview) {
+      setWatching(null)
+      setPlayingRecording(null)
+    }
+  }, [inMultiview])
 
   if (!ready) {
     return (
@@ -27,8 +58,30 @@ function Shell() {
     )
   }
 
+  // /link (quick sign-in for a TV): sign in first, then approve.
   if (!user) {
-    return <Login />
+    return <Login subtitle={onLink ? 'Sign in to approve your TV' : undefined} />
+  }
+
+  if (onLink) {
+    return (
+      <LinkPage
+        onDone={() => {
+          setView('guide')
+          navigate('/')
+        }}
+      />
+    )
+  }
+
+  const toGuide = () => {
+    setView('guide')
+    navigate('/')
+  }
+  const onMultiview = () => navigate(MULTIVIEW_PATH)
+
+  if (inMultiview) {
+    return <Multiview onGuide={toGuide} />
   }
 
   if (watching) {
@@ -43,6 +96,19 @@ function Shell() {
   }
 
   const onAdmin = user.role === 'admin' ? () => setView('admin') : undefined
+  const onAccount = () => setView('account')
+
+  if (view === 'account') {
+    return (
+      <Account
+        onGuide={() => setView('guide')}
+        onRecordings={() => setView('recordings')}
+        onMultiview={onMultiview}
+        onAdmin={onAdmin}
+        onLink={() => navigate('/link')}
+      />
+    )
+  }
 
   if (view === 'recordings') {
     return (
@@ -50,7 +116,9 @@ function Shell() {
         tab={recordingsTab}
         onTab={setRecordingsTab}
         onGuide={() => setView('guide')}
+        onMultiview={onMultiview}
         onAdmin={onAdmin}
+        onAccount={onAccount}
         onPlay={setPlayingRecording}
       />
     )
@@ -65,6 +133,7 @@ function Shell() {
         onBack={() => setView('guide')}
         onPreview={(t) => setWatching(t)}
         onRecordings={() => setView('recordings')}
+        onAccount={onAccount}
       />
     )
   }
@@ -72,8 +141,10 @@ function Shell() {
   return (
     <Guide
       onWatch={setWatching}
+      onMultiview={onMultiview}
       onAdmin={onAdmin}
       onRecordings={() => setView('recordings')}
+      onAccount={onAccount}
     />
   )
 }

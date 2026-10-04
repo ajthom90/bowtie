@@ -102,8 +102,9 @@ sub handleRequest(item as object)
     result = doHttp(built)
     parsed = bowtie.client.parseResponse(kind, result.httpCode, result.body, baseUrl)
 
-    ' Login success → hold tokens+user, persist refresh.
-    if kind = "login" and parsed.ok = true
+    ' Login success (password, or an approved quick sign-in) → hold
+    ' tokens+user, persist refresh.
+    if (kind = "login" or kind = "deviceToken") and parsed.ok = true
         applyLoginOk(parsed.data)
         emitResponse(id, parsed)
         return
@@ -128,8 +129,9 @@ sub handleRequest(item as object)
     end if
 
     ' 401 on authed kinds → reduce-driven single-flight refresh + ordered actions.
-    ' heartbeat uses stream token (no Bearer) — do not refresh on 401.
-    if isUnauthorized(parsed) and kind <> "login" and kind <> "healthz" and kind <> "heartbeat"
+    ' heartbeat uses stream token (no Bearer) — do not refresh on 401; nor
+    ' do the signed-out quick sign-in kinds.
+    if isUnauthorized(parsed) and kind <> "login" and kind <> "healthz" and kind <> "heartbeat" and kind <> "deviceStart" and kind <> "deviceToken"
         handle401(item, baseUrl)
         return
     end if
@@ -406,8 +408,9 @@ function doHttp(built as object) as object
     else if method = "DELETE"
         xfer.SetRequest("DELETE")
         sent = xfer.AsyncGetToString()
-    else if method = "PUT"
-        xfer.SetRequest("PUT")
+    else if method = "PUT" or method = "PATCH"
+        ' SetRequest overrides the verb; AsyncPostFromString carries the body.
+        xfer.SetRequest(method)
         sent = xfer.AsyncPostFromString(body)
     else
         xfer.SetRequest(method)

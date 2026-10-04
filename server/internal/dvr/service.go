@@ -17,8 +17,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -33,11 +35,25 @@ const (
 	sweepEvery        = time.Hour
 	// partialAfter: a recording that missed more than this is "partial".
 	partialAfter = 60 * time.Second
-	hlsDir       = "hls"
+	// minPartBytes: a part smaller than one TS packet holds nothing.
+	minPartBytes = 188
+	// shortPart: a part that ended this fast means the stream (or the disk)
+	// isn't working; wait RetryEvery before trying again.
+	shortPart = time.Second
+	// diskFloor: below this much free space a capture doesn't start.
+	diskFloor = 2 << 30
+	// maxSweepDeletes bounds one retention sweep; inUseWindow protects a
+	// recording someone saved a position in recently.
+	maxSweepDeletes = 10
+	inUseWindow     = 30 * time.Minute
+	hlsDir          = "hls"
 )
 
 // ErrBadWindow: the requested start/stop is backwards or already over.
 var ErrBadWindow = errors.New("recording must end after it starts, and in the future")
+
+// ErrNotStoppable: only a scheduled, waiting or recording recording can stop.
+var ErrNotStoppable = errors.New("this recording isn't in progress")
 
 // Source opens a raw MPEG-TS stream for a channel (production: the shared
 // ingest). It returns stream.ErrTunersBusy / stream.ErrNoSignal when it can't.
@@ -56,6 +72,8 @@ type Deps struct {
 	Store     *store.Store
 	Source    Source
 	Converter Converter
+	// Detector finds commercial breaks in ready recordings (nil = off).
+	Detector Detector
 	// Dir holds one folder per recording (never the segment tmpfs).
 	Dir   string
 	Clock func() time.Time
@@ -65,6 +83,10 @@ type Deps struct {
 	// recordings while free space in Dir is below this (0 = never).
 	MinFreeBytes int64
 	FreeBytes    func(dir string) (int64, error)
+	TotalBytes   func(dir string) (int64, error)
+	// Padding returns the padding for a recording being scheduled now
+	// (nil or an error: DefaultPadStart / DefaultPadEnd).
+	Padding func() (start, end time.Duration, err error)
 }
 
 // Warning accompanies a successful Schedule.
@@ -92,21 +114,38 @@ type ScheduleRequest struct {
 	Description string
 	Category    string
 	IconURL     string
+	Rating      string
 	Start, Stop time.Time
 	Force       bool // schedule despite a tuner conflict
+	RuleID      int64
+	ProgramID   string
 }
 
 // Service runs the DVR.
 type Service struct {
 	deps Deps
 
-	mu        sync.Mutex
-	captures  map[int64]*capture // in-flight captures by recording ID
-	convQueue chan int64
-	queued    map[int64]bool
-	lastSweep time.Time
-	stopped   bool
-	onDeleted func() // test hook: after the sweep deletes a recording
+	mu         sync.Mutex
+	captures   map[int64]*capture           // in-flight captures by recording ID
+	deleting   map[int64]bool               // Delete in progress: never start a capture
+	tickMu     sync.Mutex                   // one Tick at a time; Shutdown waits for it
+	rulesMu    sync.Mutex                   // one ApplyRules at a time
+	converting map[int64]context.CancelFunc // running conversions (Delete stops them)
+	convQueue  chan int64
+	queued     map[int64]bool
+	detecting  map[int64]context.CancelFunc // running commercial detection (Delete stops it)
+	detectPoke chan struct{}
+	// detectRetry: ids Redetect asked for again (the worker forgets it tried
+	// them); detectOff: the worker stopped on a setup error. Guarded by mu.
+	detectRetry map[int64]bool
+	detectOff   bool
+	lastSweep   time.Time
+	stopped     bool
+	onDeleted   func() // test hook: after the sweep deletes a recording
+
+	usedMu sync.Mutex // Storage's cached usedBytes
+	used   int64
+	usedAt time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -131,17 +170,35 @@ func New(deps Deps) *Service {
 	if deps.FreeBytes == nil {
 		deps.FreeBytes = freeBytes
 	}
+	if deps.TotalBytes == nil {
+		deps.TotalBytes = totalBytes
+	}
+	// FFmpeg's concat list resolves relative entries against the list's own
+	// directory, so every path the DVR hands out must be absolute.
+	if abs, err := filepath.Abs(deps.Dir); err == nil {
+		deps.Dir = abs
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		deps:      deps,
-		captures:  map[int64]*capture{},
-		convQueue: make(chan int64, 256),
-		queued:    map[int64]bool{},
-		ctx:       ctx,
-		cancel:    cancel,
+		deps:        deps,
+		captures:    map[int64]*capture{},
+		deleting:    map[int64]bool{},
+		converting:  map[int64]context.CancelFunc{},
+		convQueue:   make(chan int64, 256),
+		queued:      map[int64]bool{},
+		detecting:   map[int64]context.CancelFunc{},
+		detectPoke:  make(chan struct{}, 1),
+		detectRetry: map[int64]bool{},
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	s.wg.Add(1)
 	go s.convertWorker()
+	if deps.Detector != nil {
+		s.wg.Add(1)
+		go s.detectWorker()
+		s.pokeDetect() // recordings made before detection was available
+	}
 	return s
 }
 
@@ -170,6 +227,10 @@ func (s *Service) Shutdown() {
 		return
 	}
 	s.stopped = true
+	s.mu.Unlock()
+	s.tickMu.Lock()   // let a running Tick finish; later Ticks see stopped
+	s.tickMu.Unlock() //nolint:staticcheck // barrier
+	s.mu.Lock()
 	caps := make([]*capture, 0, len(s.captures))
 	for _, c := range s.captures {
 		c.shutdown = true
@@ -196,13 +257,15 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	if title == "" {
 		title = "Recording"
 	}
+	padStart, padEnd := s.padding()
 	r := store.Recording{
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
 		Title:       title, Subtitle: req.Subtitle, Description: req.Description,
-		Category: req.Category, IconURL: req.IconURL,
+		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
+		RuleID: req.RuleID, ProgramID: req.ProgramID,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
-		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
+		PadStartSec: int(padStart / time.Second), PadEndSec: int(padEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),
 	}
 
@@ -214,15 +277,17 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	if err != nil {
 		return store.Recording{}, nil, err
 	}
-	channels := map[int64]bool{r.ChannelID: true}
 	for _, o := range overlapping {
-		channels[o.ChannelID] = true
+		if o.ChannelID == r.ChannelID && o.Start.Equal(r.Start) {
+			return o, nil, nil // already scheduled (double tap, retry, second app)
+		}
 	}
+	peak, atPeak := peakChannels(r, overlapping)
 	var warnings []Warning
-	if tuners > 0 && len(channels) > tuners && !req.Force {
-		return store.Recording{}, nil, &ConflictError{TunerCount: tuners, Conflicts: overlapping}
+	if tuners > 0 && peak > tuners && !req.Force {
+		return store.Recording{}, nil, &ConflictError{TunerCount: tuners, Conflicts: atPeak}
 	}
-	if tuners > 0 && len(channels) >= tuners && len(channels) > 1 {
+	if tuners > 0 && peak >= tuners && peak > 1 {
 		warnings = append(warnings, Warning{Code: "usesAllTuners",
 			Message: "This uses every tuner at that time. If another app or someone watching live TV is using one, this may not record."})
 	}
@@ -235,8 +300,21 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	return r, warnings, nil
 }
 
+// padding is the configured padding for a recording scheduled now.
+func (s *Service) padding() (time.Duration, time.Duration) {
+	if s.deps.Padding == nil {
+		return DefaultPadStart, DefaultPadEnd
+	}
+	start, end, err := s.deps.Padding()
+	if err != nil {
+		log.Printf("dvr: padding setting: %v (using defaults)", err)
+		return DefaultPadStart, DefaultPadEnd
+	}
+	return start, end
+}
+
 // overlapping returns pending recordings whose show times overlap r's
-// (padding is soft and ignored).
+// (padding is soft and ignored: end padding gives way, see yieldEndPadding).
 func (s *Service) overlapping(r store.Recording) ([]store.Recording, error) {
 	pending, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
 	if err != nil {
@@ -249,6 +327,35 @@ func (s *Service) overlapping(r store.Recording) ([]store.Recording, error) {
 		}
 	}
 	return out, nil
+}
+
+// peakChannels is the most distinct channels recording at any one moment of
+// r's show (r included), and the other-channel recordings running then.
+// Recordings on r's channel share its tuner.
+func peakChannels(r store.Recording, overlapping []store.Recording) (int, []store.Recording) {
+	moments := []time.Time{r.Start}
+	for _, o := range overlapping {
+		if o.Start.After(r.Start) && o.Start.Before(r.Stop) {
+			moments = append(moments, o.Start)
+		}
+	}
+	best, bestAt := 0, []store.Recording(nil)
+	for _, t := range moments {
+		chans := map[int64]bool{r.ChannelID: true}
+		var at []store.Recording
+		for _, o := range overlapping {
+			if !o.Start.After(t) && o.Stop.After(t) && o.ChannelID != r.ChannelID {
+				if !chans[o.ChannelID] {
+					chans[o.ChannelID] = true
+				}
+				at = append(at, o)
+			}
+		}
+		if len(chans) > best {
+			best, bestAt = len(chans), at
+		}
+	}
+	return best, bestAt
 }
 
 func (s *Service) tunerCount() (int, error) {
@@ -266,6 +373,8 @@ func (s *Service) tunerCount() (int, error) {
 // Tick starts captures whose window opened, ends those whose window closed,
 // finishes rows left over from a restart, and runs the hourly sweep.
 func (s *Service) Tick() {
+	s.tickMu.Lock()
+	defer s.tickMu.Unlock()
 	now := s.deps.Clock()
 	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording, store.RecConverting)
 	if err != nil {
@@ -291,58 +400,119 @@ func (s *Service) Tick() {
 			s.startCapture(r)
 		}
 	}
+	s.yieldEndPadding(rows, now)
 	if now.Sub(s.lastSweep) >= sweepEvery {
 		s.lastSweep = now
+		s.ApplyRules()
 		s.sweep()
+	}
+}
+
+// yieldEndPadding keeps padding soft: for each recording whose show has
+// started but that is waiting for a tuner, stop one capture on another channel
+// that is only in its end padding (its show is over).
+func (s *Service) yieldEndPadding(rows []store.Recording, now time.Time) {
+	stopped := map[int64]bool{}
+	for _, w := range rows {
+		if w.State != store.RecWaiting || w.Failure != "noTuner" || now.Before(w.Start) {
+			continue
+		}
+		var pick *store.Recording
+		for i := range rows {
+			r := &rows[i]
+			if r.State != store.RecRecording || r.ChannelID == w.ChannelID || stopped[r.ID] || now.Before(r.Stop) {
+				continue
+			}
+			s.mu.Lock()
+			_, active := s.captures[r.ID]
+			s.mu.Unlock()
+			if active && (pick == nil || r.Stop.Before(pick.Stop)) {
+				pick = r
+			}
+		}
+		if pick == nil {
+			continue
+		}
+		stopped[pick.ID] = true
+		log.Printf("dvr: recording %d: ending its padding early so recording %d can start", pick.ID, w.ID)
+		if err := s.StopNow(pick.ID); err != nil {
+			log.Printf("dvr: recording %d: %v", pick.ID, err)
+		}
 	}
 }
 
 // StopNow ends a recording early, keeping what was captured.
 func (s *Service) StopNow(id int64) error {
-	r, err := s.deps.Store.RecordingByID(id)
+	now := s.deps.Clock().UTC()
+	ok, err := s.deps.Store.StopRecordingAt(id, now)
 	if err != nil {
 		return err
 	}
-	now := s.deps.Clock().UTC()
-	if now.Before(r.Stop) {
-		r.Stop = now
-	}
-	r.PadEndSec = 0
-	if now.Before(r.Start) {
-		r.Start = now
-		r.PadStartSec = 0
-	}
-	if err := s.deps.Store.UpdateRecording(r); err != nil {
-		return err
+	if !ok {
+		if _, err := s.deps.Store.RecordingByID(id); err != nil {
+			return err
+		}
+		return ErrNotStoppable
 	}
 	s.mu.Lock()
 	c := s.captures[id]
 	s.mu.Unlock()
 	if c != nil {
-		c.cancel()
+		c.cancel() // the capture finalizes the row
 		return nil
 	}
-	if r.State == store.RecScheduled || r.State == store.RecWaiting || r.State == store.RecRecording {
-		s.finishCapture(id, now)
-	}
+	s.finishCapture(id, now)
 	return nil
 }
 
 // Delete cancels a scheduled recording or removes a finished one, with its
-// files.
-func (s *Service) Delete(id int64) error {
+// files. An upcoming episode a series rule scheduled is marked skipped
+// instead, so the rule doesn't schedule it again.
+func (s *Service) Delete(id int64) error { return s.delete(id, true) }
+
+// CancelRule removes a series rule's upcoming episodes (stopping any that is
+// capturing). Recorded ones stay.
+func (s *Service) CancelRule(ruleID int64) {
+	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		if r.RuleID == ruleID {
+			_ = s.delete(r.ID, false)
+		}
+	}
+}
+
+func (s *Service) delete(id int64, allowSkip bool) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
+	s.deleting[id] = true // no capture may start for this row from here on
 	c := s.captures[id]
-	if c != nil {
-		c.shutdown = true // don't finalize: the row is going away
-		c.cancel()
+	if stopConvert := s.converting[id]; stopConvert != nil {
+		stopConvert() // FFmpeg would only write into a folder that's going away
+	}
+	if stopDetect := s.detecting[id]; stopDetect != nil {
+		stopDetect()
 	}
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.deleting, id)
+		s.mu.Unlock()
+	}()
+	if allowSkip && r.RuleID != 0 && r.State == store.RecScheduled && c == nil {
+		r.State, r.Failure, r.FailureDetail = store.RecFailed, "skipped", "Skipped"
+		return s.deps.Store.UpdateRecording(r)
+	}
 	if c != nil {
+		s.mu.Lock()
+		c.shutdown = true // don't finalize: the row is going away
+		s.mu.Unlock()
+		c.cancel()
 		<-c.done
 	}
 	if err := s.deps.Store.DeleteRecording(id); err != nil {
@@ -353,6 +523,9 @@ func (s *Service) Delete(id int64) error {
 			log.Printf("dvr: remove %s: %v", r.Dir, err)
 		}
 	}
+	s.usedMu.Lock()
+	s.usedAt = time.Time{} // the storage figure is stale now
+	s.usedMu.Unlock()
 	return nil
 }
 
@@ -367,25 +540,49 @@ func (s *Service) recordingDir(r store.Recording) string {
 }
 
 func (s *Service) startCapture(r store.Recording) {
+	ctx, cancel := context.WithCancel(s.ctx)
+	c := &capture{cancel: cancel, done: make(chan struct{})}
+	s.mu.Lock()
+	if s.stopped || s.deleting[r.ID] || s.captures[r.ID] != nil {
+		s.mu.Unlock()
+		cancel()
+		return
+	}
+	s.captures[r.ID] = c
+	s.mu.Unlock()
+	fail := func(failure string, err error) {
+		log.Printf("dvr: recording %d: %v", r.ID, err)
+		r.State, r.Failure, r.FailureDetail = store.RecFailed, failure, err.Error()
+		_ = s.deps.Store.UpdateRecording(r)
+		s.mu.Lock()
+		delete(s.captures, r.ID)
+		s.mu.Unlock()
+		cancel()
+		close(c.done)
+	}
+	if free, err := s.deps.FreeBytes(s.deps.Dir); err == nil && free < diskFloor {
+		s.sweep()
+		if free, err := s.deps.FreeBytes(s.deps.Dir); err == nil && free < diskFloor {
+			fail("diskFull", fmt.Errorf("only %d MB free in %s", free>>20, s.deps.Dir))
+			return
+		}
+	}
 	if r.Dir == "" {
 		r.Dir = s.recordingDir(r)
 	}
 	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
-		log.Printf("dvr: recording %d: %v", r.ID, err)
-		r.State, r.Failure = store.RecFailed, "diskFull"
-		r.FailureDetail = err.Error()
-		_ = s.deps.Store.UpdateRecording(r)
+		fail("diskFull", err)
 		return
 	}
 	if err := s.deps.Store.UpdateRecording(r); err != nil {
 		log.Printf("dvr: recording %d: %v", r.ID, err)
+		s.mu.Lock()
+		delete(s.captures, r.ID)
+		s.mu.Unlock()
+		cancel()
+		close(c.done)
 		return
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
-	c := &capture{cancel: cancel, done: make(chan struct{})}
-	s.mu.Lock()
-	s.captures[r.ID] = c
-	s.mu.Unlock()
 	go s.runCapture(ctx, c, r)
 }
 
@@ -395,58 +592,99 @@ func (s *Service) runCapture(ctx context.Context, c *capture, r store.Recording)
 	defer close(c.done)
 	defer func() {
 		s.mu.Lock()
-		delete(s.captures, r.ID)
 		shutdown := c.shutdown
 		s.mu.Unlock()
+		// Finalize before leaving the captures map, so Tick can't start a
+		// second capture for a row that is still "recording".
 		if shutdown {
 			s.noteStopped(r.ID) // a restart resumes from here; the gap counts as missed
-			return
+		} else {
+			s.finishCapture(r.ID, s.deps.Clock())
 		}
-		s.finishCapture(r.ID, s.deps.Clock())
+		s.mu.Lock()
+		delete(s.captures, r.ID)
+		s.mu.Unlock()
 	}()
 
 	ch, err := s.deps.Store.ChannelByID(r.ChannelID)
 	if err != nil {
 		ch = store.Channel{ID: r.ChannelID}
 	}
-	part := len(partFiles(r.Dir))
+	part := lastPart(r.Dir)
 	var gapFrom time.Time // when the last part ended (a dropped stream)
+	wait := func() bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(s.deps.RetryEvery):
+			return true
+		}
+	}
 	for ctx.Err() == nil {
 		rc, err := s.deps.Source.Open(ctx, ch)
 		if err != nil {
 			s.noteWaiting(r.ID, err)
-			select {
-			case <-ctx.Done():
+			if !wait() {
 				return
-			case <-time.After(s.deps.RetryEvery):
 			}
 			continue
 		}
 		part++
+		path := filepath.Join(r.Dir, fmt.Sprintf("part-%03d.ts", part))
 		s.noteRecording(r.ID, gapFrom)
-		if err := s.writePart(ctx, rc, filepath.Join(r.Dir, fmt.Sprintf("part-%03d.ts", part))); err != nil {
-			log.Printf("dvr: recording %d part %d: %v", r.ID, part, err)
+		began := time.Now()
+		n, err := s.writePart(ctx, rc, path)
+		if n < minPartBytes {
+			_ = os.Remove(path) // nothing usable; reuse the number
+			part--
 		}
 		gapFrom = s.deps.Clock()
+		if err != nil {
+			log.Printf("dvr: recording %d part %d: %v", r.ID, part, err)
+			if errors.Is(err, syscall.ENOSPC) {
+				s.noteFailure(r.ID, "diskFull", err)
+			}
+		}
+		// A part that failed or ended at once means the stream or the disk
+		// isn't working: don't spin (and hold the tuner) — wait, then retry.
+		if err != nil || time.Since(began) < shortPart {
+			if !wait() {
+				return
+			}
+		}
 	}
 }
 
-func (s *Service) writePart(ctx context.Context, rc io.ReadCloser, path string) error {
+func (s *Service) writePart(ctx context.Context, rc io.ReadCloser, path string) (int64, error) {
 	stop := context.AfterFunc(ctx, func() { _ = rc.Close() })
 	defer stop()
 	defer func() { _ = rc.Close() }()
+	if ctx.Err() != nil {
+		return 0, nil
+	}
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, copyErr := io.Copy(f, rc)
+	n, copyErr := io.Copy(f, rc)
 	if err := f.Close(); err != nil {
-		return err
+		return n, err
 	}
 	if copyErr != nil && ctx.Err() == nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, io.ErrClosedPipe) {
-		return copyErr
+		return n, copyErr
 	}
-	return nil
+	return n, nil
+}
+
+// noteFailure records a failure reason on a recording without changing its
+// state (the capture keeps retrying).
+func (s *Service) noteFailure(id int64, failure string, err error) {
+	r, gerr := s.deps.Store.RecordingByID(id)
+	if gerr != nil || r.Failure == failure {
+		return
+	}
+	r.Failure, r.FailureDetail = failure, err.Error()
+	_ = s.deps.Store.UpdateRecording(r)
 }
 
 func (s *Service) noteWaiting(id int64, err error) {
@@ -579,23 +817,48 @@ func (s *Service) convert(id int64) {
 	}
 	parts := partFiles(r.Dir)
 	out := filepath.Join(r.Dir, hlsDir)
-	_ = os.RemoveAll(out)
-	dur, err := s.deps.Converter.Convert(s.ctx, parts, out)
-	if s.ctx.Err() != nil {
-		return // shutting down: convert again after restart
+	var dur time.Duration
+	if len(parts) == 0 {
+		// Converted before, but the "ready" write didn't land: keep the VOD.
+		video, rerr := os.ReadFile(filepath.Join(out, vodLayout.TopName()+".m3u8"))
+		if _, merr := os.Stat(filepath.Join(out, MasterName)); rerr != nil || merr != nil || !strings.Contains(string(video), "#EXT-X-ENDLIST") {
+			r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "nothing was recorded"
+			_ = s.deps.Store.UpdateRecording(r)
+			return
+		}
+		dur = playlistDuration(video)
+	} else {
+		_ = os.RemoveAll(out)
+		cctx, cancel := context.WithCancel(s.ctx)
+		s.mu.Lock()
+		s.converting[id] = cancel
+		s.mu.Unlock()
+		dur, err = s.deps.Converter.Convert(cctx, parts, out)
+		stopped := cctx.Err() != nil
+		s.mu.Lock()
+		delete(s.converting, id)
+		s.mu.Unlock()
+		cancel()
+		if s.ctx.Err() != nil {
+			return // shutting down: convert again after restart
+		}
+		if stopped {
+			return // deleted: Delete removes the row and the files
+		}
+		if err != nil {
+			r, gerr := s.deps.Store.RecordingByID(id)
+			if gerr != nil {
+				return // deleted meanwhile
+			}
+			log.Printf("dvr: convert recording %d: %v", id, err)
+			r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "conversion failed: "+err.Error()
+			_ = s.deps.Store.UpdateRecording(r)
+			return
+		}
 	}
 	r, gerr := s.deps.Store.RecordingByID(id)
 	if gerr != nil {
 		return // deleted meanwhile
-	}
-	if err != nil {
-		log.Printf("dvr: convert recording %d: %v", id, err)
-		r.State, r.Failure, r.FailureDetail = store.RecFailed, "error", "conversion failed: "+err.Error()
-		_ = s.deps.Store.UpdateRecording(r)
-		return
-	}
-	for _, p := range parts {
-		_ = os.Remove(p)
 	}
 	r.DurationSec = int(dur / time.Second)
 	r.SizeBytes = dirSize(out)
@@ -605,7 +868,13 @@ func (s *Service) convert(id int64) {
 	r.State = store.RecReady
 	if err := s.deps.Store.UpdateRecording(r); err != nil {
 		log.Printf("dvr: recording %d: %v", id, err)
+		return // keep the parts; the next Tick finishes it
 	}
+	for _, p := range parts {
+		_ = os.Remove(p)
+	}
+	s.pokeDetect()
+	s.pruneRule(r.RuleID)
 }
 
 // sweep deletes the oldest unprotected finished recordings while free space
@@ -619,17 +888,35 @@ func (s *Service) sweep() {
 		return
 	}
 	sort.SliceStable(ready, func(i, j int) bool { return ready[i].Start.Before(ready[j].Start) })
+	deleted := 0
+	lastFree := int64(-1)
 	for _, r := range ready {
 		free, err := s.deps.FreeBytes(s.deps.Dir)
-		if err != nil || free >= s.deps.MinFreeBytes {
+		if err != nil || free >= s.deps.MinFreeBytes || deleted >= maxSweepDeletes {
 			return
 		}
-		if r.Protected {
+		if lastFree >= 0 && free <= lastFree {
+			// Deleting didn't free anything (the space is taken by something
+			// else); stop rather than empty the library.
+			log.Printf("dvr: low on space, but deleting recordings isn't freeing any; stopping")
+			return
+		}
+		if r.Protected || r.Failure == "skipped" { // a skip marker keeps a series rule from rescheduling
 			continue
 		}
+		if watching, _ := s.deps.Store.RecordingWatchedSince(r.ID, s.deps.Clock().Add(-inUseWindow)); watching {
+			continue
+		}
+		holdsFiles := r.SizeBytes > 0 || (r.Dir != "" && dirSize(r.Dir) > 0)
 		log.Printf("dvr: low on space (%d bytes free): deleting %q (%s)", free, r.Title, r.Start.Format(time.RFC3339))
-		if err := s.Delete(r.ID); err == nil && s.onDeleted != nil {
-			s.onDeleted()
+		if err := s.Delete(r.ID); err == nil {
+			if holdsFiles { // only deletions that should free space count
+				deleted++
+				lastFree = free
+			}
+			if s.onDeleted != nil {
+				s.onDeleted()
+			}
 		}
 	}
 }
@@ -651,8 +938,33 @@ func partFiles(dir string) []string {
 		return nil
 	}
 	m, _ := filepath.Glob(filepath.Join(dir, "part-*.ts"))
-	sort.Strings(m)
-	return m
+	var out []string
+	for _, p := range m {
+		if fi, err := os.Stat(p); err == nil && fi.Size() < minPartBytes {
+			_ = os.Remove(p) // empty part: nothing for the concat list
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return partNumber(out[i]) < partNumber(out[j]) })
+	return out
+}
+
+// partNumber is N from part-N.ts (numeric, so part-1000 sorts after part-999).
+func partNumber(path string) int {
+	n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "part-"), ".ts"))
+	return n
+}
+
+// lastPart is the highest part number already in dir (0 if none).
+func lastPart(dir string) int {
+	last := 0
+	for _, p := range partFiles(dir) {
+		if n := partNumber(p); n > last {
+			last = n
+		}
+	}
+	return last
 }
 
 func dirSize(dir string) int64 {

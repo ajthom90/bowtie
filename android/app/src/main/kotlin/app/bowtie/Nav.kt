@@ -30,12 +30,14 @@ import app.bowtie.core.vm.AppViewModel
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.core.vm.RecordingsViewModel
+import app.bowtie.core.vm.SearchViewModel
 import app.bowtie.ui.ChannelListScreen
 import app.bowtie.ui.ConnectScreen
 import app.bowtie.ui.LoginScreen
 import app.bowtie.ui.PlayerScreen
 import app.bowtie.ui.RecordingPlayerScreen
 import app.bowtie.ui.RecordingsScreen
+import app.bowtie.ui.SearchScreen
 import app.bowtie.ui.SettingsScreen
 import okhttp3.HttpUrl
 
@@ -45,6 +47,7 @@ private sealed class ReadyRoute {
     data object Settings : ReadyRoute()
     data class Player(val channel: Channel, val nowTitle: String?) : ReadyRoute()
     data object Recordings : ReadyRoute()
+    data object Search : ReadyRoute()
     data class RecordingPlayer(
         val start: RecordingsViewModel.PlayStart,
         val startAtSec: Int,
@@ -129,6 +132,11 @@ private fun ReadyShell(
         key = "recordings-${client.server}",
         factory = factory,
     )
+    val searchViewModel: SearchViewModel = viewModel(
+        viewModelStoreOwner = owner,
+        key = "search-${client.server}",
+        factory = factory,
+    )
 
     var route by remember(client.server) { mutableStateOf<ReadyRoute>(ReadyRoute.Channels) }
 
@@ -150,6 +158,18 @@ private fun ReadyShell(
                 },
                 onOpenSettings = { route = ReadyRoute.Settings },
                 onOpenRecordings = { route = ReadyRoute.Recordings },
+                onOpenSearch = { route = ReadyRoute.Search },
+                modifier = modifier,
+            )
+        }
+        is ReadyRoute.Search -> {
+            SearchScreen(
+                viewModel = searchViewModel,
+                onWatch = { channel, title ->
+                    playerViewModel.play(channel)
+                    route = ReadyRoute.Player(channel = channel, nowTitle = title)
+                },
+                onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
             )
         }
@@ -188,6 +208,7 @@ private fun ReadyShell(
                 nowTitle = r.nowTitle,
                 onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
+                programEndMs = { channel -> channelListViewModel.programEndMs(channel) },
             )
         }
     }
@@ -228,6 +249,8 @@ private class ReadyViewModelFactory(
                 PlayerViewModel(client = client, caps = caps) as T
             modelClass.isAssignableFrom(RecordingsViewModel::class.java) ->
                 RecordingsViewModel(client = client) as T
+            modelClass.isAssignableFrom(SearchViewModel::class.java) ->
+                SearchViewModel(client = client) as T
             else -> error("Unknown ViewModel class: ${modelClass.name}")
         }
     }

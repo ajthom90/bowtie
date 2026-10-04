@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- DVR recordings: Upcoming / Recorded / Missed / Shows tabs, a MarkupList
+     of recordings (or series rules), and a full-screen VOD Video node with the standard
+     trick-play UI. Pure logic lives in source/lib/Recordings.bs. -->
+<component name="RecordingsScene" extends="Group">
+    <interface>
+        <field id="apiTask" type="node" />
+        <!-- Back to home. -->
+        <field id="closed" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="RecordingsScene.bs" />
+    <children>
+        <Rectangle
+            id="background"
+            width="1920"
+            height="1080"
+            color="0x101418FF"
+        />
+
+        <Label
+            id="titleLabel"
+            translation="[80, 40]"
+            width="800"
+            height="56"
+            text="Recordings"
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:LargeBoldSystemFont"
+        />
+
+        <!-- Tabs: left/right switches, down to the list. The amber bar marks
+             the shown tab while focus is in the list. -->
+        <Button
+            id="upcomingTab"
+            translation="[80, 112]"
+            text="Upcoming"
+            minWidth="240"
+            height="56"
+        />
+        <Button
+            id="recordedTab"
+            translation="[340, 112]"
+            text="Recorded"
+            minWidth="240"
+            height="56"
+        />
+        <Button
+            id="missedTab"
+            translation="[600, 112]"
+            text="Missed"
+            minWidth="240"
+            height="56"
+        />
+        <!-- Series recording rules (GET /recording-rules). -->
+        <Button
+            id="showsTab"
+            translation="[860, 112]"
+            text="Shows"
+            minWidth="240"
+            height="56"
+        />
+        <Rectangle
+            id="tabMarker"
+            translation="[80, 172]"
+            width="240"
+            height="4"
+            color="0xF0A428FF"
+        />
+
+        <Group id="loadingGroup" visible="false">
+            <BusySpinner
+                id="loadingSpinner"
+                translation="[920, 480]"
+                visible="true"
+                control="stop"
+            />
+        </Group>
+
+        <Label
+            id="messageLabel"
+            translation="[200, 460]"
+            width="1520"
+            height="80"
+            text=""
+            horizAlign="center"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:MediumSystemFont"
+            wrap="true"
+            visible="false"
+        />
+
+        <MarkupList
+            id="recordingList"
+            translation="[80, 200]"
+            itemComponentName="RecordingItem"
+            itemSize="[1760, 112]"
+            itemSpacing="[0, 8]"
+            numRows="6"
+            drawFocusFeedback="true"
+            drawFocusFeedbackOnTop="true"
+            focusBitmapUri="pkg:/images/focus_amber.9.png"
+            visible="false"
+        />
+
+        <Label
+            id="hintLabel"
+            translation="[80, 960]"
+            width="1760"
+            height="40"
+            text="OK: play · *: options · Back: channels"
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+
+        <!-- VOD playback on top of everything; Roku draws the trick-play bar. -->
+        <Video
+            id="video"
+            width="1920"
+            height="1080"
+            translation="[0, 0]"
+            enableUI="true"
+            visible="false"
+        />
+
+        <!-- Over the video while playing. Skip ad: shown (and focused, so OK
+             reaches it rather than the Video) while the position is inside a
+             commercial segment. -->
+        <Button
+            id="skipAdButton"
+            translation="[1400, 820]"
+            text="Skip ad ▸ (OK)"
+            minWidth="420"
+            height="72"
+            visible="false"
+        />
+        <!-- "Skipped ad" after an automatic skip. -->
+        <Group id="adToast" visible="false">
+            <Rectangle
+                id="adToastBg"
+                translation="[1500, 820]"
+                width="320"
+                height="72"
+                color="0x101418E6"
+            />
+            <Label
+                id="adToastLabel"
+                translation="[1500, 820]"
+                width="320"
+                height="72"
+                text="Skipped ad"
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF0A428FF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+        <!-- Sleep timer: "Still watching?" in the last minute. Focused while
+             shown so OK reaches this screen; OK keeps watching. -->
+        <Group id="sleepWarning" visible="false">
+            <Rectangle
+                id="sleepWarningBg"
+                translation="[360, 860]"
+                width="1200"
+                height="96"
+                color="0x101418E6"
+            />
+            <Label
+                id="sleepWarningLabel"
+                translation="[380, 860]"
+                width="1160"
+                height="96"
+                text=""
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF2EFE8FF"
+                font="font:MediumSystemFont"
+            />
+        </Group>
+        <!-- Shown briefly when playback starts. -->
+        <Label
+            id="playHint"
+            translation="[1120, 48]"
+            width="720"
+            height="40"
+            text="Down: sleep timer"
+            horizAlign="right"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:SmallSystemFont"
+            visible="false"
+        />
+
+        <!-- Save the resume position while playing. -->
+        <Timer
+            id="positionTimer"
+            duration="15"
+            repeat="true"
+        />
+        <!-- Sleep timer tick (bowtie.sleep) while it is on. -->
+        <Timer
+            id="sleepTimer"
+            duration="1"
+            repeat="true"
+        />
+        <Timer
+            id="adToastTimer"
+            duration="2.5"
+            repeat="false"
+        />
+        <Timer
+            id="playHintTimer"
+            duration="5"
+            repeat="false"
+        />
+    </children>
+</component>

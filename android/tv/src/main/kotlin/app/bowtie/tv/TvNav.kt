@@ -202,6 +202,7 @@ private fun ReadyShell(
                 },
                 onBack = { route = ReadyRoute.Channels },
                 modifier = modifier,
+                programEndMs = { channel -> channelListViewModel.programEndMs(channel) },
             )
         }
     }

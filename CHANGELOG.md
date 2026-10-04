@@ -5,7 +5,139 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.14.0] — 2026-10-04
+
+### Added
+
+- **Skip commercials.** When [Comskip](https://github.com/erikkaashoek/Comskip)
+  is available (the Docker image includes it), Bowtie finds the commercial
+  breaks in each finished recording in the background, and every recording
+  player — web, iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and
+  Roku — shows **Skip ad** while you're in one. Turn on **Skip ads
+  automatically** to skip each break once. Older recordings are scanned too,
+  newest first. Set `BOWTIE_COMSKIP_PATH=off` to turn it off. After tuning
+  `comskip.ini`, admins can press **Find ads again** in the web recording
+  player. See README → Commercial detection.
+- **Sleep timer on Roku** (live TV and recordings), like the other apps.
+
+### Changed
+
+- **Roku:** Right in the live player now opens **Options** (quality and the
+  sleep timer); Down in a recording opens the sleep timer; Settings can be
+  moved through with Up/Down.
+
+## [0.13.0] — 2026-10-04
+
+### Added
+
+- **Multiview (web).** Watch up to four live channels at once — 1, 2 or a
+  2×2 grid (stacked on phones). One tile has sound: click a tile or press
+  1–4 to move it. Each tile can change channel, go full screen or close, and
+  shows its own error (tuners busy, stream limit, no signal) without stopping
+  the others. Tiles without sound start at a lower quality to save bandwidth.
+  "Restore last" brings back your last set (it never starts streams on its
+  own). Open it from the Multiview button in the guide.
+- **Sleep timer** on iPhone/iPad, Apple TV, Mac, Android and Android TV /
+  Fire TV: 15 minutes to 2 hours, or "End of this program". A minute before,
+  a "Still watching?" prompt lets you keep going; otherwise playback stops
+  and the tuner is freed.
+- **Recording storage and padding (Admin → Recordings).** A storage gauge
+  (recordings, other files, free space), recording counts, a warning when the
+  disk is almost full, and how early to start / how long to keep recording
+  (were fixed at 1 and 3 minutes). End padding now gives way: if another
+  recording needs the tuner when its show starts, a recording that is only
+  in its end padding stops early.
+- **Backup (Admin → Settings → Download backup).** A snapshot of accounts,
+  channels, guide matches, series rules, the recording list and settings —
+  see README → Backup and restore. Token-signing keys and sign-in sessions
+  are left out, so restoring signs everyone out.
+- **Roadmap** (`docs/roadmap.md`): what antenna viewers ask for most, what
+  Bowtie covers, and what's next.
+
+### Fixed
+
+- **Apple apps:** playing a recording no longer stops live TV until the
+  recording actually starts; if it can't, live TV keeps playing.
+
+## [0.12.1] — 2026-10-04
+
+### Fixed
+
+- **Changing channels from an IPTV player at your stream limit.** Players
+  like TiviMate and Kodi often open the next channel before closing the last;
+  at an account's stream limit the new channel now replaces the old one
+  instead of failing.
+- **Deleting a recording while it converts** stops the conversion right away
+  instead of letting FFmpeg finish into a deleted folder.
+- **Turning off the free HDHomeRun guide** now removes its listings and the
+  channel matches it made (matches you set by hand stay).
+- **Guide search on restricted accounts** fills its results from allowed
+  programs, and blocked programs no longer match on their descriptions.
+- **TV sign-in codes** are limited to 10 per device every 10 minutes.
+
+## [0.12.0] — 2026-10-04
+
+### Added
+
+- **Free TV guide from your HDHomeRun (no account needed).** Bowtie now
+  fetches the guide SiliconDust gives every HDHomeRun owner (about 2-3 days
+  ahead; 14 with an HDHomeRun DVR subscription) and matches it to your
+  channels by number, so the guide fills in on its own. Channels you already
+  mapped are left alone, and it refreshes once a day at a random time. It is
+  on by default; turn it off with the `hdhomerun.enabled` admin setting.
+  Episode and series IDs and new/repeat flags come along, so series
+  recordings work with it too.
+
+- **Mac app.** A native macOS app (sidebar with Favorites, Recent, Channels
+  and Recordings; full screen, picture in picture; Space, L for live,
+  ⌘↑/⌘↓ to change channel). Built in CI alongside iOS; see `ios/README.md`
+  for adding it to App Store Connect or notarizing it.
+- **Sign in with your phone on TVs.** Apple TV, Android TV / Fire TV and Roku
+  open on a QR code: scan it, approve on your phone, and the TV is signed in —
+  no typing a password with a remote. Or open `<server>/link` and enter the
+  code. (Account → Enter a TV code in the web app.)
+- **Record a series.** "Record series" next to Record (web, iPhone/iPad,
+  Apple TV, Mac, Android, Fire TV, Roku) records every new episode on that
+  channel (web: any channel, all episodes, keep the latest N). Shows you
+  record are under Recordings → Shows. Skipping an upcoming episode keeps it
+  skipped.
+- **Search the guide.** Search titles, episodes and descriptions from the
+  web, iPhone/iPad, Mac, Apple TV and Android, then watch or record (or
+  record the series) from the results.
+- **Parental controls.** In Admin → Users, limit an account to some channels,
+  a maximum rating (TV-Y … TV-MA) and optionally block unrated programs.
+  Blocked programs show 🔒 in the guide and recordings; starting one is
+  refused, and a show that changes into a blocked rating stops. Ratings come
+  from the guide (Schedules Direct has them; the free HDHomeRun guide
+  doesn't). Admins are never limited.
+- **Use Bowtie in other apps (Xbox via Kodi, VLC, TiviMate, Plex,
+  Jellyfin).** Account → "Use Bowtie in other apps" gives you a personal M3U
+  playlist and XMLTV guide link. Kodi's IPTV Simple Client on an Xbox, VLC,
+  TiviMate, Plex and Jellyfin can then watch through Bowtie (with your
+  account's limits and parental controls).
+- **SharePlay on iPhone, iPad and Apple TV.** Watch a channel together on a
+  FaceTime call: everyone joins the sharer's stream, and pause, rewind and
+  Live stay in sync. Each person signs in to your server with their own
+  account. (Needs the Group Activities capability on the App ID; test on
+  real devices.)
+
+### Fixed
+
+- Clearing a channel's guide mapping now means "no guide" (automatic
+  mapping won't fill it back in).
+- Android: "Try again" on a recording gets a fresh link (it failed after the
+  link expired).
+
+### Changed
+
+- **New logo.** The icon is now an old-school UHF bowtie TV antenna instead
+  of a necktie bowtie, on every app: iPhone/iPad, Apple TV (layered icon and
+  top shelf), Android (adaptive and themed icon, which replaces the stock
+  Android icon), Android TV / Fire TV (icon and banner), Roku (channel poster
+  and splash), and the web (favicon, home-screen icon, header and sign-in).
+  Source SVGs are in `docs/brand/`.
+
+## [0.11.0] — 2026-10-04
 
 ### Added
 

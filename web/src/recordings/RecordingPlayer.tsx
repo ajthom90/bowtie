@@ -1,9 +1,10 @@
 import Hls from 'hls.js'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, type Recording } from '../api/client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, type CommercialBreak, type Recording } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { canPlayNativeHls } from '../player/caps'
 import { loadTrackPrefs, pickAudioIndex } from '../player/tracksModel'
+import { createCommercialSkipper, isSkipKey, loadAutoSkip, saveAutoSkip } from './commercialsModel'
 import {
   createPositionSaver,
   formatClock,
@@ -48,7 +49,19 @@ function keepaliveSavePosition(id: number, positionSec: number) {
  * position saved every 15 s and on close. No live edge, no heartbeat.
  */
 export function RecordingPlayer({ recording, onBack }: Props) {
-  const { client } = useAuth()
+  const { client, user } = useAuth()
+  const [redetect, setRedetect] = useState<'idle' | 'busy' | 'queued' | 'error'>('idle')
+  const [redetectError, setRedetectError] = useState('')
+  const findAdsAgain = async () => {
+    setRedetect('busy')
+    try {
+      await client.redetectCommercials(recording.id)
+      setRedetect('queued')
+    } catch (err) {
+      setRedetectError(err instanceof Error ? err.message : 'Could not start')
+      setRedetect('error')
+    }
+  }
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
   /** Playback actually started — positions before that would clobber the saved one. */
@@ -60,10 +73,60 @@ export function RecordingPlayer({ recording, onBack }: Props) {
 
   const getPosition = useCallback((): number | null => lastPosRef.current, [])
 
+  // Commercial breaks: a Skip button while inside one, and optional auto-skip
+  // (each break once; seeking back into one doesn't skip it again).
+  // Keyed on the breaks' content, so a re-fetched copy of the same recording
+  // keeps the auto-skip memory.
+  const breaksKey = JSON.stringify(recording.commercials ?? [])
+  const skipper = useMemo(
+    () => createCommercialSkipper(JSON.parse(breaksKey) as CommercialBreak[]),
+    [breaksKey],
+  )
+  const [autoSkip, setAutoSkip] = useState(() => loadAutoSkip())
+  const autoSkipRef = useRef(autoSkip)
+  const [currentBreak, setCurrentBreak] = useState<CommercialBreak | null>(null)
+
+  const toggleAutoSkip = (on: boolean) => {
+    autoSkipRef.current = on
+    setAutoSkip(on)
+    saveAutoSkip(on)
+  }
+
   const onTimeUpdate = () => {
     const v = videoRef.current
-    if (startedRef.current && v) lastPosRef.current = v.currentTime
+    if (!v) return
+    if (startedRef.current) lastPosRef.current = v.currentTime
+    // readyState 0: the element is being reset (currentTime jumps to 0).
+    if (skipper.breaks.length === 0 || v.readyState === 0) return
+    // Auto-skip only while playing: scrubbing or pausing into a break doesn't jump.
+    const d = skipper.update(v.currentTime, autoSkipRef.current && !v.paused && !v.seeking)
+    if (d.seekTo != null) {
+      v.currentTime = d.seekTo
+      setCurrentBreak(null)
+    } else {
+      setCurrentBreak(d.current)
+    }
   }
+
+  const skipBreak = useCallback((): boolean => {
+    const v = videoRef.current
+    if (!v || v.readyState === 0) return false
+    const to = skipper.skip(v.currentTime)
+    if (to == null) return false
+    v.currentTime = to
+    setCurrentBreak(null)
+    return true
+  }, [skipper])
+
+  // S skips the break the playhead is in.
+  useEffect(() => {
+    if (skipper.breaks.length === 0) return
+    const onKey = (e: KeyboardEvent) => {
+      if (isSkipKey(e) && skipBreak()) e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [skipper, skipBreak])
 
   const saverRef = useRef<ReturnType<typeof createPositionSaver> | null>(null)
   if (saverRef.current === null) {
@@ -232,6 +295,31 @@ export function RecordingPlayer({ recording, onBack }: Props) {
               .join(' · ')}
           </span>
         </div>
+        {skipper.breaks.length > 0 ? (
+          <label className={styles.autoSkip}>
+            <input
+              type="checkbox"
+              checked={autoSkip}
+              onChange={(e) => toggleAutoSkip(e.target.checked)}
+            />
+            Auto-skip ads
+          </label>
+        ) : null}
+        {user?.role === 'admin' ? (
+          <button
+            type="button"
+            className={playerStyles.btn}
+            onClick={() => void findAdsAgain()}
+            disabled={redetect === 'busy' || redetect === 'queued'}
+            title="Run commercial detection on this recording again"
+          >
+            {redetect === 'queued'
+              ? 'Finding ads… reopen in a few minutes'
+              : redetect === 'error'
+                ? redetectError
+                : 'Find ads again'}
+          </button>
+        ) : null}
       </header>
 
       <div className={playerStyles.videoWrap}>
@@ -242,6 +330,18 @@ export function RecordingPlayer({ recording, onBack }: Props) {
           controls
           onTimeUpdate={onTimeUpdate}
         />
+
+        {phase.kind === 'playing' && currentBreak ? (
+          <button
+            type="button"
+            className={`${playerStyles.btn} ${playerStyles.btnPrimary} ${styles.skipAd}`}
+            onClick={() => skipBreak()}
+            aria-keyshortcuts="S"
+            title="Skip to the end of this commercial break (S)"
+          >
+            Skip ad ▸
+          </button>
+        ) : null}
 
         {phase.kind === 'loading' ? <div className={playerStyles.loading}>Loading…</div> : null}
 

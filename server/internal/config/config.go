@@ -29,7 +29,13 @@ type Config struct {
 	// DVRMinFreeGB: the DVR deletes the oldest unprotected recordings while
 	// free space is below this (default 20; 0 = never). Env BOWTIE_DVR_MIN_FREE_GB.
 	DVRMinFreeGB int `yaml:"dvrMinFreeGB"`
-	XMLTV             struct {
+	// ComskipPath is the Comskip binary for commercial detection (default
+	// "comskip" on PATH; not found = detection off). Env BOWTIE_COMSKIP_PATH.
+	ComskipPath string `yaml:"comskipPath"`
+	// ComskipINI is the comskip.ini to use (default: <DataDir>/comskip.ini,
+	// written with Bowtie's settings on first use). Env BOWTIE_COMSKIP_INI.
+	ComskipINI string `yaml:"comskipIni"`
+	XMLTV      struct {
 		Source       string `yaml:"source"`       // file path or http(s) URL
 		RefreshHours int    `yaml:"refreshHours"` // default 12
 	} `yaml:"xmltv"`
@@ -43,7 +49,7 @@ type Config struct {
 // Load reads <dataDir>/config.yaml if present, applies defaults, then env overrides.
 // Env vars: BOWTIE_LISTEN_ADDR, BOWTIE_FFMPEG_PATH, BOWTIE_ENCODER, BOWTIE_SEGMENT_DIR,
 // BOWTIE_DEVICES (comma-separated), BOWTIE_MULTITRACK (off|0|false disables),
-// BOWTIE_RECORDINGS_DIR, BOWTIE_DVR_MIN_FREE_GB.
+// BOWTIE_RECORDINGS_DIR, BOWTIE_DVR_MIN_FREE_GB, BOWTIE_COMSKIP_PATH, BOWTIE_COMSKIP_INI.
 func Load(dataDir string) (Config, error) {
 	cfg := Config{
 		ListenAddr: ":8400",
@@ -54,6 +60,7 @@ func Load(dataDir string) (Config, error) {
 		// DVR defaults (yaml/env may override).
 		RecordingsDir: filepath.Join(dataDir, "recordings"),
 		DVRMinFreeGB:  20,
+		ComskipPath:   "comskip",
 	}
 	cfg.XMLTV.RefreshHours = 12
 
@@ -76,6 +83,9 @@ func Load(dataDir string) (Config, error) {
 		}
 		if cfg.FFmpegPath == "" {
 			cfg.FFmpegPath = "ffmpeg"
+		}
+		if cfg.ComskipPath == "" {
+			cfg.ComskipPath = "comskip"
 		}
 		if cfg.Encoder == "" {
 			cfg.Encoder = "auto"
@@ -106,6 +116,12 @@ func Load(dataDir string) (Config, error) {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			cfg.DVRMinFreeGB = n
 		}
+	}
+	if v := os.Getenv("BOWTIE_COMSKIP_PATH"); v != "" {
+		cfg.ComskipPath = v
+	}
+	if v := os.Getenv("BOWTIE_COMSKIP_INI"); v != "" {
+		cfg.ComskipINI = v
 	}
 	switch strings.ToLower(os.Getenv("BOWTIE_MULTITRACK")) {
 	case "off", "0", "false":

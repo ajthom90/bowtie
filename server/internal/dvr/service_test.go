@@ -96,6 +96,9 @@ func (c *fakeConverter) Convert(_ context.Context, parts []string, outDir string
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return 0, err
 	}
+	if err := os.WriteFile(filepath.Join(outDir, MasterName), []byte("#EXTM3U\n"), 0o644); err != nil {
+		return 0, err
+	}
 	return 90 * time.Second, os.WriteFile(filepath.Join(outDir, "v720.m3u8"), []byte("#EXTM3U\n#EXT-X-ENDLIST\n"), 0o644)
 }
 
@@ -104,7 +107,7 @@ type clock struct {
 	now time.Time
 }
 
-func (c *clock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *clock) Now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
 func (c *clock) Set(t time.Time) { c.mu.Lock(); c.now = t; c.mu.Unlock() }
 
 // --- harness -----------------------------------------------------------------
@@ -303,11 +306,7 @@ func TestDroppedStreamContinuesInNewPart(t *testing.T) {
 	e.clock.Set(r.WindowStart())
 	e.svc.Tick()
 	waitState(t, e.st, r.ID, store.RecRecording)
-	deadline := time.Now().Add(2 * time.Second)
-	for e.src.Opens() < 2 && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	time.Sleep(10 * time.Millisecond)
+	waitPartData(t, e.st, r.ID, "part-002.ts")
 	e.clock.Set(r.WindowStop())
 	e.svc.Tick()
 	waitState(t, e.st, r.ID, store.RecReady)
@@ -332,11 +331,7 @@ func TestRestartResumesAndFinishes(t *testing.T) {
 	t.Cleanup(e.svc.Shutdown)
 	e.clock.Set(r.WindowStart().Add(2 * time.Minute))
 	e.svc.Tick() // still inside the window: resume in a new part
-	deadline := time.Now().Add(2 * time.Second)
-	for e.src.Opens() < 2 && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-	time.Sleep(10 * time.Millisecond)
+	waitPartData(t, e.st, r.ID, "part-002.ts")
 	e.clock.Set(r.WindowStop())
 	e.svc.Tick()
 	waitState(t, e.st, r.ID, store.RecReady)
@@ -407,9 +402,7 @@ func TestRetentionDeletesOldestUnprotectedWhenLowOnSpace(t *testing.T) {
 		_ = os.MkdirAll(filepath.Join(e.dir, "r", string(rune('a'+i))), 0o755)
 		ids = append(ids, id)
 	}
-	first, _ := e.st.RecordingByID(ids[0])
-	first.Protected = true
-	_ = e.st.UpdateRecording(first)
+	_ = e.st.SetRecordingProtected(ids[0], true)
 
 	free := int64(0)
 	e.svc.deps.MinFreeBytes = 100
@@ -444,5 +437,59 @@ func TestRecordNowIsNotPartial(t *testing.T) {
 	}
 	if done := waitState(t, e.st, r.ID, store.RecReady); done.Partial {
 		t.Fatalf("record-now + stop marked partial: %+v", done)
+	}
+}
+
+// waitPartData waits until a capture part holds at least one TS packet.
+func waitPartData(t *testing.T, st *store.Store, id int64, name string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, err := st.RecordingByID(id); err == nil && r.Dir != "" {
+			if fi, err := os.Stat(filepath.Join(r.Dir, name)); err == nil && fi.Size() >= minPartBytes {
+				return
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("recording %d: %s never got data", id, name)
+}
+
+// End padding gives way: when a recording is waiting for a tuner and its show
+// has started, a capture on another channel that is only in its end padding
+// stops (not marked partial) so the tuner frees up.
+func TestEndPaddingYieldsToWaitingRecording(t *testing.T) {
+	e := newEnv(t)
+	a := e.schedule(t, "5.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	b := e.schedule(t, "9.1", t0.Add(30*time.Minute), t0.Add(60*time.Minute))
+	e.clock.Set(a.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, a.ID, store.RecRecording)
+
+	e.src.mu.Lock()
+	e.src.busy = 1 << 20 // every other tuner is in use
+	e.src.mu.Unlock()
+	e.clock.Set(b.WindowStart()) // B's start padding: A's show is still on
+	e.svc.Tick()
+	waitState(t, e.st, b.ID, store.RecWaiting)
+	if r, _ := e.st.RecordingByID(a.ID); r.State != store.RecRecording {
+		t.Fatalf("A stopped during its show: %q", r.State)
+	}
+
+	e.clock.Set(b.Start) // A's show is over; only its end padding remains
+	e.svc.Tick()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r, _ := e.st.RecordingByID(a.ID)
+		if r.State == store.RecConverting || r.State == store.RecReady {
+			if r.PadEndSec != 0 || r.Partial {
+				t.Fatalf("A pad_end=%d partial=%v", r.PadEndSec, r.Partial)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("A still %q: its end padding kept the tuner", r.State)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }

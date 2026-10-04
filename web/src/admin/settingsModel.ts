@@ -3,7 +3,7 @@
  * Server is authority for validation; client hints are advisory only.
  */
 
-export type SettingsSection = 'xmltv' | 'schedulesDirect' | 'transcode' | 'streaming'
+export type SettingsSection = 'xmltv' | 'schedulesDirect' | 'transcode' | 'streaming' | 'hdhomerun'
 
 export interface SettingsXMLTV {
   source: string
@@ -35,6 +35,10 @@ export interface SettingsResponse {
   schedulesDirect: SettingsSchedulesDirect
   transcode: SettingsTranscode
   streaming: SettingsStreaming
+  /** Free HDHomeRun guide (absent on older servers). */
+  hdhomerun?: { enabled: boolean }
+  /** Recording padding (absent on older servers; edited on the Recordings tab). */
+  dvr?: { padStartSeconds: number; padEndSeconds: number }
 }
 
 export interface SDLineupSummary {
@@ -66,6 +70,8 @@ export interface SettingsFormState {
     bufferMinutes: string
     adaptive: boolean
   }
+  /** null when the server has no HDHomeRun guide setting (toggle hidden). */
+  hdhomerun: { enabled: boolean } | null
 }
 
 export type PutSettingsRequest = {
@@ -73,6 +79,7 @@ export type PutSettingsRequest = {
   schedulesDirect?: { username: string; password?: string; lineupId: string }
   transcode?: { encoder: string; allowHevc: boolean }
   streaming?: { bufferMinutes: number; adaptive: boolean }
+  hdhomerun?: { enabled: boolean }
 }
 
 /** Seed form state from a GET response. Password field starts empty. */
@@ -97,6 +104,7 @@ export function settingsToForm(s: SettingsResponse): SettingsFormState {
       bufferMinutes: String(s.streaming?.bufferMinutes ?? 15),
       adaptive: Boolean(s.streaming?.adaptive),
     },
+    hdhomerun: s.hdhomerun ? { enabled: Boolean(s.hdhomerun.enabled) } : null,
   }
 }
 
@@ -117,6 +125,8 @@ export function buildSectionPayload(
       return buildTranscodePayload(form)
     case 'streaming':
       return buildStreamingPayload(form)
+    case 'hdhomerun':
+      return { hdhomerun: { enabled: form.hdhomerun?.enabled ?? true } }
   }
 }
 

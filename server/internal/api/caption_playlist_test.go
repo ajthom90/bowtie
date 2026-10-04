@@ -53,4 +53,3 @@ func TestRepairCaptionPlaylistLeavesHealthyPlaylistAlone(t *testing.T) {
 		t.Fatalf("healthy playlist changed:\n%s", got)
 	}
 }
-

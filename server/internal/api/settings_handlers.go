@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -37,11 +39,24 @@ type settingsStreamingJSON struct {
 	Adaptive      bool `json:"adaptive"`
 }
 
+// settingsHDHomeRunJSON is the free SiliconDust guide section.
+type settingsHDHomeRunJSON struct {
+	Enabled bool `json:"enabled"`
+}
+
+// settingsDVRJSON is the recording padding section.
+type settingsDVRJSON struct {
+	PadStartSeconds int `json:"padStartSeconds"`
+	PadEndSeconds   int `json:"padEndSeconds"`
+}
+
 type settingsResponseJSON struct {
 	XMLTV           settingsXMLTVJSON     `json:"xmltv"`
 	SchedulesDirect settingsSDJSON        `json:"schedulesDirect"`
 	Transcode       settingsTranscodeJSON `json:"transcode"`
 	Streaming       settingsStreamingJSON `json:"streaming"`
+	HDHomeRun       settingsHDHomeRunJSON `json:"hdhomerun"`
+	DVR             settingsDVRJSON       `json:"dvr"`
 }
 
 // putSettingsRequest is a section-merge body: nil section = untouched.
@@ -52,6 +67,19 @@ type putSettingsRequest struct {
 	SchedulesDirect *putSDSection        `json:"schedulesDirect"`
 	Transcode       *putTranscodeSection `json:"transcode"`
 	Streaming       *putStreamingSection `json:"streaming"`
+	HDHomeRun       *putHDHomeRunSection `json:"hdhomerun"`
+	DVR             *putDVRSection       `json:"dvr"`
+}
+
+type putDVRSection struct {
+	// Both are required within the section.
+	PadStartSeconds *int `json:"padStartSeconds"`
+	PadEndSeconds   *int `json:"padEndSeconds"`
+}
+
+type putHDHomeRunSection struct {
+	// Enabled is required within the section.
+	Enabled *bool `json:"enabled"`
 }
 
 type putXMLTVSection struct {
@@ -119,6 +147,12 @@ func (s *Server) handleAdminPutSettings(w http.ResponseWriter, r *http.Request) 
 		if err := s.deps.Settings.Apply(kv); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save settings")
 			return
+		}
+		// Turning the free guide off removes its data and automatic mappings.
+		if kv[settings.KeyEPGHDHomeRun] == "false" && s.deps.EPG != nil {
+			if err := s.deps.EPG.ClearHDHomeRun(); err != nil {
+				log.Printf("settings: clear hdhomerun guide: %v", err)
+			}
 		}
 	}
 
@@ -199,6 +233,14 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 	if err != nil {
 		return settingsResponseJSON{}, err
 	}
+	hdhrGuide, err := s.deps.Settings.HDHomeRunGuide()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
+	dvrCfg, err := s.deps.Settings.DVR()
+	if err != nil {
+		return settingsResponseJSON{}, err
+	}
 
 	caps := s.probeCaps()
 	available := make([]string, 0, len(caps.Available))
@@ -230,6 +272,8 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 			BufferMinutes: stream.BufferMinutes,
 			Adaptive:      stream.Adaptive,
 		},
+		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
+		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds},
 	}, nil
 }
 
@@ -294,6 +338,29 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 		if req.Streaming.Adaptive != nil {
 			kv[settings.KeyStreamingAdaptive] = strconv.FormatBool(*req.Streaming.Adaptive)
 		}
+	}
+
+	if req.HDHomeRun != nil {
+		if req.HDHomeRun.Enabled == nil {
+			return nil, "hdhomerun.enabled is required"
+		}
+		kv[settings.KeyEPGHDHomeRun] = strconv.FormatBool(*req.HDHomeRun.Enabled)
+	}
+
+	if req.DVR != nil {
+		start, end := req.DVR.PadStartSeconds, req.DVR.PadEndSeconds
+		switch {
+		case start == nil:
+			return nil, "dvr.padStartSeconds is required"
+		case end == nil:
+			return nil, "dvr.padEndSeconds is required"
+		case *start < 0 || *start > settings.MaxPadStartSeconds:
+			return nil, fmt.Sprintf("dvr.padStartSeconds must be between 0 and %d", settings.MaxPadStartSeconds)
+		case *end < 0 || *end > settings.MaxPadEndSeconds:
+			return nil, fmt.Sprintf("dvr.padEndSeconds must be between 0 and %d", settings.MaxPadEndSeconds)
+		}
+		kv[settings.KeyDVRPadStartSeconds] = strconv.Itoa(*start)
+		kv[settings.KeyDVRPadEndSeconds] = strconv.Itoa(*end)
 	}
 
 	return kv, ""

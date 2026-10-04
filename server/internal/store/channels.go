@@ -160,3 +160,28 @@ func scanChannel(row scannable) (Channel, error) {
 	c.Enabled = en != 0
 	return c, nil
 }
+
+// NoGuide is stored as a channel's EPG mapping when an admin chose "no
+// guide", so automatic mapping leaves it alone ("" = never mapped).
+const NoGuide = "-"
+
+// AutoMapChannel sets a channel's guide mapping only if it was never mapped
+// (never touching an admin's choice or Enabled). It reports whether it did.
+func (s *Store) AutoMapChannel(id int64, epgChannelID string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE channels SET epg_channel_id = ? WHERE id = ? AND epg_channel_id = ''`, epgChannelID, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ClearMappingsWithPrefix unmaps every channel whose guide mapping starts
+// with prefix (an automatic source's mappings), leaving others alone.
+func (s *Store) ClearMappingsWithPrefix(prefix string) error {
+	if prefix == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE channels SET epg_channel_id = '' WHERE substr(epg_channel_id, 1, ?) = ?`, len(prefix), prefix)
+	return err
+}

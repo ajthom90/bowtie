@@ -7,20 +7,21 @@ import {
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { ApiError, type CreateSessionResponse, type SessionMeta } from '../api/client'
+import { type CreateSessionResponse, type SessionMeta } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
+import { isParentalBlock, startErrorFrom, type StartError } from './errorModel'
 import { QUALITY_HINT, QualitySheet, useIsNarrow } from './QualitySheet'
 import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from './tracksModel'
 import { SeekBar } from './SeekBar'
+import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
   createHeartbeatController,
   skipBack,
   type LiveWindow,
-  tunerBusyMessage,
 } from './seekModel'
 import styles from './Player.module.css'
 
@@ -61,15 +62,6 @@ function formatBandwidth(bps: number | null): string {
 function formatBuffer(sec: number | null): string {
   if (sec == null || !Number.isFinite(sec)) return '—'
   return `${sec.toFixed(1)} s`
-}
-
-function streamTokenFromPlaylist(playlistUrl: string): string | null {
-  try {
-    const u = new URL(playlistUrl, window.location.origin)
-    return u.searchParams.get('token')
-  } catch {
-    return null
-  }
 }
 
 /**
@@ -119,34 +111,6 @@ function buildLiveWindow(hls: Hls | null, video: HTMLVideoElement): LiveWindow |
   return null
 }
 
-/** Best-effort session stop when the page is unloading (DELETE cannot use sendBeacon). */
-function bestEffortDelete(viewerId: string, accessToken: string | null, streamToken: string | null) {
-  let url = `/api/v1/sessions/${encodeURIComponent(viewerId)}`
-  if (streamToken) {
-    url += `?token=${encodeURIComponent(streamToken)}`
-  }
-  try {
-    void fetch(url, {
-      method: 'DELETE',
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-      keepalive: true,
-    })
-  } catch {
-    // ignore
-  }
-  // sendBeacon is POST-only; some browsers still fire it as a secondary signal
-  // when a stream token is present (server ignores unknown methods). Prefer keepalive DELETE.
-  if (streamToken && typeof navigator.sendBeacon === 'function') {
-    try {
-      navigator.sendBeacon(
-        `/api/v1/sessions/${encodeURIComponent(viewerId)}?token=${encodeURIComponent(streamToken)}`,
-      )
-    } catch {
-      // ignore
-    }
-  }
-}
-
 export function Player({ target, onBack }: Props) {
   const { client } = useAuth()
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -162,7 +126,7 @@ export function Player({ target, onBack }: Props) {
   const [profile, setProfile] = useState<Profile>('original')
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<{ message: string; tunerBusy: boolean } | null>(null)
+  const [error, setError] = useState<StartError | null>(null)
   const [playing, setPlaying] = useState(true)
   const [muted, setMuted] = useState(false)
   const [volume, setVolume] = useState(1)
@@ -335,6 +299,7 @@ export function Player({ target, onBack }: Props) {
               ? 'Playback failed — network error. Try again.'
               : 'Playback failed. Try again or pick a lower quality.',
             tunerBusy: false,
+            retry: true,
           })
         }
       })
@@ -347,6 +312,7 @@ export function Player({ target, onBack }: Props) {
       setError({
         message: 'This browser cannot play HLS video.',
         tunerBusy: false,
+        retry: true,
       })
     }
   }, [])
@@ -395,17 +361,8 @@ export function Player({ target, onBack }: Props) {
       bumpOverlay()
     } catch (err) {
       setLoading(false)
-      if (err instanceof ApiError && err.status === 503) {
-        const otherInUse = (err.body as { otherInUse?: number } | undefined)?.otherInUse
-        setError({ message: tunerBusyMessage(otherInUse), tunerBusy: true })
-      } else if (err instanceof ApiError) {
-        setError({
-          message: err.message || 'Could not start playback.',
-          tunerBusy: false,
-        })
-      } else {
-        setError({ message: 'Could not start playback.', tunerBusy: false })
-      }
+      // 403 code "parental": the server's message, without Try again.
+      setError(startErrorFrom(err))
     }
   }, [attachPlayback, bumpOverlay, client, profile, target.channelId])
 
@@ -483,8 +440,14 @@ export function Player({ target, onBack }: Props) {
       if (!id || !playlist) return
       const token = streamTokenFromPlaylist(playlist)
       if (!token) return
-      void client.heartbeat(id, token).catch(() => {
-        /* best-effort */
+      void client.heartbeat(id, token).catch((err: unknown) => {
+        // Parental controls stopped the stream (the program changed to a
+        // blocked one): show why. Other failures are best-effort.
+        if (isParentalBlock(err)) {
+          viewerIdRef.current = null
+          destroyHls()
+          setError(startErrorFrom(err))
+        }
       })
     }
 
@@ -688,15 +651,11 @@ export function Player({ target, onBack }: Props) {
           <div className={styles.errorBox}>
             <p className={styles.errorMsg}>{error.message}</p>
             <div className={styles.errorActions}>
-              {error.tunerBusy ? (
+              {error.retry ? (
                 <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={onRetry}>
                   Try again
                 </button>
-              ) : (
-                <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={onRetry}>
-                  Try again
-                </button>
-              )}
+              ) : null}
               <button type="button" className={styles.btn} onClick={() => void onBackClick()}>
                 Back to guide
               </button>

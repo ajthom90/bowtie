@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
@@ -67,6 +68,9 @@ type ManagerDeps struct {
 	Multitrack bool
 	// TrackProbeTimeout bounds the wait for the channel's PMT; 0 → 3s.
 	TrackProbeTimeout time.Duration
+	// BlockedFor reports why a user may not keep watching a channel now
+	// (parental controls; "" = allowed). Checked every 30 s; nil = never.
+	BlockedFor func(userID, channelID int64, now time.Time) string
 	// OnWatched is called once per viewer after watchedAfter of watching
 	// (recently watched channels); nil = no-op. Called without m.mu held.
 	OnWatched func(userID, channelID int64, at time.Time)
@@ -91,12 +95,16 @@ type Manager struct {
 	multitrack bool
 	trackProbe time.Duration
 	onWatched  func(userID, channelID int64, at time.Time)
+	blockedFor func(userID, channelID int64, now time.Time) string
 
-	mu       sync.Mutex
-	sessions map[string]*session       // by session ID
-	byKey    map[string]*session       // by SessionKey
-	viewers  map[string]*Viewer        // by viewer ID
-	pending  map[*reservation]struct{} // limited accounts' in-flight starts (limits.go)
+	mu              sync.Mutex
+	sessions        map[string]*session       // by session ID
+	byKey           map[string]*session       // by SessionKey
+	viewers         map[string]*Viewer        // by viewer ID
+	pending         map[*reservation]struct{} // limited accounts' in-flight starts (limits.go)
+	blocked         map[string]blockedViewer  // viewers parental controls stopped (parental.go)
+	lastParental    time.Time
+	parentalRunning atomic.Bool
 
 	wg sync.WaitGroup // session supervisors
 }
@@ -120,6 +128,7 @@ func NewManager(deps ManagerDeps) *Manager {
 	return &Manager{
 		multitrack: deps.Multitrack,
 		onWatched:  deps.OnWatched,
+		blockedFor: deps.BlockedFor,
 		trackProbe: trackProbe,
 		cfg:        deps.Cfg,
 		store:      deps.Store,
@@ -134,6 +143,7 @@ func NewManager(deps ManagerDeps) *Manager {
 		byKey:      make(map[string]*session),
 		viewers:    make(map[string]*Viewer),
 		pending:    make(map[*reservation]struct{}),
+		blocked:    make(map[string]blockedViewer),
 	}
 }
 
@@ -614,6 +624,14 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.maintain()
+			if now := m.now(); now.Sub(m.lastParental) >= parentalEvery && m.parentalRunning.CompareAndSwap(false, true) {
+				m.lastParental = now
+				// Off the main loop: the checks read the store and guide.
+				go func() {
+					defer m.parentalRunning.Store(false)
+					m.enforceParental(now)
+				}()
+			}
 		}
 	}
 }

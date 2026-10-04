@@ -3,18 +3,20 @@ import AVFoundation
 import BowtieKit
 
 /// Full-screen VOD player for a recording: AVKit transport with full scrubbing,
-/// plus auto-hiding Bowtie chrome (title + Done).
+/// plus auto-hiding Bowtie chrome (title + Done) and Skip ad in commercial breaks.
 struct RecordingPlayerView: View {
     let model: RecordingsModel
 
     @State private var controller: RecordingPlayerController
     @State private var showChrome = true
     @State private var hideChromeTask: Task<Void, Never>?
+    @State private var sleepTimer = SleepTimer()
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     private static let chromeHideDelay: Duration = .seconds(3)
+    private static let menuOpenDelay: Duration = .seconds(20)
 
     init(playback: RecordingsModel.Playback, model: RecordingsModel) {
         self.model = model
@@ -32,7 +34,17 @@ struct RecordingPlayerView: View {
                 chrome
                     .transition(.opacity)
             }
+
+            if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                SleepWarningBanner(remaining: remaining) {
+                    sleepTimer.extend()
+                }
+                .padding(.bottom, 96)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
         }
+        // Not part of the auto-hiding chrome: stays up for the whole break.
+        .skipAdOverlay(controller, bottomInset: 96)
         .statusBarHidden(true)
         .preferredColorScheme(.dark)
         .onAppear {
@@ -43,6 +55,12 @@ struct RecordingPlayerView: View {
         .onDisappear {
             hideChromeTask?.cancel()
             controller.finish()
+        }
+        .drivesSleepTimer(sleepTimer) {
+            // Same as Done: stop, save the position, close the player.
+            hideChromeTask?.cancel()
+            controller.finish()
+            dismiss()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
@@ -65,6 +83,11 @@ struct RecordingPlayerView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                SleepTimerButton(
+                    timer: sleepTimer,
+                    programEnd: { nil },
+                    onOpen: { bumpChrome(for: Self.menuOpenDelay) }
+                )
                 Button {
                     dismiss()
                 } label: {
@@ -110,12 +133,12 @@ struct RecordingPlayerView: View {
         return recording.subtitle.isEmpty ? recording.channelName : "\(recording.subtitle) · \(recording.channelName)"
     }
 
-    private func bumpChrome() {
+    private func bumpChrome(for delay: Duration = Self.chromeHideDelay) {
         showChrome = true
         hideChromeTask?.cancel()
         hideChromeTask = Task { @MainActor in
             do {
-                try await Task.sleep(for: Self.chromeHideDelay)
+                try await Task.sleep(for: delay)
             } catch {
                 return
             }

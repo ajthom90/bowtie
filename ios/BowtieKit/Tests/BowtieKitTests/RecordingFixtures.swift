@@ -13,7 +13,8 @@ enum RecordingFixtures {
         sizeBytes: Int64 = 3_800_000_000,
         protected: Bool = false,
         positionSec: Int = 0,
-        canManage: Bool = true
+        canManage: Bool = true,
+        extra: String = ""
     ) -> String {
         """
         {
@@ -35,7 +36,7 @@ enum RecordingFixtures {
           "protected": \(protected),
           "positionSec": \(positionSec),
           "scheduledBy": "andrew",
-          "canManage": \(canManage)
+          "canManage": \(canManage)\(extra.isEmpty ? "" : ", " + extra)
         }
         """
     }
@@ -54,7 +55,10 @@ enum RecordingFixtures {
         sizeBytes: Int64 = 3_800_000_000,
         protected: Bool = false,
         positionSec: Int = 0,
-        canManage: Bool = true
+        canManage: Bool = true,
+        rating: String = "",
+        ruleId: Int64 = 0,
+        locked: Bool = false
     ) -> Recording {
         Recording(
             id: id,
@@ -75,7 +79,10 @@ enum RecordingFixtures {
             protected: protected,
             positionSec: positionSec,
             scheduledBy: "andrew",
-            canManage: canManage
+            canManage: canManage,
+            rating: rating,
+            ruleId: ruleId,
+            locked: locked
         )
     }
 }

@@ -10,8 +10,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -111,6 +113,18 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		return "", nil, fmt.Errorf("stream token secret: %w", err)
 	}
 
+	// Stable identity for apps (SharePlay: same server whatever URL each uses).
+	serverIDRaw, err := loadOrCreateHexSecret(st, "server_id")
+	if err != nil {
+		_ = st.Close()
+		return "", nil, fmt.Errorf("server id: %w", err)
+	}
+	serverID := hex.EncodeToString(serverIDRaw[:16])
+	serverName := os.Getenv("BOWTIE_SERVER_NAME")
+	if serverName == "" {
+		serverName, _ = os.Hostname()
+	}
+
 	// Root context for ALL background goroutines (tuners, epg, stream manager).
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
@@ -139,6 +153,8 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		// Captions, every broadcast audio track and the 5.1 copy, unless the
 		// BOWTIE_MULTITRACK kill switch is set.
 		Multitrack: !cfg.DisableMultitrack,
+		// Parental controls: stop a viewer when a blocked program comes on.
+		BlockedFor: api.ParentalBlocker(st, epgSvc),
 		// Recently watched channels (Favorites/Recents).
 		OnWatched: func(userID, channelID int64, at time.Time) {
 			if err := st.RecordWatch(userID, channelID, at); err != nil {
@@ -164,13 +180,17 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 			return transcode.Negotiate(transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: "high"},
 				"", caps, encoder, false, transcode.DefaultProfiles())
 		}},
+		Detector:     commercialDetector(cfg),
 		Dir:          cfg.RecordingsDir,
 		MinFreeBytes: int64(cfg.DVRMinFreeGB) << 30,
+		Padding:      settingsProv.DVRPadding,
 	})
 	go dvrSvc.Run(rootCtx)
 
 	apiHandler := api.New(api.Deps{
 		Version:           version,
+		ServerID:          serverID,
+		ServerName:        serverName,
 		Cfg:               cfg,
 		Store:             st,
 		Auth:              authSvc,
@@ -351,4 +371,21 @@ func randomPassword(n int) (string, error) {
 		s = s[:n]
 	}
 	return s, nil
+}
+
+// commercialDetector returns the Comskip detector, or nil (detection off)
+// when the binary isn't found or BOWTIE_COMSKIP_PATH is "off".
+func commercialDetector(cfg config.Config) dvr.Detector {
+	switch strings.ToLower(strings.TrimSpace(cfg.ComskipPath)) {
+	case "off", "none", "false", "0":
+		log.Printf("commercial detection off (BOWTIE_COMSKIP_PATH=%s)", cfg.ComskipPath)
+		return nil
+	}
+	path, err := exec.LookPath(cfg.ComskipPath)
+	if err != nil {
+		log.Printf("commercial detection off: comskip not found (%s); set BOWTIE_COMSKIP_PATH to enable it", cfg.ComskipPath)
+		return nil
+	}
+	log.Printf("commercial detection: using %s", path)
+	return dvr.ComskipDetector{Path: path, INI: cfg.ComskipINI, DataDir: cfg.DataDir}
 }

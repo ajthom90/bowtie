@@ -12,6 +12,8 @@ struct ChannelListView: View {
     @State private var showSettings = false
     @State private var showRecordings = false
     @State private var recordFlow: RecordFlow?
+    @State private var searchModel: GuideSearchModel?
+    @State private var searchText = ""
     @State private var now = Date()
 
     @Environment(\.scenePhase) private var scenePhase
@@ -58,6 +60,7 @@ struct ChannelListView: View {
                             serverURL: serverURL,
                             maxQuality: appModel.user?.maxQuality ?? "",
                             nowTitle: nowTitle(for: channel),
+                            programEnd: { programEnd(for: $0) },
                             playerModel: playerModel
                         )
                     } else {
@@ -78,6 +81,7 @@ struct ChannelListView: View {
                     }
                 }
                 .recordFlowAlerts(recordFlow)
+                .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)
@@ -139,10 +143,22 @@ struct ChannelListView: View {
 
     // MARK: - Content
 
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     @ViewBuilder
     private var content: some View {
         Group {
-            if let listModel {
+            if isSearching, let searchModel {
+                GuideSearchResultsView(
+                    model: searchModel,
+                    now: now,
+                    flow: recordFlow,
+                    onWatch: { open(channel: $0) },
+                    openRecordings: { showRecordings = true }
+                )
+            } else if let listModel {
                 switch listModel.state {
                 case .loading:
                     loadingView
@@ -158,6 +174,20 @@ struct ChannelListView: View {
             }
         }
         .bowtieScreenBackground()
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "Search the guide"
+        )
+        // Debounced: search once typing pauses.
+        .task(id: searchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            await searchModel?.search(searchText)
+        }
     }
 
     private var loadingView: some View {
@@ -330,9 +360,18 @@ struct ChannelListView: View {
     private func ensureListModel() async {
         guard listModel == nil, let client = appModel.client else { return }
         let model = ChannelListModel(client: client)
+        let search = GuideSearchModel(client: client)
         listModel = model
+        searchModel = search
         // Reload after scheduling so the program shows its REC mark.
-        recordFlow = RecordFlow(client: client) { Task { await model.load() } }
+        recordFlow = RecordFlow(client: client) {
+            Task {
+                await model.load()
+                if !search.query.isEmpty {
+                    await search.refresh()
+                }
+            }
+        }
     }
 
     private func open(channel: Channel) {
@@ -354,6 +393,12 @@ struct ChannelListView: View {
         return title
     }
 
+    /// When the program now on `channel` ends, if the guide knows (sleep timer).
+    private func programEnd(for channel: Channel) -> Date? {
+        guard case .loaded(let rows) = listModel?.state else { return nil }
+        return rows.first(where: { $0.channel.id == channel.id })?.nowNext.now?.stop
+    }
+
     private func accessibilityLabel(for row: ChannelListModel.Row) -> String {
         var parts = [
             "Channel \(row.channel.guideNumber)",
@@ -370,6 +415,9 @@ struct ChannelListView: View {
         }
         if row.nowNext.now?.recording != nil {
             parts.append("Set to record")
+        }
+        if let now = row.nowNext.now, now.isLocked {
+            parts.append(ParentalLockMark.accessibilityText(rating: now.rating ?? ""))
         }
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
@@ -429,6 +477,9 @@ private struct ChannelRowView: View {
                                 .lineLimit(1)
                             if program.recording != nil {
                                 RecordingMarkDot(size: 10)
+                            }
+                            if program.isLocked {
+                                ParentalLockMark(rating: program.rating ?? "", size: 11)
                             }
                         }
 

@@ -2,7 +2,7 @@
 ' registry server? no → Connect. Server, no refresh → Login.
 ' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
 ' Refresh ok → Home. Refresh fail → Login (server kept).
-' Home → Settings / Player; Settings change-server → Connect; sign-out → Login.
+' Home → Settings / Recordings / Player; Settings change-server → Connect; sign-out → Login.
 ' A3: phase changes never orphan a live viewer (PlayerScene teardown on hide).
 
 import "pkg:/source/lib/Registry.bs"
@@ -16,6 +16,7 @@ sub init()
     m.loginScene = m.top.findNode("loginScene")
     m.homeScene = m.top.findNode("homeScene")
     m.settingsScene = m.top.findNode("settingsScene")
+    m.recordingsScene = m.top.findNode("recordingsScene")
     m.playerScene = m.top.findNode("playerScene")
     m.checkingSpinner = m.top.findNode("checkingSpinner")
 
@@ -34,6 +35,7 @@ sub init()
     m.loginScene.apiTask = m.apiTask
     m.homeScene.apiTask = m.apiTask
     m.settingsScene.apiTask = m.apiTask
+    m.recordingsScene.apiTask = m.apiTask
     m.playerScene.apiTask = m.apiTask
 
     m.connectScene.observeField("connected", "onConnected")
@@ -41,6 +43,8 @@ sub init()
     m.loginScene.observeField("changeServer", "onChangeServer")
     m.homeScene.observeField("openSettings", "onOpenSettings")
     m.homeScene.observeField("selectedChannel", "onSelectedChannel")
+    m.homeScene.observeField("openRecordings", "onOpenRecordings")
+    m.recordingsScene.observeField("closed", "onRecordingsClosed")
     m.settingsScene.observeField("closed", "onSettingsClosed")
     m.settingsScene.observeField("changeServer", "onSettingsChangeServer")
     m.playerScene.observeField("closed", "onPlayerClosed")
@@ -168,12 +172,25 @@ sub onSelectedChannel()
     if ch.id <> invalid then cid = ch.id
     if ch.index <> invalid then idx = ch.index
     if ch.channels <> invalid then channels = ch.channels
+    guide = {}
+    if ch.guide <> invalid then guide = ch.guide
     m.playerScene.channelName = name
     m.playerScene.guideNumber = gn
     m.playerScene.channelId = cid
     m.playerScene.channelIndex = idx
     m.playerScene.channels = channels
+    m.playerScene.guide = guide
     setPhase("player")
+end sub
+
+sub onOpenRecordings()
+    if m.homeScene.openRecordings <> true then return
+    setPhase("recordings")
+end sub
+
+sub onRecordingsClosed()
+    if m.recordingsScene.closed <> true then return
+    setPhase("home")
 end sub
 
 sub onSettingsClosed()
@@ -214,6 +231,8 @@ sub setPhase(phase as string)
     m.loginScene.visible = false
     m.homeScene.visible = false
     m.settingsScene.visible = false
+    ' Hiding Recordings saves any playback position (its onVisible teardown).
+    m.recordingsScene.visible = false
     ' Hide player when leaving so its onVisible teardown DELETEs (A3).
     if phase <> "player"
         m.playerScene.visible = false
@@ -242,6 +261,9 @@ sub setPhase(phase as string)
         m.settingsScene.serverUrl = m.serverUrl
         m.settingsScene.visible = true
         m.settingsScene.setFocus(true)
+    else if phase = "recordings"
+        m.recordingsScene.visible = true
+        m.recordingsScene.setFocus(true)
     else if phase = "player"
         m.playerScene.visible = true
         m.playerScene.setFocus(true)

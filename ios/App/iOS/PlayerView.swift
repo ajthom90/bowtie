@@ -1,6 +1,8 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import GroupActivities
+import UIKit // with GroupActivities: GroupActivitySharingController
 import BowtieKit
 
 /// Full-screen HLS player: AVPlayerViewController wrapper with auto-hiding chrome,
@@ -10,6 +12,8 @@ struct PlayerView: View {
     let serverURL: URL
     let maxQuality: String
     var nowTitle: String?
+    /// When the program now on a channel ends (guide), for End of this program.
+    var programEnd: (Channel) -> Date? = { _ in nil }
     @Bindable var playerModel: PlayerModel
 
     @Environment(\.dismiss) private var dismiss
@@ -27,6 +31,12 @@ struct PlayerView: View {
     @State private var statsPollTask: Task<Void, Never>?
     @State private var outOfWindowNotice: String?
     @State private var noticeHideTask: Task<Void, Never>?
+    /// "On a FaceTime call" for SharePlay purposes.
+    @StateObject private var groupState = GroupStateObserver()
+    @State private var sharingActivity: SharingActivity?
+    @State private var isStartingSharePlay = false
+    /// Survives channel changes here; gone when the player is.
+    @State private var sleepTimer = SleepTimer()
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -64,20 +74,27 @@ struct PlayerView: View {
                 stalledSpinner
             }
 
-            if let notice = outOfWindowNotice {
-                Text(notice)
-                    .font(Theme.body(14))
-                    .foregroundStyle(Theme.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Theme.bg.opacity(0.88))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-                    .padding(.bottom, 96)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .transition(.opacity)
-                    .accessibilityLabel(notice)
+            VStack(spacing: 8) {
+                if sleepTimer.isWarning, let remaining = sleepTimer.remaining {
+                    SleepWarningBanner(remaining: remaining) {
+                        sleepTimer.extend()
+                    }
+                }
+                if let notice = outOfWindowNotice {
+                    Text(notice)
+                        .font(Theme.body(14))
+                        .foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Theme.bg.opacity(0.88))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                        .transition(.opacity)
+                        .accessibilityLabel(notice)
+                }
             }
+            .padding(.bottom, 96)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -144,10 +161,37 @@ struct PlayerView: View {
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
         }
+        .drivesSleepTimer(sleepTimer) {
+            Task { await leave() }
+        }
+        .task(id: coordinationKey) {
+            coordinatePlayback()
+        }
+        .sheet(item: $sharingActivity) { item in
+            GroupActivitySharingView(activity: item.activity)
+        }
+        .alert(
+            "Leave Watch Together?",
+            isPresented: groupZapBinding,
+            presenting: playerModel.pendingGroupZap
+        ) { zap in
+            Button("Watch \(zap.name)", role: .destructive) {
+                Task { await playerModel.confirmGroupZap(zap) }
+            }
+            Button("Keep Watching Together", role: .cancel) {
+                playerModel.cancelGroupZap()
+            }
+        } message: { zap in
+            Text("You're watching \(playerModel.currentChannel?.name ?? "this channel") with your group. Watching \(zap.name) leaves the group.")
+        }
     }
 
     private func showOutOfWindowNotice() {
-        outOfWindowNotice = PlayerModel.outOfWindowNotice
+        showNotice(PlayerModel.outOfWindowNotice)
+    }
+
+    private func showNotice(_ text: String) {
+        outOfWindowNotice = text
         noticeHideTask?.cancel()
         noticeHideTask = Task { @MainActor in
             do {
@@ -195,9 +239,13 @@ struct PlayerView: View {
             // The bottom edge belongs to the system transport (live scrubber),
             // so Bowtie's player controls get a second row up here.
             if !isBlockingError {
-                HStack(spacing: 10) {
-                    livePill
-                    playerButtons
+                // Scrolls sideways only when it doesn't fit (narrow iPhones);
+                // otherwise taps beside the buttons still reach AVKit.
+                ViewThatFits(in: .horizontal) {
+                    controlsRow
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        controlsRow
+                    }
                 }
             }
         }
@@ -216,20 +264,27 @@ struct PlayerView: View {
         )
     }
 
+    private var controlsRow: some View {
+        HStack(spacing: 10) {
+            livePill
+            playerButtons
+        }
+    }
+
     private var identityRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(channel.guideNumber)
+            Text(shownChannel.guideNumber)
                 .font(Theme.channelNumber(36))
                 .foregroundStyle(Theme.amber)
                 .fixedSize()
-                .accessibilityLabel("Channel \(channel.guideNumber)")
+                .accessibilityLabel("Channel \(shownChannel.guideNumber)")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(channel.name)
+                Text(shownChannel.name)
                     .font(Theme.label(16))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if let title = nowTitle, !title.isEmpty {
+                if shownChannel.id == channel.id, let title = nowTitle, !title.isEmpty {
                     Text(title)
                         .font(Theme.body(14))
                         .foregroundStyle(Theme.dim)
@@ -295,6 +350,14 @@ struct PlayerView: View {
             if bridge.audioOptionNames.count > 1 {
                 audioMenu
             }
+            SleepTimerButton(
+                timer: sleepTimer,
+                programEnd: { programEnd(shownChannel) },
+                onOpen: { bumpChrome(for: Self.menuOpenDelay) }
+            )
+            if canShare || playerModel.groupRole != nil {
+                sharePlayButton
+            }
 
             Button {
                 showStats.toggle()
@@ -308,6 +371,80 @@ struct PlayerView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(showStats ? "Hide stats" : "Show stats")
         }
+    }
+
+    // MARK: - SharePlay
+
+    /// The channel actually playing: a SharePlay group can change it under
+    /// this view (and a participant may decline a channel they picked).
+    private var shownChannel: Channel {
+        playerModel.currentChannel ?? channel
+    }
+
+    /// The server gave this stream a session ID, so others can join it.
+    private var canShare: Bool {
+        guard case .playing(let session) = playerModel.state else { return false }
+        return !(session.session?.id ?? "").isEmpty
+    }
+
+    /// "Watch Together": on a FaceTime call, start SharePlay; otherwise offer
+    /// the system sheet that starts a call with the activity.
+    private var sharePlayButton: some View {
+        let inGroup = playerModel.groupRole != nil
+        return Button {
+            bumpChrome()
+            Task { await startSharePlay() }
+        } label: {
+            Image(systemName: "shareplay")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(inGroup ? Theme.bg : Theme.amber)
+                .frame(width: 44, height: 44)
+                .background(inGroup ? Theme.amber : Theme.raised.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(inGroup || isStartingSharePlay)
+        .accessibilityLabel(inGroup ? "Watching together" : "Watch Together")
+        .accessibilityHint(inGroup ? "" : "Watch this channel with people on a FaceTime call")
+        .accessibilityIdentifier("bowtie.shareplay")
+    }
+
+    private func startSharePlay() async {
+        guard !isStartingSharePlay else { return }
+        isStartingSharePlay = true
+        defer { isStartingSharePlay = false }
+        guard let activity = await playerModel.makeWatchActivity() else {
+            showNotice("SharePlay needs a newer Bowtie server")
+            return
+        }
+        if groupState.isEligibleForGroupSession {
+            do {
+                _ = try await activity.activate()
+            } catch {
+                showNotice("Couldn't start SharePlay")
+            }
+        } else {
+            sharingActivity = SharingActivity(activity: activity)
+        }
+    }
+
+    /// Bind the group (if any) to the current AVPlayer, whichever came first.
+    private var coordinationKey: String {
+        let player = bridge.player.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        let group = playerModel.group.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        return "\(player)|\(group)"
+    }
+
+    private func coordinatePlayback() {
+        guard let group = playerModel.group, let player = bridge.player else { return }
+        group.coordinate(player)
+    }
+
+    private var groupZapBinding: Binding<Bool> {
+        Binding(
+            get: { playerModel.pendingGroupZap != nil },
+            set: { if !$0 { playerModel.cancelGroupZap() } }
+        )
     }
 
     /// Broadcast audio language (e.g. Español). AVKit's inline controls on
@@ -560,6 +697,7 @@ struct PlayerView: View {
         }
 
         let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+        SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
         bridge.load(url: url)
         stallAttempt = 0
     }
@@ -616,6 +754,7 @@ struct PlayerView: View {
                 // Re-seek / re-load the same playlist URL.
                 if let session = playerModel.lastSession {
                     let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+                    SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
                     bridge.load(url: url)
                 }
             }
@@ -676,337 +815,6 @@ struct PlayerView: View {
         hideChromeTask?.cancel()
         await playerModel.stop()
         dismiss()
-    }
-}
-
-// MARK: - Bridge (player ownership + PiP / error flags)
-
-@MainActor
-@Observable
-final class PlayerBridge {
-    var player: AVPlayer?
-    var isPictureInPictureActive = false
-    /// Set when the hosting view disappears into PiP; stop when PiP ends.
-    var shouldStopWhenPiPEnds = false
-    var pipDidEndAndShouldStop = false
-    var playerErrorIsForbidden = false
-    var playerDidStall = false
-    var playerDidRecover = false
-    /// Out-of-window clamp: position fell before seekable start → jumped to live edge.
-    var playerDidJumpToLive = false
-    /// Seconds behind the live point; nil until the seekable range is known.
-    var secondsBehindLive: Double?
-    /// Broadcast audio choices (AVKit's inline controls offer none on iPhone).
-    var audioOptionNames: [String] = []
-    var selectedAudioIndex: Int?
-    @ObservationIgnored private var audibleGroup: AVMediaSelectionGroup?
-
-    private var itemStatusObs: NSKeyValueObservation?
-    private var itemKeepUpObs: NSKeyValueObservation?
-    private var itemEmptyObs: NSKeyValueObservation?
-    private var seekableObs: NSKeyValueObservation?
-    private var timeControlObs: NSKeyValueObservation?
-    private var endObserver: NSObjectProtocol?
-    private var failedObserver: NSObjectProtocol?
-    /// Saved audio language / captions choice, applied per item.
-    @ObservationIgnored private lazy var mediaMemory: MediaSelectionMemory = {
-        let memory = MediaSelectionMemory()
-        memory.onSelectionChange = { [weak self] item in self?.refreshAudio(item) }
-        return memory
-    }()
-    private var boundaryTimeObserver: Any?
-    private var periodicTimeObserver: Any?
-    /// Startup buffering is not a stall; StallGate decides (shared with tvOS).
-    private var stallGate = StallGate()
-    private var stallTicker: Task<Void, Never>?
-    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
-
-    func load(url: URL) {
-        let item = AVPlayerItem(url: url)
-        if let player {
-            player.replaceCurrentItem(with: item)
-        } else {
-            let p = AVPlayer(playerItem: item)
-            p.allowsExternalPlayback = true
-            p.usesExternalPlaybackWhileExternalScreenIsActive = true
-            player = p
-        }
-        observe(item: item)
-        secondsBehindLive = nil
-        stallGate.loaded(at: now)
-        startStallTicker()
-        player?.play()
-    }
-
-    private func startStallTicker() {
-        stallTicker?.cancel()
-        stallTicker = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, !Task.isCancelled else { return }
-                if self.stallGate.check(at: self.now) == .stalled {
-                    self.playerDidStall = true
-                }
-            }
-        }
-    }
-
-    func replacePlayer(_ newPlayer: AVPlayer?) {
-        tearDownObservers()
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = newPlayer
-    }
-
-    func accessLogSample() -> (bitrate: Double?, dropped: Int?) {
-        guard let event = player?.currentItem?.accessLog()?.events.last else {
-            return (nil, nil)
-        }
-        let bitrate: Double? = event.indicatedBitrate > 0 ? event.indicatedBitrate : nil
-        let dropped: Int? = event.numberOfDroppedVideoFrames >= 0
-            ? event.numberOfDroppedVideoFrames
-            : nil
-        return (bitrate, dropped)
-    }
-
-    private func observe(item: AVPlayerItem) {
-        tearDownObservers()
-        mediaMemory.watch(item)
-
-        itemStatusObs = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-            Task { @MainActor in
-                self?.handleItemStatus(item)
-            }
-        }
-        itemKeepUpObs = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
-            Task { @MainActor in
-                self?.handleBufferState(item)
-            }
-        }
-        itemEmptyObs = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
-            Task { @MainActor in
-                self?.handleBufferState(item)
-            }
-        }
-        // Spec B / Task 7: when current position falls below seekable range start
-        // (paused longer than the DVR buffer), clamp to live edge + notice.
-        seekableObs = item.observe(\.seekableTimeRanges, options: [.new]) { [weak self] _, _ in
-            Task { @MainActor in
-                self?.clampIfBehindSeekableWindow()
-            }
-        }
-        if let player {
-            timeControlObs = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-                Task { @MainActor in
-                    self?.handleTimeControl(player)
-                }
-            }
-            // Periodic check so a paused head that slowly exits the window is caught.
-            let interval = CMTime(seconds: 1, preferredTimescale: 600)
-            periodicTimeObserver = player.addPeriodicTimeObserver(
-                forInterval: interval,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.clampIfBehindSeekableWindow()
-                    self?.updateLivePosition()
-                }
-            }
-        }
-
-        failedObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemFailedToPlayToEndTime,
-            object: item,
-            queue: .main
-        ) { [weak self] note in
-            Task { @MainActor in
-                let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-                self?.handleFailure(error)
-            }
-        }
-    }
-
-    /// When playback position is before the first seekable range start, seek to
-    /// the live edge (range end) and flag the out-of-window notice.
-    func updateLivePosition() {
-        guard let player, let item = player.currentItem,
-              let range = item.seekableTimeRanges.last?.timeRangeValue,
-              range.duration.isNumeric, range.duration.seconds > 0 else {
-            secondsBehindLive = nil
-            return
-        }
-        let current = player.currentTime()
-        guard current.isNumeric else { return }
-        secondsBehindLive = LiveEdge.secondsBehind(
-            seekableEnd: CMTimeRangeGetEnd(range).seconds,
-            current: current.seconds,
-            liveOffset: liveOffsetSeconds(item)
-        )
-    }
-
-    private func liveOffsetSeconds(_ item: AVPlayerItem) -> Double {
-        let offset = item.recommendedTimeOffsetFromLive
-        return offset.isNumeric ? offset.seconds : 0
-    }
-
-    /// Refresh the audio choices and the selected one from the item.
-    func refreshAudio(_ item: AVPlayerItem) {
-        Task {
-            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible) else {
-                audibleGroup = nil
-                audioOptionNames = []
-                selectedAudioIndex = nil
-                return
-            }
-            audibleGroup = group
-            audioOptionNames = group.options.map(\.displayName)
-            let current = item.currentMediaSelection.selectedMediaOption(in: group)
-            selectedAudioIndex = current.flatMap { group.options.firstIndex(of: $0) }
-        }
-    }
-
-    /// Select broadcast audio track `index` (MediaSelectionMemory saves it).
-    func selectAudio(_ index: Int) {
-        guard let item = player?.currentItem, let group = audibleGroup,
-              group.options.indices.contains(index) else { return }
-        item.select(group.options[index], in: group)
-    }
-
-    /// Seek to where AVPlayer plays live (its recommended offset from the edge).
-    func jumpToLive() {
-        guard let player, let item = player.currentItem,
-              let range = item.seekableTimeRanges.last?.timeRangeValue,
-              range.duration.isNumeric else { return }
-        // The player's live point, not the very end (seeking there stalls).
-        let target = CMTime(
-            seconds: LiveEdge.liveTarget(
-                seekableEnd: CMTimeRangeGetEnd(range).seconds,
-                liveOffset: liveOffsetSeconds(item)
-            ),
-            preferredTimescale: 600
-        )
-        player.seek(to: target) { [weak self] _ in
-            Task { @MainActor in self?.updateLivePosition() }
-        }
-        if player.timeControlStatus == .paused {
-            player.play()
-        }
-    }
-
-    func clampIfBehindSeekableWindow() {
-        guard let player, let item = player.currentItem else { return }
-        let ranges = item.seekableTimeRanges
-        guard let value = ranges.first else { return }
-        let range = value.timeRangeValue
-        guard range.duration.isNumeric, range.duration.seconds > 0 else { return }
-        let current = player.currentTime()
-        guard current.isNumeric else { return }
-        let start = range.start
-        if CMTimeCompare(current, start) < 0 {
-            let liveEdge = CMTimeRangeGetEnd(range)
-            player.seek(to: liveEdge, toleranceBefore: .zero, toleranceAfter: .zero)
-            playerDidJumpToLive = true
-        }
-    }
-
-    private func handleItemStatus(_ item: AVPlayerItem) {
-        switch item.status {
-        case .failed:
-            handleFailure(item.error)
-        case .readyToPlay:
-            playerDidRecover = true
-            mediaMemory.itemReady(item)
-        case .unknown:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    private func handleBufferState(_ item: AVPlayerItem) {
-        // Live HLS underrun: StallGate reports a stall only if it outlasts its grace.
-        if item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp,
-           player?.timeControlStatus == .waitingToPlayAtSpecifiedRate {
-            stallGate.waiting(at: now)
-        }
-    }
-
-    private func handleTimeControl(_ player: AVPlayer) {
-        switch player.timeControlStatus {
-        case .playing:
-            if stallGate.playing(at: now) == .recovered {
-                playerDidRecover = true
-            }
-        case .waitingToPlayAtSpecifiedRate:
-            stallGate.waiting(at: now)
-        case .paused:
-            stallGate.paused(at: now)
-        @unknown default:
-            break
-        }
-    }
-
-    private func handleFailure(_ error: Error?) {
-        if Self.isForbidden(error) {
-            playerErrorIsForbidden = true
-        } else {
-            // Network / other media errors → stall recovery path.
-            playerDidStall = true
-        }
-    }
-
-    /// Walk the NSError chain for HTTP 403 / unauthorized media responses.
-    static func isForbidden(_ error: Error?) -> Bool {
-        var current: NSError? = error as NSError?
-        while let err = current {
-            if err.domain == NSURLErrorDomain && err.code == NSURLErrorUserAuthenticationRequired {
-                return true
-            }
-            // AVFoundation / URL loading often surface HTTP status in userInfo.
-            for key in ["HTTPStatusCode", "statusCode", "httpStatus"] {
-                if let status = err.userInfo[key] as? Int, status == 403 {
-                    return true
-                }
-                if let status = err.userInfo[key] as? NSNumber, status.intValue == 403 {
-                    return true
-                }
-            }
-            // String-match as a last resort for wrapped "403" messages.
-            if err.localizedDescription.contains("403") {
-                return true
-            }
-            current = err.userInfo[NSUnderlyingErrorKey] as? NSError
-        }
-        return false
-    }
-
-    private func tearDownObservers() {
-        mediaMemory.stop()
-        stallTicker?.cancel()
-        stallTicker = nil
-        itemStatusObs?.invalidate()
-        itemKeepUpObs?.invalidate()
-        itemEmptyObs?.invalidate()
-        seekableObs?.invalidate()
-        timeControlObs?.invalidate()
-        itemStatusObs = nil
-        itemKeepUpObs = nil
-        itemEmptyObs = nil
-        seekableObs = nil
-        timeControlObs = nil
-        if let player, let periodicTimeObserver {
-            player.removeTimeObserver(periodicTimeObserver)
-        }
-        periodicTimeObserver = nil
-        boundaryTimeObserver = nil
-        if let endObserver {
-            NotificationCenter.default.removeObserver(endObserver)
-            self.endObserver = nil
-        }
-        if let failedObserver {
-            NotificationCenter.default.removeObserver(failedObserver)
-            self.failedObserver = nil
-        }
     }
 }
 
@@ -1112,6 +920,25 @@ private struct PlayerContainer: UIViewControllerRepresentable {
             }
         }
     }
+}
+
+// MARK: - SharePlay sheet
+
+private struct SharingActivity: Identifiable {
+    let id = UUID()
+    let activity: WatchChannelActivity
+}
+
+/// The system sheet that starts a FaceTime call (or Messages) with the
+/// activity, for sharing when not already on a call.
+private struct GroupActivitySharingView: UIViewControllerRepresentable {
+    let activity: WatchChannelActivity
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        (try? GroupActivitySharingController(activity)) ?? UIViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 }
 
 // MARK: - Preview

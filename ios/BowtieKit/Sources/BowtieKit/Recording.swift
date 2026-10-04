@@ -30,6 +30,15 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
     public let scheduledBy: String
     /// The caller may stop, delete or protect it (scheduler or admin).
     public let canManage: Bool
+    /// The program's rating when scheduled ("" = not rated).
+    public let rating: String
+    /// Series rule that scheduled it (0 = a one-off recording).
+    public let ruleId: Int64
+    /// Parental controls block it for the caller: no description, and play is refused.
+    public let locked: Bool
+    /// Detected commercial breaks on the playback timeline (seconds), sorted
+    /// and non-overlapping; empty when none were found or the server is older.
+    public let commercials: [Commercial]
 
     public init(
         id: Int64,
@@ -50,7 +59,11 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
         protected: Bool = false,
         positionSec: Int = 0,
         scheduledBy: String = "",
-        canManage: Bool = false
+        canManage: Bool = false,
+        rating: String = "",
+        ruleId: Int64 = 0,
+        locked: Bool = false,
+        commercials: [Commercial] = []
     ) {
         self.id = id
         self.title = title
@@ -71,6 +84,44 @@ public struct Recording: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.positionSec = positionSec
         self.scheduledBy = scheduledBy
         self.canManage = canManage
+        self.rating = rating
+        self.ruleId = ruleId
+        self.locked = locked
+        self.commercials = commercials
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, subtitle, description, category, channelId, channelName, start, stop
+        case state, partial, failure, failureDetail, durationSec, sizeBytes, protected
+        case positionSec, scheduledBy, canManage, rating, ruleId, locked, commercials
+    }
+
+    /// `rating`, `ruleId`, `locked` and `commercials` are absent from older servers.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        subtitle = try c.decode(String.self, forKey: .subtitle)
+        description = try c.decode(String.self, forKey: .description)
+        category = try c.decode(String.self, forKey: .category)
+        channelId = try c.decode(Int64.self, forKey: .channelId)
+        channelName = try c.decode(String.self, forKey: .channelName)
+        start = try c.decode(Date.self, forKey: .start)
+        stop = try c.decode(Date.self, forKey: .stop)
+        state = try c.decode(String.self, forKey: .state)
+        partial = try c.decode(Bool.self, forKey: .partial)
+        failure = try c.decode(String.self, forKey: .failure)
+        failureDetail = try c.decode(String.self, forKey: .failureDetail)
+        durationSec = try c.decode(Int.self, forKey: .durationSec)
+        sizeBytes = try c.decode(Int64.self, forKey: .sizeBytes)
+        protected = try c.decode(Bool.self, forKey: .protected)
+        positionSec = try c.decode(Int.self, forKey: .positionSec)
+        scheduledBy = try c.decode(String.self, forKey: .scheduledBy)
+        canManage = try c.decode(Bool.self, forKey: .canManage)
+        rating = try c.decodeIfPresent(String.self, forKey: .rating) ?? ""
+        ruleId = try c.decodeIfPresent(Int64.self, forKey: .ruleId) ?? 0
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        commercials = try c.decodeIfPresent([Commercial].self, forKey: .commercials) ?? []
     }
 }
 
@@ -90,8 +141,14 @@ public enum RecordingStatus: String, Sendable {
 extension Recording {
     public var status: RecordingStatus { RecordingStatus(rawValue: state) ?? .unknown }
 
-    /// Only a finished, packaged recording can be played.
-    public var isPlayable: Bool { status == .ready }
+    /// Only a finished, packaged recording the caller isn't locked out of can be played.
+    public var isPlayable: Bool { status == .ready && !locked }
+
+    /// Scheduled by a series rule ("Record Series").
+    public var isSeries: Bool { ruleId > 0 }
+
+    /// An upcoming episode someone removed; its series rule won't schedule it again.
+    public var isSkipped: Bool { status == .failed && failure == "skipped" }
 
     /// Cancel (upcoming) or delete (anything else).
     public var canDelete: Bool { canManage }

@@ -93,3 +93,23 @@ func TestRecordingsDirAndMinFree(t *testing.T) {
 		t.Fatalf("env: %q %d", cfg.RecordingsDir, cfg.DVRMinFreeGB)
 	}
 }
+
+func TestComskipSettings(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ComskipPath != "comskip" || cfg.ComskipINI != "" {
+		t.Fatalf("defaults: %q %q", cfg.ComskipPath, cfg.ComskipINI)
+	}
+	t.Setenv("BOWTIE_COMSKIP_PATH", "/opt/comskip/bin/comskip")
+	t.Setenv("BOWTIE_COMSKIP_INI", "/config/comskip.ini")
+	cfg, err = config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ComskipPath != "/opt/comskip/bin/comskip" || cfg.ComskipINI != "/config/comskip.ini" {
+		t.Fatalf("env: %q %q", cfg.ComskipPath, cfg.ComskipINI)
+	}
+}

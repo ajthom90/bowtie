@@ -6,25 +6,40 @@ import BowtieKit
 
 /// Owns the AVPlayer for one recording: starts at `playback.startSec`, saves
 /// the position every 15 s and once more when playback ends (dismiss/background).
+/// Also drives Skip ad: `activeCommercial` while inside a detected break, and
+/// auto-skip (once per break) when "Skip ads automatically" is on.
 @Observable
 @MainActor
 final class RecordingPlayerController {
     let playback: RecordingsModel.Playback
     private(set) var player: AVPlayer?
     private(set) var errorMessage: String?
+    /// The commercial break playing now: show Skip ad.
+    private(set) var activeCommercial: Commercial?
+    /// Briefly true after an automatic skip: show "Skipped ad".
+    private(set) var showsSkippedToast = false
 
     private let model: RecordingsModel
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var skipper: CommercialSkipper
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var isSkipping = false
     private var startTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
+    private var toastTask: Task<Void, Never>?
     /// False until the start seek lands, so a quick exit can't overwrite the
     /// saved resume point with 0.
     private var hasStarted = false
 
     static let saveInterval: Duration = .seconds(15)
+    static let commercialCheckInterval = CMTime(value: 1, timescale: 2)
+    static let skippedToastDuration: Duration = .milliseconds(1500)
 
-    init(playback: RecordingsModel.Playback, model: RecordingsModel) {
+    init(playback: RecordingsModel.Playback, model: RecordingsModel, defaults: UserDefaults = .standard) {
         self.playback = playback
         self.model = model
+        self.defaults = defaults
+        skipper = CommercialSkipper(playback.recording.commercials)
     }
 
     func start() {
@@ -36,6 +51,16 @@ final class RecordingPlayerController {
         let player = AVPlayer(playerItem: item)
         self.player = player
         let startSec = playback.startSec
+        if !skipper.segments.isEmpty {
+            timeObserver = player.addPeriodicTimeObserver(
+                forInterval: Self.commercialCheckInterval,
+                queue: .main
+            ) { [weak self] time in
+                MainActor.assumeIsolated {
+                    self?.checkCommercials(at: time.seconds)
+                }
+            }
+        }
 
         startTask = Task { [weak self] in
             for await status in item.publisher(for: \.status).values {
@@ -75,10 +100,64 @@ final class RecordingPlayerController {
     func finish() {
         startTask?.cancel()
         saveTask?.cancel()
+        toastTask?.cancel()
         guard let player else { return }
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
         player.pause()
         saveNow()
         self.player = nil
+        activeCommercial = nil
+        showsSkippedToast = false
+    }
+
+    /// Skip ad: jump to the end of the break playing now.
+    func skipCommercial() {
+        guard let player, let target = skipper.skip(at: player.currentTime().seconds) else { return }
+        seekPastCommercial(to: target)
+    }
+
+    private func checkCommercials(at seconds: Double) {
+        guard hasStarted, !isSkipping, let player else { return }
+        // Only while actually playing: scrubbing while paused never jumps.
+        if AutoSkipAds.isOn(in: defaults),
+           player.timeControlStatus == .playing,
+           let target = skipper.autoSkipTarget(at: seconds) {
+            seekPastCommercial(to: target)
+            flashSkippedToast()
+            return
+        }
+        let active = skipper.active(at: seconds)
+        if active != activeCommercial {
+            activeCommercial = active
+        }
+    }
+
+    private func seekPastCommercial(to seconds: Double) {
+        guard let player else { return }
+        activeCommercial = nil
+        isSkipping = true
+        Task { [weak self] in
+            // Exact, so a keyframe seek can't land just inside the break.
+            _ = await player.seek(
+                to: CMTime(seconds: seconds, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
+            self?.isSkipping = false
+        }
+    }
+
+    private func flashSkippedToast() {
+        showsSkippedToast = true
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.skippedToastDuration)
+            guard !Task.isCancelled else { return }
+            self?.showsSkippedToast = false
+        }
     }
 
     private func startSaving() {
@@ -117,11 +196,20 @@ final class RecordingPlayerController {
     #endif
 }
 
+#if canImport(UIKit)
 /// Native AVKit transport (full VOD scrubbing). `onTap` observes taps without
 /// taking them from AVKit (iOS chrome); omit it on tvOS.
 struct RecordingVideoContainer: UIViewControllerRepresentable {
     var player: AVPlayer?
     var onTap: (() -> Void)?
+    #if os(tvOS)
+    /// Sleep Timer info panel + Keep watching contextual action.
+    var sleepTimer: SleepTimer?
+    var sleepWarning = false
+    /// Non-nil inside a commercial break: offered as the Skip ad contextual
+    /// action (it takes remote focus, so one click skips).
+    var skipAd: (() -> Void)?
+    #endif
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
@@ -131,6 +219,13 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
         vc.allowsPictureInPicturePlayback = false
         #endif
         vc.player = player
+        #if os(tvOS)
+        if let sleepTimer {
+            vc.customInfoViewControllers = [
+                context.coordinator.sleep.makePanel(timer: sleepTimer, programEnd: nil),
+            ]
+        }
+        #endif
         if onTap != nil {
             let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
             tap.cancelsTouchesInView = false
@@ -145,6 +240,17 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
             vc.player = player
         }
         context.coordinator.onTap = onTap
+        #if os(tvOS)
+        if let sleepTimer {
+            context.coordinator.sleep.update(
+                vc,
+                timer: sleepTimer,
+                programEnd: nil,
+                warning: sleepWarning,
+                skipAd: skipAd
+            )
+        }
+        #endif
     }
 
     func makeCoordinator() -> Coordinator {
@@ -153,6 +259,9 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var onTap: (() -> Void)?
+        #if os(tvOS)
+        let sleep = TVSleepTimerSupport()
+        #endif
 
         init(onTap: (() -> Void)?) {
             self.onTap = onTap
@@ -170,3 +279,4 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
         }
     }
 }
+#endif

@@ -53,6 +53,7 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.markRecordings(guide)
+	guide = applyParental(guide, s.callerPolicy(r))
 	favs := s.callerFavorites(r)
 	for i := range guide {
 		guide[i].Favorite = favs[guide[i].ChannelID]

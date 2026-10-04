@@ -290,4 +290,3 @@ func TestNegotiate(t *testing.T) {
 		})
 	}
 }
-

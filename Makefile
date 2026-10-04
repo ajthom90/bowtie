@@ -37,6 +37,8 @@ ios-test: ios-gen
 		-destination 'generic/platform=iOS Simulator' build
 	cd ios && xcodebuild -project Bowtie.xcodeproj -scheme BowtieTV \
 		-destination 'generic/platform=tvOS Simulator' build
+	cd ios && xcodebuild -project Bowtie.xcodeproj -scheme BowtieMac \
+		-destination 'platform=macOS' CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
 
 # --- Android (JDK 17 + Android SDK required; uses android/gradlew) ---
 

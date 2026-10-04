@@ -52,6 +52,7 @@ import app.bowtie.core.RecordingLogic
 import app.bowtie.core.User
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
+import app.bowtie.core.vm.SeriesResult
 import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieDimens
 import app.bowtie.tv.BowtieType
@@ -146,19 +147,36 @@ fun ChannelRailScreen(
         }
     }
 
+    fun recordSeries(channelId: Long, program: GuideProgram) {
+        scope.launch {
+            notice = when (val result = channelListViewModel.recordSeries(channelId, program)) {
+                is SeriesResult.Scheduled -> "${program.title}: ${result.message}"
+                is SeriesResult.Failed -> result.message
+            }
+        }
+    }
+
     /**
-     * Hold OK on a channel: record what's on now or next, star / unstar it
-     * (when [onToggleFavorite] is given), or watch it.
+     * Hold OK on a channel: record what's on now or next (or its whole
+     * series), star / unstar it (when [onToggleFavorite] is given), or watch it.
      */
     fun openChannelMenu(row: ChannelListViewModel.Row, onToggleFavorite: (() -> Unit)?) {
-        val programs = listOfNotNull(
+        val guide = listOfNotNull(
             row.nowNext.now?.let { "On now" to it },
             row.nowNext.next?.let { "Next" to it },
-        ).filter { it.second.recording == null }
+        )
+        val programs = guide.filter { it.second.recording == null }
         val recordChoices = programs.map { (whenLabel, program) ->
             "Record \"${program.title}\" ($whenLabel)" to {
                 panel = null
                 record(row.channel.id, program, force = false)
+            }
+        }
+        // A series can be recorded even when this airing already is; one choice per show.
+        val seriesChoices = guide.distinctBy { it.second.title }.map { (_, program) ->
+            "Record series \"${program.title}\"" to {
+                panel = null
+                recordSeries(row.channel.id, program)
             }
         }
         val favoriteChoice = onToggleFavorite?.let { toggle ->
@@ -167,7 +185,7 @@ fun ChannelRailScreen(
                 toggle()
             }
         }
-        val choices = recordChoices + listOfNotNull(favoriteChoice) + ("Watch" to {
+        val choices = recordChoices + seriesChoices + listOfNotNull(favoriteChoice) + ("Watch" to {
             panel = null
             onOpenChannel(row.channel)
         }) + ("Close" to { panel = null })
@@ -555,7 +573,8 @@ private fun ChannelRailRow(
                 if (now != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = (if (now.recording != null) "● " else "") + now.title,
+                        text = (if (now.recording != null) "● " else "") + now.title +
+                            (RecordingLogic.lockLabel(now)?.let { "   $it" } ?: ""),
                         style = BowtieType.body,
                         color = BowtieColors.text,
                         maxLines = 1,
@@ -573,7 +592,8 @@ private fun ChannelRailRow(
                 if (next != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Next: " + (if (next.recording != null) "● " else "") + next.title,
+                        text = "Next: " + (if (next.recording != null) "● " else "") + next.title +
+                            (RecordingLogic.lockLabel(next)?.let { "   $it" } ?: ""),
                         style = BowtieType.label,
                         color = BowtieColors.dim,
                         maxLines = 1,

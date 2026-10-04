@@ -56,6 +56,11 @@ struct ThemedFieldModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            #if os(macOS)
+            // Drop AppKit's bezel and focus ring; the amber ring below is the cue.
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            #endif
             .font(Theme.body())
             .foregroundStyle(Theme.text)
             .padding(Theme.fieldPadding)

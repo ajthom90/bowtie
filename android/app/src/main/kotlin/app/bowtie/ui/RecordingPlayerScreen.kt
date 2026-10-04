@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,8 +19,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,23 +33,32 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import app.bowtie.BowtieColors
 import app.bowtie.BowtieType
+import app.bowtie.core.Commercial
+import app.bowtie.core.CommercialSkipper
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.player.AutoSkipAdsStore
 import app.bowtie.core.player.VodPlayer
 import app.bowtie.core.vm.RecordingsViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
+
+/** How often the player checks for a commercial break. */
+private const val COMMERCIAL_CHECK_MS = 500L
 
 /**
  * Plays a recording as HLS VOD with Media3's seekable controller, starting at
  * [startAtSec]. Saves the resume position every 15 s, when backgrounded, at the
- * end, and on exit.
+ * end, and on exit. Inside a detected commercial break it offers Skip ad, and
+ * skips each break once by itself when Skip ads automatically is on.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -66,6 +78,38 @@ fun RecordingPlayerScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var chromeVisible by remember { mutableStateOf(true) }
     var lastSavedMs by remember { mutableStateOf(-1L) }
+    var retrying by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    // Per screen, not per load: a retry (fresh playlist) doesn't re-skip breaks.
+    val skipper = remember { CommercialSkipper(start.recording.commercials) }
+    val autoSkipAds = remember { AutoSkipAdsStore(context) }
+    var activeAd by remember { mutableStateOf<Commercial?>(null) }
+    var skippedNonce by remember { mutableIntStateOf(0) }
+    var showSkipped by remember { mutableStateOf(false) }
+
+    /** Seek to a break's end (exact: Media3's default seek). */
+    fun seekPastAd(targetSec: Double) {
+        activeAd = null
+        player.seekTo((targetSec * 1000).toLong())
+    }
+
+    /** Ask for a fresh playlist (tokens expire) and pick up where playback stopped. */
+    fun retry() {
+        if (retrying) return
+        val atSec = RecordingLogic.retryStartSec(player.currentPosition, startAtSec)
+        retrying = true
+        error = null
+        scope.launch {
+            try {
+                when (val r = viewModel.retryPlayback(start.recording)) {
+                    is RecordingsViewModel.Retry.Ready -> VodPlayer.load(player, r.playlistUrl, server, atSec)
+                    is RecordingsViewModel.Retry.Failed -> error = r.message
+                }
+            } finally {
+                retrying = false
+            }
+        }
+    }
 
     fun save() {
         // Before the first frame the position is 0: don't wipe a saved resume point.
@@ -117,6 +161,32 @@ fun RecordingPlayerScreen(
         }
     }
 
+    // Commercial breaks: Skip ad while inside one; auto-skip (only while
+    // playing, so scrubbing while paused never jumps) once per break.
+    LaunchedEffect(player) {
+        if (skipper.segments.isEmpty()) return@LaunchedEffect
+        while (isActive) {
+            delay(COMMERCIAL_CHECK_MS)
+            val atSec = player.currentPosition / 1000.0
+            if (autoSkipAds.enabled && player.isPlaying) {
+                val target = skipper.autoSkipTarget(atSec)
+                if (target != null) {
+                    seekPastAd(target)
+                    skippedNonce++
+                    continue
+                }
+            }
+            activeAd = skipper.active(atSec)
+        }
+    }
+
+    LaunchedEffect(skippedNonce) {
+        if (skippedNonce == 0) return@LaunchedEffect
+        showSkipped = true
+        delay(SKIPPED_AD_TOAST_MS)
+        showSkipped = false
+    }
+
     DisposableEffect(activity) {
         val window = activity?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -124,6 +194,11 @@ fun RecordingPlayerScreen(
     }
 
     BackHandler { onBack() }
+
+    // Sleep timer: fires the same leave as Back (saves the position on dispose).
+    val sleepTimer = rememberSleepTimer { onBack() }
+    val sleepStatus by sleepTimer.status.collectAsStateWithLifecycle()
+    var showSleepSheet by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -158,8 +233,13 @@ fun RecordingPlayerScreen(
                     .background(BowtieColors.bg.copy(alpha = 0.6f))
                     .padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
-                TextButton(onClick = onBack) {
-                    Text("‹ Recordings", color = BowtieColors.amber)
+                Row {
+                    TextButton(onClick = onBack) {
+                        Text("‹ Recordings", color = BowtieColors.amber)
+                    }
+                    TextButton(onClick = { showSleepSheet = true }) {
+                        Text(sleepChipLabel(sleepStatus), color = BowtieColors.amber)
+                    }
                 }
                 Text(
                     text = start.recording.title,
@@ -176,6 +256,32 @@ fun RecordingPlayerScreen(
             }
         }
 
+        // Not tied to the controller's visibility: stays up for the whole break.
+        if (showSkipped) {
+            SkippedAdToast(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 96.dp, end = 16.dp),
+            )
+        } else if (activeAd != null && error == null) {
+            SkipAdButton(
+                onSkip = { skipper.skip(player.currentPosition / 1000.0)?.let { seekPastAd(it) } },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 96.dp, end = 16.dp),
+            )
+        }
+
+        if (sleepStatus.warning) {
+            SleepWarning(
+                remainingMs = sleepStatus.remainingMs ?: 0L,
+                onKeepWatching = { sleepTimer.extend() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 96.dp, start = 16.dp, end = 16.dp),
+            )
+        }
+
         error?.let { msg ->
             Column(
                 modifier = Modifier.align(Alignment.Center),
@@ -183,12 +289,18 @@ fun RecordingPlayerScreen(
             ) {
                 Text(msg, style = BowtieType.body, color = BowtieColors.alert)
                 Spacer(Modifier.height(12.dp))
-                TextButton(onClick = {
-                    error = null
-                    player.prepare()
-                    player.play()
-                }) { Text("Try again", color = BowtieColors.amber) }
+                TextButton(onClick = { retry() }, enabled = !retrying) {
+                    Text("Try again", color = BowtieColors.amber)
+                }
             }
         }
+    }
+
+    if (showSleepSheet) {
+        SleepTimerSheet(
+            timer = sleepTimer,
+            programEndMs = null,
+            onDismiss = { showSleepSheet = false },
+        )
     }
 }

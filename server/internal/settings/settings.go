@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -28,6 +29,12 @@ const (
 	KeyStreamingBufferMinutes = "streaming.bufferMinutes"
 	// KeyStreamingAdaptive: one shared multi-quality transcode per channel.
 	KeyStreamingAdaptive = "streaming.adaptive"
+	// KeyEPGHDHomeRun: fetch the free guide from SiliconDust's HDHomeRun
+	// XMLTV API (default on).
+	KeyEPGHDHomeRun = "epg.hdhomerun"
+	// DVR padding applied to recordings scheduled from now on.
+	KeyDVRPadStartSeconds = "dvr.padStartSeconds"
+	KeyDVRPadEndSeconds   = "dvr.padEndSeconds"
 )
 
 // Default product values used when seeding from empty/zero config.
@@ -35,6 +42,10 @@ const (
 	DefaultRefreshHours  = 12
 	DefaultEncoder       = "auto"
 	DefaultBufferMinutes = 15
+	// DefaultPadStartSeconds / DefaultPadEndSeconds match dvr.DefaultPadStart
+	// and dvr.DefaultPadEnd.
+	DefaultPadStartSeconds = 60
+	DefaultPadEndSeconds   = 180
 )
 
 // Provider is a typed facade over store settings. It is safe for concurrent use
@@ -72,6 +83,92 @@ type Streaming struct {
 	BufferMinutes int
 	// Adaptive: every viewer of a channel shares one quality ladder (more GPU).
 	Adaptive bool
+}
+
+// HDHomeRunGuide is the free SiliconDust guide section.
+type HDHomeRunGuide struct {
+	Enabled bool
+}
+
+// DVR is the recording padding section.
+type DVR struct {
+	PadStartSeconds int
+	PadEndSeconds   int
+}
+
+// DVR returns the recording padding. An absent or empty key reads as its
+// default (0 is a real value).
+func (p *Provider) DVR() (DVR, error) {
+	start, err := p.intOr(KeyDVRPadStartSeconds, DefaultPadStartSeconds)
+	if err != nil {
+		return DVR{}, err
+	}
+	end, err := p.intOr(KeyDVRPadEndSeconds, DefaultPadEndSeconds)
+	if err != nil {
+		return DVR{}, err
+	}
+	return DVR{PadStartSeconds: start, PadEndSeconds: end}, nil
+}
+
+// SetDVR writes the full DVR section atomically.
+func (p *Provider) SetDVR(v DVR) error {
+	return p.st.SetSettings(map[string]string{
+		KeyDVRPadStartSeconds: strconv.Itoa(v.PadStartSeconds),
+		KeyDVRPadEndSeconds:   strconv.Itoa(v.PadEndSeconds),
+	})
+}
+
+// DVRPadding is DVR as durations (the dvr.Deps.Padding hook).
+func (p *Provider) DVRPadding() (start, end time.Duration, err error) {
+	d, err := p.DVR()
+	if err != nil {
+		return 0, 0, err
+	}
+	clamp := func(n, hi int) time.Duration { return time.Duration(min(max(n, 0), hi)) * time.Second }
+	return clamp(d.PadStartSeconds, MaxPadStartSeconds), clamp(d.PadEndSeconds, MaxPadEndSeconds), nil
+}
+
+// Padding limits (seconds) for the admin setting.
+const (
+	MaxPadStartSeconds = 1800
+	MaxPadEndSeconds   = 3600
+)
+
+func (p *Provider) intOr(key string, def int) (int, error) {
+	raw, err := p.st.GetSetting(key)
+	if err != nil {
+		return 0, err
+	}
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return n, nil
+}
+
+// HDHomeRunGuide returns the free-guide setting. An absent or empty key
+// means on (the default).
+func (p *Provider) HDHomeRunGuide() (HDHomeRunGuide, error) {
+	raw, err := p.st.GetSetting(KeyEPGHDHomeRun)
+	if err != nil {
+		return HDHomeRunGuide{}, err
+	}
+	if raw == "" {
+		return HDHomeRunGuide{Enabled: true}, nil
+	}
+	on, err := strconv.ParseBool(raw)
+	if err != nil {
+		return HDHomeRunGuide{}, fmt.Errorf("%s: %w", KeyEPGHDHomeRun, err)
+	}
+	return HDHomeRunGuide{Enabled: on}, nil
+}
+
+// SetHDHomeRunGuide writes the free-guide setting.
+func (p *Provider) SetHDHomeRunGuide(v HDHomeRunGuide) error {
+	return p.st.SetSetting(KeyEPGHDHomeRun, strconv.FormatBool(v.Enabled))
 }
 
 // XMLTV returns the current XMLTV settings.
@@ -190,7 +287,7 @@ func (p *Provider) Apply(kv map[string]string) error {
 // notice is logged (DB is the sole source of truth after first seed).
 //
 // Defaults applied when cfg leaves fields zero: refreshHours=12, encoder=auto,
-// allowHevc=false, bufferMinutes=15.
+// allowHevc=false, bufferMinutes=15, dvr padding 60 s / 180 s.
 func (p *Provider) SeedFromConfig(cfg config.Config) error {
 	refreshHours := cfg.XMLTV.RefreshHours
 	if refreshHours == 0 {
@@ -214,6 +311,9 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC)},
 		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes)},
 		{KeyStreamingAdaptive, "false"},
+		{KeyEPGHDHomeRun, "true"},
+		{KeyDVRPadStartSeconds, strconv.Itoa(DefaultPadStartSeconds)},
+		{KeyDVRPadEndSeconds, strconv.Itoa(DefaultPadEndSeconds)},
 	}
 
 	for _, s := range seeds {

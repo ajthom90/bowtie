@@ -38,3 +38,31 @@
     padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
   }
 }
+
+.autoSkip {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Bottom right, above the native control bar. */
+.skipAd {
+  position: absolute;
+  right: 1rem;
+  bottom: 4.5rem;
+  z-index: 2;
+  padding: 0.55rem 1rem;
+  font-weight: 600;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.35);
+}
+
+.skipAd:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}

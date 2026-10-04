@@ -2,7 +2,7 @@
 
 BrighterScript SceneGraph channel for the Bowtie viewer:
 
-**Connect → Login → Channel rail → Live play**
+**Connect → Login → Channel rail → Live play**, plus **Recordings** (DVR)
 
 Single `ApiTask` owns all HTTP and tokens (auth actor). Pure logic
 (`AuthState`, `GuideLogic`, `Caps`, request builders/parsers) is exercised
@@ -60,17 +60,111 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 
 (`supports_input_launch=1` is set in the channel manifest.)
 
+## Sign in
+
+Login opens on **Sign in with your phone** (quick sign-in): the Roku asks
+for a code (`POST /api/v1/auth/device`, named after the Roku's friendly
+name), shows the server's QR PNG (`qrUrl`, 512 px, shown 1:1) and "Or go to
+`<server>/link` and enter **BCDF-2345**". A phone or browser that is signed
+in approves it. Meanwhile ApiTask polls `POST /api/v1/auth/device/token` every
+`interval` s (one poll at a time): 428 keeps waiting, 200 signs in exactly as a
+password login does (tokens held by ApiTask, refresh token persisted), and 410
+(or the code's `expiresIn` passing) shows **Code expired** with **Get a new
+code** focused. Network trouble keeps polling.
+
+| Button | Action |
+|--------|--------|
+| Get a new code | Drop this code and ask for another |
+| Use a password instead | Username / password keyboards (the old flow); **Sign in with your phone** returns |
+| Change server | Back to Connect |
+
+A server without quick sign-in (404) drops straight to the password form with
+a note.
+
 ## Channel rail controls
 
 | Key | Action |
 |-----|--------|
-| `*` (Options) on a channel | Star / unstar it. Starred channels move to the top (guide-number order) with a ★; the change is sent to the server and undone if it fails. |
-| Up from the first channel | Recent row (when the server has watch history), then Settings |
-| Down from Settings / Recent | Back toward the rail |
+| `*` (Options) on a channel | Opens a dialog: **Favorite / Unfavorite**, **Record this program** (only when the guide has a program on now that isn't already scheduled), **Record series** (when the guide has a program on now), **Cancel**. |
+| Up from the first channel | Recent row (when the server has watch history), then the header (Recordings / Settings) |
+| Left / Right in the header | Move between **Recordings** and **Settings** |
+| Down from the header / Recent | Back toward the rail |
+
+**Favorite** stars the channel: starred channels move to the top
+(guide-number order) with a ★; the change is sent to the server and undone if
+it fails. Favorite is left out on a server without favorites.
+
+**Record this program** schedules the current program by its guide start
+(`POST /api/v1/recordings`; capture starts 1 min early and ends 3 min late).
+A warning such as "uses all tuners" is shown with the confirmation. When more
+channels than tuners would be recording at once, the server answers 409 and the
+dialog lists the recordings already holding the tuners with **Record anyway**
+(scheduled at a lower priority; earlier recordings keep their tuners) or
+**Cancel**.
+
+**Record series** records every new episode of the show on this channel
+(`POST /api/v1/recording-rules` with the program's channel and start; the
+server's defaults are this channel, new episodes only). The upcoming airings in
+the next 14 days are scheduled at once and the dialog says **Scheduled N
+episodes**; more are added as the guide refreshes.
 
 Up/down zapping in the player follows rail order, so it cycles favorites first.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
+
+## Recordings controls
+
+**Recordings** (in the header next to Settings) lists everyone's recordings in
+three tabs: **Upcoming** (scheduled, waiting for a tuner, recording now),
+**Recorded** (converting, ready) and **Missed** (failed, with the reason in
+plain words, e.g. "No tuner was free"), plus **Shows**, the series being
+recorded (`GET /api/v1/recording-rules`). Recordings a series scheduled
+(`ruleId` > 0) say **Series**; an episode skipped by deleting it ahead of time
+says **Skipped** (not tinted red like a real miss). A recording parental
+controls block for this account (`locked`) says **Locked** and OK explains
+instead of playing.
+
+| Key | Action |
+|-----|--------|
+| Left / Right on the tabs | Switch tab |
+| Down / Up | Between the tabs and the list |
+| OK on a recorded item | Play it. Past the first 10 s and before the last 30 s, asks **Resume from m:ss** / **Start over**. |
+| OK on any other item | Same as `*` |
+| `*` (Options) on an item | **Stop recording** (while recording), **Keep / Don't keep** (protect from automatic deletion), **Cancel recording** (upcoming) or **Delete** (asks first: it removes the recording for everyone), **Close**. Only the person who scheduled it or an admin (`canManage`) gets these; others see who scheduled it. |
+| `*` or OK on a show (Shows tab) | **Stop recording this show** (`DELETE /recording-rules/{id}`: cancels its upcoming recordings, recorded ones stay), **Close**. Only whoever set it up or an admin (`canManage`). |
+| Back | Recordings → channel rail |
+
+### Recording playback
+
+Recordings play as HLS VOD in a `Video` node with Roku's standard trick-play
+UI (OK pause/play, Left/Right and FF/RW to seek, the progress bar; there are no
+BIF thumbnails). The position is saved (`PUT …/position`) every 15 s, when the
+recording ends, and on Back, which returns to the list.
+
+| Key | Action |
+|-----|--------|
+| OK / Play | Play / pause (the Video's trick-play UI) |
+| Left / Right, FF / RW | Seek |
+| OK on **Skip ad ▸ (OK)** | Jump to the end of the ad |
+| Left / Right / FF / RW / Replay on **Skip ad** | Put Skip ad away for this ad; the next press seeks |
+| Play on **Skip ad** | Play / pause |
+| Down | **Sleep timer** menu |
+| OK on **Still watching?** | Keep watching (same duration again) |
+| Back | Save the position and return to the list |
+
+**Skip ad.** A recording may carry `commercials: [{start, end}]` (seconds on
+its timeline; missing or empty means none). While the position is inside one
+(start inclusive, end exclusive) a **Skip ad ▸ (OK)** button appears bottom
+right and takes focus, so OK reaches it rather than the Video. With
+**Settings → Skip ads automatically** on, each ad is skipped once per playback
+and **Skipped ad** shows briefly; seeking back into a skipped ad shows the
+button instead of skipping again. Logic: `source/lib/Commercials.bs`.
+
+**Sleep timer** (Down): Off, 15 / 30 / 45 / 60 / 90 minutes, 2 hours, with the
+time left in the menu. A minute before it runs out, **Still watching? Sleeping
+in 1:00 — OK to keep watching** takes focus; OK adds the same duration again.
+When it runs out, playback stops as Back does. Reset when playback ends; never
+saved. "Down: sleep timer" shows for a few seconds when playback starts.
 
 ## Player controls
 
@@ -79,8 +173,21 @@ same account) and is hidden when empty or on a server without favorites.
 | OK / Play | Play / pause |
 | Back | Stop session (DELETE) and return to rail |
 | Up / Down | Zap previous / next channel (400 ms debounce, session-replace) |
-| Right (or `*` / Options on streaming sticks) | Quality dialog (profiles filtered by `user.maxQuality`). Roku TVs open their own picture menu on `*` during playback. |
+| Right | **Options** dialog: quality (profiles filtered by `user.maxQuality`) and **Sleep timer**. `*` is left to the system menu (audio tracks, closed captioning; Roku TVs add picture settings). |
+| OK while **Still watching?** shows | Keep watching (instead of pausing) |
 | Info / Display | Toggle debug overlay |
+
+### Sleep timer
+
+Right → **Sleep timer**: Off, 15 / 30 / 45 / 60 / 90 minutes, 2 hours, and
+**End of this program** when the guide (from the channel rail) knows when the
+program on now ends; the menu shows the time left. A minute before it runs
+out, **Still watching? Sleeping in 1:00 — OK to keep watching** appears; OK adds
+the same duration again (30 minutes for End of this program). When it runs
+out the player leaves exactly as Back does: the viewer is DELETEd (tuner
+freed) and the rail comes back. It survives zapping, resets when the player is
+left, and is never saved. Logic: `source/lib/SleepTimer.bs` (clock injected,
+tested under brs).
 
 ### Session lifecycle (A3)
 
@@ -109,7 +216,19 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 503 tuners busy | Full copy + who’s-watching list + Try again |
 | 422 negotiation | Reset quality to Auto, retry once; second → device-can’t-play |
 | 404 | Channel not found; rail refreshes on return |
+| 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
 | Mid-play failure | Bounded retry, then error + Try again |
+
+## Settings
+
+| Key | Action |
+|-----|--------|
+| Up / Down | Move between **Back**, **Change server**, **Change password**, **Sign out**, **Skip ads automatically** |
+| OK | Press the focused button (**Skip ads automatically** toggles On / Off) |
+| Back | Return to the channel rail |
+
+**Skip ads automatically** (default Off) is kept on this device (registry
+section `bowtie`, key `autoSkipAds`) and survives sign-out and change server.
 
 ## Design tokens
 
@@ -130,12 +249,14 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, GuideLogic, Registry
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, DeviceAuth, Favorites, GuideLogic, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
-    ├── AppScene            # phase routing (connect/login/checking/home/settings/player)
-    ├── ConnectScene / LoginScene
-    ├── HomeScene           # MarkupList rail + guide join
+    ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
+    ├── ConnectScene
+    ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
+    ├── HomeScene           # MarkupList rail + guide join, * dialog (favorite / record / series)
+    ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows)
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene

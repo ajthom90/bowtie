@@ -6,6 +6,14 @@ export interface GuideProgram {
   subtitle: string
   description: string
   category: string
+  /** Series ID of the show (when the guide source has one). */
+  seriesId?: string
+  /** First airing. */
+  isNew?: boolean
+  /** Rating from the guide source (e.g. TV-14; "" = not rated). */
+  rating?: string
+  /** Parental controls block this program for the caller (description is hidden). */
+  locked?: boolean
   /** Present when this program is scheduled, recording or recorded. */
   recording?: { id: number; state: string }
 }

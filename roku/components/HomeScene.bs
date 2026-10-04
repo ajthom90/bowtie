@@ -1,11 +1,15 @@
 ' Channel rail: MarkupList + ChannelRailItem; channels+guide via ApiTask;
 ' join with bowtie.guide.nowNext; refresh on show + 5-min timer.
-' Favorites float to the top (bowtie.favorites); * on a rail item toggles one
-' optimistically. A Recent row (recentList) sits above the rail when the
-' server has watch history. Focus: settings <-> recentList <-> rail.
+' Favorites float to the top (bowtie.favorites). * on a rail item opens a
+' dialog: Favorite/Unfavorite (optimistic toggle), Record this program (when
+' the guide has a current program; 409 → conflicts + Record anyway), Record
+' series (POST /recording-rules → "Scheduled N episodes"), Cancel.
+' A Recent row (recentList) sits above the rail when the server has watch
+' history. Focus: [Recordings | Settings] <-> recentList <-> rail.
 
 import "pkg:/source/lib/GuideLogic.bs"
 import "pkg:/source/lib/Favorites.bs"
+import "pkg:/source/lib/Recordings.bs"
 
 const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 const GUIDE_WINDOW_SECS = 4 * 3600
@@ -20,6 +24,7 @@ sub init()
     m.titleLabel = m.top.findNode("titleLabel")
     m.userLabel = m.top.findNode("userLabel")
     m.settingsButton = m.top.findNode("settingsButton")
+    m.recordingsButton = m.top.findNode("recordingsButton")
     m.loadingGroup = m.top.findNode("loadingGroup")
     m.loadingSpinner = m.top.findNode("loadingSpinner")
     m.emptyLabel = m.top.findNode("emptyLabel")
@@ -46,8 +51,20 @@ sub init()
     m.recents = []
     m.busy = false
     m.lastLoadedAt = 0
+    ' * dialog: menu shown, and the channel + current program it acts on.
+    m.dialog = invalid
+    m.dialogMode = ""
+    m.menu = []
+    m.optionsChannelId = invalid
+    m.optionsProgram = invalid
+    ' In-flight createRecording / createRecordingRule: {id, channelId, program, series}.
+    m.pendingRecord = invalid
+    m.recSeq = 0
+    ' Header button Up from the rail returns to (Recordings until one is left).
+    m.headerButton = invalid
 
     m.settingsButton.observeField("buttonSelected", "onSettingsButton")
+    m.recordingsButton.observeField("buttonSelected", "onRecordingsButton")
     m.retryButton.observeField("buttonSelected", "onRetryButton")
     m.channelList.observeField("itemSelected", "onItemSelected")
     m.recentList.observeField("itemSelected", "onRecentSelected")
@@ -82,6 +99,7 @@ end sub
 sub onVisible()
     if m.top.visible = true
         m.top.openSettings = false
+        m.top.openRecordings = false
         m.top.selectedChannel = invalid
         updateUserLabel()
         observeApi()
@@ -90,6 +108,8 @@ sub onVisible()
         loadChannels()
     else
         stopRefreshTimer()
+        closeDialog()
+        m.pendingRecord = invalid
         unobserveApi()
         setLoading(false)
     end if
@@ -116,6 +136,8 @@ end sub
 sub onRefreshTimer()
     if m.top.visible <> true then return
     if m.busy = true then return
+    ' A reload moves focus; wait until the * dialog is gone.
+    if m.dialog <> invalid then return
     ' Stale if never loaded or ≥ 5 minutes since last success.
     nowSecs = nowAsSeconds()
     if m.lastLoadedAt = 0 or (nowSecs - m.lastLoadedAt) >= 300
@@ -125,6 +147,10 @@ end sub
 
 sub onSettingsButton()
     m.top.openSettings = true
+end sub
+
+sub onRecordingsButton()
+    m.top.openRecordings = true
 end sub
 
 sub onRetryButton()
@@ -154,25 +180,27 @@ sub selectChannelAt(idx as dynamic)
         name: ch.name
         index: idx
         channels: m.channels
+        ' The player's sleep timer offers End of this program from it.
+        guide: m.guideById
     }
 end sub
 
-' Focus chain settings <-> recentList <-> rail, and * to star the focused
-' rail item. Only rail focus takes *; PlayerScene is a sibling, so its keys
-' (where * belongs to the system menu) never reach here.
+' Focus chain [Recordings | Settings] <-> recentList <-> rail, and * for the
+' focused rail item's dialog. Only rail focus takes *; PlayerScene is a
+' sibling, so its keys (where * belongs to the system menu) never reach here.
 function onKeyEvent(key as string, press as boolean) as boolean
     if press <> true then return false
 
     if m.channelList.hasFocus()
         if key = "options"
-            return toggleFocusedFavorite()
+            return openChannelOptions()
         end if
         ' MarkupList lets "up" through only from its first item.
         if key = "up"
             if m.recentList.visible = true
                 m.recentList.setFocus(true)
             else
-                m.settingsButton.setFocus(true)
+                focusHeader()
             end if
             return true
         end if
@@ -185,38 +213,226 @@ function onKeyEvent(key as string, press as boolean) as boolean
             return true
         end if
         if key = "up"
-            m.settingsButton.setFocus(true)
+            focusHeader()
             return true
         end if
         return false
     end if
 
-    if m.settingsButton.hasFocus() and key = "down"
-        if m.recentList.visible = true
-            m.recentList.setFocus(true)
+    ' Header row: Recordings and Settings side by side.
+    if m.recordingsButton.hasFocus() or m.settingsButton.hasFocus()
+        if key = "right" and m.recordingsButton.hasFocus()
+            m.settingsButton.setFocus(true)
             return true
         end if
-        if m.channelList.visible = true
-            m.channelList.setFocus(true)
+        if key = "left" and m.settingsButton.hasFocus()
+            m.recordingsButton.setFocus(true)
             return true
+        end if
+        if key = "down"
+            m.headerButton = m.recordingsButton
+            if m.settingsButton.hasFocus() then m.headerButton = m.settingsButton
+            if m.recentList.visible = true
+                m.recentList.setFocus(true)
+                return true
+            end if
+            if m.channelList.visible = true
+                m.channelList.setFocus(true)
+                return true
+            end if
         end if
     end if
 
     return false
 end function
 
-' Optimistic: flip the star, re-sort in place (no reload: that would show the
-' spinner and drop focus), keep focus on the same channel, then PUT/DELETE.
-function toggleFocusedFavorite() as boolean
+' Back up to the header button last left from (Recordings at first).
+sub focusHeader()
+    if m.headerButton = invalid then m.headerButton = m.recordingsButton
+    m.headerButton.setFocus(true)
+end sub
+
+' ── * dialog ─────────────────────────────────────────────────────────────────
+
+' Favorite/Unfavorite, Record this program (only with a current program in
+' the guide already loaded), Cancel. The channel and program are captured
+' now: the dialog takes focus and the rail may re-sort under it.
+function openChannelOptions() as boolean
     idx = m.channelList.itemFocused
     if m.fav = invalid or idx = invalid or idx < 0 or idx >= m.channels.count() then return false
     ch = m.channels[idx]
-    result = bowtie.favorites.toggle(m.fav, ch.id)
+    programs = m.guideById[ch.id.toStr()]
+    if programs = invalid then programs = []
+    nowProgram = bowtie.guide.nowNext(programs, isoNow()).now
+    opts = bowtie.recordings.homeOptions(m.fav.supported, ch.favorite = true, nowProgram)
+    ' Only Cancel (no favorites, nothing on now): nothing to offer.
+    if opts.buttons.count() <= 1 then return false
+
+    m.optionsChannelId = ch.id
+    m.optionsProgram = nowProgram
+    m.menu = opts.buttons
+    message = []
+    if opts.note <> "" then message.push(opts.note)
+    showDialog("channel", ch.guideNumber + "  " + ch.name, message, bowtie.recordings.buttonLabels(opts.buttons))
+    return true
+end function
+
+sub onDialogButton()
+    if m.dialog = invalid then return
+    idx = m.dialog.buttonSelected
+    mode = m.dialogMode
+    menu = m.menu
+    closeDialog()
+    restoreRailFocus()
+
+    if mode = "channel"
+        choice = bowtie.recordings.buttonId(menu, idx)
+        if choice = "favorite"
+            toggleFavorite(m.optionsChannelId)
+        else if choice = "record"
+            sendRecord(m.optionsChannelId, m.optionsProgram, false)
+        else if choice = "series"
+            sendSeries(m.optionsChannelId, m.optionsProgram)
+        end if
+    else if mode = "conflict"
+        ' Record anyway: lower priority; earlier recordings keep their tuners.
+        if idx = 0 then sendRecord(m.optionsChannelId, m.optionsProgram, true)
+    end if
+end sub
+
+' Optimistic: flip the star, re-sort in place (no reload: that would show the
+' spinner and drop focus), keep focus on the same channel, then PUT/DELETE.
+function toggleFavorite(channelId as dynamic) as boolean
+    if m.fav = invalid or channelId = invalid then return false
+    result = bowtie.favorites.toggle(m.fav, channelId)
     if result = invalid then return false
     m.channels = m.fav.channels
-    renderRail(ch.id)
-    sendFavorite(ch.id, result.on)
+    renderRail(channelId)
+    sendFavorite(channelId, result.on)
     return true
+end function
+
+' POST /recordings for the program by its exact guide start (the server
+' matches it exactly). force = Record anyway after a 409.
+sub sendRecord(channelId as dynamic, program as dynamic, force as boolean)
+    task = m.top.apiTask
+    if task = invalid or channelId = invalid or program = invalid or program.start = invalid then return
+    m.recSeq = m.recSeq + 1
+    reqId = "home-record-" + m.recSeq.toStr()
+    m.pendingRecord = { id: reqId, channelId: channelId, program: program, series: false }
+    task.request = {
+        id: reqId
+        kind: "createRecording"
+        params: { channelId: channelId, programStart: program.start, force: force }
+    }
+end sub
+
+' POST /recording-rules from the current program: this channel, new episodes
+' only (the server's defaults). It schedules the upcoming airings at once.
+sub sendSeries(channelId as dynamic, program as dynamic)
+    task = m.top.apiTask
+    if task = invalid or channelId = invalid or program = invalid or program.start = invalid then return
+    m.recSeq = m.recSeq + 1
+    reqId = "home-series-" + m.recSeq.toStr()
+    m.pendingRecord = { id: reqId, channelId: channelId, program: program, series: true }
+    task.request = {
+        id: reqId
+        kind: "createRecordingRule"
+        params: { channelId: channelId, programStart: program.start }
+    }
+end sub
+
+sub handleSeriesResponse(resp as object)
+    m.pendingRecord = invalid
+    if resp.ok = true
+        ' "Scheduled N episodes." The next guide refresh brings their marks.
+        showDialog("info", "Recording series", bowtie.recordings.seriesScheduledMessage(resp.data), ["OK"])
+        return
+    end if
+    showDialog("info", "Can't record series", [bowtie.recordings.seriesErrorText(resp.error)], ["OK"])
+end sub
+
+sub handleRecordResponse(resp as object)
+    pending = m.pendingRecord
+    m.pendingRecord = invalid
+    if resp.ok = true
+        ' Mark the program (shared with m.guideById) so * no longer offers
+        ' Record until the next guide refresh brings the server's mark.
+        rec = invalid
+        if resp.data <> invalid then rec = resp.data.recording
+        if rec <> invalid and pending.program <> invalid
+            pending.program.recording = { id: rec.id, state: rec.state }
+        end if
+        showDialog("info", "Recording scheduled", bowtie.recordings.scheduledMessage(resp.data), ["OK"])
+        return
+    end if
+
+    err = resp.error
+    code = 0
+    if err <> invalid and err.code <> invalid then code = err.code
+    if code = 409
+        m.optionsChannelId = pending.channelId
+        m.optionsProgram = pending.program
+        showDialog("conflict", "Not enough tuners", bowtie.recordings.conflictMessage(err, localUtcOffset()), ["Record anyway", "Cancel"])
+        return
+    end if
+    msg = "Couldn't schedule the recording."
+    if code = 404
+        msg = "That program isn't in the guide anymore."
+    else if code = 503
+        msg = "Recording isn't available on this server."
+    else if err <> invalid and err.message <> invalid and err.message <> ""
+        msg = err.message
+    end if
+    showDialog("info", "Can't record", [msg], ["OK"])
+end sub
+
+sub showDialog(mode as string, title as string, message as object, buttons as object)
+    closeDialog()
+    m.dialogMode = mode
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = title
+    dialog.message = message
+    dialog.buttons = buttons
+    dialog.observeField("buttonSelected", "onDialogButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    scene = m.top.getScene()
+    if scene <> invalid then scene.dialog = dialog
+end sub
+
+sub onDialogClosed()
+    m.dialog = invalid
+    m.dialogMode = ""
+    if m.top.visible = true then restoreRailFocus()
+end sub
+
+sub closeDialog()
+    if m.dialog <> invalid
+        m.dialog.unobserveField("buttonSelected")
+        m.dialog.unobserveField("wasClosed")
+        m.dialog = invalid
+    end if
+    m.dialogMode = ""
+    scene = m.top.getScene()
+    if scene <> invalid and scene.dialog <> invalid
+        scene.dialog.close = true
+        scene.dialog = invalid
+    end if
+end sub
+
+sub restoreRailFocus()
+    if m.channelList.visible = true
+        m.channelList.setFocus(true)
+    else
+        focusHeader()
+    end if
+end sub
+
+' Local = UTC + this. GetTimeZoneOffset is minutes from local to UTC (CDT → 300).
+function localUtcOffset() as integer
+    dt = CreateObject("roDateTime")
+    return -dt.GetTimeZoneOffset() * 60
 end function
 
 sub sendFavorite(channelId as dynamic, on as boolean)
@@ -316,6 +532,14 @@ sub onApiResponse()
     end if
     if resp.id <> invalid and m.pendingFavs.DoesExist(resp.id)
         handleFavoriteResponse(resp)
+        return
+    end if
+    if m.pendingRecord <> invalid and resp.id = m.pendingRecord.id
+        if m.pendingRecord.series = true
+            handleSeriesResponse(resp)
+        else
+            handleRecordResponse(resp)
+        end if
         return
     end if
 end sub

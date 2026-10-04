@@ -33,6 +33,7 @@ type dvrEnv struct {
 	h       http.Handler
 	st      *store.Store
 	svc     *dvr.Service
+	prov    *settings.Provider
 	dir     string
 	ids     map[string]int64
 	showAt  time.Time
@@ -54,14 +55,14 @@ func newDVREnv(t *testing.T) *dvrEnv {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	svc := dvr.New(dvr.Deps{Store: st, Source: busySource{}, Dir: dir})
+	svc := dvr.New(dvr.Deps{Store: st, Source: busySource{}, Dir: dir, Padding: prov.DVRPadding})
 	t.Cleanup(svc.Shutdown)
 	h := api.New(api.Deps{
-		Cfg: config.Config{}, Store: st, EPG: epg.NewService(st, prov), DVR: svc,
+		Cfg: config.Config{}, Store: st, EPG: epg.NewService(st, prov), DVR: svc, Settings: prov,
 		Auth:              &auth.Auth{Secret: []byte("0123456789abcdef0123456789abcdef"), Store: st},
 		StreamTokenSecret: []byte("stream-secret-stream-secret-0123"),
 	})
-	e := &dvrEnv{h: h, st: st, svc: svc, dir: dir, ids: map[string]int64{}}
+	e := &dvrEnv{h: h, st: st, svc: svc, prov: prov, dir: dir, ids: map[string]int64{}}
 	if err := st.UpsertDevice(store.Device{DeviceID: "d", IP: "1.2.3.4", Model: "DUO", TunerCount: 2, StreamPort: 5004, LastSeen: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

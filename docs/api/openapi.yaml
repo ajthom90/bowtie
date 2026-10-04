@@ -16,11 +16,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [version]
+                required: [version, serverId, serverName]
                 properties:
                   version:
                     type: string
                     example: 0.5.3
+                  serverId:
+                    type: string
+                    description: Stable random ID of this server (same whatever URL a client uses)
+                  serverName:
+                    type: string
+                    description: BOWTIE_SERVER_NAME, or the host name
   /api/v1/auth/login:
     post:
       summary: Log in with username and password
@@ -97,6 +103,162 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/device:
+    post:
+      summary: Start a quick sign-in (TV apps)
+      description: |
+        The TV shows `userCode` and a QR code of `verifyUrl` (the web app's
+        /link page). A signed-in phone or browser approves it; the TV polls
+        /auth/device/token every `interval` seconds until it gets tokens.
+      operationId: deviceStart
+      tags: [auth]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deviceName:
+                  type: string
+                  description: Shown to the approver ("Living room Apple TV")
+      responses:
+        '200':
+          description: Codes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceCode, userCode, verifyUrl, expiresIn, interval]
+                properties:
+                  deviceCode:
+                    type: string
+                    description: Secret; only the TV knows it
+                  userCode:
+                    type: string
+                    example: BCDF-2345
+                  verifyUrl:
+                    type: string
+                  qrUrl:
+                    type: string
+                    description: Server-relative PNG of verifyUrl as a QR code (for TV apps)
+                  expiresIn:
+                    type: integer
+                  interval:
+                    type: integer
+        '429':
+          description: Too many sign-ins in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/auth/device/qr/{file}:
+    parameters:
+      - name: file
+        in: path
+        required: true
+        description: <userCode>.png
+        schema:
+          type: string
+    get:
+      summary: QR code image of a quick sign-in's verify URL
+      operationId: deviceQR
+      tags: [auth]
+      responses:
+        '200':
+          description: PNG
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/auth/device/token:
+    post:
+      summary: Poll for a quick sign-in's tokens (TV apps)
+      operationId: deviceToken
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceCode]
+              properties:
+                deviceCode:
+                  type: string
+      responses:
+        '200':
+          description: Approved (one use)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '410':
+          description: Expired, used or unknown (`{"error":"expired_token"}`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '428':
+          description: Not approved yet (`{"error":"authorization_pending"}`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/auth/device/{userCode}:
+    parameters:
+      - name: userCode
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Look up a quick sign-in code before approving it
+      operationId: deviceLookup
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The device asking
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceName]
+                properties:
+                  deviceName:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/auth/device/approve:
+    post:
+      summary: Approve a quick sign-in; the device signs in as the caller
+      operationId: deviceApprove
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userCode]
+              properties:
+                userCode:
+                  type: string
+      responses:
+        '204':
+          description: Approved
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/me/password:
     post:
       summary: Change the current user's password
@@ -205,6 +367,180 @@ paths:
           description: Cleared
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/guide/search:
+    get:
+      summary: Search upcoming and on-now programs
+      description: |
+        Programs that haven't ended, on enabled channels, whose title, episode
+        title or description contains `q` (case-insensitive). Title matches
+        first, then by start time. `recording` is set when the program is
+        scheduled or recorded.
+      operationId: searchGuide
+      tags: [guide]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Matching programs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [channelId, guideNumber, channelName, logoUrl, start, stop, title, subtitle, description, category]
+                  properties:
+                    channelId:
+                      type: integer
+                      format: int64
+                    guideNumber:
+                      type: string
+                    channelName:
+                      type: string
+                    logoUrl:
+                      type: string
+                    start:
+                      type: string
+                      format: date-time
+                    stop:
+                      type: string
+                      format: date-time
+                    title:
+                      type: string
+                    subtitle:
+                      type: string
+                    description:
+                      type: string
+                    category:
+                      type: string
+                    rating:
+                      type: string
+                    locked:
+                      type: boolean
+                    recording:
+                      type: object
+                      required: [id, state]
+                      properties:
+                        id:
+                          type: integer
+                          format: int64
+                        state:
+                          type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/recording-rules:
+    get:
+      summary: List series recording rules (everyone's)
+      operationId: listRecordingRules
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecordingRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Record a show (every new episode) from a guide program
+      description: |
+        Matches the program's series (or, without a series ID from the
+        guide, its exact title). Default: the program's channel only, new
+        episodes only. Upcoming matches (14 days) are scheduled at once and
+        again whenever the guide refreshes; an episode already recorded or
+        scheduled isn't scheduled twice, and deleting an upcoming episode
+        skips it.
+      operationId: createRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelId, programStart]
+              properties:
+                channelId:
+                  type: integer
+                  format: int64
+                programStart:
+                  type: string
+                  format: date-time
+                anyChannel:
+                  type: boolean
+                  description: Record the show on any channel
+                newOnly:
+                  type: boolean
+                  default: true
+                keepLatest:
+                  type: integer
+                  minimum: 0
+                  description: Keep only this many recordings of the show (0 = all; Keep-marked ones don't count)
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule, scheduled]
+                properties:
+                  rule:
+                    $ref: '#/components/schemas/RecordingRule'
+                  scheduled:
+                    type: integer
+                    description: Upcoming airings scheduled now
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/recording-rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      summary: Stop recording a show (cancels its upcoming recordings; recorded ones stay)
+      operationId: deleteRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/recordings:
     get:
       summary: List recordings (everyone's)
@@ -396,8 +732,46 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The recording isn't in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/recordings/{id}/commercials/detect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      summary: Find commercial breaks again (admin)
+      description: |
+        Clears a ready recording's breaks and queues commercial detection
+        (say after editing comskip.ini). A run already in progress finishes.
+      operationId: redetectCommercials
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Queued
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Detection isn't available, or the recording isn't ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/recordings/{id}/play:
     parameters:
       - name: id
@@ -431,6 +805,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '403':
+          description: Parental controls block this recording (`code` is `parental`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           description: Not ready to play yet
           content:
@@ -507,6 +887,131 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/me/feed:
+    post:
+      summary: Create (or rotate) the caller's IPTV feed key
+      description: |
+        Returns M3U and XMLTV URLs for apps that can't sign in — Kodi
+        (including on Xbox), VLC, TiviMate, Plex, Jellyfin, Channels. The key
+        is in the URL; anyone with it watches as this account (limits and
+        parental controls apply). A new key replaces the old one.
+      operationId: createFeed
+      tags: [iptv]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Feed URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, m3uUrl, xmltvUrl]
+                properties:
+                  key:
+                    type: string
+                  m3uUrl:
+                    type: string
+                  xmltvUrl:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      summary: Turn the caller's IPTV feed off
+      operationId: deleteFeed
+      tags: [iptv]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Off
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/iptv/{key}/playlist.m3u:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: M3U playlist of the feed account's channels
+      operationId: iptvPlaylist
+      tags: [iptv]
+      responses:
+        '200':
+          description: Extended M3U (tvg-id matches guide.xml channel ids)
+          content:
+            audio/x-mpegurl:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/iptv/{key}/guide.xml:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: XMLTV guide (next 72 hours) for the feed account's channels
+      operationId: iptvGuide
+      tags: [iptv]
+      responses:
+        '200':
+          description: XMLTV document
+          content:
+            application/xml:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/iptv/{key}/stream/{channelId}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: quality
+        in: query
+        schema:
+          type: string
+          enum: [original, high, medium, low]
+    get:
+      summary: Start or join a channel as the feed account; redirects to its HLS playlist
+      operationId: iptvStream
+      tags: [iptv]
+      responses:
+        '302':
+          description: Redirect to /api/v1/stream/{viewerId}/index.m3u8?token=…
+        '403':
+          description: Blocked by parental controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Account limit reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserLimitError'
+        '503':
+          description: All tuners in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunersBusyError'
   /api/v1/admin/users:
     get:
       summary: List all users
@@ -914,6 +1419,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/admin/backup:
+    get:
+      summary: Download a database backup
+      description: |
+        A consistent snapshot of the SQLite database (accounts, channels,
+        guide, recording list, rules and settings — not the recorded video).
+        It contains password hashes and the Schedules Direct password, so
+        store it safely. Token-signing secrets and refresh tokens are removed.
+        Restore: stop Bowtie, replace `bowtie.db` in the data directory with
+        the file (removing any `-journal`/`-wal` file), start Bowtie; everyone
+        signs in again.
+      operationId: adminBackup
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: SQLite database file (attachment)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: Snapshot failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/admin/settings:
     get:
       summary: Product settings (XMLTV, Schedules Direct, transcode)
@@ -954,6 +1492,8 @@ paths:
         - `xmltv.refreshHours` 1–168
         - `xmltv.source` empty (disabled), http(s) URL, or absolute path
         - `transcode.encoder` `"auto"` or a probed-available backend
+        - `dvr.padStartSeconds` 0–1800 and `dvr.padEndSeconds` 0–3600 (both
+          required when `dvr` is present)
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -1000,6 +1540,37 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/dvr/storage:
+    get:
+      summary: Recording disk use and counts
+      description: |
+        Disk space where recordings live (`totalBytes`/`freeBytes` from the
+        filesystem), what recordings use (`usedBytes`: ready recordings plus
+        files of in-progress ones; cached for up to 30 s), and recording
+        counts. New captures don't start while `freeBytes` < `floorBytes`;
+        the retention sweep deletes the oldest unprotected recordings while
+        `freeBytes` < `minFreeBytes` (0 = off).
+      operationId: adminDVRStorage
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Storage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DVRStorage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: Recording is not available on this server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/sessions:
     post:
       summary: Start or join a shared HLS stream session for a channel
@@ -1056,6 +1627,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TunersBusyError'
+        '403':
+          description: |
+            Parental controls block this channel, or the program on now
+            (`{"error": "Blocked by parental controls (rated TV-MA)", "code": "parental"}`).
+            A playing viewer stopped later for the same reason gets this
+            from its heartbeat and playlist requests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           description: |
             The caller's account limit would be exceeded (see User.maxStreams
@@ -1276,7 +1857,7 @@ components:
           type: string
     User:
       type: object
-      required: [id, username, role, maxQuality, maxStreams, maxTuners]
+      required: [id, username, role, maxQuality, maxStreams, maxTuners, allowedChannelIds, maxRating, blockUnrated]
       properties:
         id:
           type: integer
@@ -1301,6 +1882,20 @@ components:
           description: |
             Tuners the account may occupy alone (0 = no limit). Watching a
             channel another account is already watching costs no tuner.
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     UserLimitError:
       type: object
       required: [error, code, kind, limit]
@@ -1378,6 +1973,20 @@ components:
           description: |
             Tuners the account may occupy alone (0 = no limit). Watching a
             channel another account is already watching costs no tuner.
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     PatchUserRequest:
       type: object
       properties:
@@ -1402,6 +2011,20 @@ components:
           type: string
           format: password
           description: If set, replaces the user's password
+        allowedChannelIds:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+          description: Parental controls — channels this account may see and watch (null = every channel; admins are never restricted)
+        maxRating:
+          type: string
+          enum: ['', TV-Y, TV-Y7, TV-G, TV-PG, TV-14, TV-MA]
+          description: Parental controls — highest rating that plays ("" = no limit). Movie ratings map onto the same ladder (G, PG, PG-13, R).
+        blockUnrated:
+          type: boolean
+          description: Parental controls — also block programs without a rating (including channels with no guide data)
     Device:
       type: object
       required: [deviceId, ip, model, tunerCount, manual, lastSeen, streamPort]
@@ -1501,6 +2124,34 @@ components:
           type: boolean
         epgChannelId:
           type: string
+    RecordingRule:
+      type: object
+      required: [id, title, seriesId, channelId, channelName, newOnly, keepLatest, scheduledBy, canManage, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        seriesId:
+          type: string
+        channelId:
+          type: integer
+          format: int64
+          description: 0 = any channel
+        channelName:
+          type: string
+        newOnly:
+          type: boolean
+        keepLatest:
+          type: integer
+        scheduledBy:
+          type: string
+        canManage:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
     Recording:
       type: object
       required: [id, title, subtitle, description, category, channelId, channelName, start, stop, state, partial, failure, failureDetail, durationSec, sizeBytes, protected, positionSec, scheduledBy, canManage]
@@ -1536,7 +2187,7 @@ components:
           description: More than a minute is missing (late start, dropped stream, or a restart)
         failure:
           type: string
-          enum: ['', noTuner, noSignal, diskFull, error]
+          enum: ['', noTuner, noSignal, diskFull, error, skipped]
         failureDetail:
           type: string
         durationSec:
@@ -1555,6 +2206,37 @@ components:
         canManage:
           type: boolean
           description: The caller may stop, delete or protect it (scheduler or admin)
+        rating:
+          type: string
+          description: The program's rating when scheduled ("" = not rated)
+        ruleId:
+          type: integer
+          format: int64
+          description: Series rule that scheduled it (0 = one-off)
+        locked:
+          type: boolean
+          description: Parental controls block it for the caller (no description; play is 403)
+        commercials:
+          type: array
+          description: >-
+            Commercial breaks found by commercial detection (Comskip, when the
+            server has it), as offsets in seconds on the recording's playback
+            (HLS VOD) timeline; sorted and non-overlapping. Omitted when none
+            were found, detection hasn't run yet, or it isn't available.
+          items:
+            $ref: '#/components/schemas/CommercialBreak'
+    CommercialBreak:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: number
+          format: double
+          description: Seconds from the start of playback
+        end:
+          type: number
+          format: double
+          description: Seconds from the start of playback (after start)
     RecentChannel:
       type: object
       required: [channelId, guideNumber, name, logoUrl, watchedAt]
@@ -1632,6 +2314,21 @@ components:
       type: object
       required: [start, stop, title, subtitle, description, category]
       properties:
+        programId:
+          type: string
+          description: Guide program ID of the episode (when the source has one)
+        seriesId:
+          type: string
+          description: Series ID of the show (when the source has one)
+        isNew:
+          type: boolean
+          description: First airing
+        rating:
+          type: string
+          description: Rating from the guide source (e.g. TV-14; "" = not rated)
+        locked:
+          type: boolean
+          description: Parental controls block this program for the caller (description is hidden)
         recording:
           type: object
           description: Present when this program is scheduled or recorded
@@ -1658,12 +2355,19 @@ components:
           type: string
     EPGSourceStatus:
       type: object
-      required: [xmltv, sd]
+      required: [xmltv, sd, hdhomerun]
       properties:
         xmltv:
           $ref: '#/components/schemas/EPGSourceState'
         sd:
           $ref: '#/components/schemas/EPGSourceState'
+        hdhomerun:
+          allOf:
+            - $ref: '#/components/schemas/EPGSourceState'
+          description: |
+            Free guide from SiliconDust's HDHomeRun XMLTV API. configured is
+            true when the hdhomerun.enabled setting is on and at least one
+            tuner is known. Refreshes every 20-28 h at a random time.
     EPGSourceState:
       type: object
       required: [configured, lastSuccess, lastError, stale]
@@ -1694,7 +2398,8 @@ components:
           type: string
         source:
           type: string
-          enum: [xmltv, sd]
+          enum: [xmltv, sd, hdhomerun]
+          description: hdhomerun channel ids are prefixed "hdhomerun:"
     TranscodeStatus:
       type: object
       required: [available, hevc, ffmpegVersion, selected]
@@ -1729,6 +2434,77 @@ components:
           $ref: '#/components/schemas/SettingsTranscode'
         streaming:
           $ref: '#/components/schemas/SettingsStreaming'
+        hdhomerun:
+          $ref: '#/components/schemas/SettingsHDHomeRun'
+        dvr:
+          $ref: '#/components/schemas/SettingsDVR'
+    SettingsDVR:
+      type: object
+      required: [padStartSeconds, padEndSeconds]
+      properties:
+        padStartSeconds:
+          type: integer
+          minimum: 0
+          maximum: 1800
+          description: |
+            Start recording this many seconds before the show. Default 60.
+            Applies to recordings scheduled afterwards.
+        padEndSeconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          description: |
+            Keep recording this many seconds after the show. Default 180.
+            Applies to recordings scheduled afterwards.
+    DVRStorage:
+      type: object
+      required: [dir, usedBytes, freeBytes, totalBytes, floorBytes, minFreeBytes, recordings]
+      properties:
+        dir:
+          type: string
+          description: Recordings directory
+        usedBytes:
+          type: integer
+          format: int64
+        freeBytes:
+          type: integer
+          format: int64
+        totalBytes:
+          type: integer
+          format: int64
+        floorBytes:
+          type: integer
+          format: int64
+          description: Below this much free space a new capture doesn't start
+        minFreeBytes:
+          type: integer
+          format: int64
+          description: The retention sweep frees space below this (0 = off)
+        recordings:
+          type: object
+          required: [ready, scheduled, recording, failed]
+          description: |
+            scheduled includes recordings waiting for a tuner; recording
+            includes converting; failed leaves out skipped series episodes.
+          properties:
+            ready:
+              type: integer
+            scheduled:
+              type: integer
+            recording:
+              type: integer
+            failed:
+              type: integer
+    SettingsHDHomeRun:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            Fetch the free TV guide from SiliconDust's HDHomeRun XMLTV API
+            (no account needed) and map unmapped channels to it by guide
+            number. Existing mappings are never changed. Default true.
     SettingsXMLTV:
       type: object
       required: [source, refreshHours]
@@ -1804,6 +2580,10 @@ components:
           $ref: '#/components/schemas/PutSettingsTranscode'
         streaming:
           $ref: '#/components/schemas/PutSettingsStreaming'
+        hdhomerun:
+          $ref: '#/components/schemas/SettingsHDHomeRun'
+        dvr:
+          $ref: '#/components/schemas/SettingsDVR'
     PutSettingsXMLTV:
       type: object
       required: [source, refreshHours]
@@ -1887,6 +2667,13 @@ components:
           format: int64
         caps:
           $ref: '#/components/schemas/ClientCaps'
+        joinSessionId:
+          type: string
+          description: |
+            SharePlay: join this existing session (the sharer's `session.id`)
+            so every participant plays the same playlist. If it is gone, on
+            another channel, or in a codec the client can't play, a normal
+            session starts instead. Account limits apply either way.
     CreateSessionResponse:
       type: object
       required: [viewerId, playlistUrl, session]
@@ -1903,6 +2690,9 @@ components:
       description: Negotiated session fields for client stats overlay
       required: [videoCodec, profile, backend, channelName]
       properties:
+        id:
+          type: string
+          description: Server session ID (shared by everyone watching the same stream)
         videoCodec:
           type: string
           example: h264

@@ -1,9 +1,15 @@
 import { useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { useAuth } from './AuthContext'
+import { BowtieMark } from '../BowtieMark'
 import styles from './Login.module.css'
 
-export function Login() {
+type Props = {
+  /** Why they're signing in (default: watching live TV). */
+  subtitle?: string
+}
+
+export function Login({ subtitle = 'Sign in to watch live TV' }: Props = {}) {
   const { login } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -30,8 +36,11 @@ export function Login() {
   return (
     <div className={styles.page}>
       <form className={styles.card} onSubmit={onSubmit}>
-        <h1 className={styles.title}>Bowtie</h1>
-        <p className={styles.subtitle}>Sign in to watch live TV</p>
+        <h1 className={styles.title}>
+          <BowtieMark size={34} />
+          Bowtie
+        </h1>
+        <p className={styles.subtitle}>{subtitle}</p>
         <label className={styles.label}>
           Username
           <input

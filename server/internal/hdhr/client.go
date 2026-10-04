@@ -21,6 +21,9 @@ type DiscoverInfo struct {
 	BaseURL         string `json:"BaseURL"`
 	LineupURL       string `json:"LineupURL"`
 	TunerCount      int    `json:"TunerCount"`
+	// DeviceAuth authorizes SiliconDust's guide API for this tuner. It
+	// rotates every 16-24 h, so read it fresh before each guide fetch.
+	DeviceAuth string `json:"DeviceAuth"`
 }
 
 // LineupEntry is one channel from /lineup.json.
@@ -34,14 +37,14 @@ type LineupEntry struct {
 
 // TunerStatus is one tuner entry from /status.json.
 type TunerStatus struct {
-	Resource               string `json:"Resource"`
-	VctNumber              string `json:"VctNumber"`
-	VctName                string `json:"VctName"`
-	Frequency              int64  `json:"Frequency"`
-	SignalStrengthPercent  int    `json:"SignalStrengthPercent"`
-	SignalQualityPercent   int    `json:"SignalQualityPercent"`
-	SymbolQualityPercent   int    `json:"SymbolQualityPercent"`
-	TargetIP               string `json:"TargetIP"`
+	Resource              string `json:"Resource"`
+	VctNumber             string `json:"VctNumber"`
+	VctName               string `json:"VctName"`
+	Frequency             int64  `json:"Frequency"`
+	SignalStrengthPercent int    `json:"SignalStrengthPercent"`
+	SignalQualityPercent  int    `json:"SignalQualityPercent"`
+	SymbolQualityPercent  int    `json:"SymbolQualityPercent"`
+	TargetIP              string `json:"TargetIP"`
 }
 
 // DefaultHTTPClient is used by Fetch* helpers. Tests may replace it.

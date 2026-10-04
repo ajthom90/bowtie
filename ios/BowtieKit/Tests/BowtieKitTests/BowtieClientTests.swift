@@ -151,6 +151,75 @@ final class BowtieClientTests: XCTestCase {
         )
     }
 
+    // MARK: SharePlay (join a session, server identity)
+
+    func testCreateSessionSendsJoinSessionIdAndDecodesSessionId() async throws {
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        await client.setAccessTokenForTesting("access-1")
+
+        let sessionJSON = """
+        {
+          "viewerId": "vid-2",
+          "playlistUrl": "/api/v1/stream/vid-2/index.m3u8?token=t",
+          "session": {
+            "id": "sess-abc",
+            "videoCodec": "h264",
+            "profile": "high",
+            "backend": "videotoolbox",
+            "channelName": "WABC"
+          }
+        }
+        """.data(using: .utf8)!
+        StubURLProtocol.handler = { _ in (200, sessionJSON, [:]) }
+
+        let caps = ClientCaps(videoCodecs: ["h264"], audioCodecs: ["aac"], maxHeight: 1080, profile: "")
+        let created = try await client.createSession(channelId: 7, caps: caps, joinSessionId: "sess-abc")
+
+        XCTAssertEqual(created.session?.id, "sess-abc")
+        let body = try jsonBody(of: StubURLProtocol.recorded[0])
+        XCTAssertEqual(body["joinSessionId"] as? String, "sess-abc")
+        XCTAssertEqual(Set(body.keys), Set(["channelId", "caps", "joinSessionId"]))
+    }
+
+    func testCreateSessionWithoutSessionIdInResponse() async throws {
+        // Servers before SharePlay support omit session.id.
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        await client.setAccessTokenForTesting("access-1")
+        let sessionJSON = """
+        {"viewerId":"v","playlistUrl":"/p.m3u8?token=t",
+         "session":{"videoCodec":"h264","profile":"high","backend":"ffmpeg","channelName":"X"}}
+        """.data(using: .utf8)!
+        StubURLProtocol.handler = { _ in (200, sessionJSON, [:]) }
+
+        let caps = ClientCaps(videoCodecs: ["h264"], audioCodecs: ["aac"], maxHeight: 1080, profile: "")
+        let created = try await client.createSession(channelId: 7, caps: caps)
+        XCTAssertNil(created.session?.id)
+    }
+
+    func testVersionDecodesServerIdentityWithoutAuth() async throws {
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        await client.setAccessTokenForTesting("access-1")
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/version")
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (200, #"{"version":"0.7.0","serverId":"srv-1","serverName":"Den"}"#.data(using: .utf8)!, [:])
+        }
+
+        let version = try await client.version()
+        XCTAssertEqual(version, ServerVersion(version: "0.7.0", serverId: "srv-1", serverName: "Den"))
+        XCTAssertNil(StubURLProtocol.recorded[0].value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testVersionFromOlderServerHasNoIdentity() async throws {
+        let client = BowtieClient(server: TestFixtures.baseURL, store: store, urlSession: makeSession())
+        StubURLProtocol.handler = { _ in (200, #"{"version":"0.6.2"}"#.data(using: .utf8)!, [:]) }
+
+        let version = try await client.version()
+        XCTAssertEqual(version.version, "0.6.2")
+        XCTAssertNil(version.serverId)
+        XCTAssertNil(version.serverName)
+    }
+
     // MARK: Bearer attachment
 
     func testBearerAttached() async throws {

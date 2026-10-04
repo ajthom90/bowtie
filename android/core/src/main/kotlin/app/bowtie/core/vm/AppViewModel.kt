@@ -101,6 +101,15 @@ class AppViewModel(
         _phase.value = Phase.Ready(user)
     }
 
+    /**
+     * The client already signed in another way (quick sign-in from a phone):
+     * go to [Phase.Ready] as [signIn] would.
+     */
+    fun completeSignIn(user: User) {
+        if (client == null) return
+        _phase.value = Phase.Ready(user)
+    }
+
     /** Sign out → [Phase.Login], keeping the server URL for reconnect. */
     suspend fun signOut() {
         client?.logout()

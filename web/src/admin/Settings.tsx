@@ -132,6 +132,11 @@ export function Settings() {
     void saveSection('streaming')
   }
 
+  function onHdhomerunSubmit(e: FormEvent) {
+    e.preventDefault()
+    void saveSection('hdhomerun')
+  }
+
   if (loading && !form) {
     return <p className={styles.status}>Loading settings…</p>
   }
@@ -161,6 +166,47 @@ export function Settings() {
 
       {error ? <p className={styles.statusError}>{error}</p> : null}
       {hint ? <p className={styles.statusError}>{hint}</p> : null}
+
+      {/* HDHomeRun free guide (servers that support it) */}
+      {form.hdhomerun ? (
+        <form className={styles.settingsCard} onSubmit={onHdhomerunSubmit}>
+          <div className={styles.sectionHead}>
+            <h3 className={styles.cardTitle}>HDHomeRun guide</h3>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '40rem' }}>
+            <label
+              className={styles.label}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}
+            >
+              <input
+                className={styles.toggle}
+                type="checkbox"
+                checked={form.hdhomerun.enabled}
+                onChange={(e) =>
+                  setForm((f) => (f ? { ...f, hdhomerun: { enabled: e.target.checked } } : f))
+                }
+                disabled={saving === 'hdhomerun'}
+              />
+              Use the free HDHomeRun guide
+            </label>
+            <p className={styles.dim} style={{ margin: 0, fontSize: '0.85rem' }}>
+              Fetches the TV guide from SiliconDust (no account needed) and matches channels that
+              have no guide yet by channel number. Existing matches are never changed. It has no
+              ratings, so use Schedules Direct to limit viewers by rating.
+            </p>
+          </div>
+          <div className={styles.settingsFooter}>
+            {saved === 'hdhomerun' ? <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span> : null}
+            <button
+              type="submit"
+              className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+              disabled={saving === 'hdhomerun'}
+            >
+              {saving === 'hdhomerun' ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {/* XMLTV */}
       <form className={styles.settingsCard} onSubmit={onXmltvSubmit}>
@@ -459,6 +505,60 @@ export function Settings() {
           </button>
         </div>
       </form>
+
+      <BackupCard />
     </div>
+  )
+}
+
+function BackupCard() {
+  const { client } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const download = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const { blob, filename } = await client.downloadBackup()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Backup failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className={styles.settingsCard}>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.cardTitle}>Backup</h3>
+      </div>
+      <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+        Saves accounts, channels, guide matches, series rules, the recording list and these
+        settings (not recorded video). It includes password hashes and the Schedules Direct
+        password, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
+        folder with this file (delete any bowtie.db-journal or -wal file next to it) and
+        start Bowtie; everyone signs in again.
+      </p>
+      {error ? <p className={styles.statusError}>{error}</p> : null}
+      <div className={styles.settingsFooter}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.settingsSave}`}
+          onClick={download}
+          disabled={busy}
+        >
+          {busy ? 'Preparing…' : 'Download backup'}
+        </button>
+      </div>
+    </section>
   )
 }

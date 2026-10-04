@@ -20,6 +20,8 @@ public protocol SessionStore: Sendable {
     func selectServer(_ url: URL)
     /// Forgets a server and its login; if it was active, none is.
     func removeServer(_ url: URL)
+    /// Whether a login (refresh token) is stored for `url`, active or not.
+    func hasLogin(for url: URL) -> Bool
 }
 
 public struct SavedServer: Codable, Equatable, Identifiable, Sendable {
@@ -110,6 +112,12 @@ public class MultiServerStore: SessionStore, @unchecked Sendable {
         if active() == url {
             backing.delete(account: activeAccount)
         }
+    }
+
+    public func hasLogin(for url: URL) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return backing.read(account: tokenAccount(url)) != nil
     }
 
     // MARK: Private (call with lock held)

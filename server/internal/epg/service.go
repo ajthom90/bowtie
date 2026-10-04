@@ -48,6 +48,8 @@ type Service struct {
 	// after is the sleep seam (default time.After). Tests inject a controllable
 	// channel factory so supervisor loops never real-sleep.
 	after func(time.Duration) <-chan time.Time
+	// hdhrGuideURL overrides SiliconDust's guide endpoint (tests).
+	hdhrGuideURL string
 
 	waitMu   sync.Mutex
 	lastWait map[string]time.Duration // source name → last computed wait
@@ -68,10 +70,13 @@ func NewService(st *store.Store, prov *settings.Provider) *Service {
 	}
 }
 
-// SourceStatus is the admin-facing status of both EPG sources.
+// SourceStatus is the admin-facing status of the EPG sources.
 type SourceStatus struct {
 	XMLTV SourceState `json:"xmltv"`
 	SD    SourceState `json:"sd"`
+	// HDHomeRun is SiliconDust's free guide (configured = setting on and at
+	// least one tuner known).
+	HDHomeRun SourceState `json:"hdhomerun"`
 }
 
 // SourceState describes one EPG source's configuration and health.
@@ -105,6 +110,15 @@ type GuideProgram struct {
 	Subtitle    string    `json:"subtitle"`
 	Description string    `json:"description"`
 	Category    string    `json:"category"`
+	// Rating as the guide source gives it ("TV-14"; "" = not rated).
+	Rating string `json:"rating"`
+	// ProgramID / SeriesID identify the episode and show (series recording).
+	ProgramID string `json:"programId,omitempty"`
+	SeriesID  string `json:"seriesId,omitempty"`
+	IsNew     bool   `json:"isNew,omitempty"`
+	// Locked: parental controls block this program for the caller (the API
+	// layer sets it and blanks the description).
+	Locked bool `json:"locked"`
 	// Recording is filled by the API layer when this program is scheduled
 	// or recorded.
 	Recording *GuideRecording `json:"recording,omitempty"`
@@ -129,6 +143,11 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 			errs = append(errs, "sd: "+err.Error())
 		}
 	}
+	if s.hdhomerunConfigured() {
+		if err := s.refreshHDHomeRun(ctx); err != nil {
+			errs = append(errs, "hdhomerun: "+err.Error())
+		}
+	}
 	now := s.now()
 	if err := s.store.PrunePrograms(now.Add(-24 * time.Hour)); err != nil {
 		errs = append(errs, "prune: "+err.Error())
@@ -139,22 +158,20 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 	return nil
 }
 
-// Run starts always-on supervisor loops for XMLTV and SD until ctx is cancelled,
-// then waits for both loops to exit (so shutdown does not race the store).
-// Each loop re-reads the provider every iteration: unconfigured sources poll
-// every 60s without error spam; configured sources refresh then sleep a
-// jittered interval re-read on the next cycle.
+// Run starts always-on supervisor loops for XMLTV, SD and the HDHomeRun guide
+// until ctx is cancelled, then waits for every loop to exit (so shutdown does
+// not race the store). Each loop re-reads the provider every iteration:
+// unconfigured sources poll every 60s without error spam; configured sources
+// refresh then sleep a jittered interval re-read on the next cycle.
 func (s *Service) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		s.superviseXMLTV(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		s.superviseSD(ctx)
-	}()
+	for _, loop := range []func(context.Context){s.superviseXMLTV, s.superviseSD, s.superviseHDHomeRun} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			loop(ctx)
+		}()
+	}
 	wg.Wait()
 }
 
@@ -266,6 +283,8 @@ func (s *Service) Status() SourceStatus {
 	return SourceStatus{
 		XMLTV: s.sourceState(s.xmltvConfigured(), s.xmltvInterval(), settingXMLTVLastSuccess, settingXMLTVLastError),
 		SD:    s.sourceState(s.sdConfigured(), sdRefreshInterval, settingSDLastSuccess, settingSDLastError),
+		HDHomeRun: s.sourceState(s.hdhomerunConfigured(), hdhomerunMaxInterval,
+			settingHDHomeRunLastSuccess, settingHDHomeRunLastError),
 	}
 }
 
@@ -332,6 +351,10 @@ func (s *Service) Guide(ctx context.Context, start, stop time.Time) ([]GuideChan
 				Subtitle:    p.Subtitle,
 				Description: p.Description,
 				Category:    p.Category,
+				Rating:      p.Rating,
+				ProgramID:   p.ProgramID,
+				SeriesID:    p.SeriesID,
+				IsNew:       p.IsNew,
 			})
 		}
 	}

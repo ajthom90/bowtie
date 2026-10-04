@@ -1,3 +1,5 @@
+<img src="docs/brand/bowtie-icon.svg" width="112" alt="Bowtie logo: a classic UHF bowtie TV antenna" align="right">
+
 # Bowtie
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -9,13 +11,13 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 
 - Discovers Silicondust HDHomeRun tuners on your LAN
 - Transcodes over-the-air channels to HLS with hardware acceleration when available
-- Serves a TV guide (XMLTV and/or Schedules Direct)
+- Serves a TV guide (free from your HDHomeRun, plus optional XMLTV and/or Schedules Direct)
 - Lets an admin manage users, devices, channels, and active sessions
 - Live pause/rewind within a settings-backed buffer, with one tuner per channel
   shared across quality variants
 
 **Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
-Admin → Settings) plus iOS/tvOS, Android/Fire TV, and Roku clients.
+Admin → Settings) plus iOS/tvOS/macOS, Android/Fire TV, and Roku clients.
 
 ---
 
@@ -140,6 +142,27 @@ The Docker Compose file passes `/dev/dri` into the container for QSV/VAAPI on In
 
 Guide data is **optional** — channels are fully watchable with no EPG configured.
 
+### Free guide from your HDHomeRun (default)
+
+Out of the box Bowtie fetches the free guide SiliconDust offers every
+HDHomeRun owner (about 2-3 days ahead; 14 days with an HDHomeRun DVR
+subscription). No account or setup is needed: Bowtie reads each tuner's
+`DeviceAuth` from its `discover.json`, downloads the guide from
+`api.hdhomerun.com` every 20-28 hours at a random time, and maps each
+unmapped channel to it by guide number (for example `9.1`). Channels you
+mapped yourself are never changed. Turn it off with
+`PUT /api/v1/admin/settings` `{"hdhomerun": {"enabled": false}}`
+(setting `epg.hdhomerun`); its health is under `hdhomerun` in
+`GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
+
+SiliconDust allows about one download a day: a second download soon after
+the first gets HTTP 403, and Bowtie simply retries hourly until it's allowed.
+The free guide carries titles, episodes, series IDs (series recording works)
+and new/repeat flags, but **no age ratings**; to limit accounts by rating
+(parental controls), add Schedules Direct. Channel restrictions work either way.
+
+### XMLTV and Schedules Direct
+
 **Preferred:** configure XMLTV and/or Schedules Direct in **Admin → Settings**
 (lineup picker, clear credentials by emptying username). Changes apply without
 restart; **Admin → EPG** is status + Refresh only. Map each enabled channel to
@@ -190,7 +213,7 @@ add devices by IP.
 | Source | Keys |
 |--------|------|
 | Flag / env | `--data-dir` / `BOWTIE_DATA_DIR` (default `./data`, Docker `/data`) |
-| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20) |
+| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
 | Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
 | Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC, buffer, adaptive quality (DB-backed) |
 | File | `<dataDir>/config.yaml` |
@@ -203,6 +226,51 @@ Infra keys (listen, data dir, segments, FFmpeg path, device IP list) still
 apply every process start.
 
 Default listen address: `:8400`. Health check: `GET /healthz` → `ok`.
+
+## Commercial detection
+
+When [Comskip](https://github.com/erikkaashoek/Comskip) is available, Bowtie
+finds the commercial breaks in each finished recording, and every app's
+recording player shows **Skip ad** while you're in one (web and Mac: or press
+**S**). Turn on **Skip ads automatically** (web player header; app Settings →
+Playback; Roku Settings) to skip each break once. Detection runs in the background after a recording is
+ready, one at a time at low CPU priority, and never holds up recording or
+conversion. Recordings made before Comskip was available are scanned too,
+newest first. The breaks are in the recording API as `commercials`.
+
+It's optional: without Comskip nothing changes. The Docker image includes it.
+For other installs, put `comskip` on the `PATH` or point to it:
+
+| Env | |
+|-----|---|
+| `BOWTIE_COMSKIP_PATH` | Comskip binary (default `comskip` on the `PATH`; not found = detection off; `off` turns it off, e.g. in Docker) |
+| `BOWTIE_COMSKIP_INI` | Your own `comskip.ini` (default: Bowtie writes its settings to `<data>/comskip.ini` on first use; edit that file to tune detection) |
+
+Detection is heuristic (black frames, the station logo, aspect ratio
+changes), so it can miss a break or mark part of the show. After editing
+`comskip.ini`, an admin can press **Find ads again** in the web recording
+player (or `POST /api/v1/recordings/{id}/commercials/detect`). If Comskip can't
+run at all (missing library, an ini without `output_edl=1`), detection stops
+until the next restart and nothing is marked; a recording it fails on is
+tried again after a restart.
+
+## Backup and restore
+
+**Admin → Settings → Download backup** (or `GET /api/v1/admin/backup` with an
+admin token) saves a snapshot of the database: accounts, channels, guide
+mappings, series rules, the recording list and settings. It is taken safely
+while Bowtie runs. Recorded video is not included — back up
+`<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
+The file holds password hashes and the Schedules Direct password; keep it
+private. Token-signing keys and sign-in sessions are left out, so a restored
+server makes new keys and everyone signs in again.
+
+The snapshot is written next to `bowtie.db` while the download is prepared
+(other requests wait a moment on a large guide).
+
+To restore, stop Bowtie, replace `<data>/bowtie.db` with the backup file
+(delete any `bowtie.db-journal`, `bowtie.db-wal` or `bowtie.db-shm` next to
+it), and start Bowtie.
 
 ---
 
@@ -229,6 +297,7 @@ cd windows && dotnet test Bowtie.Core.Tests   # Windows app's client + view mode
 ## Apps
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
+- **macOS** — native Mac app (macOS 14+) built from the same Xcode project (`BowtieMac` scheme): a sidebar of channels (Recent, Favorites) and recordings, an `AVPlayerView` player with picture in picture and full screen, and keyboard shortcuts (Space, L for live, ⌘↑/⌘↓, ⌘F). Not yet published to the Mac App Store or notarized; see [`ios/README.md`](ios/README.md#macos-app).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 - **Windows** — native WinUI 3 app for Windows 10 (1809+) and 11 on x64 and ARM64: see [`windows/README.md`](windows/README.md) (install the `.msixbundle` from a release, or unzip and run; build with Visual Studio 2022).

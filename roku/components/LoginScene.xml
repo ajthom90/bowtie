@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8" ?>
+<!-- Sign in. Default: "Sign in with your phone" (quick sign-in) — a QR the
+     server draws plus a short code to enter at <server>/link; a phone that is
+     signed in approves this Roku. Password entry (on-screen keyboard) is the
+     fallback. Pure decisions live in source/lib/DeviceAuth.bs. -->
 <component name="LoginScene" extends="Group">
     <interface>
         <field id="apiTask" type="node" />
@@ -16,92 +20,194 @@
             height="1080"
             color="0x101418FF"
         />
-        <LayoutGroup
-            id="layout"
-            translation="[960, 220]"
-            layoutDirection="vert"
-            horizAlignment="center"
-            itemSpacings="[12, 8, 28, 12, 12, 16, 20, 12]"
-        >
+        <Label
+            id="titleLabel"
+            translation="[0, 70]"
+            width="1920"
+            height="60"
+            text="Sign in"
+            horizAlign="center"
+            color="0xF2EFE8FF"
+            font="font:LargeBoldSystemFont"
+        />
+        <Label
+            id="serverLabel"
+            translation="[0, 140]"
+            width="1920"
+            height="36"
+            text=""
+            horizAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+
+        <!-- Sign in with your phone (default). -->
+        <Group id="quickGroup" visible="false">
+            <!-- White frame: a steady box for the code while it loads. -->
+            <Rectangle
+                id="qrFrame"
+                translation="[240, 236]"
+                width="560"
+                height="560"
+                color="0xFFFFFFFF"
+                visible="false"
+            />
+            <!-- The server draws a 512 px PNG: shown 1:1 so the modules stay crisp. -->
+            <Poster
+                id="qrPoster"
+                translation="[264, 260]"
+                width="512"
+                height="512"
+                loadDisplayMode="scaleToFit"
+            />
             <Label
-                id="titleLabel"
-                width="1000"
-                height="60"
-                text="Sign in"
+                id="qrHint"
+                translation="[240, 816]"
+                width="560"
+                height="40"
+                text="Scan with your phone's camera"
                 horizAlign="center"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+            />
+            <Label
+                id="quickTitle"
+                translation="[900, 236]"
+                width="860"
+                height="60"
+                text="Sign in with your phone"
                 color="0xF2EFE8FF"
                 font="font:LargeBoldSystemFont"
             />
             <Label
-                id="serverLabel"
-                width="1000"
-                height="36"
-                text=""
-                horizAlign="center"
+                id="stepLabel"
+                translation="[900, 310]"
+                width="860"
+                height="100"
+                text="Scan the code with a phone that's signed in to Bowtie, then approve this Roku."
                 color="0x9BA5AEFF"
-                font="font:SmallSystemFont"
+                font="font:MediumSystemFont"
+                wrap="true"
             />
             <Label
-                id="hintLabel"
-                width="1000"
-                height="36"
-                text="Use your Bowtie account"
-                horizAlign="center"
-                color="0x9BA5AEFF"
-                font="font:SmallSystemFont"
-            />
-            <Label
-                id="usernameDisplay"
-                width="1000"
+                id="linkLabel"
+                translation="[900, 430]"
+                width="860"
                 height="40"
-                text="Username: (not set)"
-                horizAlign="center"
+                text=""
                 color="0xF2EFE8FF"
                 font="font:MediumSystemFont"
             />
             <Label
-                id="passwordDisplay"
-                width="1000"
-                height="40"
-                text="Password: (not set)"
-                horizAlign="center"
-                color="0xF2EFE8FF"
-                font="font:MediumSystemFont"
-            />
-            <Label
-                id="errorLabel"
-                width="1000"
-                height="60"
+                id="codeLabel"
+                translation="[900, 480]"
+                width="860"
+                height="110"
                 text=""
-                horizAlign="center"
-                color="0xE05050FF"
+                vertAlign="center"
+                color="0xF0A428FF"
+            >
+                <Font role="font" uri="font:BoldSystemFontFile" size="88" />
+            </Label>
+            <Label
+                id="statusLabel"
+                translation="[900, 604]"
+                width="860"
+                height="40"
+                text=""
+                color="0x9BA5AEFF"
                 font="font:SmallSystemFont"
                 wrap="true"
             />
-            <Button
-                id="usernameButton"
-                text="Username"
-                minWidth="400"
-                height="56"
+            <ButtonGroup
+                id="quickButtons"
+                translation="[900, 676]"
+                minWidth="520"
             />
-            <Button
-                id="passwordButton"
-                text="Password"
-                minWidth="400"
-                height="56"
-            />
-            <Button
-                id="signInButton"
-                text="Sign in"
-                minWidth="400"
-                height="56"
-            />
-            <Button
-                id="changeServerButton"
-                text="Change server"
-                minWidth="400"
-                height="56"
-            />
-        </LayoutGroup>
+            <Timer id="pollTimer" duration="5" repeat="false" />
+        </Group>
+
+        <!-- AppScene focuses this Group itself right after showing it; hand
+             focus on to the buttons a moment later. -->
+        <Timer id="focusTimer" duration="0.05" repeat="false" />
+
+        <!-- Password entry (fallback). -->
+        <Group id="passwordGroup" visible="false">
+            <LayoutGroup
+                id="layout"
+                translation="[960, 220]"
+                layoutDirection="vert"
+                horizAlignment="center"
+                itemSpacings="[28, 12, 12, 16, 20, 12, 12, 12]"
+            >
+                <Label
+                    id="hintLabel"
+                    width="1000"
+                    height="36"
+                    text="Use your Bowtie account"
+                    horizAlign="center"
+                    color="0x9BA5AEFF"
+                    font="font:SmallSystemFont"
+                />
+                <Label
+                    id="usernameDisplay"
+                    width="1000"
+                    height="40"
+                    text="Username: (not set)"
+                    horizAlign="center"
+                    color="0xF2EFE8FF"
+                    font="font:MediumSystemFont"
+                />
+                <Label
+                    id="passwordDisplay"
+                    width="1000"
+                    height="40"
+                    text="Password: (not set)"
+                    horizAlign="center"
+                    color="0xF2EFE8FF"
+                    font="font:MediumSystemFont"
+                />
+                <Label
+                    id="errorLabel"
+                    width="1000"
+                    height="60"
+                    text=""
+                    horizAlign="center"
+                    color="0xE05050FF"
+                    font="font:SmallSystemFont"
+                    wrap="true"
+                />
+                <Button
+                    id="usernameButton"
+                    text="Username"
+                    minWidth="400"
+                    height="56"
+                />
+                <Button
+                    id="passwordButton"
+                    text="Password"
+                    minWidth="400"
+                    height="56"
+                />
+                <Button
+                    id="signInButton"
+                    text="Sign in"
+                    minWidth="400"
+                    height="56"
+                />
+                <Button
+                    id="phoneButton"
+                    text="Sign in with your phone"
+                    minWidth="400"
+                    height="56"
+                />
+                <Button
+                    id="changeServerButton"
+                    text="Change server"
+                    minWidth="400"
+                    height="56"
+                />
+            </LayoutGroup>
+        </Group>
     </children>
 </component>

@@ -43,6 +43,7 @@
         <LoginScene id="loginScene" visible="false" />
         <HomeScene id="homeScene" visible="false" />
         <SettingsScene id="settingsScene" visible="false" />
+        <RecordingsScene id="recordingsScene" visible="false" />
         <PlayerScene id="playerScene" visible="false" />
     </children>
 </component>
