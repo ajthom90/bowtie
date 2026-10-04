@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { WatchTarget } from '../guide/Guide'
 import { useAuth } from '../auth/AuthContext'
 import { Channels } from './Channels'
@@ -31,13 +30,14 @@ type Props = {
   onRecordings?: () => void
   /** Opens the Account page. */
   onAccount?: () => void
-  /** The section shown first (default Tuners). */
-  initialTab?: AdminTab
+  /** The section shown (from the route). */
+  tab: AdminTab
+  /** Switches section (App keeps it in the path). */
+  onTab: (tab: AdminTab) => void
 }
 
-export function Admin({ onBack, onPreview, onRecordings, onAccount, initialTab = 'tuners' }: Props) {
+export function Admin({ onBack, onPreview, onRecordings, onAccount, tab, onTab }: Props) {
   const { user, logout } = useAuth()
-  const [tab, setTab] = useState<AdminTab>(initialTab)
 
   // Defense in depth — App already gates on role.
   if (user?.role !== 'admin') {
@@ -92,7 +92,7 @@ export function Admin({ onBack, onPreview, onRecordings, onAccount, initialTab =
             type="button"
             className={`${styles.navBtn}${tab === t.id ? ` ${styles.navBtnActive}` : ''}`}
             aria-current={tab === t.id ? 'page' : undefined}
-            onClick={() => setTab(t.id)}
+            onClick={() => onTab(t.id)}
           >
             {t.label}
           </button>

@@ -9,25 +9,26 @@ import { isLinkPath } from './auth/linkModel'
 import { Login } from './auth/Login'
 import { Guide, type WatchTarget } from './guide/Guide'
 import { Multiview } from './multiview/Multiview'
-import { MULTIVIEW_PATH, isMultiviewPath } from './multiview/multiviewModel'
+import { isMultiviewPath } from './multiview/multiviewModel'
 import { Player } from './player/Player'
 import { RecordingPlayer } from './recordings/RecordingPlayer'
 import { Recordings } from './recordings/Recordings'
-import type { RecordingsTab } from './recordings/recordingsModel'
+import { parseRoute, pathFor, type Route } from './routes'
 import styles from './App.module.css'
 
-type View = 'guide' | 'admin' | 'recordings' | 'account'
+type NavigateOptions = { replace?: boolean }
 
-/** The current path, kept in step with back/forward. No router: only /link and /multiview are real routes. */
-function usePath(): [string, (to: string) => void] {
+/** The current path, kept in step with back/forward (no router; see routes.ts). */
+function usePath(): [string, (to: string, opts?: NavigateOptions) => void] {
   const [path, setPath] = useState(() => window.location.pathname)
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname)
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-  const navigate = useCallback((to: string) => {
-    window.history.pushState(null, '', to)
+  const navigate = useCallback((to: string, opts?: NavigateOptions) => {
+    if (opts?.replace) window.history.replaceState(null, '', to)
+    else window.history.pushState(null, '', to)
     setPath(window.location.pathname)
   }, [])
   return [path, navigate]
@@ -36,12 +37,12 @@ function usePath(): [string, (to: string) => void] {
 function Shell() {
   const { user, ready } = useAuth()
   const [path, navigate] = usePath()
+  const route = parseRoute(path)
+  const go = (r: Route, opts?: NavigateOptions) => navigate(pathFor(r), opts)
   const onLink = isLinkPath(path)
+  // Players keep their target in state; their path (/watch/…, /recordings/play/…)
+  // gives them a history entry so Back (or a phone's Back gesture) closes them.
   const [watching, setWatchingState] = useState<WatchTarget | null>(null)
-  const [view, setView] = useState<View>('guide')
-  /** The Admin section to open on (the guide's "no guide data" hint opens EPG). */
-  const [adminTab, setAdminTab] = useState<AdminTab>('tuners')
-  const [recordingsTab, setRecordingsTab] = useState<RecordingsTab>('upcoming')
   const [playingRecording, setPlayingRecordingState] = useState<Recording | null>(null)
   /** The control that opened a player, focused again when the page returns. */
   const returnFocusRef = useRef<FocusMark | null>(null)
@@ -49,16 +50,17 @@ function Shell() {
   const openPlayer = () => {
     returnFocusRef.current = focusMarkOf(document.activeElement)
   }
-  const closePlayer = () => setFocusEpoch((n) => n + 1)
-  const setWatching = (t: WatchTarget | null) => {
-    if (t) openPlayer()
-    else closePlayer()
+  /** A player's Back pops its history entry; the effect below then closes it. */
+  const leavePlayer = () => window.history.back()
+  const setWatching = (t: WatchTarget) => {
+    openPlayer()
     setWatchingState(t)
+    go({ view: 'watch', channelId: t.channelId })
   }
-  const setPlayingRecording = (rec: Recording | null) => {
-    if (rec) openPlayer()
-    else closePlayer()
+  const setPlayingRecording = (rec: Recording) => {
+    openPlayer()
     setPlayingRecordingState(rec)
+    go({ view: 'playRecording', recordingId: rec.id })
   }
   useEffect(() => {
     if (focusEpoch === 0) return
@@ -85,6 +87,28 @@ function Shell() {
       setPlayingRecordingState(null)
     }
   }, [inMultiview])
+  // Leaving a player's path (Back, Forward elsewhere) closes it and returns focus.
+  const routeView = route.view
+  useEffect(() => {
+    let closed = false
+    if (routeView !== 'watch' && watching) {
+      setWatchingState(null)
+      closed = true
+    }
+    if (routeView !== 'playRecording' && playingRecording) {
+      setPlayingRecordingState(null)
+      closed = true
+    }
+    if (closed) setFocusEpoch((n) => n + 1)
+  }, [routeView, watching, playingRecording])
+  // A player path with no player (refresh, Forward): never auto-start a stream
+  // (tuners are shared) — fall back to the guide or Recordings instead.
+  const orphanPlayer =
+    (routeView === 'watch' && !watching) || (routeView === 'playRecording' && !playingRecording)
+  useEffect(() => {
+    if (!orphanPlayer || !user) return
+    navigate(routeView === 'playRecording' ? '/recordings' : '/', { replace: true })
+  }, [orphanPlayer, routeView, user, navigate])
 
   if (!ready) {
     return (
@@ -100,54 +124,39 @@ function Shell() {
   }
 
   if (onLink) {
-    return (
-      <LinkPage
-        onDone={() => {
-          setView('guide')
-          navigate('/')
-        }}
-      />
-    )
+    return <LinkPage onDone={() => navigate('/')} />
   }
 
-  const toGuide = () => {
-    setView('guide')
-    navigate('/')
-  }
-  const onMultiview = () => navigate(MULTIVIEW_PATH)
+  const toGuide = () => go({ view: 'guide' })
+  const onMultiview = () => go({ view: 'multiview' })
 
   if (inMultiview) {
     return <Multiview onGuide={toGuide} />
   }
 
-  if (watching) {
-    return <Player target={watching} onBack={() => setWatching(null)} />
+  if (routeView === 'watch' && watching) {
+    return <Player target={watching} onBack={leavePlayer} />
   }
 
   // Recording playback returns to where it started (Recordings tab or guide).
-  if (playingRecording) {
+  if (routeView === 'playRecording' && playingRecording) {
     return (
-      <RecordingPlayer
-        recording={playingRecording}
-        autoResume={autoResume}
-        onBack={() => setPlayingRecording(null)}
-      />
+      <RecordingPlayer recording={playingRecording} autoResume={autoResume} onBack={leavePlayer} />
     )
   }
 
-  const openAdmin = (tab: AdminTab) => {
-    setAdminTab(tab)
-    setView('admin')
-  }
-  const onAdmin = user.role === 'admin' ? () => openAdmin('tuners') : undefined
-  const onAdminEpg = user.role === 'admin' ? () => openAdmin('epg') : undefined
-  const onAccount = () => setView('account')
+  const isAdmin = user.role === 'admin'
+  const openAdmin = (tab: AdminTab) => go({ view: 'admin', tab })
+  const onAdmin = isAdmin ? () => openAdmin('tuners') : undefined
+  const onAdminEpg = isAdmin ? () => openAdmin('epg') : undefined
+  const onAccount = () => go({ view: 'account' })
+  const onRecordings = () => go({ view: 'recordings', tab: 'upcoming' })
 
-  if (view === 'account') {
+  if (route.view === 'account') {
     return (
       <Account
-        onGuide={() => setView('guide')}
-        onRecordings={() => setView('recordings')}
+        onGuide={toGuide}
+        onRecordings={onRecordings}
         onMultiview={onMultiview}
         onAdmin={onAdmin}
         onLink={() => navigate('/link')}
@@ -155,12 +164,14 @@ function Shell() {
     )
   }
 
-  if (view === 'recordings') {
+  // An orphaned recording-player path shows Recordings until it is replaced.
+  if (route.view === 'recordings' || route.view === 'playRecording') {
     return (
       <Recordings
-        tab={recordingsTab}
-        onTab={setRecordingsTab}
-        onGuide={() => setView('guide')}
+        tab={route.view === 'recordings' ? route.tab : 'upcoming'}
+        // Tabs replace the entry: Back leaves Recordings rather than stepping tabs.
+        onTab={(tab) => go({ view: 'recordings', tab }, { replace: true })}
+        onGuide={toGuide}
         onMultiview={onMultiview}
         onAdmin={onAdmin}
         onAccount={onAccount}
@@ -170,17 +181,17 @@ function Shell() {
     )
   }
 
-  // Role guard: viewers never see admin route or nav entry.
-  // A5: Preview opens the player via setWatching; Player Back returns to Guide
-  // (accepted simplification — does not restore the Admin tab).
-  if (view === 'admin' && user.role === 'admin') {
+  // Role guard: viewers never see the admin area or nav entry (/admin → guide).
+  // Preview opens the player; its Back returns to Admin → Channels.
+  if (route.view === 'admin' && isAdmin) {
     return (
       <Admin
-        onBack={() => setView('guide')}
-        onPreview={(t) => setWatching(t)}
-        onRecordings={() => setView('recordings')}
+        onBack={toGuide}
+        onPreview={setWatching}
+        onRecordings={onRecordings}
         onAccount={onAccount}
-        initialTab={adminTab}
+        tab={route.tab}
+        onTab={(tab) => go({ view: 'admin', tab }, { replace: true })}
       />
     )
   }
@@ -192,7 +203,7 @@ function Shell() {
       onMultiview={onMultiview}
       onAdmin={onAdmin}
       onAdminEpg={onAdminEpg}
-      onRecordings={() => setView('recordings')}
+      onRecordings={onRecordings}
       onAccount={onAccount}
     />
   )
