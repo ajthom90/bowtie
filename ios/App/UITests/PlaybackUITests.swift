@@ -121,6 +121,29 @@ final class PlaybackUITests: XCTestCase {
         waitForExpectations(timeout: 8)
     }
 
+    /// The sleep timer is reachable from the live player chrome and shows the
+    /// time left once set.
+    func testSleepTimerFromPlayer() throws {
+        try testPlayChannel()
+        let sleep = app.buttons["bowtie.sleep"]
+        if !sleep.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(sleep.waitForExistence(timeout: 3) && sleep.isHittable, "no reachable sleep timer button")
+        attach("sleep-chrome")
+        sleep.tap()
+        let fifteen = app.buttons["15 minutes"]
+        XCTAssertTrue(fifteen.waitForExistence(timeout: 3), "no 15 minutes option")
+        attach("sleep-choices")
+        fifteen.tap()
+        if !sleep.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        expectation(for: NSPredicate(format: "value BEGINSWITH %@", "Sleeping in 1"), evaluatedWith: sleep)
+        waitForExpectations(timeout: 5)
+        attach("sleep-set")
+    }
+
     /// The audio language chosen in Bowtie's Audio dialog is remembered across
     /// launches (MediaSelectionMemory; captions use the same path but AVKit's
     /// Subtitles menu is not reliably reachable from UI tests).

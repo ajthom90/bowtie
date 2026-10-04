@@ -394,6 +394,7 @@ struct MacMainView: View {
                     serverURL: serverURL,
                     maxQuality: appModel.user?.maxQuality ?? "",
                     nowTitle: playerModel.currentChannel.flatMap { nowNext(for: $0.id)?.now?.title },
+                    programEnd: playerModel.currentChannel.flatMap { nowNext(for: $0.id)?.now?.stop },
                     playerModel: playerModel,
                     bridge: bridge,
                     onLeave: { selection = nil }

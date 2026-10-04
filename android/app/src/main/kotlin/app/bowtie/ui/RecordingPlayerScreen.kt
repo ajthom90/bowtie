@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +32,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -147,6 +149,11 @@ fun RecordingPlayerScreen(
 
     BackHandler { onBack() }
 
+    // Sleep timer: fires the same leave as Back (saves the position on dispose).
+    val sleepTimer = rememberSleepTimer { onBack() }
+    val sleepStatus by sleepTimer.status.collectAsStateWithLifecycle()
+    var showSleepSheet by remember { mutableStateOf(false) }
+
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
@@ -180,8 +187,13 @@ fun RecordingPlayerScreen(
                     .background(BowtieColors.bg.copy(alpha = 0.6f))
                     .padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
-                TextButton(onClick = onBack) {
-                    Text("‹ Recordings", color = BowtieColors.amber)
+                Row {
+                    TextButton(onClick = onBack) {
+                        Text("‹ Recordings", color = BowtieColors.amber)
+                    }
+                    TextButton(onClick = { showSleepSheet = true }) {
+                        Text(sleepChipLabel(sleepStatus), color = BowtieColors.amber)
+                    }
                 }
                 Text(
                     text = start.recording.title,
@@ -198,6 +210,16 @@ fun RecordingPlayerScreen(
             }
         }
 
+        if (sleepStatus.warning) {
+            SleepWarning(
+                remainingMs = sleepStatus.remainingMs ?: 0L,
+                onKeepWatching = { sleepTimer.extend() },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 96.dp, start = 16.dp, end = 16.dp),
+            )
+        }
+
         error?.let { msg ->
             Column(
                 modifier = Modifier.align(Alignment.Center),
@@ -210,5 +232,13 @@ fun RecordingPlayerScreen(
                 }
             }
         }
+    }
+
+    if (showSleepSheet) {
+        SleepTimerSheet(
+            timer = sleepTimer,
+            programEndMs = null,
+            onDismiss = { showSleepSheet = false },
+        )
     }
 }

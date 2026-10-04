@@ -8,6 +8,7 @@ import styles from './Account.module.css'
 type Props = {
   onGuide: () => void
   onRecordings: () => void
+  onMultiview?: () => void
   onAdmin?: () => void
   /** Opens /link to approve a TV's quick sign-in. */
   onLink: () => void
@@ -18,7 +19,7 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 /** The signed-in user's page: TV sign-in and links for other apps. */
-export function Account({ onGuide, onRecordings, onAdmin, onLink }: Props) {
+export function Account({ onGuide, onRecordings, onMultiview, onAdmin, onLink }: Props) {
   const { client, user, logout } = useAuth()
   const [feed, setFeed] = useState<FeedResponse | null>(null)
   const [busy, setBusy] = useState(false)
@@ -75,6 +76,11 @@ export function Account({ onGuide, onRecordings, onAdmin, onLink }: Props) {
           <button type="button" className={styles.btn} onClick={onRecordings}>
             Recordings
           </button>
+          {onMultiview ? (
+            <button type="button" className={styles.btn} onClick={onMultiview}>
+              Multiview
+            </button>
+          ) : null}
           {onAdmin ? (
             <button type="button" className={styles.btn} onClick={onAdmin}>
               Admin

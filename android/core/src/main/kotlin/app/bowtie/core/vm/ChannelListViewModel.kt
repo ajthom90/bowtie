@@ -222,6 +222,15 @@ class ChannelListViewModel(
         _message.value = null
     }
 
+    /**
+     * When the program now on [channel] ends (epoch ms), from the loaded guide;
+     * null when unknown. The sleep timer's End of this program uses it.
+     */
+    fun programEndMs(channel: Channel): Long? =
+        (_state.value as? LoadState.Loaded)
+            ?.rows?.firstOrNull { it.id == channel.id }
+            ?.nowNext?.now?.stop?.toEpochMilli()
+
     /** The listed channel for a Recent item, or one built from its fields. */
     fun channelFor(recent: RecentChannel): Channel {
         val listed = (_state.value as? LoadState.Loaded)

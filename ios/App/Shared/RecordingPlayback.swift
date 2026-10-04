@@ -123,6 +123,11 @@ final class RecordingPlayerController {
 struct RecordingVideoContainer: UIViewControllerRepresentable {
     var player: AVPlayer?
     var onTap: (() -> Void)?
+    #if os(tvOS)
+    /// Sleep Timer info panel + Keep watching contextual action.
+    var sleepTimer: SleepTimer?
+    var sleepWarning = false
+    #endif
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let vc = AVPlayerViewController()
@@ -132,6 +137,13 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
         vc.allowsPictureInPicturePlayback = false
         #endif
         vc.player = player
+        #if os(tvOS)
+        if let sleepTimer {
+            vc.customInfoViewControllers = [
+                context.coordinator.sleep.makePanel(timer: sleepTimer, programEnd: nil),
+            ]
+        }
+        #endif
         if onTap != nil {
             let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
             tap.cancelsTouchesInView = false
@@ -146,6 +158,11 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
             vc.player = player
         }
         context.coordinator.onTap = onTap
+        #if os(tvOS)
+        if let sleepTimer {
+            context.coordinator.sleep.update(vc, timer: sleepTimer, programEnd: nil, warning: sleepWarning)
+        }
+        #endif
     }
 
     func makeCoordinator() -> Coordinator {
@@ -154,6 +171,9 @@ struct RecordingVideoContainer: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var onTap: (() -> Void)?
+        #if os(tvOS)
+        let sleep = TVSleepTimerSupport()
+        #endif
 
         init(onTap: (() -> Void)?) {
             self.onTap = onTap

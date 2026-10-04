@@ -478,3 +478,85 @@ describe('ApiClient search, series rules, feed and quick sign-in', () => {
     })
   })
 })
+
+describe('ApiClient DVR admin', () => {
+  let client: ApiClient
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    client = new ApiClient(
+      () => 'tok',
+      () => {},
+    )
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  it('reads recording storage', async () => {
+    const storage = {
+      dir: '/var/lib/bowtie/recordings',
+      usedBytes: 10,
+      freeBytes: 20,
+      totalBytes: 40,
+      floorBytes: 2,
+      minFreeBytes: 0,
+      recordings: { ready: 1, scheduled: 2, recording: 0, failed: 3 },
+    }
+    fetchMock.mockResolvedValueOnce(json(storage))
+    await expect(client.getDVRStorage()).resolves.toEqual(storage)
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/v1/admin/dvr/storage')
+    expect(init.method).toBe('GET')
+  })
+
+  it('surfaces 503 when recording is unavailable', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: 'recording is not available' }, 503))
+    const err = await client.getDVRStorage().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(503)
+  })
+
+  it('downloads a database backup with its file name', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([83, 81, 76]), {
+        status: 200,
+        headers: { 'Content-Disposition': 'attachment; filename="bowtie-backup-20261004-0230.db"' },
+      }),
+    )
+    const b = await client.downloadBackup()
+    expect(b.filename).toBe('bowtie-backup-20261004-0230.db')
+    expect(b.blob.size).toBe(3)
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/v1/admin/backup')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok')
+  })
+
+  it('surfaces backup errors', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: 'backup failed' }, 500))
+    const err = await client.downloadBackup().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toBe('backup failed')
+  })
+
+  it('saves the dvr settings section', async () => {
+    fetchMock.mockResolvedValueOnce(json({ dvr: { padStartSeconds: 120, padEndSeconds: 600 } }))
+    const res = await client.putSettings({ dvr: { padStartSeconds: 120, padEndSeconds: 600 } })
+    expect(res.dvr).toEqual({ padStartSeconds: 120, padEndSeconds: 600 })
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/v1/admin/settings')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(String(init.body))).toEqual({
+      dvr: { padStartSeconds: 120, padEndSeconds: 600 },
+    })
+  })
+})

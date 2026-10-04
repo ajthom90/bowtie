@@ -3,6 +3,7 @@ package settings_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/settings"
@@ -182,6 +183,8 @@ func TestDefaultsSeeded(t *testing.T) {
 		settings.KeyTranscodeEncoder,
 		settings.KeyTranscodeAllowHEVC,
 		settings.KeyStreamingBufferMinutes,
+		settings.KeyDVRPadStartSeconds,
+		settings.KeyDVRPadEndSeconds,
 	} {
 		has, err := st.HasSetting(key)
 		if err != nil {
@@ -332,5 +335,65 @@ func TestHDHomeRunGuideDefaultOnAndRoundTrips(t *testing.T) {
 	}
 	if g, _ := p.HDHomeRunGuide(); g.Enabled {
 		t.Fatal("re-seed must not re-enable")
+	}
+}
+
+// DVR padding: absent keys read as the defaults, 0 is a real value, and the
+// first-boot seed writes the defaults.
+func TestDVRPaddingDefaultsAndRoundTrips(t *testing.T) {
+	p, st := openProvider(t)
+	d, err := p.DVR()
+	if err != nil || d.PadStartSeconds != 60 || d.PadEndSeconds != 180 {
+		t.Fatalf("absent keys = %+v err=%v, want 60/180", d, err)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := st.GetSetting(settings.KeyDVRPadStartSeconds); raw != "60" {
+		t.Fatalf("raw padStart seed = %q, want 60", raw)
+	}
+	if raw, _ := st.GetSetting(settings.KeyDVRPadEndSeconds); raw != "180" {
+		t.Fatalf("raw padEnd seed = %q, want 180", raw)
+	}
+	if err := p.SetDVR(settings.DVR{PadStartSeconds: 0, PadEndSeconds: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := p.DVR(); err != nil || d.PadStartSeconds != 0 || d.PadEndSeconds != 0 {
+		t.Fatalf("zero round trip = %+v err=%v", d, err)
+	}
+	if err := p.SetDVR(settings.DVR{PadStartSeconds: 120, PadEndSeconds: 600}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := p.DVR(); err != nil || d.PadStartSeconds != 120 || d.PadEndSeconds != 600 {
+		t.Fatalf("round trip after re-seed = %+v err=%v", d, err)
+	}
+}
+
+func TestDVRPaddingDurations(t *testing.T) {
+	p, _ := openProvider(t)
+	if err := p.SetDVR(settings.DVR{PadStartSeconds: 90, PadEndSeconds: 600}); err != nil {
+		t.Fatal(err)
+	}
+	start, end, err := p.DVRPadding()
+	if err != nil || start != 90*time.Second || end != 10*time.Minute {
+		t.Fatalf("DVRPadding = %v %v %v", start, end, err)
+	}
+}
+
+// Values edited straight into the database are kept within the allowed range.
+func TestDVRPaddingClampsStoredValues(t *testing.T) {
+	p, st := openProvider(t)
+	if err := st.SetSetting(settings.KeyDVRPadStartSeconds, "-50"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(settings.KeyDVRPadEndSeconds, "999999"); err != nil {
+		t.Fatal(err)
+	}
+	start, end, err := p.DVRPadding()
+	if err != nil || start != 0 || end != time.Hour {
+		t.Fatalf("DVRPadding = %v %v %v; want 0 1h", start, end, err)
 	}
 }

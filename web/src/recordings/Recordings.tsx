@@ -29,6 +29,7 @@ type Props = {
   tab: RecordingsTab
   onTab: (tab: RecordingsTab) => void
   onGuide: () => void
+  onMultiview?: () => void
   onAdmin?: () => void
   onAccount?: () => void
   onPlay: (rec: Recording) => void
@@ -38,7 +39,7 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiError && err.message ? err.message : fallback
 }
 
-export function Recordings({ tab, onTab, onGuide, onAdmin, onAccount, onPlay }: Props) {
+export function Recordings({ tab, onTab, onGuide, onMultiview, onAdmin, onAccount, onPlay }: Props) {
   const { user, logout } = useAuth()
 
   return (
@@ -52,6 +53,11 @@ export function Recordings({ tab, onTab, onGuide, onAdmin, onAccount, onPlay }: 
           <button type="button" className={styles.btn} onClick={onGuide}>
             Guide
           </button>
+          {onMultiview ? (
+            <button type="button" className={styles.btn} onClick={onMultiview}>
+              Multiview
+            </button>
+          ) : null}
           {onAdmin ? (
             <button type="button" className={styles.btn} onClick={onAdmin}>
               Admin

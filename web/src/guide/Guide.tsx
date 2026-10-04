@@ -34,6 +34,8 @@ export type WatchTarget = {
 
 type Props = {
   onWatch: (target: WatchTarget) => void
+  /** Opens Multiview (several live channels at once). */
+  onMultiview?: () => void
   /** Present only for admins — opens the admin area. Viewers never receive this. */
   onAdmin?: () => void
   /** Opens the Recordings page. */
@@ -49,7 +51,7 @@ type Selected = {
   initialConflict?: SheetConflict
 }
 
-export function Guide({ onWatch, onAdmin, onRecordings, onAccount }: Props) {
+export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }: Props) {
   const { client, user, logout } = useAuth()
   const [{ start, stop }, setWindow] = useState(() => defaultWindow())
   const [channels, setChannels] = useState<GuideChannel[] | null>(null)
@@ -213,6 +215,11 @@ export function Guide({ onWatch, onAdmin, onRecordings, onAccount }: Props) {
               {user?.role === 'admin' ? ' · admin' : ''}
             </span>
           )}
+          {onMultiview ? (
+            <button type="button" className={styles.btn} onClick={onMultiview}>
+              Multiview
+            </button>
+          ) : null}
           {onRecordings ? (
             <button type="button" className={styles.btn} onClick={onRecordings}>
               Recordings

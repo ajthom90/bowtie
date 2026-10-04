@@ -122,8 +122,13 @@ adb install -r tv/build/outputs/apk/debug/tv-debug.apk
 | **DPAD Up / Down** | Channel zap (session-replace, debounced) |
 | **Back** | Close drawer if open; otherwise stop playback and return to the rail |
 
-Stats toggle lives inside the quality drawer. Media3 `PlayerView` never owns DPAD
-focus — Compose handles keys so zap and drawer keep working while video plays.
+Stats toggle and the sleep timer live inside the quality drawer. Media3 `PlayerView`
+never owns DPAD focus — Compose handles keys so zap and drawer keep working while
+video plays. In a sleep timer's last minute a "Still watching?" prompt takes focus;
+Select on **Keep watching** extends it.
+
+Recordings: **DPAD Down** or **Menu** opens the menu (sleep timer); **Up** shows
+the progress bar; **Left / Right** seek.
 
 ## First run — connect to your server
 

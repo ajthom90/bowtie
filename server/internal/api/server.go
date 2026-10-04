@@ -146,12 +146,17 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
 	handle("GET /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGLineups)))
 
+	handle("GET /api/v1/admin/backup", admin(http.HandlerFunc(s.handleAdminBackup)))
+
 	// Admin product settings (v0.4.0 Task 4).
 	handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminGetSettings)))
 	handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminPutSettings)))
 
 	// Admin transcode probe (Task 11).
 	handle("GET /api/v1/admin/transcode", admin(http.HandlerFunc(s.handleAdminTranscode)))
+
+	// Admin DVR disk use.
+	handle("GET /api/v1/admin/dvr/storage", admin(http.HandlerFunc(s.handleAdminDVRStorage)))
 
 	// Stream sessions (Task 15 / v0.5.0 heartbeat).
 	handle("POST /api/v1/sessions", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateSession)))

@@ -10,11 +10,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,16 +43,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import androidx.tv.material3.Button
 import androidx.tv.material3.Text
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.SleepTimer
 import app.bowtie.core.player.VodPlayer
 import app.bowtie.core.vm.RecordingsViewModel
 import app.bowtie.tv.BowtieColors
+import app.bowtie.tv.BowtieDimens
 import app.bowtie.tv.BowtieType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -61,7 +69,8 @@ private const val INFO_HIDE_MS = 4_000L
 /**
  * Recording playback for TV: HLS VOD with DPAD seeking ([VodKeys]), a
  * progress bar shown on any key and while paused, and the resume position
- * saved every 15 s, on background, at the end and on exit.
+ * saved every 15 s, on background, at the end and on exit. Down (or Menu)
+ * opens the menu with the sleep timer.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -88,6 +97,14 @@ fun TvRecordingPlayerScreen(
     var lastSavedMs by remember { mutableLongStateOf(-1L) }
     var retrying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var showMenu by remember { mutableStateOf(false) }
+    val menuFocusRequester = remember { FocusRequester() }
+    val sleepWarningFocusRequester = remember { FocusRequester() }
+
+    // Sleep timer: fires the same leave as Back (saves the position on dispose).
+    val sleepTimer = rememberSleepTimer { onBack() }
+    val sleepStatus by sleepTimer.status.collectAsStateWithLifecycle()
+    val sleepWarning = sleepStatus.warning
 
     /** Ask for a fresh playlist (tokens expire) and pick up where playback stopped. */
     fun retry() {
@@ -186,7 +203,20 @@ fun TvRecordingPlayerScreen(
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
-    BackHandler { onBack() }
+    BackHandler {
+        if (showMenu) showMenu = false else onBack()
+    }
+
+    // Focus: the menu while open, else Keep watching while prompting, else the player.
+    LaunchedEffect(showMenu, sleepWarning) {
+        runCatching {
+            when {
+                showMenu -> menuFocusRequester.requestFocus()
+                sleepWarning -> sleepWarningFocusRequester.requestFocus()
+                else -> focusRequester.requestFocus()
+            }
+        }
+    }
 
     fun apply(action: VodKeys.Action) {
         when (action) {
@@ -209,6 +239,7 @@ fun TvRecordingPlayerScreen(
                 positionMs = target
             }
             VodKeys.Action.ShowInfo -> Unit
+            VodKeys.Action.OpenMenu -> showMenu = true
             VodKeys.Action.Back -> onBack()
         }
         showInfo()
@@ -222,6 +253,16 @@ fun TvRecordingPlayerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
+                if (showMenu || sleepWarning) {
+                    // Let the menu / prompt handle navigation; only intercept BACK.
+                    if (native.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                        native.action == android.view.KeyEvent.ACTION_DOWN
+                    ) {
+                        if (showMenu) showMenu = false else onBack()
+                        return@onPreviewKeyEvent true
+                    }
+                    return@onPreviewKeyEvent false
+                }
                 val result = VodKeys.onKey(native.keyCode, native.action, native.repeatCount)
                 result.action?.let { apply(it) }
                 result.handled
@@ -277,6 +318,53 @@ fun TvRecordingPlayerScreen(
                 error?.let {
                     Spacer(Modifier.height(12.dp))
                     Text(it, style = BowtieType.body, color = BowtieColors.alert)
+                }
+            }
+        }
+
+        if (sleepWarning) {
+            TvSleepWarning(
+                remainingMs = sleepStatus.remainingMs ?: 0L,
+                focusRequester = sleepWarningFocusRequester,
+                onKeepWatching = { sleepTimer.extend() },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = BowtieDimens.screenPadding),
+            )
+        }
+
+        if (showMenu) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .widthIn(min = 320.dp, max = 400.dp)
+                    .background(BowtieColors.surface.copy(alpha = 0.96f))
+                    .padding(BowtieDimens.rowPadding)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = "Controls",
+                    style = BowtieType.title,
+                    color = BowtieColors.text,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                SleepTimerChoices(
+                    status = sleepStatus,
+                    options = SleepTimer.options(programEndMs = null, nowMs = System.currentTimeMillis()),
+                    onSelect = { option ->
+                        sleepTimer.start(option)
+                        showMenu = false
+                    },
+                    firstFocus = menuFocusRequester,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { showMenu = false },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = drawerButtonColors(false),
+                ) {
+                    Text(text = "Close", style = BowtieType.body, color = BowtieColors.amber)
                 }
             }
         }

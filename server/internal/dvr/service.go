@@ -81,6 +81,10 @@ type Deps struct {
 	// recordings while free space in Dir is below this (0 = never).
 	MinFreeBytes int64
 	FreeBytes    func(dir string) (int64, error)
+	TotalBytes   func(dir string) (int64, error)
+	// Padding returns the padding for a recording being scheduled now
+	// (nil or an error: DefaultPadStart / DefaultPadEnd).
+	Padding func() (start, end time.Duration, err error)
 }
 
 // Warning accompanies a successful Schedule.
@@ -131,6 +135,10 @@ type Service struct {
 	stopped    bool
 	onDeleted  func() // test hook: after the sweep deletes a recording
 
+	usedMu sync.Mutex // Storage's cached usedBytes
+	used   int64
+	usedAt time.Time
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -153,6 +161,9 @@ func New(deps Deps) *Service {
 	}
 	if deps.FreeBytes == nil {
 		deps.FreeBytes = freeBytes
+	}
+	if deps.TotalBytes == nil {
+		deps.TotalBytes = totalBytes
 	}
 	// FFmpeg's concat list resolves relative entries against the list's own
 	// directory, so every path the DVR hands out must be absolute.
@@ -230,6 +241,7 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	if title == "" {
 		title = "Recording"
 	}
+	padStart, padEnd := s.padding()
 	r := store.Recording{
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
@@ -237,7 +249,7 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
 		RuleID: req.RuleID, ProgramID: req.ProgramID,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
-		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
+		PadStartSec: int(padStart / time.Second), PadEndSec: int(padEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),
 	}
 
@@ -272,8 +284,21 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 	return r, warnings, nil
 }
 
+// padding is the configured padding for a recording scheduled now.
+func (s *Service) padding() (time.Duration, time.Duration) {
+	if s.deps.Padding == nil {
+		return DefaultPadStart, DefaultPadEnd
+	}
+	start, end, err := s.deps.Padding()
+	if err != nil {
+		log.Printf("dvr: padding setting: %v (using defaults)", err)
+		return DefaultPadStart, DefaultPadEnd
+	}
+	return start, end
+}
+
 // overlapping returns pending recordings whose show times overlap r's
-// (padding is soft and ignored).
+// (padding is soft and ignored: end padding gives way, see yieldEndPadding).
 func (s *Service) overlapping(r store.Recording) ([]store.Recording, error) {
 	pending, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
 	if err != nil {
@@ -359,10 +384,44 @@ func (s *Service) Tick() {
 			s.startCapture(r)
 		}
 	}
+	s.yieldEndPadding(rows, now)
 	if now.Sub(s.lastSweep) >= sweepEvery {
 		s.lastSweep = now
 		s.ApplyRules()
 		s.sweep()
+	}
+}
+
+// yieldEndPadding keeps padding soft: for each recording whose show has
+// started but that is waiting for a tuner, stop one capture on another channel
+// that is only in its end padding (its show is over).
+func (s *Service) yieldEndPadding(rows []store.Recording, now time.Time) {
+	stopped := map[int64]bool{}
+	for _, w := range rows {
+		if w.State != store.RecWaiting || w.Failure != "noTuner" || now.Before(w.Start) {
+			continue
+		}
+		var pick *store.Recording
+		for i := range rows {
+			r := &rows[i]
+			if r.State != store.RecRecording || r.ChannelID == w.ChannelID || stopped[r.ID] || now.Before(r.Stop) {
+				continue
+			}
+			s.mu.Lock()
+			_, active := s.captures[r.ID]
+			s.mu.Unlock()
+			if active && (pick == nil || r.Stop.Before(pick.Stop)) {
+				pick = r
+			}
+		}
+		if pick == nil {
+			continue
+		}
+		stopped[pick.ID] = true
+		log.Printf("dvr: recording %d: ending its padding early so recording %d can start", pick.ID, w.ID)
+		if err := s.StopNow(pick.ID); err != nil {
+			log.Printf("dvr: recording %d: %v", pick.ID, err)
+		}
 	}
 }
 
@@ -445,6 +504,9 @@ func (s *Service) delete(id int64, allowSkip bool) error {
 			log.Printf("dvr: remove %s: %v", r.Dir, err)
 		}
 	}
+	s.usedMu.Lock()
+	s.usedAt = time.Time{} // the storage figure is stale now
+	s.usedMu.Unlock()
 	return nil
 }
 

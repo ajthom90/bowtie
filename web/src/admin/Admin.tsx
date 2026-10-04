@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { WatchTarget } from '../guide/Guide'
 import { useAuth } from '../auth/AuthContext'
 import { Channels } from './Channels'
+import { DvrAdmin } from './DvrAdmin'
 import { Epg } from './Epg'
 import { Sessions } from './Sessions'
 import { Settings } from './Settings'
@@ -10,12 +11,13 @@ import { Users } from './Users'
 import { BowtieMark } from '../BowtieMark'
 import styles from './Admin.module.css'
 
-export type AdminTab = 'tuners' | 'channels' | 'epg' | 'settings' | 'users' | 'sessions'
+export type AdminTab = 'tuners' | 'channels' | 'epg' | 'recordings' | 'settings' | 'users' | 'sessions'
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: 'tuners', label: 'Tuners' },
   { id: 'channels', label: 'Channels' },
   { id: 'epg', label: 'EPG' },
+  { id: 'recordings', label: 'Recordings' },
   { id: 'settings', label: 'Settings' },
   { id: 'users', label: 'Users' },
   { id: 'sessions', label: 'Sessions' },
@@ -99,6 +101,7 @@ export function Admin({ onBack, onPreview, onRecordings, onAccount }: Props) {
         {tab === 'tuners' ? <Tuners /> : null}
         {tab === 'channels' ? <Channels onPreview={onPreview} /> : null}
         {tab === 'epg' ? <Epg /> : null}
+        {tab === 'recordings' ? <DvrAdmin /> : null}
         {tab === 'settings' ? <Settings /> : null}
         {tab === 'users' ? <Users /> : null}
         {tab === 'sessions' ? <Sessions /> : null}

@@ -505,6 +505,60 @@ export function Settings() {
           </button>
         </div>
       </form>
+
+      <BackupCard />
     </div>
+  )
+}
+
+function BackupCard() {
+  const { client } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const download = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const { blob, filename } = await client.downloadBackup()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Backup failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className={styles.settingsCard}>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.cardTitle}>Backup</h3>
+      </div>
+      <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+        Saves accounts, channels, guide matches, series rules, the recording list and these
+        settings (not recorded video). It includes password hashes and the Schedules Direct
+        password, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
+        folder with this file (delete any bowtie.db-journal or -wal file next to it) and
+        start Bowtie; everyone signs in again.
+      </p>
+      {error ? <p className={styles.statusError}>{error}</p> : null}
+      <div className={styles.settingsFooter}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.settingsSave}`}
+          onClick={download}
+          disabled={busy}
+        >
+          {busy ? 'Preparing…' : 'Download backup'}
+        </button>
+      </div>
+    </section>
   )
 }
