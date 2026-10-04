@@ -44,6 +44,7 @@ type recordingJSON struct {
 	// CanManage: the caller may stop, delete or protect it (owner or admin).
 	CanManage bool   `json:"canManage"`
 	Rating    string `json:"rating"`
+	RuleID    int64  `json:"ruleId"` // series rule that scheduled it (0 = one-off)
 	// Locked: parental controls block it for the caller (no description, no play).
 	Locked bool `json:"locked"`
 }
@@ -56,7 +57,7 @@ func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names ma
 		State: r.State, Partial: r.Partial, Failure: r.Failure, FailureDetail: r.FailureDetail,
 		DurationSec: r.DurationSec, SizeBytes: r.SizeBytes, Protected: r.Protected, PositionSec: pos,
 		ScheduledBy: names[r.UserID], CanManage: claims.Role == "admin" || claims.UserID == r.UserID,
-		Rating: r.Rating,
+		Rating: r.Rating, RuleID: r.RuleID,
 	}
 }
 

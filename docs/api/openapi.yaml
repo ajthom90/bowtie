@@ -287,6 +287,104 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/recording-rules:
+    get:
+      summary: List series recording rules (everyone's)
+      operationId: listRecordingRules
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecordingRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Record a show (every new episode) from a guide program
+      description: |
+        Matches the program's series (or, without a series ID from the
+        guide, its exact title). Default: the program's channel only, new
+        episodes only. Upcoming matches (14 days) are scheduled at once and
+        again whenever the guide refreshes; an episode already recorded or
+        scheduled isn't scheduled twice, and deleting an upcoming episode
+        skips it.
+      operationId: createRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelId, programStart]
+              properties:
+                channelId:
+                  type: integer
+                  format: int64
+                programStart:
+                  type: string
+                  format: date-time
+                anyChannel:
+                  type: boolean
+                  description: Record the show on any channel
+                newOnly:
+                  type: boolean
+                  default: true
+                keepLatest:
+                  type: integer
+                  minimum: 0
+                  description: Keep only this many recordings of the show (0 = all; Keep-marked ones don't count)
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule, scheduled]
+                properties:
+                  rule:
+                    $ref: '#/components/schemas/RecordingRule'
+                  scheduled:
+                    type: integer
+                    description: Upcoming airings scheduled now
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/recording-rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    delete:
+      summary: Stop recording a show (cancels its upcoming recordings; recorded ones stay)
+      operationId: deleteRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/recordings:
     get:
       summary: List recordings (everyone's)
@@ -1641,6 +1739,34 @@ components:
           type: boolean
         epgChannelId:
           type: string
+    RecordingRule:
+      type: object
+      required: [id, title, seriesId, channelId, channelName, newOnly, keepLatest, scheduledBy, canManage, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        seriesId:
+          type: string
+        channelId:
+          type: integer
+          format: int64
+          description: 0 = any channel
+        channelName:
+          type: string
+        newOnly:
+          type: boolean
+        keepLatest:
+          type: integer
+        scheduledBy:
+          type: string
+        canManage:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
     Recording:
       type: object
       required: [id, title, subtitle, description, category, channelId, channelName, start, stop, state, partial, failure, failureDetail, durationSec, sizeBytes, protected, positionSec, scheduledBy, canManage]
@@ -1676,7 +1802,7 @@ components:
           description: More than a minute is missing (late start, dropped stream, or a restart)
         failure:
           type: string
-          enum: ['', noTuner, noSignal, diskFull, error]
+          enum: ['', noTuner, noSignal, diskFull, error, skipped]
         failureDetail:
           type: string
         durationSec:
@@ -1698,6 +1824,10 @@ components:
         rating:
           type: string
           description: The program's rating when scheduled ("" = not rated)
+        ruleId:
+          type: integer
+          format: int64
+          description: Series rule that scheduled it (0 = one-off)
         locked:
           type: boolean
           description: Parental controls block it for the caller (no description; play is 403)
@@ -1778,6 +1908,15 @@ components:
       type: object
       required: [start, stop, title, subtitle, description, category]
       properties:
+        programId:
+          type: string
+          description: Guide program ID of the episode (when the source has one)
+        seriesId:
+          type: string
+          description: Series ID of the show (when the source has one)
+        isNew:
+          type: boolean
+          description: First airing
         rating:
           type: string
           description: Rating from the guide source (e.g. TV-14; "" = not rated)
