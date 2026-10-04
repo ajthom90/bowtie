@@ -202,7 +202,15 @@ struct MacMainView: View {
                 }
             }
 
-            let favorites = model.favoriteRows
+            if case .loaded = model.state {
+                Section {
+                    GuideFilterBar(selection: Bindable(model).filter)
+                        .listRowInsets(EdgeInsets())
+                }
+            }
+
+            let visible = model.filteredRows(at: now)
+            let favorites = visible.filter { $0.channel.isFavorite }
             if !favorites.isEmpty {
                 Section("Favorites") {
                     ForEach(favorites) { row in
@@ -216,8 +224,10 @@ struct MacMainView: View {
                     Text(Self.emptyCopy)
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.dim)
+                } else if visible.isEmpty, model.filter != .all, case .loaded = model.state {
+                    GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                 } else {
-                    ForEach(model.otherRows) { row in
+                    ForEach(visible.filter { !$0.channel.isFavorite }) { row in
                         rowWithMenu(row, section: .all, model: model)
                     }
                 }
@@ -286,7 +296,13 @@ struct MacMainView: View {
     }
 
     private func rowWithMenu(_ row: ChannelListModel.Row, section: ChannelSection, model: ChannelListModel) -> some View {
-        channelRow(row.channel, nowNext: row.nowNext, section: section, model: model)
+        channelRow(
+            row.channel,
+            nowNext: row.nowNext,
+            section: section,
+            model: model,
+            highlight: model.highlight(for: row, at: now)
+        )
             .contextMenu {
                 if model.supportsFavorites {
                     Button {
@@ -313,7 +329,8 @@ struct MacMainView: View {
         _ channel: Channel,
         nowNext: GuideLogic.NowNext?,
         section: ChannelSection,
-        model: ChannelListModel
+        model: ChannelListModel,
+        highlight: GuideFilter.RowHighlight? = nil
     ) -> some View {
         let isPlaying = playerModel.currentChannel?.id == channel.id
         return HStack(spacing: 10) {
@@ -354,6 +371,10 @@ struct MacMainView: View {
                             ParentalLockMark(rating: now.rating ?? "", size: 9)
                         }
                     }
+                    .opacity(highlight?.nowMatches == false ? 0.4 : 1)
+                }
+                if let later = highlight?.later {
+                    GuideFilterLaterLine(program: later, size: 11)
                 }
             }
         }
@@ -361,7 +382,10 @@ struct MacMainView: View {
         .tag(SidebarItem.channel(channel.id, section))
         .help(helpText(channel: channel, nowNext: nowNext))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel(channel: channel, nowNext: nowNext, isPlaying: isPlaying))
+        .accessibilityLabel(
+            accessibilityLabel(channel: channel, nowNext: nowNext, isPlaying: isPlaying)
+                + (highlight?.later.map { ", " + GuideFilterLaterLine.accessibilityText($0) } ?? "")
+        )
     }
 
     // MARK: - Detail
@@ -450,8 +474,12 @@ struct MacMainView: View {
     }
 
     /// Next / previous in the sidebar's order (favorites, then the rest), wrapping.
+    /// Under a category filter it steps through the channels the sidebar shows.
     private func stepChannel(by delta: Int) {
-        guard let rows = listModel?.rows, !rows.isEmpty else { return }
+        guard let model = listModel else { return }
+        let shown = model.filteredRows(at: now)
+        let rows = shown.isEmpty ? model.rows : shown
+        guard !rows.isEmpty else { return }
         let current = playerModel.currentChannel?.id
         let index = rows.firstIndex { $0.channel.id == current }
         let next: Int

@@ -19,6 +19,16 @@ import {
   withFavorite,
   type GuideProgram,
 } from './guideModel'
+import {
+  GUIDE_FILTERS,
+  channelMatchesFilter,
+  filterEmptyCopy,
+  filterLabel,
+  loadGuideFilter,
+  programMatchesFilter,
+  saveGuideFilter,
+  type GuideFilter,
+} from './guideFilterModel'
 import { GuideSearch } from './GuideSearch'
 import { ProgramSheet, type SheetChannel, type SheetConflict } from './ProgramSheet'
 import { lockText } from './searchModel'
@@ -65,6 +75,13 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
   const [notice, setNotice] = useState<string | null>(null)
   /** Bumped after a recording change so open search results refresh. */
   const [searchEpoch, setSearchEpoch] = useState(0)
+  /** Category chip; remembered per browser. */
+  const [filter, setFilter] = useState<GuideFilter>(() => loadGuideFilter())
+
+  function chooseFilter(next: GuideFilter) {
+    setFilter(next)
+    saveGuideFilter(next)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -95,6 +112,11 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
 
   const favoritesOn = useMemo(() => (channels ? supportsFavorites(channels) : false), [channels])
   const rows = useMemo(() => (channels ? sortFavoritesFirst(channels) : null), [channels])
+  /** Rows with something matching the chip in the visible window. */
+  const visibleRows = useMemo(
+    () => rows?.filter((ch) => channelMatchesFilter(ch, filter, start, stop)) ?? null,
+    [rows, filter, start, stop],
+  )
 
   async function toggleFavorite(channel: GuideChannel) {
     const id = channel.channelId
@@ -305,7 +327,37 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
         </nav>
       ) : null}
 
-      {pageState.kind === 'ready' && rows ? (
+      {pageState.kind === 'ready' ? (
+        <div className={styles.filters} role="group" aria-label="Show programs">
+          {GUIDE_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`${styles.filterChip}${filter === f ? ` ${styles.filterChipOn}` : ''}`}
+              aria-pressed={filter === f}
+              onClick={() => chooseFilter(f)}
+            >
+              {filterLabel(f)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {pageState.kind === 'ready' && filter !== 'all' && visibleRows?.length === 0 ? (
+        <div className={styles.filterEmpty} role="status">
+          <p className={styles.filterEmptyText}>{filterEmptyCopy(filter)}</p>
+          <div className={styles.filterEmptyActions}>
+            <button type="button" className={styles.btn} onClick={() => page(1)}>
+              Later
+            </button>
+            <button type="button" className={styles.btn} onClick={() => chooseFilter('all')}>
+              Show all
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {pageState.kind === 'ready' && visibleRows && visibleRows.length > 0 ? (
         <div className={styles.scroll} tabIndex={0} role="region" aria-label="TV guide">
           <div className={styles.grid}>
             <div className={styles.corner} aria-hidden />
@@ -328,7 +380,7 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
               </div>
             </div>
 
-            {rows.map((ch) => {
+            {visibleRows.map((ch) => {
               const cells = layoutRow(ch.programs, start, stop)
               const hasPrograms = ch.programs.length > 0
 
@@ -344,6 +396,7 @@ export function Guide({ onWatch, onMultiview, onAdmin, onRecordings, onAccount }
                   windowStart={start}
                   windowStop={stop}
                   now={now}
+                  filter={filter}
                   onWatch={onWatch}
                   onSelect={(program) =>
                     setSelected({
@@ -398,6 +451,7 @@ function ChannelRow({
   windowStart,
   windowStop,
   now,
+  filter,
   onWatch,
   onToggleFavorite,
   onSelect,
@@ -412,6 +466,8 @@ function ChannelRow({
   windowStart: Date
   windowStop: Date
   now: Date
+  /** Programs outside the chosen category are dimmed. */
+  filter: GuideFilter
   onWatch: (t: WatchTarget) => void
   onSelect: (program: GuideProgram) => void
 }) {
@@ -504,11 +560,12 @@ function ChannelRow({
               const mark = cell.program.recording
               const rec = guideRecLabel(mark)
               const recWords = mark ? guideMarkText(mark.state) : ''
+              const dimmed = !programMatchesFilter(cell.program, filter)
               return (
                 <button
                   key={`prog-${i}-${cell.program.start}`}
                   type="button"
-                  className={`${styles.cell}${onAir ? ` ${styles.cellOnAir}` : ''}`}
+                  className={`${styles.cell}${onAir ? ` ${styles.cellOnAir}` : ''}${dimmed ? ` ${styles.cellDimmed}` : ''}`}
                   style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
                   onClick={() => onSelect(cell.program)}
                   aria-haspopup="dialog"

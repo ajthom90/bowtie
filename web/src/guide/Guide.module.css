@@ -290,6 +290,74 @@
   color: var(--text);
 }
 
+/* Category chips (All · Sports · Movies · News · Kids · New) */
+.filters {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.45rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.filterChip {
+  flex-shrink: 0;
+  padding: 0.25rem 0.8rem;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion), color var(--motion);
+}
+
+.filterChip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.filterChipOn,
+.filterChipOn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Not in the chosen category: still clickable, just quiet. */
+.cellDimmed {
+  opacity: 0.35;
+}
+
+.cellDimmed:hover,
+.cellDimmed:focus-visible {
+  opacity: 0.8;
+}
+
+.filterEmpty {
+  padding: 2rem 1.25rem;
+  color: var(--text-dim);
+  max-width: 36rem;
+}
+
+.filterEmptyText {
+  margin: 0 0 0.9rem;
+  font-size: 0.95rem;
+}
+
+.filterEmptyActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .actionError {
   margin: 0;
   padding: 0.45rem 1rem;
@@ -542,8 +610,14 @@
   }
 
   .recents,
+  .filters,
   .actionError {
     padding: 0.4rem 0.75rem;
+  }
+
+  .filterChip {
+    min-height: 44px;
+    padding: 0.25rem 1rem;
   }
 
   .chip,

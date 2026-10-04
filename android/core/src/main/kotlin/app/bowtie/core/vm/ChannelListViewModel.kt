@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
+import app.bowtie.core.GuideFilter
+import app.bowtie.core.GuideFilterPrefs
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.GuideProgram
 import app.bowtie.core.GuideRecordingMark
@@ -40,11 +42,15 @@ class ChannelListViewModel(
     private val client: BowtieClient,
     private val now: () -> Instant = { Instant.now() },
     scope: CoroutineScope? = null,
+    /** Where the guide category chip is remembered (per device). */
+    private val filterPrefs: GuideFilterPrefs = GuideFilterPrefs.InMemory(),
 ) : ViewModel() {
 
     data class Row(
         val channel: Channel,
         val nowNext: GuideLogic.NowNext,
+        /** The channel's programs in the loaded guide window (category filters). */
+        val programs: List<GuideProgram> = emptyList(),
     ) {
         val id: Long get() = channel.id
 
@@ -82,6 +88,37 @@ class ChannelListViewModel(
 
     /** One-shot user-facing notice (e.g. a favorite toggle the server refused). */
     val message: StateFlow<String?> = _message.asStateFlow()
+
+    private val _filter = MutableStateFlow(filterPrefs.filter)
+
+    /** The guide category chip (All · Sports · Movies · News · Kids · New). */
+    val filter: StateFlow<GuideFilter> = _filter.asStateFlow()
+
+    /** Picks a chip and remembers it on this device. */
+    fun setFilter(filter: GuideFilter) {
+        _filter.value = filter
+        filterPrefs.filter = filter
+    }
+
+    /** End of the loaded guide window (its start is "now"). */
+    @Volatile
+    private var windowEnd: Instant? = null
+
+    private fun windowEndFrom(at: Instant): Instant = windowEnd ?: at.plus(GUIDE_WINDOW)
+
+    /**
+     * [rows] with something matching [filter] between [at] and the end of the
+     * loaded window, order kept. [GuideFilter.ALL] returns every row.
+     */
+    fun visibleRows(rows: List<Row>, filter: GuideFilter, at: Instant = now()): List<Row> {
+        if (filter == GuideFilter.ALL) return rows
+        val to = windowEndFrom(at)
+        return rows.filter { filter.matches(it.programs, at, to) }
+    }
+
+    /** How [row] reads under [filter] at [at] (dimmed lines, a later match). */
+    fun highlight(row: Row, filter: GuideFilter, at: Instant = now()): GuideFilter.RowHighlight =
+        filter.highlight(row.nowNext, row.programs, at, windowEndFrom(at))
 
     /** Channel id → position in the last server response; "the rest" keeps this order. */
     @Volatile
@@ -123,8 +160,10 @@ class ChannelListViewModel(
                 Row(
                     channel = channel,
                     nowNext = GuideLogic.nowNext(programs = programs, at = at),
+                    programs = programs,
                 )
             }
+            windowEnd = stop
             supported = channels.any { it.favorite != null }
             serverOrder = channels.withIndex().associate { (i, c) -> c.id to i }
             _state.value = LoadState.Loaded(

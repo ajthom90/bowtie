@@ -24,6 +24,8 @@ import app.bowtie.core.Caps
 import app.bowtie.core.Channel
 import app.bowtie.core.ClientCaps
 import app.bowtie.core.EncryptedTokenStore
+import app.bowtie.core.GuideFilterPrefs
+import app.bowtie.core.GuideFilterStore
 import app.bowtie.core.TokenStore
 import app.bowtie.core.User
 import app.bowtie.core.vm.AppViewModel
@@ -114,7 +116,7 @@ private fun ReadyShell(
     val caps = remember(client.server) { Caps.current(context) }
     val owner = context as ViewModelStoreOwner
     val factory = remember(client, caps) {
-        ReadyViewModelFactory(client = client, caps = caps)
+        ReadyViewModelFactory(client = client, caps = caps, filterPrefs = GuideFilterStore(context.applicationContext))
     }
 
     val channelListViewModel: ChannelListViewModel = viewModel(
@@ -239,12 +241,13 @@ class AppViewModelFactory(
 private class ReadyViewModelFactory(
     private val client: BowtieClient,
     private val caps: ClientCaps,
+    private val filterPrefs: GuideFilterPrefs,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return when {
             modelClass.isAssignableFrom(ChannelListViewModel::class.java) ->
-                ChannelListViewModel(client = client) as T
+                ChannelListViewModel(client = client, filterPrefs = filterPrefs) as T
             modelClass.isAssignableFrom(PlayerViewModel::class.java) ->
                 PlayerViewModel(client = client, caps = caps) as T
             modelClass.isAssignableFrom(RecordingsViewModel::class.java) ->
