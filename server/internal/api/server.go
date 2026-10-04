@@ -146,6 +146,8 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
 	handle("GET /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGLineups)))
 
+	handle("GET /api/v1/admin/backup", admin(http.HandlerFunc(s.handleAdminBackup)))
+
 	// Admin product settings (v0.4.0 Task 4).
 	handle("GET /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminGetSettings)))
 	handle("PUT /api/v1/admin/settings", admin(http.HandlerFunc(s.handleAdminPutSettings)))

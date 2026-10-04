@@ -1387,6 +1387,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/admin/backup:
+    get:
+      summary: Download a database backup
+      description: |
+        A consistent snapshot of the SQLite database (accounts, channels,
+        guide, recording list, rules and settings — not the recorded video).
+        It contains password hashes and the Schedules Direct password, so
+        store it safely. Restore: stop Bowtie, replace `bowtie.db` in the data
+        directory with the file, start Bowtie.
+      operationId: adminBackup
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: SQLite database file (attachment)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: Snapshot failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/admin/settings:
     get:
       summary: Product settings (XMLTV, Schedules Direct, transcode)
