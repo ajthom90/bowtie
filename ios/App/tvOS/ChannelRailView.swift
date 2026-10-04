@@ -99,6 +99,12 @@ struct ChannelRailView: View {
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
             Task { await listModel?.load() }
         }
+        // Back from the player: the server may have just recorded a watch.
+        .onChange(of: playingChannel) { old, new in
+            if old != nil, new == nil {
+                Task { await listModel?.refreshRecents() }
+            }
+        }
     }
 
     // MARK: - Content
@@ -115,7 +121,7 @@ struct ChannelRailView: View {
                 case .failed(let message):
                     failedView(message: message, model: listModel)
                 case .loaded(let rows):
-                    railView(rows: rows)
+                    railView(rows: rows, model: listModel)
                 }
             } else {
                 loadingView
@@ -169,28 +175,68 @@ struct ChannelRailView: View {
         .focusSection()
     }
 
-    private func railView(rows: [ChannelListModel.Row]) -> some View {
-        List {
-            ForEach(rows) { row in
-                Button {
-                    open(channel: row.channel)
-                } label: {
-                    RailRowView(
-                        row: row,
-                        now: now,
-                        isPlaying: playerModel.currentChannel?.id == row.channel.id
-                    )
-                    .opacity(row.channel.hasNoSignal ? 0.55 : 1)
+    /// Recent cards (own focus section) above the rail; favorites lead the rail.
+    private func railView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.showsRecents {
+                RecentCardRow(
+                    channels: model.recentChannels,
+                    playingID: playerModel.currentChannel?.id,
+                    onSelect: { open(channel: $0) },
+                    onClear: { Task { await model.clearRecents() } }
+                )
+                .focusSection()
+            }
+
+            List {
+                ForEach(rows) { row in
+                    Button {
+                        open(channel: row.channel)
+                    } label: {
+                        RailRowView(
+                            row: row,
+                            now: now,
+                            isPlaying: playerModel.currentChannel?.id == row.channel.id
+                        )
+                        .opacity(row.channel.hasNoSignal ? 0.55 : 1)
+                    }
+                    // Default button style → system focus scale / highlight.
+                    // Click-and-hold Select opens the menu.
+                    .contextMenu {
+                        if model.supportsFavorites {
+                            favoriteButton(for: row.channel, model: model)
+                        }
+                    }
+                    .listRowBackground(Theme.bg)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(accessibilityLabel(for: row))
+                    .accessibilityHint("Play this channel")
+                    .accessibilityActions {
+                        if model.supportsFavorites {
+                            favoriteButton(for: row.channel, model: model)
+                        }
+                    }
                 }
-                // Default button style → system focus scale / highlight.
-                .listRowBackground(Theme.bg)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(accessibilityLabel(for: row))
-                .accessibilityHint("Play this channel")
+            }
+            .listStyle(.plain)
+            .focusSection()
+        }
+        .bowtieToast(model.actionError) {
+            model.dismissActionError()
+        }
+    }
+
+    /// "Favorite" / "Unfavorite" — shared by the context menu and VoiceOver.
+    private func favoriteButton(for channel: Channel, model: ChannelListModel) -> some View {
+        Button {
+            Task { await model.toggleFavorite(channelId: channel.id) }
+        } label: {
+            if channel.isFavorite {
+                Label("Unfavorite", systemImage: "star.slash")
+            } else {
+                Label("Favorite", systemImage: "star")
             }
         }
-        .listStyle(.plain)
-        .focusSection()
     }
 
     // MARK: - Actions
@@ -223,6 +269,9 @@ struct ChannelRailView: View {
             "Channel \(row.channel.guideNumber)",
             row.channel.name,
         ]
+        if row.channel.isFavorite {
+            parts.append("Favorite")
+        }
         if row.channel.hasNoSignal {
             parts.append("No signal last time")
         }
@@ -256,10 +305,19 @@ private struct RailRowView: View {
                 .minimumScaleFactor(0.7)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(row.channel.name)
-                    .font(Theme.label(28))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
+                HStack(spacing: 10) {
+                    Text(row.channel.name)
+                        .font(Theme.label(28))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+
+                    if row.channel.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(Theme.amber)
+                            .accessibilityHidden(true)
+                    }
+                }
 
                 if row.channel.hasNoSignal {
                     // Last tune got no signal; still tappable (signal may return).
@@ -314,6 +372,79 @@ private struct RailRowView: View {
         guard total > 0 else { return 0 }
         let elapsed = date.timeIntervalSince(program.start)
         return min(1, max(0, elapsed / total))
+    }
+}
+
+// MARK: - Recent cards
+
+/// Row of recently watched channels above the rail; Select plays the channel.
+private struct RecentCardRow: View {
+    let channels: [Channel]
+    let playingID: Int64?
+    let onSelect: (Channel) -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Recent")
+                .font(Theme.label(24))
+                .foregroundStyle(Theme.dim)
+                .textCase(.uppercase)
+                .padding(.horizontal, 80)
+                .accessibilityAddTraits(.isHeader)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 40) {
+                    ForEach(channels) { channel in
+                        Button {
+                            onSelect(channel)
+                        } label: {
+                            card(for: channel)
+                        }
+                        .buttonStyle(.card)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                onClear()
+                            } label: {
+                                Label("Clear Recent", systemImage: "clock.arrow.circlepath")
+                            }
+                        }
+                        .accessibilityLabel(accessibilityLabel(for: channel))
+                        .accessibilityHint("Play this channel")
+                    }
+                }
+                // Room for the card focus lift so it isn't clipped.
+                .padding(.horizontal, 80)
+                .padding(.vertical, 24)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
+    private func card(for channel: Channel) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(channel.guideNumber)
+                .font(Theme.channelNumber(36))
+                .foregroundStyle(playingID == channel.id ? Theme.amber : Theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(channel.name)
+                .font(Theme.label(22))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .frame(width: 260, alignment: .leading)
+        .background(Theme.raised)
+    }
+
+    private func accessibilityLabel(for channel: Channel) -> String {
+        var parts = ["Channel \(channel.guideNumber)", channel.name]
+        if playingID == channel.id {
+            parts.append("Playing")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
