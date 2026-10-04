@@ -174,6 +174,11 @@ for w, h, name in ((1920, 1080, "fhd"), (1280, 720, "hd")):
 shutil.copy(os.path.join(BRAND, "bowtie-favicon.svg"), out("web/public/favicon.svg"))
 print("web/public/favicon.svg")
 render_file("bowtie-icon.svg", "web/public/apple-touch-icon.png", 180, opaque=True)
+# Installable web app (manifest.webmanifest): plain icons, plus a maskable one
+# whose mark stays inside the 80% safe zone when the launcher crops it.
+render_file("bowtie-icon.svg", "web/public/icon-192.png", 192, opaque=True)
+render_file("bowtie-icon.svg", "web/public/icon-512.png", 512, opaque=True)
+render(svg(1024, 1024, mark(512, 512, 1024 * 0.5)), "web/public/icon-maskable-512.png", 512, opaque=True)
 icos = []
 for px in (16, 32, 48):
     p = os.path.join(TMP, f"fav{px}.png")
