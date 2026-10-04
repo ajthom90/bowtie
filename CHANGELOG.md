@@ -5,6 +5,18 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-10-04
+
+### Added
+
+- **Favorites.** Star a channel (☆ in the web guide; swipe or long-press on
+  iPhone/iPad; click-and-hold Select on Apple TV; the star button or
+  long-press on Android; hold OK or ☰ on Fire TV / Android TV; `*` on Roku).
+  Favorites sit at the top everywhere, and channel up/down on TV visits them
+  first. Favorites follow your account across devices.
+- **Recent.** A row of the channels you watched lately (after 30 seconds of
+  watching, so zapping past a channel doesn't count) on every app.
+
 ## [0.9.0] — 2026-10-03
 
 ### Added
