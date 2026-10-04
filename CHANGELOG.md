@@ -5,7 +5,7 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] — 2026-10-03
 
 ### Added
 
@@ -16,6 +16,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   are never limited. A viewer over a limit sees, for example, "Your account
   can use 1 tuner at a time. Stop another channel first." (HTTP 429,
   `code: "user_limit"`).
+
+### Fixed
+
+- **Android/Fire TV: quick channel changes no longer leave a stream running
+  on the server.** Changing channel again before the last one started now
+  cancels that request outright, so it can't count against an account's
+  limit (or hold a tuner) until it times out.
 
 ## [0.8.0] — 2026-10-03
 
