@@ -6,10 +6,7 @@ name: Windows
 # GitHub Release — so the upload can never race the Release creation.
 on:
   push:
-    # feat/windows-catchup: CI for the catch-up branch before it has a PR
-    # (this workflow isn't on main yet, so it can't be dispatched). Drop it
-    # when the branch is folded into feat/windows.
-    branches: [main, feat/windows-catchup]
+    branches: [main]
     paths:
       - "windows/**"
       - ".github/workflows/windows.yml"
