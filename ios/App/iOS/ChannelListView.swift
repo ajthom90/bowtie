@@ -10,6 +10,8 @@ struct ChannelListView: View {
     @State private var listModel: ChannelListModel?
     @State private var playingChannel: Channel?
     @State private var showSettings = false
+    @State private var showRecordings = false
+    @State private var recordFlow: RecordFlow?
     @State private var now = Date()
 
     @Environment(\.scenePhase) private var scenePhase
@@ -26,6 +28,16 @@ struct ChannelListView: View {
                 .navigationTitle("Channels")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showRecordings = true
+                        } label: {
+                            Image(systemName: "recordingtape")
+                                .foregroundStyle(Theme.amber)
+                        }
+                        .accessibilityLabel("Recordings")
+                        .accessibilityHint("Open your recordings")
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             showSettings = true
@@ -60,6 +72,12 @@ struct ChannelListView: View {
                         .bowtieScreenBackground()
                     }
                 }
+                .navigationDestination(isPresented: $showRecordings) {
+                    if let client = appModel.client {
+                        RecordingsView(client: client, playerModel: playerModel)
+                    }
+                }
+                .recordFlowAlerts(recordFlow)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)
@@ -208,6 +226,14 @@ struct ChannelListView: View {
                 .accessibilityLabel(accessibilityLabel(for: row))
                 .accessibilityHint("Play this channel")
                 .accessibilityAddTraits(.isButton)
+                .contextMenu {
+                    RecordMenuItems(
+                        channel: row.channel,
+                        nowNext: row.nowNext,
+                        flow: recordFlow,
+                        openRecordings: { showRecordings = true }
+                    )
+                }
             }
         }
         .listStyle(.plain)
@@ -221,7 +247,10 @@ struct ChannelListView: View {
 
     private func ensureListModel() async {
         guard listModel == nil, let client = appModel.client else { return }
-        listModel = ChannelListModel(client: client)
+        let model = ChannelListModel(client: client)
+        listModel = model
+        // Reload after scheduling so the program shows its REC mark.
+        recordFlow = RecordFlow(client: client) { Task { await model.load() } }
     }
 
     private func open(channel: Channel) {
@@ -253,6 +282,9 @@ struct ChannelListView: View {
         }
         if let nowTitle = row.nowNext.now?.title, !nowTitle.isEmpty {
             parts.append("Now \(nowTitle)")
+        }
+        if row.nowNext.now?.recording != nil {
+            parts.append("Set to record")
         }
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
@@ -296,10 +328,15 @@ private struct ChannelRowView: View {
 
                 if let program = row.nowNext.now {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(program.title.isEmpty ? "On now" : program.title)
-                            .font(Theme.body(14))
-                            .foregroundStyle(Theme.text.opacity(0.92))
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(program.title.isEmpty ? "On now" : program.title)
+                                .font(Theme.body(14))
+                                .foregroundStyle(Theme.text.opacity(0.92))
+                                .lineLimit(1)
+                            if program.recording != nil {
+                                RecordingMarkDot(size: 10)
+                            }
+                        }
 
                         ProgressCapsule(progress: Self.progress(for: program, at: now))
                             .frame(maxWidth: 180)

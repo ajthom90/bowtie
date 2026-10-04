@@ -12,6 +12,8 @@ struct ChannelRailView: View {
     @State private var listModel: ChannelListModel?
     @State private var playingChannel: Channel?
     @State private var showSettings = false
+    @State private var showRecordings = false
+    @State private var recordFlow: RecordFlow?
     @State private var now = Date()
 
     /// Spec-mandated empty copy (verbatim).
@@ -25,6 +27,17 @@ struct ChannelRailView: View {
             content
                 .navigationTitle("Channels")
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showRecordings = true
+                        } label: {
+                            Label("Recordings", systemImage: "recordingtape")
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(Theme.amber)
+                        }
+                        .accessibilityLabel("Recordings")
+                        .accessibilityHint("Open your recordings")
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             showSettings = true
@@ -57,6 +70,12 @@ struct ChannelRailView: View {
                         .bowtieScreenBackground()
                     }
                 }
+                .navigationDestination(isPresented: $showRecordings) {
+                    if let client = appModel.client {
+                        TVRecordingsView(client: client, playerModel: playerModel)
+                    }
+                }
+                .recordFlowAlerts(recordFlow)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)
@@ -186,7 +205,16 @@ struct ChannelRailView: View {
                 .listRowBackground(Theme.bg)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityLabel(for: row))
-                .accessibilityHint("Play this channel")
+                .accessibilityHint("Play this channel. Press and hold to record.")
+                // Press and hold on the Siri Remote.
+                .contextMenu {
+                    RecordMenuItems(
+                        channel: row.channel,
+                        nowNext: row.nowNext,
+                        flow: recordFlow,
+                        openRecordings: { showRecordings = true }
+                    )
+                }
             }
         }
         .listStyle(.plain)
@@ -197,7 +225,10 @@ struct ChannelRailView: View {
 
     private func ensureListModel() async {
         guard listModel == nil, let client = appModel.client else { return }
-        listModel = ChannelListModel(client: client)
+        let model = ChannelListModel(client: client)
+        listModel = model
+        // Reload after scheduling so the program shows its REC mark.
+        recordFlow = RecordFlow(client: client) { Task { await model.load() } }
     }
 
     private func open(channel: Channel) {
@@ -228,6 +259,9 @@ struct ChannelRailView: View {
         }
         if let nowTitle = row.nowNext.now?.title, !nowTitle.isEmpty {
             parts.append("Now \(nowTitle)")
+        }
+        if row.nowNext.now?.recording != nil {
+            parts.append("Set to record")
         }
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
@@ -275,6 +309,10 @@ private struct RailRowView: View {
                             .font(Theme.body(20))
                             .foregroundStyle(Theme.text.opacity(0.92))
                             .lineLimit(1)
+
+                        if program.recording != nil {
+                            RecordingMarkDot(size: 16)
+                        }
 
                         // Compact progress for the current program.
                         GeometryReader { geo in
