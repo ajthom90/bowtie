@@ -5,6 +5,39 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] — 2026-10-04
+
+### Added
+
+- **Multiview (web).** Watch up to four live channels at once — 1, 2 or a
+  2×2 grid (stacked on phones). One tile has sound: click a tile or press
+  1–4 to move it. Each tile can change channel, go full screen or close, and
+  shows its own error (tuners busy, stream limit, no signal) without stopping
+  the others. Tiles without sound start at a lower quality to save bandwidth.
+  "Restore last" brings back your last set (it never starts streams on its
+  own). Open it from the Multiview button in the guide.
+- **Sleep timer** on iPhone/iPad, Apple TV, Mac, Android and Android TV /
+  Fire TV: 15 minutes to 2 hours, or "End of this program". A minute before,
+  a "Still watching?" prompt lets you keep going; otherwise playback stops
+  and the tuner is freed.
+- **Recording storage and padding (Admin → Recordings).** A storage gauge
+  (recordings, other files, free space), recording counts, a warning when the
+  disk is almost full, and how early to start / how long to keep recording
+  (were fixed at 1 and 3 minutes). End padding now gives way: if another
+  recording needs the tuner when its show starts, a recording that is only
+  in its end padding stops early.
+- **Backup (Admin → Settings → Download backup).** A snapshot of accounts,
+  channels, guide matches, series rules, the recording list and settings —
+  see README → Backup and restore. Token-signing keys and sign-in sessions
+  are left out, so restoring signs everyone out.
+- **Roadmap** (`docs/roadmap.md`): what antenna viewers ask for most, what
+  Bowtie covers, and what's next.
+
+### Fixed
+
+- **Apple apps:** playing a recording no longer stops live TV until the
+  recording actually starts; if it can't, live TV keeps playing.
+
 ## [0.12.1] — 2026-10-04
 
 ### Fixed
