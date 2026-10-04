@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  compareGuideNumber,
   formatGuideTime,
+  sortFavoritesFirst,
+  supportsFavorites,
+  withFavorite,
   GUIDE_COPY,
   halfHourTicks,
   layoutRow,
@@ -270,5 +274,84 @@ describe('receptionNote', () => {
     expect(receptionNote('ok')).toBeNull()
     expect(receptionNote('unknown')).toBeNull()
     expect(receptionNote(undefined)).toBeNull()
+  })
+})
+
+type FavCh = { channelId: number; guideNumber: string; favorite?: boolean }
+
+function ch(channelId: number, guideNumber: string, favorite?: boolean): FavCh {
+  return favorite === undefined ? { channelId, guideNumber } : { channelId, guideNumber, favorite }
+}
+
+const ids = (list: FavCh[]) => list.map((c) => c.channelId)
+
+describe('compareGuideNumber', () => {
+  it('orders major then minor numerically, not as strings', () => {
+    expect(compareGuideNumber('9.1', '11.1')).toBeLessThan(0)
+    expect(compareGuideNumber('5.10', '5.2')).toBeGreaterThan(0)
+    expect(compareGuideNumber('5', '5.1')).toBeLessThan(0)
+    expect(compareGuideNumber('4.1', '4.1')).toBe(0)
+  })
+})
+
+describe('sortFavoritesFirst', () => {
+  it('puts favorites first in guide-number order, then the rest in server order', () => {
+    const input = [
+      ch(1, '11.1', true),
+      ch(2, '2.1', false),
+      ch(3, '9.1', true),
+      ch(4, '13.1', false),
+      ch(5, '4.1', false),
+    ]
+    expect(ids(sortFavoritesFirst(input))).toEqual([3, 1, 2, 4, 5])
+  })
+
+  it('keeps server order when nothing is starred', () => {
+    const input = [ch(1, '11.1', false), ch(2, '2.1', false)]
+    expect(ids(sortFavoritesFirst(input))).toEqual([1, 2])
+  })
+
+  it('sorts by guide number when everything is starred', () => {
+    const input = [ch(1, '11.1', true), ch(2, '2.1', true), ch(3, '2.10', true), ch(4, '2.2', true)]
+    expect(ids(sortFavoritesFirst(input))).toEqual([2, 4, 3, 1])
+  })
+
+  it('leaves an older server (no favorite field) untouched', () => {
+    const input = [ch(1, '11.1'), ch(2, '2.1')]
+    expect(ids(sortFavoritesFirst(input))).toEqual([1, 2])
+  })
+
+  it('handles an empty list and does not mutate its input', () => {
+    expect(sortFavoritesFirst([])).toEqual([])
+    const input = [ch(1, '11.1', false), ch(2, '9.1', true)]
+    const out = sortFavoritesFirst(input)
+    expect(ids(out)).toEqual([2, 1])
+    expect(ids(input)).toEqual([1, 2])
+  })
+})
+
+describe('supportsFavorites', () => {
+  it('is true when the server sends the favorite field', () => {
+    expect(supportsFavorites([ch(1, '2.1', false)])).toBe(true)
+    expect(supportsFavorites([ch(1, '2.1', true)])).toBe(true)
+  })
+  it('is false for an older server or an empty guide', () => {
+    expect(supportsFavorites([ch(1, '2.1')])).toBe(false)
+    expect(supportsFavorites([])).toBe(false)
+  })
+})
+
+describe('withFavorite', () => {
+  it('sets favorite on the one channel and returns a new array', () => {
+    const input = [ch(1, '2.1', false), ch(2, '4.1', false)]
+    const out = withFavorite(input, 2, true)
+    expect(out).not.toBe(input)
+    expect(out.map((c) => c.favorite)).toEqual([false, true])
+    expect(input[1].favorite).toBe(false)
+  })
+  it('clears favorite and leaves unknown ids alone', () => {
+    const input = [ch(1, '2.1', true)]
+    expect(withFavorite(input, 1, false)[0].favorite).toBe(false)
+    expect(withFavorite(input, 99, false)[0].favorite).toBe(true)
   })
 })
