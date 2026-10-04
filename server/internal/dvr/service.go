@@ -108,8 +108,11 @@ type ScheduleRequest struct {
 	Description string
 	Category    string
 	IconURL     string
+	Rating      string
 	Start, Stop time.Time
 	Force       bool // schedule despite a tuner conflict
+	RuleID      int64
+	ProgramID   string
 }
 
 // Service runs the DVR.
@@ -120,6 +123,7 @@ type Service struct {
 	captures  map[int64]*capture // in-flight captures by recording ID
 	deleting  map[int64]bool     // Delete in progress: never start a capture
 	tickMu    sync.Mutex         // one Tick at a time; Shutdown waits for it
+	rulesMu   sync.Mutex         // one ApplyRules at a time
 	convQueue chan int64
 	queued    map[int64]bool
 	lastSweep time.Time
@@ -228,7 +232,8 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
 		Title:       title, Subtitle: req.Subtitle, Description: req.Description,
-		Category: req.Category, IconURL: req.IconURL,
+		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
+		RuleID: req.RuleID, ProgramID: req.ProgramID,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
 		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),
@@ -354,6 +359,7 @@ func (s *Service) Tick() {
 	}
 	if now.Sub(s.lastSweep) >= sweepEvery {
 		s.lastSweep = now
+		s.ApplyRules()
 		s.sweep()
 	}
 }
@@ -383,26 +389,47 @@ func (s *Service) StopNow(id int64) error {
 }
 
 // Delete cancels a scheduled recording or removes a finished one, with its
-// files.
-func (s *Service) Delete(id int64) error {
+// files. An upcoming episode a series rule scheduled is marked skipped
+// instead, so the rule doesn't schedule it again.
+func (s *Service) Delete(id int64) error { return s.delete(id, true) }
+
+// CancelRule removes a series rule's upcoming episodes (stopping any that is
+// capturing). Recorded ones stay.
+func (s *Service) CancelRule(ruleID int64) {
+	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		if r.RuleID == ruleID {
+			_ = s.delete(r.ID, false)
+		}
+	}
+}
+
+func (s *Service) delete(id int64, allowSkip bool) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.deleting[id] = true
+	s.deleting[id] = true // no capture may start for this row from here on
+	c := s.captures[id]
+	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		delete(s.deleting, id)
 		s.mu.Unlock()
 	}()
-	c := s.captures[id]
-	if c != nil {
-		c.shutdown = true // don't finalize: the row is going away
-		c.cancel()
+	if allowSkip && r.RuleID != 0 && r.State == store.RecScheduled && c == nil {
+		r.State, r.Failure, r.FailureDetail = store.RecFailed, "skipped", "Skipped"
+		return s.deps.Store.UpdateRecording(r)
 	}
-	s.mu.Unlock()
 	if c != nil {
+		s.mu.Lock()
+		c.shutdown = true // don't finalize: the row is going away
+		s.mu.Unlock()
+		c.cancel()
 		<-c.done
 	}
 	if err := s.deps.Store.DeleteRecording(id); err != nil {
@@ -748,6 +775,7 @@ func (s *Service) convert(id int64) {
 	for _, p := range parts {
 		_ = os.Remove(p)
 	}
+	s.pruneRule(r.RuleID)
 }
 
 // sweep deletes the oldest unprotected finished recordings while free space
@@ -774,16 +802,19 @@ func (s *Service) sweep() {
 			log.Printf("dvr: low on space, but deleting recordings isn't freeing any; stopping")
 			return
 		}
-		if r.Protected {
+		if r.Protected || r.Failure == "skipped" { // a skip marker keeps a series rule from rescheduling
 			continue
 		}
 		if watching, _ := s.deps.Store.RecordingWatchedSince(r.ID, s.deps.Clock().Add(-inUseWindow)); watching {
 			continue
 		}
+		holdsFiles := r.SizeBytes > 0 || (r.Dir != "" && dirSize(r.Dir) > 0)
 		log.Printf("dvr: low on space (%d bytes free): deleting %q (%s)", free, r.Title, r.Start.Format(time.RFC3339))
 		if err := s.Delete(r.ID); err == nil {
-			deleted++
-			lastFree = free
+			if holdsFiles { // only deletions that should free space count
+				deleted++
+				lastFree = free
+			}
 			if s.onDeleted != nil {
 				s.onDeleted()
 			}

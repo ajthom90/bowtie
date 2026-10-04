@@ -7,6 +7,12 @@ export interface User {
   maxStreams: number
   /** Tuners the account may use alone; 0 = no limit. */
   maxTuners: number
+  /** Parental controls: channels this account may see (null = every channel). */
+  allowedChannelIds?: number[] | null
+  /** Parental controls: highest rating that plays ("" = no limit). */
+  maxRating?: string
+  /** Parental controls: also block programs without a rating. */
+  blockUnrated?: boolean
 }
 
 export interface LoginResponse {
@@ -36,7 +42,34 @@ export interface GuideProgram {
   subtitle: string
   description: string
   category: string
+  /** Guide program ID of the episode (when the source has one). */
+  programId?: string
+  /** Series ID of the show (when the source has one). */
+  seriesId?: string
+  /** First airing. */
+  isNew?: boolean
+  /** Rating from the guide source (e.g. TV-14; "" = not rated). */
+  rating?: string
+  /** Parental controls block this program for the caller (description is hidden). */
+  locked?: boolean
   /** Present when this program is scheduled, recording or recorded. */
+  recording?: GuideRecordingMark
+}
+
+/** GET /api/v1/guide/search item: an on-now or upcoming program. */
+export interface GuideSearchResult {
+  channelId: number
+  guideNumber: string
+  channelName: string
+  logoUrl: string
+  start: string
+  stop: string
+  title: string
+  subtitle: string
+  description: string
+  category: string
+  rating?: string
+  locked?: boolean
   recording?: GuideRecordingMark
 }
 
@@ -56,7 +89,7 @@ export type RecordingState =
   | 'ready'
   | 'failed'
 
-export type RecordingFailure = '' | 'noTuner' | 'noSignal' | 'diskFull' | 'error'
+export type RecordingFailure = '' | 'noTuner' | 'noSignal' | 'diskFull' | 'error' | 'skipped'
 
 export interface Recording {
   id: number
@@ -83,6 +116,54 @@ export interface Recording {
   scheduledBy: string
   /** The caller may stop, delete or protect it (scheduler or admin). */
   canManage: boolean
+  /** The program's rating when scheduled ("" = not rated). */
+  rating?: string
+  /** Series rule that scheduled it (0 = one-off). */
+  ruleId?: number
+  /** Parental controls block it for the caller (no description; play is 403). */
+  locked?: boolean
+}
+
+/** A series recording rule (GET/POST /recording-rules). */
+export interface RecordingRule {
+  id: number
+  title: string
+  seriesId: string
+  /** 0 = any channel. */
+  channelId: number
+  channelName: string
+  newOnly: boolean
+  /** Keep only this many recordings (0 = all). */
+  keepLatest: number
+  scheduledBy: string
+  canManage: boolean
+  createdAt: string
+}
+
+export interface CreateRecordingRuleRequest {
+  channelId: number
+  programStart: string
+  anyChannel: boolean
+  newOnly: boolean
+  keepLatest: number
+}
+
+export interface CreateRecordingRuleResponse {
+  rule: RecordingRule
+  /** Upcoming airings scheduled now. */
+  scheduled: number
+}
+
+/** POST /me/feed: IPTV links for other apps. */
+export interface FeedResponse {
+  key: string
+  m3uUrl: string
+  xmltvUrl: string
+}
+
+/** GET /auth/device/{code}: the device asking to sign in. */
+export interface DeviceLookup {
+  deviceName: string
 }
 
 /** GET /recordings?state= filter. */
@@ -212,6 +293,8 @@ export interface EPGSourceState {
 export interface EPGSourceStatus {
   xmltv: EPGSourceState
   sd: EPGSourceState
+  /** Free HDHomeRun guide (absent on older servers). */
+  hdhomerun?: EPGSourceState
 }
 
 export interface EPGChannel {
@@ -219,7 +302,7 @@ export interface EPGChannel {
   displayName: string
   callsign: string
   iconUrl: string
-  source: 'xmltv' | 'sd'
+  source: 'xmltv' | 'sd' | 'hdhomerun'
 }
 
 export interface TranscodeStatus {
@@ -264,6 +347,10 @@ export interface PatchUserRequest {
   maxStreams?: number
   maxTuners?: number
   password?: string
+  /** null = every channel; omit to keep. */
+  allowedChannelIds?: number[] | null
+  maxRating?: string
+  blockUnrated?: boolean
 }
 
 export interface PatchChannelRequest {
@@ -293,6 +380,12 @@ export interface SettingsTranscode {
 
 export interface SettingsStreaming {
   bufferMinutes: number
+  adaptive?: boolean
+}
+
+export interface SettingsHDHomeRun {
+  /** Fetch the free guide from SiliconDust's HDHomeRun XMLTV API. */
+  enabled: boolean
 }
 
 /** GET /api/v1/admin/settings */
@@ -301,6 +394,8 @@ export interface Settings {
   schedulesDirect: SettingsSchedulesDirect
   transcode: SettingsTranscode
   streaming: SettingsStreaming
+  /** Absent on servers older than the HDHomeRun guide. */
+  hdhomerun?: SettingsHDHomeRun
 }
 
 /** PUT /api/v1/admin/settings — section merge; omit sections to leave untouched. */
@@ -308,7 +403,8 @@ export interface PutSettingsRequest {
   xmltv?: { source: string; refreshHours: number }
   schedulesDirect?: { username: string; password?: string; lineupId: string }
   transcode?: { encoder: string; allowHevc: boolean }
-  streaming?: { bufferMinutes: number }
+  streaming?: { bufferMinutes: number; adaptive?: boolean }
+  hdhomerun?: SettingsHDHomeRun
 }
 
 export interface SDLineupSummary {
@@ -382,8 +478,36 @@ export class ApiClient {
     return this.request<GuideChannel[]>('GET', `/api/v1/guide?${q}`)
   }
 
+  /** On-now and upcoming programs whose title, episode or description matches q. */
+  async searchGuide(q: string, limit = 50): Promise<GuideSearchResult[]> {
+    const params = new URLSearchParams({ q, limit: String(limit) })
+    return this.request<GuideSearchResult[]>('GET', `/api/v1/guide/search?${params}`)
+  }
+
   async getChannels(): Promise<ViewerChannel[]> {
     return this.request<ViewerChannel[]>('GET', '/api/v1/channels')
+  }
+
+  // ── IPTV feed (per user) ─────────────────────────────────────────────────
+
+  /** Creates or rotates the caller's feed key; the old links stop working. */
+  async createFeed(): Promise<FeedResponse> {
+    return this.request<FeedResponse>('POST', '/api/v1/me/feed')
+  }
+
+  async deleteFeed(): Promise<void> {
+    await this.request<void>('DELETE', '/api/v1/me/feed')
+  }
+
+  // ── Quick sign-in (approve a TV) ─────────────────────────────────────────
+
+  /** 404 when the code expired or doesn't exist. */
+  async lookupDevice(userCode: string): Promise<DeviceLookup> {
+    return this.request<DeviceLookup>('GET', `/api/v1/auth/device/${encodeURIComponent(userCode)}`)
+  }
+
+  async approveDevice(userCode: string): Promise<void> {
+    await this.request<void>('POST', '/api/v1/auth/device/approve', { userCode })
   }
 
   // ── Favorites / recents (per user) ───────────────────────────────────────
@@ -434,19 +558,35 @@ export class ApiClient {
       return
     }
     let msg = res.statusText
+    let body: unknown
     try {
       const text = await res.text()
       if (text) {
         const data = JSON.parse(text) as { error?: string }
+        body = data
         if (data.error) msg = data.error
       }
     } catch {
       // ignore parse errors
     }
-    throw new ApiError(res.status, msg || 'heartbeat failed')
+    throw new ApiError(res.status, msg || 'heartbeat failed', body)
   }
 
   // ── DVR ──────────────────────────────────────────────────────────────────
+
+  async listRecordingRules(): Promise<RecordingRule[]> {
+    return this.request<RecordingRule[]>('GET', '/api/v1/recording-rules')
+  }
+
+  /** Records a show from one of its guide programs; schedules upcoming airings now. */
+  async createRecordingRule(body: CreateRecordingRuleRequest): Promise<CreateRecordingRuleResponse> {
+    return this.request<CreateRecordingRuleResponse>('POST', '/api/v1/recording-rules', body)
+  }
+
+  /** Stops recording a show: upcoming recordings are cancelled, recorded ones stay. */
+  async deleteRecordingRule(id: number): Promise<void> {
+    await this.request<void>('DELETE', `/api/v1/recording-rules/${id}`)
+  }
 
   async listRecordings(state?: RecordingsFilter): Promise<Recording[]> {
     const q = state ? `?${new URLSearchParams({ state })}` : ''

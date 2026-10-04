@@ -42,7 +42,11 @@ type recordingJSON struct {
 	PositionSec   int       `json:"positionSec"`
 	ScheduledBy   string    `json:"scheduledBy"`
 	// CanManage: the caller may stop, delete or protect it (owner or admin).
-	CanManage bool `json:"canManage"`
+	CanManage bool   `json:"canManage"`
+	Rating    string `json:"rating"`
+	RuleID    int64  `json:"ruleId"` // series rule that scheduled it (0 = one-off)
+	// Locked: parental controls block it for the caller (no description, no play).
+	Locked bool `json:"locked"`
 }
 
 func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names map[int64]string) recordingJSON {
@@ -53,6 +57,7 @@ func (s *Server) recordingToJSON(r store.Recording, claims auth.Claims, names ma
 		State: r.State, Partial: r.Partial, Failure: r.Failure, FailureDetail: r.FailureDetail,
 		DurationSec: r.DurationSec, SizeBytes: r.SizeBytes, Protected: r.Protected, PositionSec: pos,
 		ScheduledBy: names[r.UserID], CanManage: claims.Role == "admin" || claims.UserID == r.UserID,
+		Rating: r.Rating, RuleID: r.RuleID,
 	}
 }
 
@@ -100,9 +105,17 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Start.After(rows[j].Start) })
 	}
 	names := s.userNames()
+	policy := s.callerPolicy(r)
 	out := make([]recordingJSON, 0, len(rows))
 	for _, rec := range rows {
-		out = append(out, s.recordingToJSON(rec, claims, names))
+		if !policy.ChannelAllowed(rec.ChannelID) {
+			continue
+		}
+		j := s.recordingToJSON(rec, claims, names)
+		if !policy.ProgramAllowed(rec.Rating) {
+			j.Locked, j.Description = true, ""
+		}
+		out = append(out, j)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -143,12 +156,26 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "program not found in the guide")
 			return
 		}
-		sr.Title, sr.Subtitle, sr.Description, sr.Category = p.Title, p.Subtitle, p.Description, p.Category
+		sr.Title, sr.Subtitle, sr.Description, sr.Category, sr.Rating = p.Title, p.Subtitle, p.Description, p.Category, p.Rating
 		sr.Start, sr.Stop = p.Start, p.Stop
 	case req.Start != nil && req.Stop != nil:
 		sr.Start, sr.Stop = req.Start.UTC(), req.Stop.UTC()
+		// A manual window holds whatever airs in it: keep the strictest rating.
+		sr.Rating = s.windowRating(r, ch.ID, sr.Start, sr.Stop)
 	default:
 		writeError(w, http.StatusBadRequest, "send programStart, or start and stop")
+		return
+	}
+	u, err := s.deps.Store.UserByID(claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if p := policyFor(u); !p.ChannelAllowed(ch.ID) {
+		writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
+		return
+	} else if !p.ProgramAllowed(sr.Rating) {
+		writeParentalBlock(w, p.Reason(sr.Rating))
 		return
 	}
 
@@ -161,8 +188,13 @@ func (s *Server) handleCreateRecording(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &conflict):
 		names := s.userNames()
 		list := make([]recordingJSON, 0, len(conflict.Conflicts))
+		pol := policyFor(u)
 		for _, c := range conflict.Conflicts {
-			list = append(list, s.recordingToJSON(c, claims, names))
+			j := s.recordingToJSON(c, claims, names)
+			if !pol.ChannelAllowed(c.ChannelID) || !pol.ProgramAllowed(c.Rating) {
+				j.Title, j.Subtitle, j.Description, j.Locked = "Another recording", "", "", true
+			}
+			list = append(list, j)
 		}
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":      fmt.Sprintf("Only %d tuners: other recordings already need them then. Record anyway to try if one frees up.", conflict.TunerCount),
@@ -208,24 +240,14 @@ func (s *Server) findProgram(r *http.Request, channelID int64, start time.Time) 
 // markRecordings sets GuideProgram.Recording for scheduled/in-progress/ready
 // recordings that match a program's channel and start.
 func (s *Server) markRecordings(guide []epg.GuideChannel) {
-	rows, err := s.deps.Store.ListRecordings(store.RecScheduled, store.RecWaiting, store.RecRecording, store.RecConverting, store.RecReady)
-	if err != nil || len(rows) == 0 {
+	recs := s.recordingsByProgram()
+	if len(recs) == 0 {
 		return
-	}
-	type key struct {
-		ch    int64
-		start int64
-	}
-	byKey := map[key]store.Recording{}
-	for _, rec := range rows {
-		byKey[key{rec.ChannelID, rec.Start.Unix()}] = rec
 	}
 	for i := range guide {
 		for j := range guide[i].Programs {
 			p := &guide[i].Programs[j]
-			if rec, ok := byKey[key{guide[i].ChannelID, p.Start.Unix()}]; ok {
-				p.Recording = &epg.GuideRecording{ID: rec.ID, State: rec.State}
-			}
+			p.Recording = recs[programKey{guide[i].ChannelID, p.Start.Unix()}]
 		}
 	}
 }
@@ -331,6 +353,18 @@ func (s *Server) handlePlayRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	if rec.State != store.RecReady {
 		writeError(w, http.StatusConflict, "this recording isn't ready to play yet")
+		return
+	}
+	u, err := s.deps.Store.UserByID(claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if p := policyFor(u); !p.ChannelAllowed(rec.ChannelID) {
+		writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
+		return
+	} else if !p.ProgramAllowed(rec.Rating) {
+		writeParentalBlock(w, p.Reason(rec.Rating))
 		return
 	}
 	tok := stream.SignStreamToken(s.deps.StreamTokenSecret, recTokenSubject(id), time.Now().UTC().Add(streamTokenTTL))

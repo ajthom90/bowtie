@@ -253,3 +253,20 @@ describe('streaming.adaptive', () => {
     expect(form.streaming.adaptive).toBe(false)
   })
 })
+
+describe('HDHomeRun free guide setting', () => {
+  it('seeds the toggle from the server', () => {
+    expect(formFrom(sampleSettings({ hdhomerun: { enabled: true } })).hdhomerun).toEqual({ enabled: true })
+    expect(formFrom(sampleSettings({ hdhomerun: { enabled: false } })).hdhomerun).toEqual({ enabled: false })
+  })
+
+  it('is null on servers without the setting (toggle hidden)', () => {
+    expect(formFrom(sampleSettings()).hdhomerun).toBeNull()
+  })
+
+  it('saves only the hdhomerun section', () => {
+    const form = formFrom(sampleSettings({ hdhomerun: { enabled: true } }))
+    form.hdhomerun = { enabled: false }
+    expect(buildSectionPayload('hdhomerun', form)).toEqual({ hdhomerun: { enabled: false } })
+  })
+})

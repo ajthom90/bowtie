@@ -8,16 +8,24 @@ import { formatTimeRange } from '../guide/guideModel'
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 
-export type RecordingsTab = 'upcoming' | 'recorded' | 'missed'
+export type RecordingsTab = 'upcoming' | 'recorded' | 'missed' | 'shows'
+
+/** Tabs that list recordings (Shows lists series rules instead). */
+export type RecordingListTab = Exclude<RecordingsTab, 'shows'>
 
 export const RECORDINGS_TABS: { id: RecordingsTab; label: string }[] = [
   { id: 'upcoming', label: 'Upcoming' },
   { id: 'recorded', label: 'Recorded' },
   { id: 'missed', label: 'Missed' },
+  { id: 'shows', label: 'Shows' },
 ]
 
+export function isListTab(tab: RecordingsTab): tab is RecordingListTab {
+  return tab !== 'shows'
+}
+
 /** Server filter for a tab. The server filters and sorts; Missed = failed. */
-export function tabQuery(tab: RecordingsTab): RecordingsFilter {
+export function tabQuery(tab: RecordingListTab): RecordingsFilter {
   return tab === 'missed' ? 'failed' : tab
 }
 
@@ -25,6 +33,7 @@ export const EMPTY_TAB_COPY: Record<RecordingsTab, string> = {
   upcoming: 'Nothing scheduled. Pick a show in the guide and choose Record.',
   recorded: 'No recordings yet.',
   missed: 'No missed recordings.',
+  shows: 'No shows yet. Pick a program in the guide and choose Record series.',
 }
 
 // ── Labels ──────────────────────────────────────────────────────────────────
@@ -67,9 +76,24 @@ export function failureText(failure: RecordingFailure | string, detail: string):
       return 'Disk full'
     case 'error':
       return detail.trim() || 'Something went wrong'
+    case 'skipped':
+      return 'Skipped'
     default:
       return ''
   }
+}
+
+/** The failure line on a failed row: "Missed: No signal", or "Skipped" for a skipped episode. */
+export function failureLine(rec: Pick<Recording, 'state' | 'failure' | 'failureDetail'>): string {
+  if (rec.state !== 'failed') return ''
+  const text = failureText(rec.failure, rec.failureDetail)
+  if (!text) return ''
+  return rec.failure === 'skipped' ? text : `Missed: ${text}`
+}
+
+/** Scheduled by a series rule ("Series" badge). */
+export function isSeriesRecording(rec: Pick<Recording, 'ruleId'>): boolean {
+  return (rec.ruleId ?? 0) > 0
 }
 
 // ── Formatting ──────────────────────────────────────────────────────────────
@@ -202,6 +226,8 @@ export function conflictLine(rec: Pick<Recording, 'title' | 'channelName' | 'sta
 
 export type RowActions = {
   play: boolean
+  /** Play is shown but disabled: parental controls block it. */
+  playLocked: boolean
   stop: boolean
   /** Cancel an upcoming recording, or delete one with files. */
   remove: 'cancel' | 'delete' | null
@@ -209,11 +235,12 @@ export type RowActions = {
   keep: boolean
 }
 
-export function rowActions(rec: Pick<Recording, 'state' | 'canManage'>): RowActions {
+export function rowActions(rec: Pick<Recording, 'state' | 'canManage' | 'locked'>): RowActions {
   const manage = rec.canManage
   const upcoming = rec.state === 'scheduled' || rec.state === 'waiting'
   return {
     play: rec.state === 'ready',
+    playLocked: rec.locked === true,
     stop: manage && rec.state === 'recording',
     remove: manage ? (upcoming ? 'cancel' : 'delete') : null,
     keep: manage && (rec.state === 'ready' || rec.state === 'converting'),

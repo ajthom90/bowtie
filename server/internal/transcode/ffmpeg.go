@@ -49,7 +49,9 @@ func BuildArgs(s JobSpec) []string {
 	// omit_endlist: FFmpeg exits gracefully when Bowtie closes its input (a
 	// restart Bowtie triggers); its trailer must not tell players the stream
 	// is over, because the restarted process continues the same playlist.
-	hlsFlags := "delete_segments+temp_file+omit_endlist"
+	// program_date_time: SharePlay syncs live HLS by EXT-X-PROGRAM-DATE-TIME,
+	// and every participant reads the same playlist (one clock).
+	hlsFlags := "delete_segments+temp_file+omit_endlist+program_date_time"
 	if s.VOD {
 		hlsFlags = "temp_file"
 	}

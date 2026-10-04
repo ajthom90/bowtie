@@ -35,7 +35,9 @@ struct ConnectView: View {
 
                     // Placeholder doubles as the full-screen keyboard prompt on tvOS.
                     TextField(Self.placeholder, text: $urlText)
+                        #if !os(macOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .keyboardType(.URL)

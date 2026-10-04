@@ -215,7 +215,7 @@ func TestSweepSkipsRecordingInUseAndStopsWhenNotFreeing(t *testing.T) {
 		id, _ := e.st.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "old",
 			Start: st, Stop: st.Add(time.Hour), State: store.RecScheduled, CreatedAt: t0})
 		r, _ := e.st.RecordingByID(id)
-		r.State, r.Dir = store.RecReady, dir
+		r.State, r.Dir, r.SizeBytes = store.RecReady, dir, 500 // holds files
 		_ = e.st.UpdateRecording(r)
 		ids = append(ids, id)
 	}
@@ -234,5 +234,62 @@ func TestSweepSkipsRecordingInUseAndStopsWhenNotFreeing(t *testing.T) {
 	}
 	if left != 1 {
 		t.Fatalf("sweep kept deleting although space didn't come back (left %d of 2)", left)
+	}
+}
+
+// I-4: failed rows without files don't make the sweep give up before it
+// reaches recordings that free space.
+func TestSweepNotStoppedByEmptyFailedRows(t *testing.T) {
+	e := newEnv(t)
+	for i := 0; i < 3; i++ { // oldest: failed, no files
+		st := t0.Add(-time.Duration(20-i) * time.Hour)
+		id, _ := e.st.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "missed",
+			Start: st, Stop: st.Add(time.Hour), State: store.RecScheduled, CreatedAt: t0})
+		r, _ := e.st.RecordingByID(id)
+		r.State, r.Failure = store.RecFailed, "noTuner"
+		_ = e.st.UpdateRecording(r)
+	}
+	dir := filepath.Join(e.dir, "big")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "x"), make([]byte, 1000), 0o644)
+	st := t0.Add(-5 * time.Hour)
+	big, _ := e.st.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "big",
+		Start: st, Stop: st.Add(time.Hour), State: store.RecScheduled, CreatedAt: t0})
+	r, _ := e.st.RecordingByID(big)
+	r.State, r.Dir, r.SizeBytes = store.RecReady, dir, 1000
+	_ = e.st.UpdateRecording(r)
+	free := int64(0)
+	e.svc.deps.MinFreeBytes = 100
+	e.svc.deps.FreeBytes = func(string) (int64, error) { return free, nil }
+	e.svc.onDeleted = func() {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			free = 1000
+		}
+	}
+	e.svc.sweep()
+	if _, err := e.st.RecordingByID(big); err == nil {
+		t.Fatal("sweep stopped at empty failed rows and never freed space")
+	}
+}
+
+// M-1: deleting a series rule's episode while it is capturing stops the
+// capture (it doesn't just mark it skipped and keep recording).
+func TestDeleteActiveRuleEpisodeStopsCapture(t *testing.T) {
+	e := newEnv(t)
+	r := e.schedule(t, "9.1", t0.Add(time.Minute), t0.Add(30*time.Minute))
+	rec, _ := e.st.RecordingByID(r.ID)
+	rec.RuleID = 7
+	_ = e.st.UpdateRecording(rec)
+	e.clock.Set(r.WindowStart())
+	e.svc.Tick()
+	waitState(t, e.st, r.ID, store.RecRecording)
+	if err := e.svc.Delete(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.mu.Lock()
+	n := len(e.svc.captures)
+	e.svc.mu.Unlock()
+	if n != 0 {
+		t.Fatal("capture kept running after delete")
 	}
 }

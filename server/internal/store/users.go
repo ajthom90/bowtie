@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,15 +16,22 @@ type User struct {
 	MaxQuality   string // profile name or "" = unlimited
 	MaxStreams   int    // concurrent streams; 0 = unlimited
 	MaxTuners    int    // tuners used alone (channels no other account watches); 0 = unlimited
-	CreatedAt    time.Time
+	// Parental controls (see internal/parental). nil AllowedChannels = every
+	// channel; MaxRating is a ladder level (0 = no limit).
+	AllowedChannels []int64
+	MaxRating       int
+	BlockUnrated    bool
+	CreatedAt       time.Time
 }
 
 // CreateUser inserts a user and returns its ID.
 func (s *Store) CreateUser(u User) (int64, error) {
 	res, err := s.db.Exec(`
-		INSERT INTO users (username, password_hash, role, max_quality, max_streams, max_tuners, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, u.Username, u.PasswordHash, u.Role, u.MaxQuality, u.MaxStreams, u.MaxTuners, formatTime(u.CreatedAt))
+		INSERT INTO users (username, password_hash, role, max_quality, max_streams, max_tuners,
+			allowed_channels, max_rating, block_unrated, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, u.Username, u.PasswordHash, u.Role, u.MaxQuality, u.MaxStreams, u.MaxTuners,
+		joinIDs(u.AllowedChannels), u.MaxRating, boolToInt(u.BlockUnrated), formatTime(u.CreatedAt))
 	if err != nil {
 		return 0, err
 	}
@@ -32,7 +41,7 @@ func (s *Store) CreateUser(u User) (int64, error) {
 // UserByUsername returns the user with the given username, or sql.ErrNoRows.
 func (s *Store) UserByUsername(name string) (User, error) {
 	return s.scanUser(s.db.QueryRow(`
-		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, created_at
+		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, allowed_channels, max_rating, block_unrated, created_at
 		FROM users WHERE username = ?
 	`, name))
 }
@@ -40,7 +49,7 @@ func (s *Store) UserByUsername(name string) (User, error) {
 // UserByID returns the user with the given id, or sql.ErrNoRows.
 func (s *Store) UserByID(id int64) (User, error) {
 	return s.scanUser(s.db.QueryRow(`
-		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, created_at
+		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, allowed_channels, max_rating, block_unrated, created_at
 		FROM users WHERE id = ?
 	`, id))
 }
@@ -48,7 +57,7 @@ func (s *Store) UserByID(id int64) (User, error) {
 // ListUsers returns all users ordered by id.
 func (s *Store) ListUsers() ([]User, error) {
 	rows, err := s.db.Query(`
-		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, created_at
+		SELECT id, username, password_hash, role, max_quality, max_streams, max_tuners, allowed_channels, max_rating, block_unrated, created_at
 		FROM users ORDER BY id
 	`)
 	if err != nil {
@@ -70,8 +79,10 @@ func (s *Store) ListUsers() ([]User, error) {
 // UpdateUser updates username, role, maxQuality and limits for the user with u.ID.
 func (s *Store) UpdateUser(u User) error {
 	res, err := s.db.Exec(`
-		UPDATE users SET username = ?, role = ?, max_quality = ?, max_streams = ?, max_tuners = ? WHERE id = ?
-	`, u.Username, u.Role, u.MaxQuality, u.MaxStreams, u.MaxTuners, u.ID)
+		UPDATE users SET username = ?, role = ?, max_quality = ?, max_streams = ?, max_tuners = ?,
+			allowed_channels = ?, max_rating = ?, block_unrated = ? WHERE id = ?
+	`, u.Username, u.Role, u.MaxQuality, u.MaxStreams, u.MaxTuners,
+		joinIDs(u.AllowedChannels), u.MaxRating, boolToInt(u.BlockUnrated), u.ID)
 	if err != nil {
 		return err
 	}
@@ -122,6 +133,7 @@ func (s *Store) DeleteUser(id int64) error {
 	for _, q := range []string{
 		`DELETE FROM user_favorites WHERE user_id = ?`,
 		`DELETE FROM user_recents WHERE user_id = ?`,
+		`DELETE FROM recording_rules WHERE user_id = ?`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
 			return err
@@ -147,14 +159,52 @@ func (s *Store) scanUser(row scannable) (User, error) {
 
 func scanUserRow(row scannable) (User, error) {
 	var u User
-	var created string
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.MaxQuality, &u.MaxStreams, &u.MaxTuners, &created)
+	var created, allowed string
+	var blockUnrated int
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.MaxQuality, &u.MaxStreams, &u.MaxTuners,
+		&allowed, &u.MaxRating, &blockUnrated, &created)
 	if err != nil {
 		return User{}, err
 	}
+	u.AllowedChannels, u.BlockUnrated = splitIDs(allowed), blockUnrated != 0
 	u.CreatedAt, err = parseTime(created)
 	if err != nil {
 		return User{}, err
 	}
 	return u, nil
+}
+
+// joinIDs stores a channel allowlist ("" for nil = every channel). An empty
+// non-nil list (nothing allowed) is stored as "-".
+func joinIDs(ids []int64) string {
+	if ids == nil {
+		return ""
+	}
+	if len(ids) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(parts, ",")
+}
+
+func splitIDs(s string) []int64 {
+	switch s {
+	case "":
+		return nil
+	case "-":
+		return []int64{}
+	}
+	var out []int64
+	for _, p := range strings.Split(s, ",") {
+		if id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64); err == nil {
+			out = append(out, id)
+		}
+	}
+	if out == nil {
+		out = []int64{}
+	}
+	return out
 }

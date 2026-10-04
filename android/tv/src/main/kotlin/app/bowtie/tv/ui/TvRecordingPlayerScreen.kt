@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 
 /** How long the progress bar stays up after a key press while playing. */
@@ -84,6 +86,26 @@ fun TvRecordingPlayerScreen(
     var infoNonce by remember { mutableIntStateOf(0) }
     var infoVisible by remember { mutableStateOf(true) }
     var lastSavedMs by remember { mutableLongStateOf(-1L) }
+    var retrying by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    /** Ask for a fresh playlist (tokens expire) and pick up where playback stopped. */
+    fun retry() {
+        if (retrying) return
+        val atSec = RecordingLogic.retryStartSec(player.currentPosition, startAtSec)
+        retrying = true
+        error = null
+        scope.launch {
+            try {
+                when (val r = viewModel.retryPlayback(start.recording)) {
+                    is RecordingsViewModel.Retry.Ready -> VodPlayer.load(player, r.playlistUrl, server, atSec)
+                    is RecordingsViewModel.Retry.Failed -> error = "${r.message} Press OK to try again."
+                }
+            } finally {
+                retrying = false
+            }
+        }
+    }
 
     fun save() {
         if (player.playbackState == Player.STATE_IDLE && player.currentPosition == 0L) return
@@ -169,10 +191,8 @@ fun TvRecordingPlayerScreen(
     fun apply(action: VodKeys.Action) {
         when (action) {
             VodKeys.Action.PlayPause -> {
-                if (error != null) {
-                    error = null
-                    player.prepare()
-                    player.play()
+                if (error != null || retrying) {
+                    retry()
                 } else if (player.isPlaying) {
                     player.pause()
                 } else {

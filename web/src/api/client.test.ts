@@ -163,6 +163,17 @@ describe('ApiClient.heartbeat', () => {
       status: 404,
     })
   })
+
+  it('keeps the error body (parental 403 code) on failure', async () => {
+    const body = { error: 'Blocked by parental controls (rated TV-MA)', code: 'parental' }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 403 })))
+    const client = new ApiClient(() => null, () => {})
+    const err = await client.heartbeat('v', 'tok').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(403)
+    expect((err as ApiError).message).toBe(body.error)
+    expect((err as ApiError).body).toEqual(body)
+  })
 })
 
 describe('ApiClient favorites and recents', () => {
@@ -367,5 +378,103 @@ describe('ApiClient recordings', () => {
     const res = await client.playRecording(7)
     expect(res.positionSec).toBe(412)
     expect(call()).toMatchObject({ path: '/api/v1/recordings/7/play', method: 'POST' })
+  })
+})
+
+describe('ApiClient search, series rules, feed and quick sign-in', () => {
+  let client: ApiClient
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    client = new ApiClient(
+      () => 'tok',
+      () => {},
+    )
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  const noContent = () => new Response(null, { status: 204 })
+
+  const call = (i = 0) => {
+    const [path, init] = fetchMock.mock.calls[i] as [string, RequestInit]
+    return {
+      path,
+      method: init.method,
+      body: init.body ? JSON.parse(String(init.body)) : undefined,
+      auth: (init.headers as Record<string, string>).Authorization,
+    }
+  }
+
+  it('searches the guide with an encoded query and limit', async () => {
+    fetchMock.mockResolvedValueOnce(json([]))
+    await client.searchGuide('law & order', 25)
+    expect(call()).toMatchObject({
+      path: '/api/v1/guide/search?q=law+%26+order&limit=25',
+      method: 'GET',
+      auth: 'Bearer tok',
+    })
+  })
+
+  it('lists, creates and deletes recording rules', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json({ rule: { id: 3 }, scheduled: 4 }, 201))
+      .mockResolvedValueOnce(noContent())
+    await client.listRecordingRules()
+    const res = await client.createRecordingRule({
+      channelId: 2,
+      programStart: '2026-10-04T19:00:00Z',
+      anyChannel: false,
+      newOnly: true,
+      keepLatest: 5,
+    })
+    await client.deleteRecordingRule(3)
+    expect(res.scheduled).toBe(4)
+    expect(call(0)).toMatchObject({ path: '/api/v1/recording-rules', method: 'GET' })
+    expect(call(1)).toMatchObject({
+      path: '/api/v1/recording-rules',
+      method: 'POST',
+      body: {
+        channelId: 2,
+        programStart: '2026-10-04T19:00:00Z',
+        anyChannel: false,
+        newOnly: true,
+        keepLatest: 5,
+      },
+    })
+    expect(call(2)).toMatchObject({ path: '/api/v1/recording-rules/3', method: 'DELETE' })
+  })
+
+  it('creates and turns off the IPTV feed', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ key: 'k', m3uUrl: 'http://h/a.m3u', xmltvUrl: 'http://h/g.xml' }))
+      .mockResolvedValueOnce(noContent())
+    const feed = await client.createFeed()
+    await client.deleteFeed()
+    expect(feed.m3uUrl).toBe('http://h/a.m3u')
+    expect(call(0)).toMatchObject({ path: '/api/v1/me/feed', method: 'POST' })
+    expect(call(1)).toMatchObject({ path: '/api/v1/me/feed', method: 'DELETE' })
+  })
+
+  it('looks up and approves a quick sign-in code', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ deviceName: 'Living room' }))
+      .mockResolvedValueOnce(noContent())
+    const d = await client.lookupDevice('BCDF2345')
+    await client.approveDevice('BCDF2345')
+    expect(d.deviceName).toBe('Living room')
+    expect(call(0)).toMatchObject({ path: '/api/v1/auth/device/BCDF2345', method: 'GET', auth: 'Bearer tok' })
+    expect(call(1)).toMatchObject({
+      path: '/api/v1/auth/device/approve',
+      method: 'POST',
+      body: { userCode: 'BCDF2345' },
+    })
   })
 })

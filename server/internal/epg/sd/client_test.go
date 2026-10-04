@@ -478,11 +478,7 @@ func TestToStore(t *testing.T) {
 	scheds := []StationSchedule{
 		{
 			StationID: "20454",
-			Programs: []struct {
-				ProgramID   string    `json:"programID"`
-				AirDateTime time.Time `json:"airDateTime"`
-				Duration    int       `json:"duration"`
-			}{
+			Programs: []ScheduledProgram{
 				{ProgramID: "EP0001", AirDateTime: air, Duration: 1800},
 			},
 		},
@@ -541,5 +537,44 @@ func TestProgramsEmpty(t *testing.T) {
 	}
 	if f.programsPOSTs.Load() != 0 {
 		t.Fatalf("unexpected POSTs = %d", f.programsPOSTs.Load())
+	}
+}
+
+// SD sends ratings per airing ("ratings") and per program ("contentRating");
+// codes like "TV14" (no hyphen).
+func TestToStoreRatings(t *testing.T) {
+	var scheds []StationSchedule
+	if err := json.Unmarshal([]byte(`[{"stationID":"1","programs":[
+		{"programID":"EP1","airDateTime":"2026-10-04T01:00:00Z","duration":3600,"ratings":[{"body":"USA Parental Rating","code":"TV14"}]},
+		{"programID":"MV2","airDateTime":"2026-10-04T02:00:00Z","duration":3600},
+		{"programID":"SH3","airDateTime":"2026-10-04T03:00:00Z","duration":3600}]}]`), &scheds); err != nil {
+		t.Fatal(err)
+	}
+	var details map[string]ProgramDetail
+	if err := json.Unmarshal([]byte(`{
+		"EP1":{"programID":"EP1","titles":[{"title120":"Drama"}]},
+		"MV2":{"programID":"MV2","titles":[{"title120":"Movie"}],"contentRating":[{"body":"Motion Picture Association of America","code":"PG-13"}]},
+		"SH3":{"programID":"SH3","titles":[{"title120":"News"}]}}`), &details); err != nil {
+		t.Fatal(err)
+	}
+	_, progs := ToStore(Lineup{}, scheds, details)
+	if len(progs) != 3 || progs[0].Rating != "TV14" || progs[1].Rating != "PG-13" || progs[2].Rating != "" {
+		t.Fatalf("%+v", progs)
+	}
+}
+
+func TestToStoreSeriesIDs(t *testing.T) {
+	var scheds []StationSchedule
+	if err := json.Unmarshal([]byte(`[{"stationID":"1","programs":[
+		{"programID":"EP012345670012","airDateTime":"2026-10-04T01:00:00Z","duration":3600,"new":true},
+		{"programID":"MV000111220000","airDateTime":"2026-10-04T02:00:00Z","duration":3600}]}]`), &scheds); err != nil {
+		t.Fatal(err)
+	}
+	_, progs := ToStore(Lineup{}, scheds, map[string]ProgramDetail{})
+	if progs[0].ProgramID != "EP012345670012" || progs[0].SeriesID != "SH01234567" || !progs[0].IsNew {
+		t.Fatalf("episode %+v", progs[0])
+	}
+	if progs[1].SeriesID != "" || progs[1].IsNew {
+		t.Fatalf("movie %+v", progs[1])
 	}
 }

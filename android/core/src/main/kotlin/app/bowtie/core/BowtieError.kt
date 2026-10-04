@@ -25,6 +25,13 @@ sealed class BowtieError : Exception() {
         val conflicts: List<Recording>,
     ) : BowtieError()
 
+    /**
+     * 403 with `code: "parental"`: parental controls block this channel,
+     * program or recording. [message] is the server's plain-words reason
+     * ("Blocked by parental controls (rated TV-MA)").
+     */
+    data class Parental(override val message: String) : BowtieError()
+
     /** 404 — unknown or disabled channel / resource. */
     data object NotFound : BowtieError()
 

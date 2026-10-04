@@ -462,6 +462,51 @@ final class PlayerModelTests: XCTestCase {
         )
     }
 
+    func testParentalHeartbeatRefusalEndsPlaybackWithItsMessage() async {
+        let blocked = #"{"error":"Blocked by parental controls (rated TV-MA)","code":"parental"}"#
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (200, SharedFixtures.createdSessionJSON(viewerId: "hb-parental"), [:])
+            }
+            if request.httpMethod == "POST", request.url?.path.contains("/heartbeat") == true {
+                return (403, Data(blocked.utf8), [:])
+            }
+            return (204, Data(), [:])
+        }
+
+        let model = makeModel(heartbeatInterval: .seconds(15))
+        await playThroughDebounce(model)
+        guard case .playing = model.state else {
+            return XCTFail("expected playing, got \(model.state)")
+        }
+
+        await advanceClock(.seconds(15))
+        await waitUntil {
+            if case .failed = model.state { return true }
+            return false
+        }
+
+        XCTAssertEqual(model.state, .failed("Blocked by parental controls (rated TV-MA)"))
+        let beats = heartbeatRequests().count
+        await advanceClock(.seconds(15))
+        XCTAssertEqual(heartbeatRequests().count, beats, "no more beats once the server stopped the viewer")
+        await model.stop()
+    }
+
+    func testParentalCreateRefusalShowsItsMessage() async {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/sessions" {
+                return (403, Data(#"{"error":"Blocked by parental controls (this channel isn't allowed)","code":"parental"}"#.utf8), [:])
+            }
+            return (204, Data(), [:])
+        }
+
+        let model = makeModel()
+        await playThroughDebounce(model)
+
+        XCTAssertEqual(model.state, .failed("Blocked by parental controls (this channel isn't allowed)"))
+    }
+
     func testStreamTokenFromPlaylist() {
         XCTAssertEqual(
             PlayerModel.streamToken(from: "/api/v1/stream/v1/index.m3u8?token=abc"),

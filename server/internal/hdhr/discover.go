@@ -17,11 +17,11 @@ const (
 	typeDiscoverReq uint16 = 0x0002
 	typeDiscoverRpy uint16 = 0x0003
 
-	tagDeviceType  uint8 = 0x01
-	tagDeviceID    uint8 = 0x02
-	tagTunerCount  uint8 = 0x10
-	tagLineupURL   uint8 = 0x27
-	tagBaseURL     uint8 = 0x2A
+	tagDeviceType uint8 = 0x01
+	tagDeviceID   uint8 = 0x02
+	tagTunerCount uint8 = 0x10
+	tagLineupURL  uint8 = 0x27
+	tagBaseURL    uint8 = 0x2A
 
 	deviceTypeTuner  uint32 = 0x00000001
 	deviceIDWildcard uint32 = 0xFFFFFFFF

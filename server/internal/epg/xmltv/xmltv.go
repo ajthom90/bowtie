@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajthom90/bowtie/server/internal/parental"
 	"github.com/ajthom90/bowtie/server/internal/store"
 )
 
@@ -21,7 +22,10 @@ type TV struct {
 type Channel struct {
 	ID           string   `xml:"id,attr"`
 	DisplayNames []string `xml:"display-name"`
-	Icon         struct {
+	// LCNs are logical channel numbers ("9.1"); SiliconDust's guide may
+	// carry the guide number here as well as in a display-name.
+	LCNs []string `xml:"lcn"`
+	Icon struct {
 		Src string `xml:"src,attr"`
 	} `xml:"icon"`
 }
@@ -38,6 +42,20 @@ type Programme struct {
 	Icon       struct {
 		Src string `xml:"src,attr"`
 	} `xml:"icon"`
+	Ratings []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:"value"`
+	} `xml:"rating"`
+	EpisodeNums []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:",chardata"`
+	} `xml:"episode-num"`
+	SeriesIDs []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:",chardata"`
+	} `xml:"series-id"`
+	New             *struct{} `xml:"new"`
+	PreviouslyShown *struct{} `xml:"previously-shown"`
 }
 
 // Parse streams an XMLTV document from r, decoding channel and programme
@@ -130,6 +148,7 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 		if len(p.Categories) > 0 {
 			category = p.Categories[0]
 		}
+		pid := programID(p)
 		progs = append(progs, store.Program{
 			EPGChannelID: p.Channel,
 			Start:        start,
@@ -139,6 +158,10 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			Description:  p.Desc,
 			Category:     category,
 			IconURL:      p.Icon.Src,
+			Rating:       rating(p),
+			ProgramID:    pid,
+			SeriesID:     seriesID(p, pid),
+			IsNew:        p.New != nil && p.PreviouslyShown == nil,
 		})
 	}
 	return chans, progs, skipped
@@ -160,4 +183,37 @@ func pickNames(names []string) (displayName, callsign string) {
 		}
 	}
 	return displayName, callsign
+}
+
+// rating picks the program's rating (US TV first, then MPAA).
+func rating(p Programme) string {
+	rs := make([]parental.Rated, 0, len(p.Ratings))
+	for _, r := range p.Ratings {
+		rs = append(rs, parental.Rated{System: r.System, Code: r.Value})
+	}
+	return parental.Pick(rs)
+}
+
+// seriesID prefers SiliconDust's <series-id system="cseries">, else derives
+// the show ID from the program ID.
+func seriesID(p Programme, programID string) string {
+	for _, s := range p.SeriesIDs {
+		if s.System == "cseries" {
+			if v := strings.TrimSpace(s.Value); v != "" {
+				return v
+			}
+		}
+	}
+	return store.SeriesIDOf(programID)
+}
+
+// programID is the Schedules Direct program ID from a dd_progid episode-num
+// ("EP01234567.0012" → "EP012345670012"), or "".
+func programID(p Programme) string {
+	for _, e := range p.EpisodeNums {
+		if e.System == "dd_progid" {
+			return strings.ReplaceAll(strings.TrimSpace(e.Value), ".", "")
+		}
+	}
+	return ""
 }

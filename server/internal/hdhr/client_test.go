@@ -2,6 +2,8 @@ package hdhr_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -87,5 +89,21 @@ func TestFetchDiscoverBadURL(t *testing.T) {
 	_, err := hdhr.FetchDiscover(ctx, "http://127.0.0.1:1")
 	if err == nil {
 		t.Fatal("expected error for unreachable base URL")
+	}
+}
+
+// DeviceAuth (the guide-API credential, rotated by the tuner) is read from
+// discover.json.
+func TestFetchDiscoverDeviceAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"DeviceID":"10629B1A","DeviceAuth":"abc123XYZ","TunerCount":2}`))
+	}))
+	defer srv.Close()
+	info, err := hdhr.FetchDiscover(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.DeviceAuth != "abc123XYZ" {
+		t.Fatalf("DeviceAuth = %q", info.DeviceAuth)
 	}
 }

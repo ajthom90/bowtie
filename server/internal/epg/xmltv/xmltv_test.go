@@ -3,6 +3,7 @@ package xmltv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,97 @@ func TestParseTime(t *testing.T) {
 		if !got.Equal(tt.want) {
 			t.Errorf("ParseTime(%q) = %v, want %v", tt.in, got.UTC(), tt.want)
 		}
+	}
+}
+
+func TestRatingsToStore(t *testing.T) {
+	doc := `<tv><channel id="c"><display-name>C</display-name></channel>
+<programme start="20261004010000 +0000" stop="20261004020000 +0000" channel="c">
+  <title>Late Movie</title>
+  <rating system="MPAA"><value>R</value></rating>
+  <rating system="VCHIP"><value>TV-MA</value></rating>
+</programme>
+<programme start="20261004020000 +0000" stop="20261004030000 +0000" channel="c"><title>News</title></programme>
+</tv>`
+	tv, err := Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, progs, _ := ToStore(tv)
+	if len(progs) != 2 || progs[0].Rating != "TV-MA" || progs[1].Rating != "" {
+		t.Fatalf("%+v", progs)
+	}
+}
+
+func TestSeriesIDsToStore(t *testing.T) {
+	doc := `<tv><channel id="c"><display-name>C</display-name></channel>
+<programme start="20261004010000 +0000" stop="20261004020000 +0000" channel="c">
+  <title>Drama</title><episode-num system="dd_progid">EP01234567.0012</episode-num><new/>
+</programme>
+<programme start="20261004020000 +0000" stop="20261004030000 +0000" channel="c">
+  <title>Drama</title><episode-num system="xmltv_ns">1.4.</episode-num>
+</programme></tv>`
+	tv, err := Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, progs, _ := ToStore(tv)
+	p0, p1 := progs[0], progs[1]
+	if p0.ProgramID != "EP012345670012" || p0.SeriesID != "SH01234567" || !p0.IsNew {
+		t.Fatalf("p0 %+v", p0)
+	}
+	if p1.ProgramID != "" || p1.SeriesID != "" || p1.IsNew {
+		t.Fatalf("p1 %+v", p1)
+	}
+}
+
+// SiliconDust's guide (api.hdhomerun.com/api/xmltv): a cseries series-id wins
+// over the dd_progid-derived one, previously-shown is never new, and channel
+// lcn plus every display-name are kept for guide-number matching.
+func TestHDHomeRunStyleGuide(t *testing.T) {
+	doc := `<tv>
+<channel id="US12345.hdhomerun.com">
+  <display-name>9.1 KMSP</display-name><display-name>9.1</display-name><display-name>KMSP</display-name>
+  <lcn>9.1</lcn>
+</channel>
+<programme start="20261004010000 +0000" stop="20261004020000 +0000" channel="US12345.hdhomerun.com">
+  <title>Drama</title>
+  <series-id system="cseries">C20814443ENX3UM</series-id>
+  <episode-num system="dd_progid">EP00001648.0025</episode-num>
+  <episode-num system="xmltv_ns">1.4.</episode-num>
+  <episode-num system="onscreen">S02E05</episode-num>
+  <new/>
+</programme>
+<programme start="20261004020000 +0000" stop="20261004030000 +0000" channel="US12345.hdhomerun.com">
+  <title>Rerun</title>
+  <episode-num system="dd_progid">EP00001648.0024</episode-num>
+  <new/><previously-shown/>
+</programme>
+<programme start="20261004030000 +0000" stop="20261004040000 +0000" channel="US12345.hdhomerun.com">
+  <title>Other</title>
+  <series-id system="other">ignored</series-id>
+  <episode-num system="dd_progid">EP00001648.0023</episode-num>
+</programme></tv>`
+	tv, err := Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := tv.Channels[0]
+	if len(ch.DisplayNames) != 3 || ch.DisplayNames[1] != "9.1" {
+		t.Fatalf("display names %v", ch.DisplayNames)
+	}
+	if len(ch.LCNs) != 1 || ch.LCNs[0] != "9.1" {
+		t.Fatalf("lcn %v", ch.LCNs)
+	}
+	_, progs, _ := ToStore(tv)
+	p0, p1, p2 := progs[0], progs[1], progs[2]
+	if p0.ProgramID != "EP000016480025" || p0.SeriesID != "C20814443ENX3UM" || !p0.IsNew {
+		t.Fatalf("p0 %+v", p0)
+	}
+	if p1.IsNew || p1.SeriesID != "SH00001648" {
+		t.Fatalf("p1 (previously shown) %+v", p1)
+	}
+	if p2.SeriesID != "SH00001648" {
+		t.Fatalf("p2 (non-cseries series-id ignored) %+v", p2)
 	}
 }

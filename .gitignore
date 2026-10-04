@@ -29,3 +29,4 @@ server/bowtie
 # Local HDHomeRun captures (broadcast content — never commit)
 captures/
 .playwright-mcp/
+.claude/worktrees/

@@ -13,6 +13,7 @@ struct ChannelRailView: View {
     @State private var playingChannel: Channel?
     @State private var showSettings = false
     @State private var showRecordings = false
+    @State private var showSearch = false
     @State private var recordFlow: RecordFlow?
     @State private var now = Date()
 
@@ -27,6 +28,17 @@ struct ChannelRailView: View {
             content
                 .navigationTitle("Channels")
                 .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showSearch = true
+                        } label: {
+                            Label("Search", systemImage: "magnifyingglass")
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(Theme.amber)
+                        }
+                        .accessibilityLabel("Search")
+                        .accessibilityHint("Search the guide")
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             showRecordings = true
@@ -75,7 +87,11 @@ struct ChannelRailView: View {
                         TVRecordingsView(client: client, playerModel: playerModel)
                     }
                 }
+                .navigationDestination(isPresented: $showSearch) {
+                    searchDestination
+                }
                 .recordFlowAlerts(recordFlow)
+                .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)
@@ -123,6 +139,23 @@ struct ChannelRailView: View {
             if old != nil, new == nil {
                 Task { await listModel?.refreshRecents() }
             }
+        }
+    }
+
+    // MARK: - Search
+
+    @ViewBuilder
+    private var searchDestination: some View {
+        if let client = appModel.client {
+            TVSearchView(
+                client: client,
+                onWatch: { open(channel: $0) },
+                openRecordings: {
+                    showSearch = false
+                    showRecordings = true
+                },
+                onScheduled: { Task { await listModel?.load() } }
+            )
         }
     }
 
@@ -309,6 +342,9 @@ struct ChannelRailView: View {
         if row.nowNext.now?.recording != nil {
             parts.append("Set to record")
         }
+        if let now = row.nowNext.now, now.isLocked {
+            parts.append(ParentalLockMark.accessibilityText(rating: now.rating ?? ""))
+        }
         if let nextTitle = row.nowNext.next?.title, !nextTitle.isEmpty {
             parts.append("Next \(nextTitle)")
         }
@@ -367,6 +403,10 @@ private struct RailRowView: View {
 
                         if program.recording != nil {
                             RecordingMarkDot(size: 16)
+                        }
+
+                        if program.isLocked {
+                            ParentalLockMark(rating: program.rating ?? "", size: 18)
                         }
 
                         // Compact progress for the current program.

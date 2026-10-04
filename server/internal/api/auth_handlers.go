@@ -17,6 +17,7 @@ type userJSON struct {
 	MaxQuality string `json:"maxQuality"`
 	MaxStreams int    `json:"maxStreams"`
 	MaxTuners  int    `json:"maxTuners"`
+	parentalJSON
 }
 
 type tokenPairJSON struct {
@@ -27,12 +28,13 @@ type tokenPairJSON struct {
 
 func userToJSON(u store.User) userJSON {
 	return userJSON{
-		ID:         u.ID,
-		Username:   u.Username,
-		Role:       u.Role,
-		MaxQuality: u.MaxQuality,
-		MaxStreams: u.MaxStreams,
-		MaxTuners:  u.MaxTuners,
+		ID:           u.ID,
+		Username:     u.Username,
+		Role:         u.Role,
+		MaxQuality:   u.MaxQuality,
+		MaxStreams:   u.MaxStreams,
+		MaxTuners:    u.MaxTuners,
+		parentalJSON: parentalToJSON(u),
 	}
 }
 

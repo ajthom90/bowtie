@@ -192,11 +192,14 @@ final class RecordingLogicTests: XCTestCase {
     // MARK: - Tabs
 
     func testTabsMapToServerFilters() {
-        XCTAssertEqual(RecordingsTab.allCases, [.upcoming, .recorded, .missed])
+        XCTAssertEqual(RecordingsTab.allCases, [.upcoming, .recorded, .missed, .shows])
         XCTAssertEqual(RecordingsTab.upcoming.filter, .upcoming)
         XCTAssertEqual(RecordingsTab.recorded.filter, .recorded)
         XCTAssertEqual(RecordingsTab.missed.filter, .failed)
+        XCTAssertNil(RecordingsTab.shows.filter, "Shows lists recording rules, not recordings")
         XCTAssertEqual(RecordingsTab.missed.title, "Missed")
+        XCTAssertEqual(RecordingsTab.shows.title, "Shows")
+        XCTAssertFalse(RecordingsTab.shows.emptyMessage.isEmpty)
         XCTAssertFalse(RecordingsTab.upcoming.emptyMessage.isEmpty)
     }
 

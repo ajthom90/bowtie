@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.RecordingRule
 import app.bowtie.core.RecordingLogic.Tab
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,9 @@ class RecordingsViewModel(
     sealed class Load {
         data object Loading : Load()
         data class Loaded(val items: List<Recording>) : Load()
+
+        /** The Shows tab: series rules. */
+        data class Shows(val rules: List<RecordingRule>) : Load()
         data class Failed(val message: String) : Load()
     }
 
@@ -50,6 +54,12 @@ class RecordingsViewModel(
         /** Ask "Resume / Start over"; otherwise start from the beginning. */
         val offerResume: Boolean,
     )
+
+    /** "Try again" in the player: a fresh playlist, or why there isn't one. */
+    sealed class Retry {
+        data class Ready(val playlistUrl: String) : Retry()
+        data class Failed(val message: String) : Retry()
+    }
 
     private val workScope: CoroutineScope = scope ?: viewModelScope
 
@@ -82,7 +92,7 @@ class RecordingsViewModel(
     suspend fun refresh() {
         val tab = _state.value.tab
         val load = try {
-            Load.Loaded(client.recordings(tab))
+            if (tab.isShows) Load.Shows(client.recordingRules()) else Load.Loaded(client.recordings(tab))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -96,6 +106,9 @@ class RecordingsViewModel(
     suspend fun delete(r: Recording): Boolean = act { client.deleteRecording(r.id) }
 
     suspend fun stop(r: Recording): Boolean = act { client.stopRecording(r.id) }
+
+    /** "Stop recording this show": deletes the rule (its upcoming recordings are cancelled). */
+    suspend fun stopShow(rule: RecordingRule): Boolean = act { client.deleteRecordingRule(rule.id) }
 
     suspend fun setKept(r: Recording, keep: Boolean): Boolean =
         act { client.setRecordingProtected(r.id, keep) }
@@ -117,6 +130,19 @@ class RecordingsViewModel(
             _state.update { it.copy(message = RecordingLogic.errorMessage(e)) }
             null
         }
+    }
+
+    /**
+     * "Try again" after a playback error: asks `/play` again for a freshly
+     * signed playlist (the old token expires after 12 h, and the recording may
+     * be gone). The player shows a failure itself, so [UiState.message] is untouched.
+     */
+    suspend fun retryPlayback(r: Recording): Retry = try {
+        Retry.Ready(client.playRecording(r.id).playlistUrl)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Retry.Failed(RecordingLogic.errorMessage(e))
     }
 
     /** Save the resume position (best-effort, in order, never blocks the caller). */

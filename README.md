@@ -1,3 +1,5 @@
+<img src="docs/brand/bowtie-icon.svg" width="112" alt="Bowtie logo: a classic UHF bowtie TV antenna" align="right">
+
 # Bowtie
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -9,13 +11,13 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 
 - Discovers Silicondust HDHomeRun tuners on your LAN
 - Transcodes over-the-air channels to HLS with hardware acceleration when available
-- Serves a TV guide (XMLTV and/or Schedules Direct)
+- Serves a TV guide (free from your HDHomeRun, plus optional XMLTV and/or Schedules Direct)
 - Lets an admin manage users, devices, channels, and active sessions
 - Live pause/rewind within a settings-backed buffer, with one tuner per channel
   shared across quality variants
 
 **Project status:** v0.5.0 — server + web (live DVR buffer, seek bar, heartbeats,
-Admin → Settings) plus iOS/tvOS, Android/Fire TV, and Roku clients.
+Admin → Settings) plus iOS/tvOS/macOS, Android/Fire TV, and Roku clients.
 
 ---
 
@@ -137,6 +139,27 @@ The Docker Compose file passes `/dev/dri` into the container for QSV/VAAPI on In
 
 Guide data is **optional** — channels are fully watchable with no EPG configured.
 
+### Free guide from your HDHomeRun (default)
+
+Out of the box Bowtie fetches the free guide SiliconDust offers every
+HDHomeRun owner (about 2-3 days ahead; 14 days with an HDHomeRun DVR
+subscription). No account or setup is needed: Bowtie reads each tuner's
+`DeviceAuth` from its `discover.json`, downloads the guide from
+`api.hdhomerun.com` every 20-28 hours at a random time, and maps each
+unmapped channel to it by guide number (for example `9.1`). Channels you
+mapped yourself are never changed. Turn it off with
+`PUT /api/v1/admin/settings` `{"hdhomerun": {"enabled": false}}`
+(setting `epg.hdhomerun`); its health is under `hdhomerun` in
+`GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
+
+SiliconDust allows about one download a day: a second download soon after
+the first gets HTTP 403, and Bowtie simply retries hourly until it's allowed.
+The free guide carries titles, episodes, series IDs (series recording works)
+and new/repeat flags, but **no age ratings**; to limit accounts by rating
+(parental controls), add Schedules Direct. Channel restrictions work either way.
+
+### XMLTV and Schedules Direct
+
 **Preferred:** configure XMLTV and/or Schedules Direct in **Admin → Settings**
 (lineup picker, clear credentials by emptying username). Changes apply without
 restart; **Admin → EPG** is status + Refresh only. Map each enabled channel to
@@ -225,6 +248,7 @@ cd web && npm ci && npm test && npm run build
 ## Apps
 
 - **iOS / iPadOS / tvOS** — native SwiftUI viewer: see [`ios/README.md`](ios/README.md) (build, test, sideload).
+- **macOS** — native Mac app (macOS 14+) built from the same Xcode project (`BowtieMac` scheme): a sidebar of channels (Recent, Favorites) and recordings, an `AVPlayerView` player with picture in picture and full screen, and keyboard shortcuts (Space, L for live, ⌘↑/⌘↓, ⌘F). Not yet published to the Mac App Store or notarized; see [`ios/README.md`](ios/README.md#macos-app).
 - **Android** — native Kotlin/Compose viewer: see [`android/README.md`](android/README.md) (build). To install, open `https://<your-server>/android` (phone) or `/tv` (Fire TV, via the Downloader app) — see [docs/install/android.md](docs/install/android.md).
 - **Roku** — BrighterScript SceneGraph channel: see [`roku/README.md`](roku/README.md) (`make roku-package` → sideloadable zip). On-device gate: [`docs/deploy/roku-testing.md`](docs/deploy/roku-testing.md).
 

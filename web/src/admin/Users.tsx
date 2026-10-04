@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { ApiError, type PatchUserRequest, type User, type UserRole } from '../api/client'
+import {
+  ApiError,
+  type AdminChannel,
+  type PatchUserRequest,
+  type User,
+  type UserRole,
+} from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { LIMIT_OPTIONS, QUALITY_OPTIONS, qualityLabel } from './adminModel'
+import { ChannelPicker } from './ChannelPicker'
+import {
+  RATINGS_NOTE,
+  RATING_OPTIONS,
+  channelsSummary,
+  parentalEditable,
+  pickerChannels,
+  ratingLabel,
+} from './parentalModel'
 import styles from './Admin.module.css'
 
 export function Users() {
@@ -19,6 +34,13 @@ export function Users() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  /** For the parental-controls channel picker (best-effort). */
+  const [channels, setChannels] = useState<AdminChannel[]>([])
+  const [pickerFor, setPickerFor] = useState<User | null>(null)
+
+  useEffect(() => {
+    client.getAdminChannels().then(setChannels, () => setChannels([]))
+  }, [client])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -65,18 +87,22 @@ export function Users() {
     }
   }
 
-  async function patchUser(id: number, body: PatchUserRequest) {
+  async function patchUser(id: number, body: PatchUserRequest): Promise<boolean> {
     setBusyId(id)
     setError(null)
     try {
       const updated = await client.patchUser(id, body)
       setUsers((prev) => (prev ? prev.map((u) => (u.id === id ? updated : u)) : prev))
+      return true
     } catch (err) {
       setError(err instanceof ApiError ? err.message || 'Update failed' : 'Update failed')
+      return false
     } finally {
       setBusyId(null)
     }
   }
+
+  const channelTotal = pickerChannels(channels, null).length
 
   async function onResetPassword(u: User) {
     const next = window.prompt(`New password for ${u.username}:`)
@@ -174,6 +200,11 @@ export function Users() {
         ) : null}
       </form>
 
+      <p className={styles.note}>
+        <strong>Parental controls</strong> limit what an account can see and watch: its channels,
+        the highest rating that plays, and whether unrated programs play. {RATINGS_NOTE}
+      </p>
+
       {loading && !users ? <p className={styles.status}>Loading users…</p> : null}
       {error ? <p className={styles.statusError}>{error}</p> : null}
 
@@ -191,6 +222,9 @@ export function Users() {
                 <th scope="col">Max quality</th>
                 <th scope="col">Streams</th>
                 <th scope="col">Tuners</th>
+                <th scope="col">Channels</th>
+                <th scope="col">Max rating</th>
+                <th scope="col">Unrated</th>
                 <th scope="col">Actions</th>
               </tr>
             </thead>
@@ -247,6 +281,49 @@ export function Users() {
                       onChange={(n) => void patchUser(u.id, { maxTuners: n })}
                     />
                   </td>
+                  <td data-label="Channels">
+                    <button
+                      type="button"
+                      className={`${styles.btn} ${styles.btnSm} ${styles.pickBtn}`}
+                      disabled={busyId === u.id || !parentalEditable(u)}
+                      onClick={() => setPickerFor(u)}
+                      aria-label={`Allowed channels for ${u.username}: ${channelsSummary(u.allowedChannelIds, channelTotal)}`}
+                      title={parentalEditable(u) ? undefined : 'Admins are never restricted'}
+                    >
+                      {channelsSummary(u.allowedChannelIds, channelTotal)}
+                    </button>
+                  </td>
+                  <td data-label="Max rating">
+                    <select
+                      className={`${styles.select} ${styles.selectSm}`}
+                      value={u.maxRating ?? ''}
+                      disabled={busyId === u.id || !parentalEditable(u)}
+                      onChange={(e) => void patchUser(u.id, { maxRating: e.target.value })}
+                      aria-label={`Max rating for ${u.username}`}
+                    >
+                      {RATING_OPTIONS.map((o) => (
+                        <option key={o.value || 'none'} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                      {!RATING_OPTIONS.some((o) => o.value === (u.maxRating ?? '')) ? (
+                        <option value={u.maxRating}>{ratingLabel(u.maxRating)}</option>
+                      ) : null}
+                    </select>
+                  </td>
+                  <td data-label="Unrated">
+                    <label className={styles.checkLabel}>
+                      <input
+                        className={styles.toggle}
+                        type="checkbox"
+                        checked={u.blockUnrated === true}
+                        disabled={busyId === u.id || !parentalEditable(u)}
+                        onChange={(e) => void patchUser(u.id, { blockUnrated: e.target.checked })}
+                        aria-label={`Block unrated programs for ${u.username}`}
+                      />
+                      Block
+                    </label>
+                  </td>
                   <td data-label="Actions" className={styles.cardActions}>
                     <div className={styles.actions}>
                       <button
@@ -272,6 +349,21 @@ export function Users() {
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {pickerFor ? (
+        <ChannelPicker
+          user={pickerFor}
+          channels={channels}
+          busy={busyId === pickerFor.id}
+          onClose={() => setPickerFor(null)}
+          onSave={(allowed) => {
+            // null = every channel (an absent field would keep the old list).
+            void patchUser(pickerFor.id, { allowedChannelIds: allowed }).then((ok) => {
+              if (ok) setPickerFor(null)
+            })
+          }}
+        />
       ) : null}
     </div>
   )

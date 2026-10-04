@@ -50,6 +50,35 @@ data class TokenPair(
     val user: User,
 )
 
+/** `POST /auth/device`: a quick sign-in code for a TV to show. */
+@Serializable
+data class DeviceSignIn(
+    /** Secret; only this device knows it. Polled with `/auth/device/token`. */
+    val deviceCode: String,
+    /** What the person types on their phone ("BCDF-2345"). */
+    val userCode: String,
+    /** The web app's /link page with the code filled in. */
+    val verifyUrl: String,
+    /** Server-relative PNG of [verifyUrl] as a QR code. */
+    val qrUrl: String = "",
+    /** Seconds the code lives. */
+    val expiresIn: Int,
+    /** Seconds between polls. */
+    val interval: Int,
+)
+
+/** One `/auth/device/token` poll. */
+sealed class DevicePoll {
+    /** 428: not approved yet. */
+    data object Pending : DevicePoll()
+
+    /** 410: expired, used or unknown; start over with a new code. */
+    data object Expired : DevicePoll()
+
+    /** 200: approved; the client now holds the session, as after a password sign-in. */
+    data class SignedIn(val user: User) : DevicePoll()
+}
+
 @Serializable
 data class Channel(
     val id: Long,
@@ -87,6 +116,39 @@ data class GuideProgram(
     val description: String,
     val category: String,
     /** Present when this program is scheduled or recorded (servers with the DVR). */
+    val recording: GuideRecordingMark? = null,
+    /** Guide program ID of the episode (when the source has one). */
+    val programId: String? = null,
+    /** Series ID of the show (when the source has one). */
+    val seriesId: String? = null,
+    /** First airing. */
+    val isNew: Boolean? = null,
+    /** Rating from the guide source (e.g. TV-14; "" = not rated). */
+    val rating: String = "",
+    /** Parental controls block this program for the caller (description is hidden). */
+    val locked: Boolean = false,
+)
+
+/** One airing from `GET /guide/search`: the program plus the channel it's on. */
+@Serializable
+data class GuideSearchResult(
+    val channelId: Long,
+    val guideNumber: String = "",
+    val channelName: String = "",
+    val logoUrl: String = "",
+    @Serializable(with = InstantIso8601Serializer::class)
+    val start: Instant,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val stop: Instant,
+    val title: String,
+    /** Episode title. */
+    val subtitle: String = "",
+    val description: String = "",
+    val category: String = "",
+    val rating: String = "",
+    /** Parental controls block this program for the caller (description is hidden). */
+    val locked: Boolean = false,
+    /** Present when this airing is scheduled or recorded. */
     val recording: GuideRecordingMark? = null,
 )
 
@@ -164,7 +226,7 @@ data class Recording(
     val state: String,
     /** More than a minute is missing (late start, dropped stream, or a restart). */
     val partial: Boolean = false,
-    /** "", noTuner, noSignal, diskFull or error. */
+    /** "", noTuner, noSignal, diskFull, error or skipped. */
     val failure: String = "",
     val failureDetail: String = "",
     val durationSec: Int = 0,
@@ -177,6 +239,12 @@ data class Recording(
     val scheduledBy: String = "",
     /** The caller may stop, delete or keep it (scheduler or admin). */
     val canManage: Boolean = false,
+    /** The program's rating when scheduled ("" = not rated). */
+    val rating: String = "",
+    /** Series rule that scheduled it (0 = one-off). */
+    val ruleId: Long = 0,
+    /** Parental controls block it for the caller (no description; play is 403). */
+    val locked: Boolean = false,
 ) {
     companion object {
         const val SCHEDULED = "scheduled"
@@ -187,6 +255,32 @@ data class Recording(
         const val FAILED = "failed"
     }
 }
+
+/** A series recording rule (OpenAPI `RecordingRule`): record every (new) episode of a show. */
+@Serializable
+data class RecordingRule(
+    val id: Long,
+    val title: String,
+    val seriesId: String = "",
+    /** 0 = any channel. */
+    val channelId: Long = 0,
+    val channelName: String = "",
+    val newOnly: Boolean = true,
+    /** Keep only this many recordings of the show (0 = all). */
+    val keepLatest: Int = 0,
+    val scheduledBy: String = "",
+    /** The caller may delete it (who made it, or an admin). */
+    val canManage: Boolean = false,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val createdAt: Instant? = null,
+)
+
+/** 201 body of `POST /recording-rules`: the rule and how many airings it scheduled now. */
+@Serializable
+data class CreatedRecordingRule(
+    val rule: RecordingRule,
+    val scheduled: Int = 0,
+)
 
 @Serializable
 data class RecordingWarning(

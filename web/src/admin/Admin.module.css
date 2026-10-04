@@ -25,6 +25,9 @@
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.25rem;
@@ -407,6 +410,34 @@
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+.note {
+  margin: 0 0 1rem;
+  max-width: 48rem;
+  padding: 0.6rem 0.8rem;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.note strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pickBtn {
+  white-space: nowrap;
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .toggle {

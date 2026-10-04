@@ -4,6 +4,8 @@
 ' position is saved every 15 s, when the recording finishes, and on Back.
 ' * on a row: Stop / Keep / Cancel / Delete for the scheduler or an admin
 ' (canManage); Delete asks first because it removes it for everyone.
+' Shows tab: series rules (GET /recording-rules); * → Stop recording this
+' show (DELETE) for whoever set it up or an admin.
 ' Focus: tabs (left/right) <-> list. Back: playback → list → Home.
 
 import "pkg:/source/lib/Recordings.bs"
@@ -12,6 +14,7 @@ sub init()
     m.upcomingTab = m.top.findNode("upcomingTab")
     m.recordedTab = m.top.findNode("recordedTab")
     m.missedTab = m.top.findNode("missedTab")
+    m.showsTab = m.top.findNode("showsTab")
     m.tabMarker = m.top.findNode("tabMarker")
     m.loadingGroup = m.top.findNode("loadingGroup")
     m.loadingSpinner = m.top.findNode("loadingSpinner")
@@ -21,7 +24,7 @@ sub init()
     m.video = m.top.findNode("video")
     m.positionTimer = m.top.findNode("positionTimer")
 
-    m.tabButtons = [m.upcomingTab, m.recordedTab, m.missedTab]
+    m.tabButtons = [m.upcomingTab, m.recordedTab, m.missedTab, m.showsTab]
     m.tabIndex = 0
     m.items = []
     m.observing = false
@@ -133,6 +136,10 @@ sub loadTab()
     m.reqSeq = m.reqSeq + 1
     m.pendingListId = "rec-list-" + m.reqSeq.toStr()
     setLoading(true)
+    if bowtie.recordings.isRulesTab(currentTab())
+        task.request = { id: m.pendingListId, kind: "recordingRules", params: {} }
+        return
+    end if
     task.request = {
         id: m.pendingListId
         kind: "recordings"
@@ -148,13 +155,18 @@ sub handleListResponse(resp as object)
         showMessage(listErrorText(resp.error))
         return
     end if
-    m.items = bowtie.recordings.filterForTab(bowtie.recordings.parseList(resp.data), currentTab())
+    if bowtie.recordings.isRulesTab(currentTab())
+        m.items = bowtie.recordings.parseRules(resp.data)
+    else
+        m.items = bowtie.recordings.filterForTab(bowtie.recordings.parseList(resp.data), currentTab())
+    end if
     renderList()
 end sub
 
 function listErrorText(err as dynamic) as string
     code = 0
     if err <> invalid and err.code <> invalid then code = err.code
+    if code = 404 and bowtie.recordings.isRulesTab(currentTab()) then return "This server doesn't support series recording yet."
     if code = 404 then return "This server doesn't support recordings yet."
     if code = 503 then return "Recording isn't available on this server."
     if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
@@ -169,14 +181,23 @@ sub renderList()
 
     nowIso = isoNow()
     offset = localUtcOffset()
+    rules = bowtie.recordings.isRulesTab(currentTab())
     root = CreateObject("roSGNode", "ContentNode")
     for each r in m.items
         item = root.createChild("ContentNode")
-        item.title = bowtie.recordings.titleLine(r)
-        item.addFields({
-            detail: bowtie.recordings.detailLine(r, nowIso, offset)
-            missed: (r.state = "failed")
-        })
+        if rules
+            item.title = bowtie.recordings.ruleTitleLine(r)
+            item.addFields({
+                detail: bowtie.recordings.ruleDetailLine(r)
+                missed: false
+            })
+        else
+            item.title = bowtie.recordings.titleLine(r)
+            item.addFields({
+                detail: bowtie.recordings.detailLine(r, nowIso, offset)
+                missed: bowtie.recordings.missedTint(r)
+            })
+        end if
     end for
     m.messageLabel.visible = false
     m.recordingList.content = root
@@ -227,7 +248,9 @@ sub onItemSelected()
     idx = m.recordingList.itemSelected
     if idx = invalid or idx < 0 or idx >= m.items.count() then return
     r = m.items[idx]
-    if bowtie.recordings.rowActions(r).play
+    if bowtie.recordings.isRulesTab(currentTab())
+        openRuleOptions(r)
+    else if bowtie.recordings.rowActions(r).play
         requestPlay(r)
     else
         openOptions(r)
@@ -239,15 +262,36 @@ end sub
 sub openOptions(r as dynamic)
     if r = invalid then return
     m.target = r
+    message = [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset())]
+    ' Locked (parental controls): OK lands here instead of playing; say why.
+    if r.locked = true then message.push(bowtie.recordings.lockedText())
     menu = bowtie.recordings.optionButtons(r)
     if menu.count() = 0
         who = r.scheduledBy
         if who = invalid or who = "" then who = "the person who scheduled it"
-        showDialog("info", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset()), "Only " + who + " or an admin can change this recording."], ["OK"])
+        if r.locked <> true or r.state <> "ready" then message.push("Only " + who + " or an admin can change this recording.")
+        showDialog("info", bowtie.recordings.titleLine(r), message, ["OK"])
         return
     end if
     m.menu = menu
-    showDialog("options", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset())], bowtie.recordings.buttonLabels(menu))
+    showDialog("options", bowtie.recordings.titleLine(r), message, bowtie.recordings.buttonLabels(menu))
+end sub
+
+' A show (series rule): Stop recording this show for whoever set it up or an
+' admin; everyone else is told who can.
+sub openRuleOptions(r as dynamic)
+    if r = invalid then return
+    m.target = r
+    detail = bowtie.recordings.ruleDetailLine(r)
+    menu = bowtie.recordings.ruleOptionButtons(r)
+    if menu.count() = 0
+        who = r.scheduledBy
+        if who = invalid or who = "" then who = "the person who set it up"
+        showDialog("info", bowtie.recordings.ruleTitleLine(r), [detail, "Only " + who + " or an admin can stop recording this show."], ["OK"])
+        return
+    end if
+    m.menu = menu
+    showDialog("ruleOptions", bowtie.recordings.ruleTitleLine(r), [detail, bowtie.recordings.stopRuleNote()], bowtie.recordings.buttonLabels(menu))
 end sub
 
 sub onDialogButton()
@@ -273,6 +317,9 @@ sub onDialogButton()
         end if
     else if mode = "confirmDelete"
         if idx = 0 then sendAction("deleteRecording", { id: m.target.id })
+    else if mode = "ruleOptions"
+        choice = bowtie.recordings.buttonId(menu, idx)
+        if choice = "stopRule" then sendAction("deleteRecordingRule", { id: m.target.id })
     else if mode = "resume"
         pb = m.pendingPlayback
         m.pendingPlayback = invalid
@@ -513,7 +560,11 @@ function onKeyEvent(key as string, press as boolean) as boolean
 
     if m.recordingList.hasFocus()
         if key = "options"
-            openOptions(focusedRecording())
+            if bowtie.recordings.isRulesTab(currentTab())
+                openRuleOptions(focusedRecording())
+            else
+                openOptions(focusedRecording())
+            end if
             return true
         end if
         ' MarkupList lets "up" through only from its first item.

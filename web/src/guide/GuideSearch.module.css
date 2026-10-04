@@ -1,0 +1,308 @@
+/* Guide search: box in the toolbar, results panel dropping below it. */
+.wrap {
+  position: relative;
+  flex: 1 1 14rem;
+  max-width: 22rem;
+  min-width: 0;
+}
+
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.icon {
+  position: absolute;
+  left: 0.55rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.35rem 2rem 0.35rem 1.75rem;
+  font-size: 0.85rem;
+  transition: border-color var(--motion);
+}
+
+.input::placeholder {
+  color: var(--text-dim);
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+/* Our own clear button replaces the WebKit one. */
+.input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.clear {
+  position: absolute;
+  right: 0.2rem;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.clear:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+/* Sits above the grid's sticky headers, below the program sheet (z 20). */
+.panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 15;
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: min(70vh, 36rem);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  -webkit-overflow-scrolling: touch;
+}
+
+.panelHead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.status {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.statusError {
+  margin: 0;
+  padding: 0 0.75rem;
+  font-size: 0.82rem;
+  color: var(--alert);
+}
+
+.panelHead .statusError {
+  padding: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.itemMain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.itemMain:hover .itemTitle {
+  color: var(--accent);
+}
+
+.itemMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.chNum {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.chName {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.when {
+  font-family: var(--font-mono);
+}
+
+.onNow {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+.itemTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: color var(--motion);
+}
+
+.rating,
+.lock {
+  display: inline-block;
+  padding: 0.02rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.lock {
+  color: var(--text);
+}
+
+.itemSub {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.itemActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.mark {
+  font-size: 0.78rem;
+  color: var(--alert);
+}
+
+.btn {
+  appearance: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.05);
+}
+
+.btnRecord {
+  border-color: var(--alert);
+  color: var(--alert);
+}
+
+.btnRecord:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--alert) 14%, var(--surface-raised));
+}
+
+/* Tablet: the toolbar wraps (Guide.module.css) and search takes its own row. */
+@media (max-width: 1024px) {
+  .wrap {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 5;
+  }
+}
+
+/* Phone: full-width row in the wrapped toolbar; panel spans the screen. */
+@media (max-width: 640px) {
+  .wrap {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 5;
+  }
+
+  .input {
+    font-size: 1rem; /* no iOS zoom on focus */
+  }
+
+  .clear {
+    min-height: 0;
+    padding: 0.5rem 0.65rem;
+  }
+
+  .panel {
+    width: 100%;
+    max-height: 65vh;
+  }
+
+  .btn {
+    min-height: 44px;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .itemActions .btn {
+    flex: 1 1 auto;
+  }
+}

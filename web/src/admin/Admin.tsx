@@ -7,6 +7,7 @@ import { Sessions } from './Sessions'
 import { Settings } from './Settings'
 import { Tuners } from './Tuners'
 import { Users } from './Users'
+import { BowtieMark } from '../BowtieMark'
 import styles from './Admin.module.css'
 
 export type AdminTab = 'tuners' | 'channels' | 'epg' | 'settings' | 'users' | 'sessions'
@@ -26,9 +27,11 @@ type Props = {
   onPreview: (target: WatchTarget) => void
   /** Opens the Recordings page. */
   onRecordings?: () => void
+  /** Opens the Account page. */
+  onAccount?: () => void
 }
 
-export function Admin({ onBack, onPreview, onRecordings }: Props) {
+export function Admin({ onBack, onPreview, onRecordings, onAccount }: Props) {
   const { user, logout } = useAuth()
   const [tab, setTab] = useState<AdminTab>('tuners')
 
@@ -50,7 +53,10 @@ export function Admin({ onBack, onPreview, onRecordings }: Props) {
     <div className={styles.page}>
       <header className={styles.toolbar}>
         <div className={styles.toolbarLeft}>
-          <span className={styles.brand}>Bowtie</span>
+          <span className={styles.brand}>
+            <BowtieMark size={22} />
+            Bowtie
+          </span>
           <span className={styles.subtitle}>Admin</span>
         </div>
         <div className={styles.toolbarRight}>
@@ -62,7 +68,13 @@ export function Admin({ onBack, onPreview, onRecordings }: Props) {
               Recordings
             </button>
           ) : null}
-          <span className={styles.subtitle}>{user.username}</span>
+          {onAccount ? (
+            <button type="button" className={styles.btn} onClick={onAccount} title="Account">
+              {user.username}
+            </button>
+          ) : (
+            <span className={styles.subtitle}>{user.username}</span>
+          )}
           <button type="button" className={styles.btn} onClick={() => void logout()}>
             Sign out
           </button>
