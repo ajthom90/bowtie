@@ -95,7 +95,7 @@ describe('buildSectionPayload — per-section merge', () => {
     form.streaming.bufferMinutes = '30'
     const body = buildSectionPayload('streaming', form)
     expect(body).toEqual({
-      streaming: { bufferMinutes: 30 },
+      streaming: { bufferMinutes: 30, adaptive: false },
     })
     expect(body.xmltv).toBeUndefined()
     expect(body.schedulesDirect).toBeUndefined()
@@ -196,7 +196,7 @@ describe('streaming section payload + validation', () => {
     const form = formFrom()
     form.streaming.bufferMinutes = ' 45 '
     expect(buildStreamingPayload(form)).toEqual({
-      streaming: { bufferMinutes: 45 },
+      streaming: { bufferMinutes: 45, adaptive: false },
     })
   })
 
@@ -238,5 +238,18 @@ describe('encoderOptions / lineupOptionLabel', () => {
     expect(
       lineupOptionLabel({ lineupId: 'USA-2', name: '', location: '', transport: '' }),
     ).toBe('USA-2')
+  })
+})
+
+describe('streaming.adaptive', () => {
+  it('maps GET → form and form → PUT', () => {
+    const form = formFrom(sampleSettings({ streaming: { bufferMinutes: 15, adaptive: true } }))
+    expect(form.streaming.adaptive).toBe(true)
+    form.streaming.adaptive = false
+    expect(buildStreamingPayload(form)).toEqual({ streaming: { bufferMinutes: 15, adaptive: false } })
+  })
+  it('defaults to false when an older server omits it', () => {
+    const form = formFrom(sampleSettings({ streaming: { bufferMinutes: 15 } as never }))
+    expect(form.streaming.adaptive).toBe(false)
   })
 })

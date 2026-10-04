@@ -9,6 +9,9 @@ import {
 } from 'react'
 import styles from './QualitySheet.module.css'
 
+/** Quality choices are a ceiling: the player adapts below it. */
+export const QUALITY_HINT = 'The most this player will use; it adapts below that to your connection.'
+
 export type QualityOption = {
   value: string
   label: string
@@ -150,6 +153,7 @@ export function QualitySheet({ value, options, onChange, 'aria-label': ariaLabel
             <h2 id={titleId} className={styles.title}>
               {ariaLabel}
             </h2>
+            <p className={styles.hint}>{QUALITY_HINT}</p>
             <ul className={styles.list} role="listbox" aria-label={ariaLabel}>
               {options.map((opt) => {
                 const selected = opt.value === value

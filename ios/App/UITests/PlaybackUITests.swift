@@ -121,6 +121,60 @@ final class PlaybackUITests: XCTestCase {
         waitForExpectations(timeout: 8)
     }
 
+    /// The audio language chosen in Bowtie's Audio dialog is remembered across
+    /// launches (MediaSelectionMemory; captions use the same path but AVKit's
+    /// Subtitles menu is not reliably reachable from UI tests).
+    func testAudioChoicePersists() throws {
+        try testPlayChannel()
+        RunLoop.current.run(until: Date().addingTimeInterval(6))
+        chooseAudio(["Spanish", "Español"])
+        attach("chosen")
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+
+        app.terminate()
+        app.launch()
+        try testPlayChannel()
+        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        openMenu("bowtie.audio")
+        let spanish = menuItem(["Spanish", "Español"])
+        XCTAssertTrue(spanish.waitForExistence(timeout: 5) && spanish.label.hasSuffix("✓"),
+                      "Spanish not restored:\n\(app.debugDescription)")
+        attach("restored-audio")
+        spanish.tap() // closes the dialog, keeps Spanish
+    }
+
+    /// Opens one of AVKit's menus (bringing the controls up first).
+    private func openMenu(_ identifier: String) {
+        let button = app.buttons[identifier]
+        // A tap on the video toggles the controls, so one tap may hide them.
+        for _ in 0..<3 where !(button.exists && button.isHittable) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            _ = button.waitForExistence(timeout: 2)
+        }
+        XCTAssertTrue(button.exists && button.isHittable, "no \(identifier):\n\(app.debugDescription)")
+        button.tap()
+    }
+
+    private func menuItem(_ labels: [String]) -> XCUIElement {
+        let preds = labels.map { NSPredicate(format: "label CONTAINS[c] %@", $0) }
+        return app.buttons.matching(NSCompoundPredicate(orPredicateWithSubpredicates: preds)).firstMatch
+    }
+
+    private func chooseAudio(_ labels: [String]) {
+        let before = app.debugDescription
+        openMenu("bowtie.audio")
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        attach("audio-menu")
+        let tree = XCTAttachment(string: "BEFORE\n" + before + "\nAFTER\n" + app.debugDescription)
+        tree.name = "audio-menu-tree"
+        tree.lifetime = .keepAlways
+        add(tree)
+        let item = menuItem(labels)
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "no audio item \(labels):\n\(app.debugDescription)")
+        item.tap()
+    }
+
+
     func testSwitchToSavedServerKeepsLogin() throws {
         try testPlayChannel() // ensures we are signed in and the server is saved
         app.buttons["Done"].tap()

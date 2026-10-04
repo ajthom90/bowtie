@@ -2,11 +2,13 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,7 +23,17 @@ import (
 
 const streamTokenTTL = 12 * time.Hour
 
-var segmentNameRe = regexp.MustCompile(`^seg\d{5}\.ts$`)
+// Names FFmpeg writes for a session layout (transcode.Layout): rung, AAC and
+// AC-3 rendition segments; per-rung WebVTT segments; rendition playlists.
+var (
+	segmentNameRe   = regexp.MustCompile(`^(v\d{3,4}|aac[0-2]|ac3[0-2])_\d{5}\.ts$`)
+	captionNameRe   = regexp.MustCompile(`^v\d{3,4}\d+\.vtt$`)
+	renditionNameRe = regexp.MustCompile(`^(v\d{3,4}|v\d{3,4}_vtt|aac[0-2]|ac3[0-2])\.m3u8$`)
+)
+
+// vttTimestampMap aligns FFmpeg's WebVTT cue times (which start at 0) with the
+// video's MPEG-TS clock (the mpegts muxer starts video at 1.4 s).
+const vttTimestampMap = "X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000"
 
 // StreamController is the stream manager surface consumed by HTTP handlers.
 type StreamController interface {
@@ -36,6 +48,8 @@ type StreamController interface {
 	IngestChannels() []int64
 	// ChannelReception returns a channel's last tune outcome; false if never tuned.
 	ChannelReception(channelID int64) (stream.Reception, bool)
+	// SessionMediaOf returns the viewer's session layout and quality ceiling.
+	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +210,9 @@ func filterSessionsEnabledOnly(sessions []stream.SessionInfo, enabledIDs map[int
 	return out
 }
 
+// handlePlaylist serves index.m3u8: the viewer's master playlist, rebuilt on
+// every fetch (rungs above the viewer's ceiling are left out; captions appear
+// once their playlist exists).
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	viewerID := r.PathValue("viewerId")
 	if err := s.verifyStreamAccess(viewerID, r); err != nil {
@@ -210,12 +227,43 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "viewer not found")
 		return
 	}
+	media, ok := s.deps.Streams.SessionMediaOf(viewerID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if !fileExists(filepath.Join(media.Dir, media.Layout.ReadyPlaylist())) {
+		writeError(w, http.StatusNotFound, "playlist not ready")
+		return
+	}
+	captionsReady := media.Layout.Captions && fileExists(filepath.Join(media.Dir, media.Layout.CaptionPlaylist()))
+	query := "?token=" + url.QueryEscape(r.URL.Query().Get("token"))
+	body := transcode.MasterPlaylist(media.Layout, media.MaxHeight, query, captionsReady)
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// serveMediaPlaylist serves one rendition playlist with token-signed segment
+// URLs. Players poll these (not index.m3u8), so each fetch keeps the viewer alive.
+func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, viewerID, name string) {
+	if !s.deps.Streams.Touch(viewerID) {
+		writeError(w, http.StatusNotFound, "viewer not found")
+		return
+	}
 	dir, ok := s.deps.Streams.SessionDirOf(viewerID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "live.m3u8"))
+	raw, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeError(w, http.StatusNotFound, "playlist not ready")
@@ -224,17 +272,20 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to read playlist")
 		return
 	}
-
-	token := r.URL.Query().Get("token")
-	rewritten := rewritePlaylist(string(raw), viewerID, token)
-
+	if rung, ok := strings.CutSuffix(name, "_vtt.m3u8"); ok {
+		// FFmpeg 5.1 mangles caption playlists continued after a restart.
+		if video, err := os.ReadFile(filepath.Join(dir, rung+".m3u8")); err == nil {
+			raw = repairCaptionPlaylist(raw, video, rung)
+		}
+	}
+	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(rewritten))
 }
 
-// rewritePlaylist rewrites bare seg*.ts lines to absolute stream URLs with the token.
+// rewritePlaylist rewrites bare segment lines to absolute stream URLs with the token.
 func rewritePlaylist(body, viewerID, token string) string {
 	var b strings.Builder
 	sc := bufio.NewScanner(strings.NewReader(body))
@@ -248,7 +299,7 @@ func rewritePlaylist(body, viewerID, token string) string {
 		first = false
 		line := sc.Text()
 		trimmed := strings.TrimSpace(line)
-		if segmentNameRe.MatchString(trimmed) {
+		if segmentNameRe.MatchString(trimmed) || captionNameRe.MatchString(trimmed) {
 			b.WriteString("/api/v1/stream/")
 			b.WriteString(viewerID)
 			b.WriteByte('/')
@@ -267,10 +318,30 @@ func rewritePlaylist(body, viewerID, token string) string {
 	return out
 }
 
+// withTimestampMap inserts vttTimestampMap after the WEBVTT line unless present.
+func withTimestampMap(b []byte) []byte {
+	if !bytes.HasPrefix(b, []byte("WEBVTT")) || bytes.Contains(b, []byte("X-TIMESTAMP-MAP")) {
+		return b
+	}
+	i := bytes.IndexByte(b, '\n')
+	if i < 0 {
+		return append(append(b, '\n'), vttTimestampMap+"\n"...)
+	}
+	out := make([]byte, 0, len(b)+len(vttTimestampMap)+1)
+	out = append(out, b[:i+1]...)
+	out = append(out, vttTimestampMap...)
+	out = append(out, '\n')
+	return append(out, b[i+1:]...)
+}
+
+// handleSegment serves a session file: rendition playlist, WebVTT segment or
+// TS segment. Names are validated before any filesystem access (no traversal).
 func (s *Server) handleSegment(w http.ResponseWriter, r *http.Request) {
 	viewerID := r.PathValue("viewerId")
-	segment := r.PathValue("segment")
-	if !segmentNameRe.MatchString(segment) {
+	name := r.PathValue("segment")
+	isPlaylist := renditionNameRe.MatchString(name)
+	isCaption := captionNameRe.MatchString(name)
+	if !isPlaylist && !isCaption && !segmentNameRe.MatchString(name) {
 		writeError(w, http.StatusBadRequest, "invalid segment name")
 		return
 	}
@@ -282,13 +353,32 @@ func (s *Server) handleSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "streaming not available")
 		return
 	}
+	if isPlaylist {
+		s.serveMediaPlaylist(w, r, viewerID, name)
+		return
+	}
 	dir, ok := s.deps.Streams.SessionDirOf(viewerID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	// segment is validated against ^seg\d{5}\.ts$ — no path traversal possible.
-	path := filepath.Join(dir, segment)
+	path := filepath.Join(dir, name)
+	if isCaption {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeError(w, http.StatusNotFound, "segment not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to read segment")
+			return
+		}
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(withTimestampMap(raw))
+		return
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -302,7 +392,7 @@ func (s *Server) handleSegment(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, segment, time.Time{}, f)
+	http.ServeContent(w, r, name, time.Time{}, f)
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {

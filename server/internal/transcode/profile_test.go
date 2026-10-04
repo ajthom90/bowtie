@@ -291,30 +291,3 @@ func TestNegotiate(t *testing.T) {
 	}
 }
 
-func TestSessionKey(t *testing.T) {
-	d := transcode.Decision{
-		VideoCodec: "h264",
-		AudioCopy:  false,
-		Profile:    transcode.Profile{Name: "medium"},
-	}
-	got := transcode.SessionKey(42, d)
-	want := "ch42|h264|medium|aac"
-	if got != want {
-		t.Errorf("SessionKey = %q, want %q", got, want)
-	}
-
-	dCopy := d
-	dCopy.AudioCopy = true
-	dCopy.VideoCodec = "hevc"
-	dCopy.Profile.Name = "original"
-	got = transcode.SessionKey(7, dCopy)
-	want = "ch7|hevc|original|copy"
-	if got != want {
-		t.Errorf("SessionKey = %q, want %q", got, want)
-	}
-
-	// Stability: same inputs → same key
-	if transcode.SessionKey(42, d) != "ch42|h264|medium|aac" {
-		t.Error("SessionKey not stable across calls")
-	}
-}

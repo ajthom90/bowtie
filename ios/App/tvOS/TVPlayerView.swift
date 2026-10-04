@@ -394,6 +394,8 @@ final class TVPlayerBridge {
     private var seekableObs: NSKeyValueObservation?
     private var timeControlObs: NSKeyValueObservation?
     private var failedObserver: NSObjectProtocol?
+    /// Saved audio language / captions choice, applied per item.
+    @ObservationIgnored private let mediaMemory = MediaSelectionMemory()
     private var periodicTimeObserver: Any?
     /// Startup buffering is not a stall; StallGate decides (shared with iOS).
     private var stallGate = StallGate()
@@ -447,6 +449,7 @@ final class TVPlayerBridge {
 
     private func observe(item: AVPlayerItem) {
         tearDownObservers()
+        mediaMemory.watch(item)
 
         itemStatusObs = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             Task { @MainActor in
@@ -521,6 +524,7 @@ final class TVPlayerBridge {
             handleFailure(item.error)
         case .readyToPlay:
             playerDidRecover = true
+            mediaMemory.itemReady(item)
         case .unknown:
             break
         @unknown default:
@@ -582,6 +586,7 @@ final class TVPlayerBridge {
     }
 
     private func tearDownObservers() {
+        mediaMemory.stop()
         stallTicker?.cancel()
         stallTicker = nil
         itemStatusObs?.invalidate()
@@ -728,6 +733,10 @@ private struct TVQualityPanel: View {
 
     var body: some View {
         List {
+            // Choices are a ceiling: playback adapts below it.
+            Text("The most this player will use")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Button {
                 onSelect("")
             } label: {

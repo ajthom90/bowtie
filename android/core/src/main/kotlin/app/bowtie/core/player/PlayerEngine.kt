@@ -1,8 +1,10 @@
 package app.bowtie.core.player
 
 import android.content.Context
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -35,6 +37,9 @@ class PlayerEngine(
     private val scope: CoroutineScope,
     private val listener: Listener,
     userAgent: String = USER_AGENT,
+    /** Remembered audio language / captions choice (per device). */
+    private val loadPrefs: () -> TrackPrefs = { TrackPrefs() },
+    private val savePrefs: (TrackPrefs) -> Unit = {},
 ) {
     /**
      * Host callbacks — map onto [app.bowtie.core.vm.PlayerViewModel] (or UI) as needed.
@@ -53,6 +58,9 @@ class PlayerEngine(
          * Host should show the out-of-window notice (spec B).
          */
         fun onJumpedToLive() {}
+
+        /** Audio or caption tracks changed; refresh [audioOptions]/[hasCaptions]. */
+        fun onTracksAvailable() {}
     }
 
     val player: ExoPlayer
@@ -113,11 +121,85 @@ class PlayerEngine(
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 emitBitrate()
+                listener.onTracksAvailable()
             }
         }
 
         player.addListener(playerListener)
         player.addAnalyticsListener(analytics)
+        applyPrefs(loadPrefs())
+    }
+
+    private fun applyPrefs(p: TrackPrefs) {
+        val b = player.trackSelectionParameters.buildUpon()
+        p.audioLanguage?.let { b.setPreferredAudioLanguage(it) }
+        when (p.captionsOn) {
+            true -> b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage("en")
+            false -> b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            null -> {}
+        }
+        player.trackSelectionParameters = b.build()
+    }
+
+    /**
+     * Playable audio choices, one per language/name (the AAC and 5.1 copies of
+     * a language are one choice; Media3 picks the copy the device can play).
+     */
+    fun audioOptions(): List<AudioOption> {
+        val seen = mutableSetOf<String>()
+        val out = mutableListOf<AudioOption>()
+        player.currentTracks.groups.forEachIndexed { gi, group ->
+            if (group.type != C.TRACK_TYPE_AUDIO) return@forEachIndexed
+            for (i in 0 until group.length) {
+                if (!group.isTrackSupported(i)) continue
+                val f = group.getTrackFormat(i)
+                val label = audioLabel(f.language, f.label, out.size)
+                // The AAC and 5.1 copies of one track share a label: one choice.
+                if (seen.add(label)) {
+                    out += AudioOption("$gi:$i", f.language, label)
+                }
+            }
+        }
+        return out
+    }
+
+    /** Id ("group:track") of the playing audio track, if any. */
+    fun selectedAudioId(): String? {
+        player.currentTracks.groups.forEachIndexed { gi, g ->
+            if (g.type == C.TRACK_TYPE_AUDIO && g.isSelected) {
+                for (i in 0 until g.length) {
+                    if (g.isTrackSelected(i)) return "$gi:$i"
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Play [option]'s track exactly (two tracks can share a language, e.g.
+     * main and described audio) and remember its language for later items.
+     */
+    fun selectAudio(option: AudioOption) {
+        val p = loadPrefs().copy(audioLanguage = option.language)
+        savePrefs(p)
+        val (gi, ti) = option.id.split(':').map { it.toInt() }
+        val group = player.currentTracks.groups.getOrNull(gi) ?: return applyPrefs(p)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguage(option.language)
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(group.mediaTrackGroup, ti))
+            .build()
+    }
+
+    fun hasCaptions(): Boolean = player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
+
+    fun captionsOn(): Boolean =
+        player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+
+    fun setCaptions(on: Boolean) {
+        val p = loadPrefs().copy(captionsOn = on)
+        savePrefs(p)
+        applyPrefs(p)
     }
 
     /**

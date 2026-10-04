@@ -50,6 +50,16 @@ func (p *stubProcess) Stop() {
 	})
 }
 
+// Stopped reports whether Stop was called.
+func (p *stubProcess) Stopped() bool {
+	select {
+	case <-p.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
 // Crash sends an error on Done without going through Stop.
 func (p *stubProcess) Crash(err error) {
 	select {
@@ -70,6 +80,9 @@ type stubRunner struct {
 	specs []transcode.JobSpec
 	// onStart optional hook
 	onStart func(spec transcode.JobSpec)
+	// failNext makes the next Start return a process that exits before
+	// writing any playlist (like "-map 0:a:1 matches no streams").
+	failNext bool
 }
 
 func (r *stubRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, error) {
@@ -88,15 +101,29 @@ func (r *stubRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 	if spec.Stdin != nil {
 		go func() { _, _ = io.Copy(io.Discard, spec.Stdin) }()
 	}
+	if spec.CaptionInput != nil {
+		go func() { _, _ = io.Copy(io.Discard, spec.CaptionInput) }()
+	}
 	p := newStubProcess()
 	r.procs = append(r.procs, p)
+	if r.failNext {
+		r.failNext = false
+		p.Crash(errors.New("exit status 1: Stream map '0:a:1' matches no streams"))
+		return p, nil
+	}
 	if r.writeM3U {
-		path := filepath.Join(spec.OutDir, "live.m3u8")
+		path := filepath.Join(spec.OutDir, spec.Layout.ReadyPlaylist())
 		if err := os.WriteFile(path, []byte("#EXTM3U\n"), 0o644); err != nil {
 			return nil, err
 		}
 	}
 	return p, nil
+}
+
+func (r *stubRunner) LastSpec() transcode.JobSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastSpec
 }
 
 func (r *stubRunner) Starts() int {
@@ -298,6 +325,7 @@ func newTestManager(st *store.Store, cfg config.Config, clock *fakeClock, runner
 func newTestManagerWithDial(st *store.Store, cfg config.Config, clock *fakeClock, runner *stubRunner, dial DialFunc) (*Manager, *IngestManager, *countingDial) {
 	im, cd := newManagerIngest(clock, dial)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		// Tuners nil; StreamURL injected
@@ -325,8 +353,8 @@ func TestStartCreatesSession(t *testing.T) {
 	if h.ViewerID == "" || h.SessionID == "" || h.SessionDir == "" {
 		t.Fatalf("empty handle: %+v", h)
 	}
-	if _, err := os.Stat(filepath.Join(h.SessionDir, "live.m3u8")); err != nil {
-		t.Fatalf("live.m3u8 missing: %v", err)
+	if err := readyPlaylistIn(h.SessionDir); err != nil {
+		t.Fatalf("ready playlist missing: %v", err)
 	}
 	if runner.Starts() != 1 {
 		t.Fatalf("starts=%d, want 1", runner.Starts())
@@ -640,6 +668,7 @@ func TestStartStreamURLError(t *testing.T) {
 	want := errors.New("stream url failed")
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(store.Channel) (string, error) {
@@ -658,7 +687,7 @@ func TestStartStreamURLError(t *testing.T) {
 
 func TestStartPlaylistTimeout(t *testing.T) {
 	st, cfg, clock, _, chID, user := setupEnv(t)
-	// Runner never writes live.m3u8; advance clock past 15s via concurrent advance.
+	// Runner never writes a playlist; advance clock past 15s via concurrent advance.
 	// waitPlaylist uses clock for deadline but real sleep for poll — advance clock
 	// from another goroutine so the loop observes timeout.
 	runner := &stubRunner{writeM3U: false}
@@ -800,6 +829,7 @@ func TestEncoderSettingAppliesPerSession(t *testing.T) {
 	}
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -867,6 +897,7 @@ func TestHLSListSizeFromStreamingSetting(t *testing.T) {
 	}
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -1004,7 +1035,7 @@ func (r *raceRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 	r.procs = append(r.procs, p)
 	r.mu.Unlock()
 
-	path := filepath.Join(spec.OutDir, "live.m3u8")
+	path := filepath.Join(spec.OutDir, spec.Layout.ReadyPlaylist())
 	if err := os.WriteFile(path, []byte("#EXTM3U\n"), 0o644); err != nil {
 		return nil, err
 	}
@@ -1035,6 +1066,7 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	runner := newRaceRunner()
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
 		Cfg:   cfg,
 		Store: st,
 		StreamURL: func(ch store.Channel) (string, error) {
@@ -1107,7 +1139,7 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	}
 
 	// Working session: dir exists with playlist, SessionDirOf resolves.
-	if _, err := os.Stat(filepath.Join(bRes.h.SessionDir, "live.m3u8")); err != nil {
+	if err := readyPlaylistIn(bRes.h.SessionDir); err != nil {
 		t.Fatalf("B playlist dir not usable: %v (dir=%s)", err, bRes.h.SessionDir)
 	}
 	dir, ok := m.SessionDirOf(bRes.h.ViewerID)
@@ -1192,7 +1224,7 @@ func TestDualProfileOneDial(t *testing.T) {
 		t.Fatalf("AttachCalls=%d, want 2 (one per process)", im.AttachCalls())
 	}
 	for _, h := range []ViewerHandle{h1, h2} {
-		if _, err := os.Stat(filepath.Join(h.SessionDir, "live.m3u8")); err != nil {
+		if err := readyPlaylistIn(h.SessionDir); err != nil {
 			t.Fatalf("playlist missing for %s: %v", h.SessionID, err)
 		}
 	}
@@ -1285,7 +1317,7 @@ func TestCrashTwiceReattaches(t *testing.T) {
 		t.Fatalf("TotalDials=%d, want 1 (1s+2s backoff < 5s tail)", fake.TotalDials())
 	}
 	// Playlist path recovers.
-	if _, err := os.Stat(filepath.Join(h.SessionDir, "live.m3u8")); err != nil {
+	if err := readyPlaylistIn(h.SessionDir); err != nil {
 		t.Fatalf("playlist missing after restarts: %v", err)
 	}
 	if !m.Touch(h.ViewerID) {
@@ -1708,4 +1740,17 @@ func TestRestartDialDoesNotBlockManager(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("manager calls blocked while a restart waited on the device")
 	}
+}
+
+// readyPlaylistIn reports whether a session dir has its ready playlist
+// (v<height>.m3u8 for the lowest rung).
+func readyPlaylistIn(dir string) error {
+	m, err := filepath.Glob(filepath.Join(dir, "v*.m3u8"))
+	if err != nil {
+		return err
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("no v*.m3u8 in %s", dir)
+	}
+	return nil
 }

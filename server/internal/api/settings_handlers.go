@@ -33,7 +33,8 @@ type settingsTranscodeJSON struct {
 }
 
 type settingsStreamingJSON struct {
-	BufferMinutes int `json:"bufferMinutes"`
+	BufferMinutes int  `json:"bufferMinutes"`
+	Adaptive      bool `json:"adaptive"`
 }
 
 type settingsResponseJSON struct {
@@ -71,6 +72,8 @@ type putTranscodeSection struct {
 
 type putStreamingSection struct {
 	BufferMinutes int `json:"bufferMinutes"`
+	// Adaptive is optional: nil keeps the stored value.
+	Adaptive *bool `json:"adaptive,omitempty"`
 }
 
 type lineupJSON struct {
@@ -225,6 +228,7 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 		},
 		Streaming: settingsStreamingJSON{
 			BufferMinutes: stream.BufferMinutes,
+			Adaptive:      stream.Adaptive,
 		},
 	}, nil
 }
@@ -287,6 +291,9 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 			return nil, "bufferMinutes must be between 2 and 60"
 		}
 		kv[settings.KeyStreamingBufferMinutes] = strconv.Itoa(req.Streaming.BufferMinutes)
+		if req.Streaming.Adaptive != nil {
+			kv[settings.KeyStreamingAdaptive] = strconv.FormatBool(*req.Streaming.Adaptive)
+		}
 	}
 
 	return kv, ""

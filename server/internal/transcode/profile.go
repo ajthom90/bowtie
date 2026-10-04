@@ -81,16 +81,6 @@ func Negotiate(caps ClientCaps, userMaxQuality string, hw Capabilities, forced s
 	}, nil
 }
 
-// SessionKey builds a stable session identity string for session sharing.
-// Format: "ch%d|%s|%s|%s" → channelID, VideoCodec, Profile.Name, "copy"|"aac".
-func SessionKey(channelID int64, d Decision) string {
-	audio := "aac"
-	if d.AudioCopy {
-		audio = "copy"
-	}
-	return fmt.Sprintf("ch%d|%s|%s|%s", channelID, d.VideoCodec, d.Profile.Name, audio)
-}
-
 func pickVideo(caps ClientCaps, hw Capabilities, backend Backend, allowHEVC bool) (codec, encoder string, err error) {
 	if allowHEVC && slices.Contains(caps.VideoCodecs, "hevc") && hw.HEVC[backend] {
 		return "hevc", encoderName(backend, true), nil

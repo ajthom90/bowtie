@@ -58,7 +58,7 @@ type Report struct {
 	// EndList: a polled playlist contained #EXT-X-ENDLIST, which tells a real
 	// player the stream is over (it stops reloading).
 	EndList bool
-	Errors      []string
+	Errors  []string
 }
 
 // Player is one virtual viewer.
@@ -242,6 +242,15 @@ func (p *Player) poll(ctx context.Context) bool {
 		p.errorf("playlist: HTTP %d", status)
 		return false
 	}
+	if bytes.Contains(body, []byte("#EXT-X-STREAM-INF")) {
+		// Master playlist: follow the first variant, as a real player does.
+		if v := firstURI(body); v != "" {
+			p.mu.Lock()
+			p.playlistURL = resolveRef(p.playlistURL, v)
+			p.mu.Unlock()
+		}
+		return false
+	}
 	if bytes.Contains(body, []byte("#EXT-X-ENDLIST")) {
 		p.mu.Lock()
 		p.report.EndList = true
@@ -328,4 +337,27 @@ func parsePlaylist(body []byte) []entry {
 		}
 	}
 	return out
+}
+
+// firstURI is the first non-tag line of a playlist.
+func firstURI(body []byte) string {
+	sc := bufio.NewScanner(bytes.NewReader(body))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return line
+		}
+	}
+	return ""
+}
+
+// resolveRef resolves a playlist reference against the playlist it came from.
+func resolveRef(base, ref string) string {
+	if strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return ref
+	}
+	if q := strings.IndexByte(base, '?'); q >= 0 {
+		base = base[:q]
+	}
+	return base[:strings.LastIndexByte(base, '/')+1] + ref
 }

@@ -19,7 +19,10 @@ type Config struct {
 	Encoder    string   `yaml:"encoder"`    // "auto"|"videotoolbox"|"qsv"|"nvenc"|"vaapi"|"software"
 	AllowHEVC  bool     `yaml:"allowHevc"`
 	Devices    []string `yaml:"devices"` // manual HDHomeRun IPs
-	XMLTV      struct {
+	// DisableMultitrack turns off captions, extra audio and the 5.1 option
+	// (video + first audio as AAC). Env BOWTIE_MULTITRACK=off|0|false.
+	DisableMultitrack bool `yaml:"disableMultitrack"`
+	XMLTV             struct {
 		Source       string `yaml:"source"`       // file path or http(s) URL
 		RefreshHours int    `yaml:"refreshHours"` // default 12
 	} `yaml:"xmltv"`
@@ -32,7 +35,7 @@ type Config struct {
 
 // Load reads <dataDir>/config.yaml if present, applies defaults, then env overrides.
 // Env vars: BOWTIE_LISTEN_ADDR, BOWTIE_FFMPEG_PATH, BOWTIE_ENCODER, BOWTIE_SEGMENT_DIR,
-// BOWTIE_DEVICES (comma-separated).
+// BOWTIE_DEVICES (comma-separated), BOWTIE_MULTITRACK (off|0|false disables).
 func Load(dataDir string) (Config, error) {
 	cfg := Config{
 		ListenAddr: ":8400",
@@ -81,6 +84,10 @@ func Load(dataDir string) (Config, error) {
 	}
 	if v := os.Getenv("BOWTIE_SEGMENT_DIR"); v != "" {
 		cfg.SegmentDir = v
+	}
+	switch strings.ToLower(os.Getenv("BOWTIE_MULTITRACK")) {
+	case "off", "0", "false":
+		cfg.DisableMultitrack = true
 	}
 	if v := os.Getenv("BOWTIE_DEVICES"); v != "" {
 		parts := strings.Split(v, ",")

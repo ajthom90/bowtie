@@ -698,3 +698,36 @@ func TestLineupsTokenHTTP200NonzeroCodeMapsTo401(t *testing.T) {
 		t.Fatalf("status = %d, want 401 body=%q", rr.Code, rr.Body.String())
 	}
 }
+
+// streaming.adaptive is returned by GET, set by PUT, and kept when a PUT's
+// streaming section omits it (older admin UIs).
+func TestPutSettingsStreamingAdaptive(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+
+	rr := doJSON(t, h, "GET", "/api/v1/admin/settings", nil, authHeader(tok))
+	if got := section(decodeSettings(t, rr), "streaming")["adaptive"]; got != false {
+		t.Fatalf("GET adaptive = %v, want false", got)
+	}
+
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"streaming": map[string]any{"bufferMinutes": 15, "adaptive": true},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	if s, err := prov.Streaming(); err != nil || !s.Adaptive {
+		t.Fatalf("provider adaptive = %+v err=%v", s, err)
+	}
+
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"streaming": map[string]any{"bufferMinutes": 20},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d", rr.Code)
+	}
+	sec := section(decodeSettings(t, rr), "streaming")
+	if sec["adaptive"] != true || int(sec["bufferMinutes"].(float64)) != 20 {
+		t.Fatalf("omitted adaptive must be kept: %v", sec)
+	}
+}

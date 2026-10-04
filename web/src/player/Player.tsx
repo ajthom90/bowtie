@@ -11,7 +11,8 @@ import { ApiError, type CreateSessionResponse, type SessionMeta } from '../api/c
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
-import { QualitySheet, useIsNarrow } from './QualitySheet'
+import { QUALITY_HINT, QualitySheet, useIsNarrow } from './QualitySheet'
+import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from './tracksModel'
 import { SeekBar } from './SeekBar'
 import {
   OUT_OF_WINDOW_NOTICE,
@@ -175,6 +176,11 @@ export function Player({ target, onBack }: Props) {
     bufferLength: null,
   })
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  const [audioTracks, setAudioTracks] = useState<{ name?: string; lang?: string }[]>([])
+  const [audioIdx, setAudioIdx] = useState(0)
+  const [hasCaptions, setHasCaptions] = useState(false)
+  const [captionsOn, setCaptionsOn] = useState(false)
+  const [playingHeight, setPlayingHeight] = useState<number | null>(null)
   const isNarrow = useIsNarrow(640)
 
   const showNotice = useCallback((msg: string) => {
@@ -209,6 +215,10 @@ export function Player({ target, onBack }: Props) {
       hlsRef.current.destroy()
       hlsRef.current = null
     }
+    setAudioTracks([])
+    setHasCaptions(false)
+    setCaptionsOn(false)
+    setPlayingHeight(null)
     const video = videoRef.current
     if (video) {
       video.removeAttribute('src')
@@ -294,6 +304,25 @@ export function Player({ target, onBack }: Props) {
       hlsRef.current = hls
       hls.loadSource(playlistUrl)
       hls.attachMedia(video)
+      hls.subtitleDisplay = true
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_e, data) => {
+        const tracks = data.audioTracks.map((t) => ({ name: t.name, lang: t.lang }))
+        setAudioTracks(tracks)
+        const want = pickAudioIndex(tracks, loadTrackPrefs().audioLang)
+        if (want >= 0 && want !== hls.audioTrack) hls.audioTrack = want
+        setAudioIdx(hls.audioTrack)
+      })
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_e, data) => setAudioIdx(data.id))
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_e, data) => {
+        const any = data.subtitleTracks.length > 0
+        setHasCaptions(any)
+        const on = any && loadTrackPrefs().captions === true
+        hls.subtitleTrack = on ? 0 : -1
+        setCaptionsOn(on)
+      })
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
+        setPlayingHeight(hls.levels[data.level]?.height ?? null)
+      })
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         void video.play().catch(() => {
           /* autoplay may require mute */
@@ -320,6 +349,22 @@ export function Player({ target, onBack }: Props) {
         tunerBusy: false,
       })
     }
+  }, [])
+
+  const onPickAudio = useCallback((i: number) => {
+    const hls = hlsRef.current
+    if (!hls) return
+    hls.audioTrack = i
+    saveTrackPrefs({ ...loadTrackPrefs(), audioLang: hls.audioTracks[i]?.lang ?? null })
+  }, [])
+
+  const onToggleCaptions = useCallback(() => {
+    const hls = hlsRef.current
+    if (!hls) return
+    const next = hls.subtitleTrack < 0
+    hls.subtitleTrack = next ? 0 : -1
+    setCaptionsOn(next)
+    saveTrackPrefs({ ...loadTrackPrefs(), captions: next })
   }, [])
 
   const startSession = useCallback(async () => {
@@ -678,6 +723,10 @@ export function Player({ target, onBack }: Props) {
                 <span>{field(sessionMeta?.profile ?? profile)}</span>
               </div>
               <div className={styles.statsRow}>
+                <span className={styles.statsKey}>playing</span>
+                <span>{playingHeight ? `${playingHeight}p` : '—'}</span>
+              </div>
+              <div className={styles.statsRow}>
                 <span className={styles.statsKey}>video codec</span>
                 <span>{field(sessionMeta?.videoCodec)}</span>
               </div>
@@ -773,6 +822,7 @@ export function Player({ target, onBack }: Props) {
                     value={profile}
                     onChange={onQualitySelect}
                     aria-label="Quality"
+                    title={QUALITY_HINT}
                   >
                     {QUALITY_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>
@@ -782,6 +832,37 @@ export function Player({ target, onBack }: Props) {
                   </select>
                 </label>
               )}
+              {audioTracks.length > 1 ? (
+                <label>
+                  <span className="visually-hidden">Audio track</span>
+                  <select
+                    className={styles.select}
+                    value={audioIdx}
+                    onChange={(e) => onPickAudio(Number(e.target.value))}
+                    aria-label="Audio track"
+                  >
+                    {audioTracks.map((t, i) => (
+                      <option key={i} value={i}>
+                        {audioTrackLabel(t, i)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {hasCaptions ? (
+                <button
+                  type="button"
+                  className={`${styles.btn} ${captionsOn ? styles.btnPrimary : ''}`}
+                  onClick={() => {
+                    onToggleCaptions()
+                    bumpOverlay()
+                  }}
+                  aria-pressed={captionsOn}
+                  aria-label="Closed captions"
+                >
+                  CC
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={styles.btn}

@@ -26,6 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -50,6 +51,8 @@ import app.bowtie.core.Channel
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.SessionInfoMeta
 import app.bowtie.core.player.PlayerEngine
+import app.bowtie.core.player.TrackPrefsStore
+import app.bowtie.core.player.nextAudio
 import app.bowtie.core.vm.PlayerViewModel
 import app.bowtie.tv.BowtieColors
 import app.bowtie.tv.BowtieDimens
@@ -116,10 +119,14 @@ fun TvPlayerScreen(
         pendingFocusRestore = true
     }
 
+    var tracksVersion by remember { mutableIntStateOf(0) }
+    val trackPrefs = remember { TrackPrefsStore(context) }
     val engine = remember {
         PlayerEngine(
             context = context,
             scope = scope,
+            loadPrefs = trackPrefs::load,
+            savePrefs = trackPrefs::save,
             listener = object : PlayerEngine.Listener {
                 override fun onAuthError() {
                     viewModelLatest.value.onPlaybackAuthError()
@@ -152,6 +159,10 @@ fun TvPlayerScreen(
 
                 override fun onJumpedToLive() {
                     setJumpedToLive.value.invoke()
+                }
+
+                override fun onTracksAvailable() {
+                    tracksVersion++
                 }
             },
         )
@@ -448,6 +459,24 @@ fun TvPlayerScreen(
                     }
                 },
                 onToggleStats = { showStats = !showStats },
+                audioLabel = remember(tracksVersion) {
+                    val opts = engine.audioOptions()
+                    if (opts.size < 2) {
+                        null
+                    } else {
+                        val current = engine.selectedAudioId()
+                        "Audio: " + (opts.firstOrNull { it.id == current } ?: opts.first()).label
+                    }
+                },
+                onAudio = {
+                    nextAudio(engine.audioOptions(), engine.selectedAudioId())?.let {
+                        engine.selectAudio(it)
+                    }
+                },
+                captionsOn = remember(tracksVersion) {
+                    if (engine.hasCaptions()) engine.captionsOn() else null
+                },
+                onCaptions = { engine.setCaptions(!engine.captionsOn()) },
                 onClose = { showDrawer = false },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -466,6 +495,10 @@ private fun TransportDrawer(
     showStats: Boolean,
     onSelectProfile: (String) -> Unit,
     onToggleStats: () -> Unit,
+    audioLabel: String?,
+    onAudio: () -> Unit,
+    captionsOn: Boolean?,
+    onCaptions: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -487,7 +520,7 @@ private fun TransportDrawer(
             modifier = Modifier.padding(bottom = 8.dp),
         )
         Text(
-            text = "Quality",
+            text = "Quality (the most this player will use)",
             style = BowtieType.label,
             color = BowtieColors.dim,
         )
@@ -519,6 +552,28 @@ private fun TransportDrawer(
             }
         }
         Spacer(Modifier.height(12.dp))
+        audioLabel?.let { label ->
+            Button(
+                onClick = onAudio,
+                modifier = Modifier.fillMaxWidth(),
+                colors = drawerButtonColors(false),
+            ) {
+                Text(text = label, style = BowtieType.body, color = BowtieColors.text)
+            }
+        }
+        captionsOn?.let { on ->
+            Button(
+                onClick = onCaptions,
+                modifier = Modifier.fillMaxWidth(),
+                colors = drawerButtonColors(on),
+            ) {
+                Text(
+                    text = if (on) "Captions ✓" else "Captions",
+                    style = BowtieType.body,
+                    color = BowtieColors.text,
+                )
+            }
+        }
         Button(
             onClick = onToggleStats,
             modifier = Modifier.fillMaxWidth(),

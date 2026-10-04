@@ -113,7 +113,8 @@ func New(t testing.TB, o Options) *Harness {
 		return body, status, err
 	})
 	mgr := stream.NewManager(stream.ManagerDeps{
-		Cfg: cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
+		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
+		Cfg:               cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan struct{})

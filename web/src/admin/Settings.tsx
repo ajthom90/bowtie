@@ -426,6 +426,25 @@ export function Settings() {
               disabled={saving === 'streaming'}
             />
           </label>
+          <label className={styles.label} style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              className={styles.toggle}
+              type="checkbox"
+              checked={form.streaming.adaptive}
+              onChange={(e) =>
+                setForm((f) =>
+                  f ? { ...f, streaming: { ...f.streaming, adaptive: e.target.checked } } : f,
+                )
+              }
+              disabled={saving === 'streaming'}
+            />
+            Adaptive quality (one shared stream per channel)
+          </label>
+          <p className={styles.dim} style={{ margin: 0, fontSize: '0.85rem' }}>
+            Every viewer of a channel shares one transcode at 1080/720/480/360 (never above
+            the broadcast), and players pick the quality for their connection. Uses about
+            1.7× the GPU of one stream. Applies to new sessions.
+          </p>
         </div>
         <div className={styles.settingsFooter}>
           {saved === 'streaming' ? (
