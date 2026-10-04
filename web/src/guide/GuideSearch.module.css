@@ -266,6 +266,15 @@
   background: color-mix(in srgb, var(--alert) 14%, var(--surface-raised));
 }
 
+/* Tablet: the toolbar wraps (Guide.module.css) and search takes its own row. */
+@media (max-width: 1024px) {
+  .wrap {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 5;
+  }
+}
+
 /* Phone: full-width row in the wrapped toolbar; panel spans the screen. */
 @media (max-width: 640px) {
   .wrap {

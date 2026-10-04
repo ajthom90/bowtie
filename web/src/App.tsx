@@ -53,7 +53,14 @@ function Shell() {
   }
 
   if (onLink) {
-    return <LinkPage onDone={() => navigate('/')} />
+    return (
+      <LinkPage
+        onDone={() => {
+          setView('guide')
+          navigate('/')
+        }}
+      />
+    )
   }
 
   if (watching) {
