@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/auth"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // Quick sign-in for TV apps (device authorization): the TV shows a QR code
@@ -119,6 +120,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		"deviceCode": deviceCode,
 		"userCode":   code[:4] + "-" + code[4:],
 		"verifyUrl":  baseURL(r) + "/link?code=" + code,
+		"qrUrl":      "/api/v1/auth/device/qr/" + code + ".png",
 		"expiresIn":  int(deviceAuthTTL / time.Second),
 		"interval":   deviceAuthInterval,
 	})
@@ -206,4 +208,27 @@ func (s *Server) handleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		}
 		s.issueTokens(w, u, now.UTC())
 	}
+}
+
+// handleDeviceQR serves GET /api/v1/auth/device/qr/{file} ("<userCode>.png"):
+// the verify URL as a QR code, so TV apps can show it as a plain image.
+func (s *Server) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
+	code := normalizeUserCode(strings.TrimSuffix(r.PathValue("file"), ".png"))
+	d := s.devices
+	d.mu.Lock()
+	d.pruneLocked(time.Now())
+	_, p := d.byUserCodeLocked(code)
+	d.mu.Unlock()
+	if p == nil {
+		writeError(w, http.StatusNotFound, "that code has expired or doesn't exist")
+		return
+	}
+	png, err := qrcode.Encode(baseURL(r)+"/link?code="+code, qrcode.Medium, 512)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to draw the code")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
 }

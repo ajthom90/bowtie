@@ -66,3 +66,24 @@ func TestDeviceSignIn(t *testing.T) {
 		t.Fatalf("unknown device code %d", rr.Code)
 	}
 }
+
+// TV apps show the QR as an image the server draws (no QR library needed on
+// Roku, tvOS or Android TV).
+func TestDeviceQRCodeImage(t *testing.T) {
+	h, _, _ := testAPI(t)
+	rr := doJSON(t, h, "POST", "/api/v1/auth/device", map[string]string{"deviceName": "TV"}, nil)
+	var start struct {
+		UserCode string `json:"userCode"`
+		QRURL    string `json:"qrUrl"`
+	}
+	if json.Unmarshal(rr.Body.Bytes(), &start) != nil || start.QRURL == "" {
+		t.Fatalf("no qrUrl: %s", rr.Body.String())
+	}
+	img := doJSON(t, h, "GET", start.QRURL, nil, nil)
+	if img.Code != http.StatusOK || img.Header().Get("Content-Type") != "image/png" || !strings.HasPrefix(img.Body.String(), "\x89PNG") {
+		t.Fatalf("qr %d %q", img.Code, img.Header().Get("Content-Type"))
+	}
+	if rr := doJSON(t, h, "GET", "/api/v1/auth/device/qr/ZZZZZZZZ.png", nil, nil); rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown code %d", rr.Code)
+	}
+}

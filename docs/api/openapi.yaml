@@ -138,6 +138,9 @@ paths:
                     example: BCDF-2345
                   verifyUrl:
                     type: string
+                  qrUrl:
+                    type: string
+                    description: Server-relative PNG of verifyUrl as a QR code (for TV apps)
                   expiresIn:
                     type: integer
                   interval:
@@ -148,6 +151,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/auth/device/qr/{file}:
+    parameters:
+      - name: file
+        in: path
+        required: true
+        description: <userCode>.png
+        schema:
+          type: string
+    get:
+      summary: QR code image of a quick sign-in's verify URL
+      operationId: deviceQR
+      tags: [auth]
+      responses:
+        '200':
+          description: PNG
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/auth/device/token:
     post:
       summary: Poll for a quick sign-in's tokens (TV apps)

@@ -90,6 +90,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	handleFunc("POST /api/v1/auth/device", s.handleDeviceStart)
 	handleFunc("POST /api/v1/auth/device/token", s.handleDeviceToken)
+	handleFunc("GET /api/v1/auth/device/qr/{file}", s.handleDeviceQR)
 	handle("GET /api/v1/auth/device/{userCode}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeviceLookup)))
 	handle("POST /api/v1/auth/device/approve", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeviceApprove)))
 
