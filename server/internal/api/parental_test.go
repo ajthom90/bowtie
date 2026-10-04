@@ -128,3 +128,58 @@ func TestParentalControls(t *testing.T) {
 		t.Fatalf("after lifting: %d started=%d", code, started)
 	}
 }
+
+// Restricted accounts don't see or play recordings from channels or ratings
+// they're blocked from.
+func TestParentalRecordings(t *testing.T) {
+	e := newDVREnv(t) // programs "Show on <g>" at showAt, unrated
+	kid := seedUser(t, e.st, "kid", "pw", "viewer")
+	kidTok := decodeLogin(t, doJSON(t, e.h, "POST", "/api/v1/auth/login", map[string]string{"username": "kid", "password": "pw"}, nil))
+	kidH := map[string]string{"Authorization": "Bearer " + kidTok.AccessToken}
+
+	mk := func(guide, rating string) int64 {
+		id, _ := e.st.CreateRecording(store.Recording{UserID: e.aliceID, ChannelID: e.ids[guide], ChannelName: guide, Title: "R " + guide + " " + rating,
+			Rating: rating, Start: e.showAt.Add(-48 * time.Hour), Stop: e.showAt.Add(-47 * time.Hour), State: store.RecScheduled, CreatedAt: time.Now()})
+		r, _ := e.st.RecordingByID(id)
+		r.State, r.Dir = store.RecReady, filepath.Join(e.dir, fmt.Sprint(id))
+		_ = e.st.UpdateRecording(r)
+		return id
+	}
+	okID, maID, otherCh := mk("9.1", "TV-G"), mk("9.1", "TV-MA"), mk("5.1", "TV-G")
+	if r, _ := e.st.RecordingByID(maID); r.Rating != "TV-MA" {
+		t.Fatalf("rating not stored: %+v", r)
+	}
+	path := fmt.Sprintf("/api/v1/admin/users/%d", kid.ID)
+	if rr := doJSON(t, e.h, "PATCH", path, map[string]any{"allowedChannelIds": []int64{e.ids["9.1"]}, "maxRating": "TV-PG"}, e.admin); rr.Code != http.StatusOK {
+		t.Fatalf("patch %d", rr.Code)
+	}
+	var list []struct {
+		ID     int64 `json:"id"`
+		Locked bool  `json:"locked"`
+	}
+	rr := doJSON(t, e.h, "GET", "/api/v1/recordings?state=recorded", nil, kidH)
+	if json.Unmarshal(rr.Body.Bytes(), &list) != nil || len(list) != 2 {
+		t.Fatalf("kid list %s", rr.Body.String())
+	}
+	for _, r := range list {
+		if r.ID == otherCh || (r.ID == maID) != r.Locked {
+			t.Fatalf("list %+v", list)
+		}
+	}
+	play := func(id int64) int {
+		return doJSON(t, e.h, "POST", fmt.Sprintf("/api/v1/recordings/%d/play", id), nil, kidH).Code
+	}
+	if play(maID) != http.StatusForbidden || play(otherCh) != http.StatusForbidden {
+		t.Fatalf("blocked plays: %d %d", play(maID), play(otherCh))
+	}
+	if c := play(okID); c != http.StatusOK {
+		t.Fatalf("allowed play %d", c)
+	}
+	// Scheduling from the guide snapshots the program's rating.
+	_ = e.st.ReplaceEPG("xmltv", []store.EPGChannel{{ID: "epg-9.1", Source: "xmltv"}}, []store.Program{
+		{EPGChannelID: "epg-9.1", Start: e.showAt, Stop: e.showAt.Add(time.Hour), Title: "Rated", Rating: "TV-14"}})
+	_, rec := e.record(t, e.alice, map[string]any{"channelId": e.ids["9.1"], "programStart": e.showAt})
+	if r, _ := e.st.RecordingByID(rec.ID); r.Rating != "TV-14" {
+		t.Fatalf("scheduled rating %q", r.Rating)
+	}
+}

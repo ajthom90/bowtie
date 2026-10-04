@@ -104,7 +104,7 @@ type clock struct {
 	now time.Time
 }
 
-func (c *clock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *clock) Now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
 func (c *clock) Set(t time.Time) { c.mu.Lock(); c.now = t; c.mu.Unlock() }
 
 // --- harness -----------------------------------------------------------------

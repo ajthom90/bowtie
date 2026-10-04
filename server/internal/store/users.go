@@ -21,7 +21,7 @@ type User struct {
 	AllowedChannels []int64
 	MaxRating       int
 	BlockUnrated    bool
-	CreatedAt    time.Time
+	CreatedAt       time.Time
 }
 
 // CreateUser inserts a user and returns its ID.

@@ -92,6 +92,7 @@ type ScheduleRequest struct {
 	Description string
 	Category    string
 	IconURL     string
+	Rating      string
 	Start, Stop time.Time
 	Force       bool // schedule despite a tuner conflict
 }
@@ -200,7 +201,7 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
 		Title:       title, Subtitle: req.Subtitle, Description: req.Description,
-		Category: req.Category, IconURL: req.IconURL,
+		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
 		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),

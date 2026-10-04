@@ -6,3 +6,5 @@ ALTER TABLE programs ADD COLUMN rating TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN allowed_channels TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN max_rating INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN block_unrated INTEGER NOT NULL DEFAULT 0;
+-- Recordings keep the program's rating (snapshot at scheduling).
+ALTER TABLE recordings ADD COLUMN rating TEXT NOT NULL DEFAULT '';

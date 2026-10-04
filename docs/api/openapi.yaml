@@ -513,6 +513,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '403':
+          description: Parental controls block this recording (`code` is `parental`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           description: Not ready to play yet
           content:
@@ -1689,6 +1695,12 @@ components:
         canManage:
           type: boolean
           description: The caller may stop, delete or protect it (scheduler or admin)
+        rating:
+          type: string
+          description: The program's rating when scheduled ("" = not rated)
+        locked:
+          type: boolean
+          description: Parental controls block it for the caller (no description; play is 403)
     RecentChannel:
       type: object
       required: [channelId, guideNumber, name, logoUrl, watchedAt]

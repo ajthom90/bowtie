@@ -27,6 +27,7 @@ type Recording struct {
 	Description   string
 	Category      string
 	IconURL       string
+	Rating        string // the program's rating when scheduled (parental controls)
 	Start, Stop   time.Time
 	PadStartSec   int
 	PadEndSec     int
@@ -56,16 +57,16 @@ func (r Recording) WindowStop() time.Time {
 
 const recordingCols = `id, user_id, channel_id, channel_name, title, subtitle, description, category,
 	icon_url, start, stop, pad_start_sec, pad_end_sec, state, partial, failure, failure_detail,
-	actual_start, actual_stop, missed_sec, dir, size_bytes, duration_sec, protected, created_at`
+	actual_start, actual_stop, missed_sec, dir, size_bytes, duration_sec, protected, created_at, rating`
 
 // CreateRecording inserts r and returns its ID.
 func (s *Store) CreateRecording(r Recording) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO recordings (user_id, channel_id, channel_name, title, subtitle,
-		description, category, icon_url, start, stop, pad_start_sec, pad_end_sec, state, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		description, category, icon_url, start, stop, pad_start_sec, pad_end_sec, state, created_at, rating)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.UserID, r.ChannelID, r.ChannelName, r.Title, r.Subtitle, r.Description, r.Category,
 		r.IconURL, formatTime(r.Start), formatTime(r.Stop), r.PadStartSec, r.PadEndSec, r.State,
-		formatTime(r.CreatedAt))
+		formatTime(r.CreatedAt), r.Rating)
 	if err != nil {
 		return 0, err
 	}
@@ -174,7 +175,7 @@ func scanRecording(row scannable) (Recording, error) {
 	if err := row.Scan(&r.ID, &r.UserID, &r.ChannelID, &r.ChannelName, &r.Title, &r.Subtitle,
 		&r.Description, &r.Category, &r.IconURL, &start, &stop, &r.PadStartSec, &r.PadEndSec,
 		&r.State, &partial, &r.Failure, &r.FailureDetail, &aStart, &aStop, &r.MissedSec, &r.Dir,
-		&r.SizeBytes, &r.DurationSec, &protected, &created); err != nil {
+		&r.SizeBytes, &r.DurationSec, &protected, &created, &r.Rating); err != nil {
 		return Recording{}, err
 	}
 	r.Partial, r.Protected = partial != 0, protected != 0
