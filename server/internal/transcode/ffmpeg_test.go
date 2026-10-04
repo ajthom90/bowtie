@@ -36,7 +36,7 @@ func TestBuildArgsSoftwareAAC(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "libx264", "-profile:v", "high",
 		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "veryfast",
@@ -70,7 +70,7 @@ func TestBuildArgsSoftwareAudioCopy(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:720[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "libx264", "-profile:v", "high",
 		"-b:v:0", "4000k", "-maxrate:v:0", "4800k", "-bufsize:v:0", "8000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "veryfast",
@@ -104,7 +104,7 @@ func TestBuildArgsVideoToolbox(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "h264_videotoolbox", "-profile:v", "high",
 		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-realtime", "1", "-a53cc", "0",
@@ -139,7 +139,7 @@ func TestBuildArgsQSV(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "h264_qsv", "-profile:v", "high",
 		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "veryfast",
@@ -174,7 +174,7 @@ func TestBuildArgsVAAPI(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "h264_vaapi", "-profile:v", "high",
 		"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
@@ -208,7 +208,7 @@ func TestBuildArgsNVENC(t *testing.T) {
 		"-i", "http://hdhr/auto/v7.1",
 		"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
 		"-map", "[v0]", "-map", "0:a:0",
-		"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+		"-c:v", "h264_nvenc", "-profile:v", "high",
 		"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 		"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 		"-preset", "p4",
@@ -317,7 +317,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "libx264", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
@@ -345,7 +345,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_videotoolbox", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-realtime", "1", "-a53cc", "0",
@@ -374,7 +374,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
 				"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_qsv", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
@@ -403,7 +403,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
 				"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_vaapi", "-profile:v", "high",
 				"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
@@ -431,7 +431,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-fflags", "+discardcorrupt", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_nvenc", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "p4",
@@ -500,7 +500,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-i", "http://hdhr/auto/v7.1",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "libx264", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
@@ -528,7 +528,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-i", "http://hdhr/auto/v7.1",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_videotoolbox", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_videotoolbox", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-realtime", "1", "-a53cc", "0",
@@ -557,7 +557,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-i", "http://hdhr/auto/v7.1",
 				"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_qsv", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_qsv", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
@@ -586,7 +586,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-i", "http://hdhr/auto/v7.1",
 				"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_vaapi", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_vaapi", "-profile:v", "high",
 				"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
@@ -614,7 +614,7 @@ func TestHLSListSize225AcrossBackends(t *testing.T) {
 				"-i", "http://hdhr/auto/v7.1",
 				"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
-				"-c:v", "h264_nvenc", "-profile:v", "high", "-level", "4.1",
+				"-c:v", "h264_nvenc", "-profile:v", "high",
 				"-b:v:0", "1500k", "-maxrate:v:0", "1800k", "-bufsize:v:0", "3000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "p4",
@@ -751,5 +751,21 @@ func TestBuildArgsSingleRungQSVKeepsNoForcedIDR(t *testing.T) {
 		Layout: transcode.Layout{Rungs: []transcode.Rung{{720, 4000}}, VideoCodec: "h264"}}
 	if containsAdjacent(transcode.BuildArgs(s), "-forced_idr", "1") {
 		t.Fatal("single rung must not change QSV IDR behavior")
+	}
+}
+
+// No -level: FFmpeg 5.1's h264_qsv has no level option, so the generic
+// integer option turns "4.1" into 4 — not a valid MFX level. Encoders pick a
+// level that fits; CODECS advertises the ceiling (4.1).
+func TestBuildArgsPassesNoLevel(t *testing.T) {
+	for _, enc := range []string{"h264_qsv", "libx264", "h264_videotoolbox", "h264_nvenc", "h264_vaapi"} {
+		s := transcode.JobSpec{Stdin: nonNilStdin(), OutDir: "/tmp/out",
+			D:      transcode.Decision{VideoCodec: "h264", VideoEncoder: enc, Backend: transcode.BackendQSV},
+			Layout: transcode.Layout{Rungs: []transcode.Rung{{720, 4000}}, VideoCodec: "h264"}}
+		for _, a := range transcode.BuildArgs(s) {
+			if a == "-level" {
+				t.Fatalf("%s: -level must not be passed", enc)
+			}
+		}
 	}
 }

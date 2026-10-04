@@ -85,8 +85,11 @@ func BuildArgs(s JobSpec) []string {
 
 	args = append(args, "-c:v", s.D.VideoEncoder)
 	if s.D.VideoCodec != "hevc" {
-		// Pinned so the master playlist's CODECS (avc1.640029) is true.
-		args = append(args, "-profile:v", "high", "-level", "4.1")
+		// High profile, as the master's CODECS (avc1.640029) says. No -level:
+		// FFmpeg 5.1's h264_qsv has no level option, so the generic integer
+		// one turns "4.1" into 4 (not a valid MFX level); encoders pick a
+		// level that fits, and 4.1 is the ceiling for these rungs.
+		args = append(args, "-profile:v", "high")
 	}
 	for i, r := range rungs {
 		args = append(args,
