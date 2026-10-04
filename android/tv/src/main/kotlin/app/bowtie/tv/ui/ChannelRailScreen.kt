@@ -555,7 +555,8 @@ private fun ChannelRailRow(
                 if (now != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = (if (now.recording != null) "● " else "") + now.title,
+                        text = (if (now.recording != null) "● " else "") + now.title +
+                            (RecordingLogic.lockLabel(now)?.let { "   $it" } ?: ""),
                         style = BowtieType.body,
                         color = BowtieColors.text,
                         maxLines = 1,
@@ -573,7 +574,8 @@ private fun ChannelRailRow(
                 if (next != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Next: " + (if (next.recording != null) "● " else "") + next.title,
+                        text = "Next: " + (if (next.recording != null) "● " else "") + next.title +
+                            (RecordingLogic.lockLabel(next)?.let { "   $it" } ?: ""),
                         style = BowtieType.label,
                         color = BowtieColors.dim,
                         maxLines = 1,

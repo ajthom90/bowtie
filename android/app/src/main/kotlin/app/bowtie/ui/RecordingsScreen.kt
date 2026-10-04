@@ -293,6 +293,9 @@ private fun RecordingRow(
         if (recording.subtitle.isNotEmpty()) {
             Text(recording.subtitle, style = BowtieType.label, color = BowtieColors.dim, maxLines = 1)
         }
+        RecordingLogic.lockLabel(recording)?.let {
+            Text(it, style = BowtieType.label, color = BowtieColors.amber)
+        }
         Spacer(Modifier.height(4.dp))
         Text(
             text = "${recording.channelName} · ${RecordingLogic.formatWhen(recording.start, recording.stop, Instant.now())}",

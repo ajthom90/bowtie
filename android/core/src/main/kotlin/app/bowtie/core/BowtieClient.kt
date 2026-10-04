@@ -161,9 +161,12 @@ class BowtieClient(
 
     /**
      * Session liveness beat (spec C). Auth is the stream token query param only —
-     * never Bearer (avoids racing access-token refresh mid-session). Best-effort.
+     * never Bearer (avoids racing access-token refresh mid-session). Best-effort,
+     * except that a viewer stopped by parental controls throws
+     * [BowtieError.Parental] so the player can say why.
      */
     suspend fun heartbeat(viewerId: String, token: String): Unit = withContext(Dispatchers.IO) {
+        var parental: BowtieError.Parental? = null
         try {
             val path = "/api/v1/sessions/$viewerId/heartbeat?token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
             val request = Request.Builder()
@@ -171,12 +174,14 @@ class BowtieClient(
                 .post("".toRequestBody(null))
                 .build()
             okHttp.newCall(request).execute().use { response ->
-                // 204 success; all other statuses swallowed (best-effort).
-                response.body?.close()
+                // 204 success; every other status is swallowed (best-effort) except parental.
+                val body = response.body?.string().orEmpty()
+                if (response.code == 403) parental = parentalError(body)
             }
         } catch (_: Exception) {
             // swallow
         }
+        parental?.let { throw it }
     }
 
     suspend fun me(): User = withContext(Dispatchers.IO) {
@@ -436,6 +441,8 @@ class BowtieClient(
     private fun mapHttpError(code: Int, body: String, path: String = ""): BowtieError {
         return when (code) {
             401 -> BowtieError.Unauthorized
+            403 -> parentalError(body)
+                ?: BowtieError.Server(403, extractErrorMessage(body) ?: body.ifEmpty { "HTTP 403" })
             404 -> BowtieError.NotFound
             409 -> {
                 // Only a schedule conflict carries `conflicts`; /play's 409 is a plain error.
@@ -465,6 +472,17 @@ class BowtieClient(
                 code,
                 extractErrorMessage(body) ?: body.ifEmpty { "HTTP $code" },
             )
+        }
+    }
+
+    /** A 403 body with `code: "parental"`, else null. */
+    private fun parentalError(body: String): BowtieError.Parental? {
+        if (body.isBlank()) return null
+        return try {
+            val e = BowtieJson.decodeFromString<ErrorBody>(body)
+            if (e.code == "parental") BowtieError.Parental(e.error) else null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -520,8 +538,9 @@ private data class CreateSessionRequest(
     val caps: ClientCaps,
 )
 
+/** `code` is set on some errors (e.g. "parental"). */
 @Serializable
-private data class ErrorBody(val error: String)
+private data class ErrorBody(val error: String, val code: String? = null)
 
 /** `force` is optional: false is omitted (BowtieJson has encodeDefaults = false). */
 @Serializable

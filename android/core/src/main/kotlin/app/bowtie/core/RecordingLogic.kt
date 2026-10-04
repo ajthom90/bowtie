@@ -73,10 +73,13 @@ object RecordingLogic {
         else -> if (r.partial) "Part of this program is missing" else null
     }
 
-    /** What a row offers: play when ready; stop/keep/delete only when [Recording.canManage]. */
+    /**
+     * What a row offers: play when ready (and not locked by parental controls);
+     * stop/keep/delete only when [Recording.canManage].
+     */
     fun actions(r: Recording): Set<Action> {
         val out = linkedSetOf<Action>()
-        if (r.state == Recording.READY) out += Action.Play
+        if (r.state == Recording.READY && !r.locked) out += Action.Play
         if (!r.canManage) return out
         if (r.state == Recording.RECORDING) out += Action.Stop
         if (r.state == Recording.READY || r.state == Recording.CONVERTING) out += Action.Keep
@@ -191,14 +194,24 @@ object RecordingLogic {
 
     /** Plain-words error for a failed "Record this program". */
     fun scheduleErrorMessage(e: Throwable): String = when (e) {
+        is BowtieError.Parental -> e.message
         is BowtieError.NotFound -> "That program isn't in the guide anymore."
         is BowtieError.Server ->
             if (e.status == 503) "Recording isn't available on this server." else e.message
         else -> errorMessage(e)
     }
 
+    /** "🔒 TV-MA" / "🔒 Not rated" for a program or recording parental controls block; null otherwise. */
+    fun lockLabel(locked: Boolean, rating: String): String? =
+        if (!locked) null else "🔒 " + rating.ifEmpty { "Not rated" }
+
+    fun lockLabel(r: Recording): String? = lockLabel(r.locked, r.rating)
+
+    fun lockLabel(p: GuideProgram): String? = lockLabel(p.locked, p.rating)
+
     /** Generic error copy for DVR actions. */
     fun errorMessage(e: Throwable): String = when (e) {
+        is BowtieError.Parental -> e.message
         is BowtieError.Unauthorized -> "Your session ended. Sign in again."
         is BowtieError.NotFound -> "That recording is gone."
         is BowtieError.Server -> when (e.status) {

@@ -167,6 +167,7 @@ fun TvRecordingsScreen(
             body = listOfNotNull(
                 "${r.channelName} · ${RecordingLogic.formatWhen(r.start, r.stop, Instant.now())}",
                 RecordingLogic.statusLine(r),
+                RecordingLogic.lockLabel(r)?.let { "$it · Blocked by parental controls" },
                 if (actions.isEmpty()) "Only the person who scheduled it or an admin can change it." else null,
             ).joinToString("\n"),
             choices = choices,
@@ -316,6 +317,9 @@ private fun TvRecordingRow(
             }
             if (recording.subtitle.isNotEmpty()) {
                 Text(recording.subtitle, style = BowtieType.label, color = BowtieColors.dim, maxLines = 1)
+            }
+            RecordingLogic.lockLabel(recording)?.let {
+                Text(it, style = BowtieType.label, color = BowtieColors.amber)
             }
             Spacer(Modifier.height(4.dp))
             Text(

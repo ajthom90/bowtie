@@ -294,6 +294,14 @@ class PlayerViewModel(
                 if (activeViewerId != viewerId) return@launch
                 try {
                     client.heartbeat(viewerId, token)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: BowtieError.Parental) {
+                    // Parental controls stopped this viewer (the program changed): say why.
+                    if (activeViewerId != viewerId) return@launch
+                    activeViewerId = null
+                    _state.value = State.Failed(e.message)
+                    return@launch
                 } catch (_: Exception) {
                     // best-effort
                 }
@@ -330,6 +338,9 @@ class PlayerViewModel(
             }
             is BowtieError.TunersBusy -> {
                 _state.value = State.TunersBusy(error.sessions, error.otherInUse)
+            }
+            is BowtieError.Parental -> {
+                _state.value = State.Failed(error.message)
             }
             is BowtieError.NotFound -> {
                 _channelsStale.value = true

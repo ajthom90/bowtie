@@ -338,6 +338,7 @@ class ChannelListViewModel(
 
         fun messageFor(error: Throwable): String {
             return when (error) {
+                is BowtieError.Parental -> error.message
                 is BowtieError.Unauthorized -> "Unauthorized"
                 is BowtieError.TunersBusy -> "All tuners are in use"
                 is BowtieError.RecordingConflict -> "Not enough tuners then"

@@ -88,6 +88,16 @@ data class GuideProgram(
     val category: String,
     /** Present when this program is scheduled or recorded (servers with the DVR). */
     val recording: GuideRecordingMark? = null,
+    /** Guide program ID of the episode (when the source has one). */
+    val programId: String? = null,
+    /** Series ID of the show (when the source has one). */
+    val seriesId: String? = null,
+    /** First airing. */
+    val isNew: Boolean? = null,
+    /** Rating from the guide source (e.g. TV-14; "" = not rated). */
+    val rating: String = "",
+    /** Parental controls block this program for the caller (description is hidden). */
+    val locked: Boolean = false,
 )
 
 /** A guide program's DVR mark: which recording covers it, and its state. */
@@ -164,7 +174,7 @@ data class Recording(
     val state: String,
     /** More than a minute is missing (late start, dropped stream, or a restart). */
     val partial: Boolean = false,
-    /** "", noTuner, noSignal, diskFull or error. */
+    /** "", noTuner, noSignal, diskFull, error or skipped. */
     val failure: String = "",
     val failureDetail: String = "",
     val durationSec: Int = 0,
@@ -177,6 +187,12 @@ data class Recording(
     val scheduledBy: String = "",
     /** The caller may stop, delete or keep it (scheduler or admin). */
     val canManage: Boolean = false,
+    /** The program's rating when scheduled ("" = not rated). */
+    val rating: String = "",
+    /** Series rule that scheduled it (0 = one-off). */
+    val ruleId: Long = 0,
+    /** Parental controls block it for the caller (no description; play is 403). */
+    val locked: Boolean = false,
 ) {
     companion object {
         const val SCHEDULED = "scheduled"

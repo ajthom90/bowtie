@@ -558,7 +558,10 @@ private fun ChannelRow(
                         text = now.title,
                         style = BowtieType.body.copy(color = BowtieColors.text),
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    LockMark(now)
                 }
                 Spacer(Modifier.height(6.dp))
                 ProgressCapsule(progress = progress)
@@ -579,7 +582,10 @@ private fun ChannelRow(
                         style = BowtieType.label,
                         color = BowtieColors.dim,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    LockMark(next)
                 }
             }
         }
@@ -598,6 +604,19 @@ private fun RecordMark(program: GuideProgram) {
         style = BowtieType.label,
         color = BowtieColors.alert,
         modifier = Modifier.semantics { contentDescription = "Set to record" },
+    )
+}
+
+/** Lock and rating after a program parental controls block for this user. */
+@Composable
+internal fun LockMark(program: GuideProgram) {
+    val label = RecordingLogic.lockLabel(program) ?: return
+    Text(
+        text = "  $label",
+        style = BowtieType.label,
+        color = BowtieColors.amber,
+        maxLines = 1,
+        modifier = Modifier.semantics { contentDescription = "Blocked by parental controls, $label" },
     )
 }
 
