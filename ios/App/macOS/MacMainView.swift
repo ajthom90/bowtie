@@ -156,6 +156,17 @@ struct MacMainView: View {
             now = Date()
             await searchModel?.search(searchText)
         }
+        // Keeps "On now" in search results current.
+        .task {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+                now = Date()
+            }
+        }
         .navigationTitle("Bowtie")
         .toolbar {
             ToolbarItem {

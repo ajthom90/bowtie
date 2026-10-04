@@ -272,7 +272,7 @@ struct RecordingsView: View {
         .listRowSeparatorTint(Theme.line)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(rowView.accessibilityText)
-        .accessibilityHint(recording.isPlayable ? "Play this recording" : "")
+        .accessibilityHint(recording.locked ? "Locked by parental controls" : (recording.isPlayable ? "Play this recording" : ""))
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if recording.canDelete {
                 Button {
