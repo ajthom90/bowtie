@@ -29,6 +29,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - Notifications: a busy database no longer drops a notification.
 - Web Multiview: the channel picker keeps keyboard focus inside it and gives
   it back when closed.
+- Web: a background refresh on Recordings can't bring back something you
+  just removed, and an open recording picks up its new breaks after **Find
+  ads again**.
 
 ## [0.17.0] — 2026-10-04
 
