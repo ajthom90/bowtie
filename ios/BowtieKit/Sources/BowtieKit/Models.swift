@@ -75,6 +75,16 @@ public struct GuideProgram: Codable, Equatable, Sendable {
     public let category: String
     /// Present when this program is scheduled or recorded (DVR servers).
     public let recording: RecordingMark?
+    /// Rating from the guide (e.g. "TV-14"; "" = not rated). Absent from older servers.
+    public let rating: String?
+    /// Parental controls block it for the caller (the description is blank).
+    public let locked: Bool?
+    /// First airing.
+    public let isNew: Bool?
+    /// The show's series ID, when the guide source has one.
+    public let seriesId: String?
+    /// The episode's program ID, when the guide source has one.
+    public let programId: String?
 
     public init(
         start: Date,
@@ -83,7 +93,12 @@ public struct GuideProgram: Codable, Equatable, Sendable {
         subtitle: String,
         description: String,
         category: String,
-        recording: RecordingMark? = nil
+        recording: RecordingMark? = nil,
+        rating: String? = nil,
+        locked: Bool? = nil,
+        isNew: Bool? = nil,
+        seriesId: String? = nil,
+        programId: String? = nil
     ) {
         self.start = start
         self.stop = stop
@@ -92,7 +107,15 @@ public struct GuideProgram: Codable, Equatable, Sendable {
         self.description = description
         self.category = category
         self.recording = recording
+        self.rating = rating
+        self.locked = locked
+        self.isNew = isNew
+        self.seriesId = seriesId
+        self.programId = programId
     }
+
+    /// Parental controls block this program for the caller.
+    public var isLocked: Bool { locked == true }
 }
 
 public struct GuideChannel: Codable, Equatable, Sendable {

@@ -1,8 +1,9 @@
 import SwiftUI
 import BowtieKit
 
-/// "Record this program" from the channel list: schedules, then explains the
-/// result, offering "Record Anyway" on a tuner conflict.
+/// "Record This Program" / "Record Series" from the channel list and search:
+/// schedules, then explains the result, offering "Record Anyway" on a tuner
+/// conflict.
 @Observable
 @MainActor
 final class RecordFlow {
@@ -43,6 +44,47 @@ final class RecordFlow {
 
     func recordAnyway(_ request: Request) {
         Task { await schedule(request, force: true) }
+    }
+
+    /// Every new episode of the program's show on this channel.
+    func recordSeries(channel: Channel, program: GuideProgram) {
+        let request = Request(
+            channelId: channel.id,
+            channelName: channel.name,
+            programStart: program.start,
+            title: program.title
+        )
+        Task { await scheduleSeries(request) }
+    }
+
+    private func scheduleSeries(_ request: Request) async {
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        let outcome = await RecordingScheduler.scheduleSeries(
+            client: client,
+            channelId: request.channelId,
+            programStart: request.programStart
+        )
+        switch outcome {
+        case .scheduled(let rule, let count):
+            notice = .scheduled(
+                title: RecordingLogic.seriesScheduledTitle(count: count),
+                message: RecordingLogic.seriesScheduledMessage(
+                    title: rule.title.isEmpty ? request.title : rule.title,
+                    channelName: seriesChannelName(rule: rule, request: request)
+                )
+            )
+            onScheduled()
+        case .failed(let message):
+            notice = .failed(message)
+        }
+    }
+
+    /// "" (any channel) for an any-channel rule.
+    private func seriesChannelName(rule: RecordingRule, request: Request) -> String {
+        if rule.anyChannel { return "" }
+        return rule.channelName.isEmpty ? request.channelName : rule.channelName
     }
 
     private func schedule(_ request: Request, force: Bool) async {
@@ -128,12 +170,22 @@ struct RecordMenuItems: View {
     var body: some View {
         if let program = nowNext.now {
             item(program: program, label: "Record This Program")
+            RecordSeriesButton(channel: channel, program: program, flow: flow, label: "Record Series")
         }
         if let program = nowNext.next {
             item(
                 program: program,
                 label: program.title.isEmpty ? "Record Next Program" : "Record Next: \(program.title)"
             )
+            // Back-to-back episodes of one show need only one series item.
+            if program.title != nowNext.now?.title {
+                RecordSeriesButton(
+                    channel: channel,
+                    program: program,
+                    flow: flow,
+                    label: "Record Series: \(program.title)"
+                )
+            }
         }
         Button {
             openRecordings()
@@ -161,6 +213,70 @@ struct RecordMenuItems: View {
             }
             .disabled(flow == nil)
         }
+    }
+}
+
+/// "Record Series": this channel, new episodes only. Offered even when this
+/// airing is already set to record (the show's later episodes aren't). Hidden
+/// for an untitled program (nothing to match on).
+struct RecordSeriesButton: View {
+    let channel: Channel
+    let program: GuideProgram
+    let flow: RecordFlow?
+    var label = "Record Series"
+
+    var body: some View {
+        if !program.title.isEmpty {
+            Button {
+                flow?.recordSeries(channel: channel, program: program)
+            } label: {
+                Label(label, systemImage: "square.stack.3d.down.right")
+            }
+            .disabled(flow == nil)
+        }
+    }
+}
+
+/// Lock and rating for a program or recording parental controls block.
+struct ParentalLockMark: View {
+    let rating: String
+    var size: CGFloat = 12
+
+    var body: some View {
+        HStack(spacing: size * 0.3) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: size * 0.9, weight: .semibold))
+            if !rating.isEmpty {
+                Text(rating)
+                    .font(.system(size: size, weight: .semibold))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(Theme.dim)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessibilityText(rating: rating))
+    }
+
+    static func accessibilityText(rating: String) -> String {
+        rating.isEmpty ? "Locked by parental controls" : "Locked by parental controls, rated \(rating)"
+    }
+}
+
+/// Small "SERIES" tag for a recording a series rule scheduled.
+struct SeriesTag: View {
+    var size: CGFloat = 11
+
+    var body: some View {
+        Text("Series")
+            .font(.system(size: size, weight: .bold))
+            .textCase(.uppercase)
+            .foregroundStyle(Theme.amber)
+            .padding(.horizontal, size * 0.5)
+            .padding(.vertical, size * 0.15)
+            .overlay(Capsule().stroke(Theme.amber.opacity(0.6), lineWidth: 1))
+            .fixedSize()
+            .accessibilityLabel("Series")
     }
 }
 

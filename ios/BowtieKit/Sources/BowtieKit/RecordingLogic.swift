@@ -5,6 +5,8 @@ public enum RecordingsTab: String, CaseIterable, Identifiable, Sendable {
     case upcoming
     case recorded
     case missed
+    /// Series rules (`/recording-rules`), not recordings.
+    case shows
 
     public var id: String { rawValue }
 
@@ -13,14 +15,17 @@ public enum RecordingsTab: String, CaseIterable, Identifiable, Sendable {
         case .upcoming: return "Upcoming"
         case .recorded: return "Recorded"
         case .missed: return "Missed"
+        case .shows: return "Shows"
         }
     }
 
-    public var filter: RecordingsFilter {
+    /// The `?state=` filter; nil for Shows, which lists rules.
+    public var filter: RecordingsFilter? {
         switch self {
         case .upcoming: return .upcoming
         case .recorded: return .recorded
         case .missed: return .failed
+        case .shows: return nil
         }
     }
 
@@ -29,6 +34,7 @@ public enum RecordingsTab: String, CaseIterable, Identifiable, Sendable {
         case .upcoming: return "Nothing scheduled. Press and hold a channel to record what's on."
         case .recorded: return "No recordings yet."
         case .missed: return "No missed recordings."
+        case .shows: return "No shows. Choose Record Series on a program to record every new episode."
         }
     }
 }
@@ -54,7 +60,7 @@ public enum RecordingLogic {
         case .recording: return "Recording"
         case .converting: return "Finishing up"
         case .ready: return recording.partial ? "Partly recorded" : "Recorded"
-        case .failed: return "Missed"
+        case .failed: return recording.isSkipped ? "Skipped" : "Missed"
         case .unknown: return recording.state.capitalized
         }
     }
@@ -66,12 +72,16 @@ public enum RecordingLogic {
         case "noTuner": return "No tuner was free"
         case "noSignal": return "The antenna got no signal"
         case "diskFull": return "The server ran out of space"
+        case "skipped": return "Skipped"
         default: return "Something went wrong on the server"
         }
     }
 
     /// Secondary line for a row: why it was missed, or that part is missing.
     public static func detailLine(_ recording: Recording) -> String? {
+        if recording.isSkipped {
+            return "This episode was removed, so the series won't record it"
+        }
         if recording.status == .failed {
             let reason = failureLabel(recording.failure) ?? "It didn't record"
             return "Missed: " + reason.prefix(1).lowercased() + reason.dropFirst()
@@ -85,7 +95,7 @@ public enum RecordingLogic {
     public static func badgeTone(_ recording: Recording) -> BadgeTone {
         switch recording.status {
         case .recording: return .live
-        case .failed: return .alert
+        case .failed: return recording.isSkipped ? .neutral : .alert
         case .waiting: return .warning
         case .ready: return recording.partial ? .warning : .good
         case .scheduled, .converting, .unknown: return .neutral
@@ -151,6 +161,24 @@ public enum RecordingLogic {
             return String(format: "%d:%02d:%02d", hours, minutes, secs)
         }
         return String(format: "%d:%02d", minutes, secs)
+    }
+
+    // MARK: - Series
+
+    /// Alert title after "Record Series".
+    public static func seriesScheduledTitle(count: Int) -> String {
+        switch count {
+        case ..<1: return "Series Recording Set"
+        case 1: return "Scheduled 1 episode"
+        default: return "Scheduled \(count) episodes"
+        }
+    }
+
+    /// Alert body after "Record Series". An empty channel name means any channel.
+    public static func seriesScheduledMessage(title: String, channelName: String) -> String {
+        let show = title.isEmpty ? "This show" : "\u{201C}\(title)\u{201D}"
+        let place = channelName.isEmpty ? "any channel" : channelName
+        return "New episodes of \(show) on \(place) will record as they appear in the guide."
     }
 
     // MARK: - Conflict

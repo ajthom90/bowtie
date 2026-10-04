@@ -55,6 +55,26 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(store.loadRefreshToken(), "r2")
     }
 
+    func testDeviceSignInCompletesLogin() {
+        store.save(server: SharedFixtures.baseURL, refreshToken: nil)
+        let model = AppModel(store: store, urlSession: makeSession())
+        let user = User(id: 1, username: "alice", role: "viewer", maxQuality: "high")
+
+        model.completeDeviceSignIn(user: user)
+
+        XCTAssertEqual(model.phase, .ready)
+        XCTAssertEqual(model.user, user)
+    }
+
+    func testDeviceSignInIgnoredOutsideLogin() {
+        let model = AppModel(store: store, urlSession: makeSession())
+
+        model.completeDeviceSignIn(user: User(id: 1, username: "alice", role: "viewer", maxQuality: "high"))
+
+        XCTAssertEqual(model.phase, .connect)
+        XCTAssertNil(model.user)
+    }
+
     func testBootstrapFailureFallsBackToLogin() async {
         store.save(server: SharedFixtures.baseURL, refreshToken: "dead-token")
 

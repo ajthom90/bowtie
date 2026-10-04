@@ -14,6 +14,7 @@ struct MacRecordingsView: View {
     @State private var model: RecordingsModel?
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
+    @State private var confirmStopRule: RecordingRule?
 
     /// Upcoming states move on their own (recording → finishing up → recorded).
     private let refreshInterval: Duration = .seconds(30)
@@ -115,7 +116,7 @@ struct MacRecordingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 440)
             .padding(.vertical, 12)
 
             content(model)
@@ -142,29 +143,88 @@ struct MacRecordingsView: View {
 
     @ViewBuilder
     private func content(_ model: RecordingsModel) -> some View {
+        if model.tab == .shows {
+            showsContent(model)
+        } else {
+            recordingsContent(model)
+        }
+    }
+
+    private func emptyView(_ message: String) -> some View {
+        Text(message)
+            .font(Theme.body())
+            .foregroundStyle(Theme.dim)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func failedView(_ message: String, model: RecordingsModel) -> some View {
+        VStack(spacing: 16) {
+            Text(message)
+                .font(Theme.body())
+                .foregroundStyle(Theme.alert)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Try Again") {
+                Task { await model.load() }
+            }
+            .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Shows
+
+    @ViewBuilder
+    private func showsContent(_ model: RecordingsModel) -> some View {
+        switch model.rulesState {
+        case .loading:
+            loadingView
+        case .empty:
+            emptyView(RecordingsTab.shows.emptyMessage)
+        case .failed(let message):
+            failedView(message, model: model)
+        case .loaded(let rules):
+            List {
+                ForEach(rules) { rule in
+                    ruleRow(rule)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .stopShowDialog(rule: $confirmStopRule) { rule in
+                Task { await model.deleteRule(rule) }
+            }
+        }
+    }
+
+    private func ruleRow(_ rule: RecordingRule) -> some View {
+        let rowView = RecordingRuleRowView(rule: rule)
+        return rowView
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(rowView.accessibilityText)
+            .contextMenu {
+                if rule.canManage {
+                    Button(role: .destructive) {
+                        confirmStopRule = rule
+                    } label: {
+                        Label("Stop Recording This Show", systemImage: "stop.circle")
+                    }
+                }
+            }
+    }
+
+    // MARK: - Recordings
+
+    @ViewBuilder
+    private func recordingsContent(_ model: RecordingsModel) -> some View {
         switch model.state {
         case .loading:
             loadingView
         case .empty:
-            Text(model.tab.emptyMessage)
-                .font(Theme.body())
-                .foregroundStyle(Theme.dim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            emptyView(model.tab.emptyMessage)
         case .failed(let message):
-            VStack(spacing: 16) {
-                Text(message)
-                    .font(Theme.body())
-                    .foregroundStyle(Theme.alert)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                Button("Try Again") {
-                    Task { await model.load() }
-                }
-                .controlSize(.large)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            failedView(message, model: model)
         case .loaded(let rows):
             List {
                 ForEach(rows) { recording in
@@ -192,7 +252,7 @@ struct MacRecordingsView: View {
             rowView
         }
         .buttonStyle(.plain)
-        .help(recording.isPlayable ? "Play" : "")
+        .help(recording.locked ? "Locked by parental controls" : (recording.isPlayable ? "Play" : ""))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(rowView.accessibilityText)
         .accessibilityHint(recording.isPlayable ? "Play this recording" : "")

@@ -13,6 +13,7 @@ struct TVRecordingsView: View {
     @State private var activePlayback: RecordingsModel.Playback?
     @State private var actionsFor: Recording?
     @State private var confirmDelete: Recording?
+    @State private var confirmStopRule: RecordingRule?
 
     private let refreshInterval: Duration = .seconds(30)
 
@@ -73,7 +74,13 @@ struct TVRecordingsView: View {
     }
 
     private func withDialogs<V: View>(_ v: V) -> some View {
-        errorAlert(deleteDialog(actionsDialog(resumeDialog(v))))
+        errorAlert(stopRuleDialog(deleteDialog(actionsDialog(resumeDialog(v)))))
+    }
+
+    private func stopRuleDialog<V: View>(_ v: V) -> some View {
+        v.stopShowDialog(rule: $confirmStopRule) { rule in
+            Task { await model?.deleteRule(rule) }
+        }
     }
 
     private func resumeDialog<V: View>(_ v: V) -> some View {
@@ -165,32 +172,97 @@ struct TVRecordingsView: View {
 
     @ViewBuilder
     private func content(_ model: RecordingsModel) -> some View {
+        if model.tab == .shows {
+            showsContent(model)
+        } else {
+            recordingsContent(model)
+        }
+    }
+
+    private func emptyView(_ message: String) -> some View {
+        Text(message)
+            .font(Theme.body(24))
+            .foregroundStyle(Theme.dim)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 80)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func failedView(_ message: String, model: RecordingsModel) -> some View {
+        VStack(spacing: 24) {
+            Text(message)
+                .font(Theme.body(24))
+                .foregroundStyle(Theme.alert)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 80)
+            Button {
+                Task { await model.load() }
+            } label: {
+                Text("Try again")
+                    .font(Theme.label(22))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusSection()
+    }
+
+    // MARK: - Shows
+
+    @ViewBuilder
+    private func showsContent(_ model: RecordingsModel) -> some View {
+        switch model.rulesState {
+        case .loading:
+            loadingView
+        case .empty:
+            emptyView(RecordingsTab.shows.emptyMessage)
+        case .failed(let message):
+            failedView(message, model: model)
+        case .loaded(let rules):
+            List {
+                ForEach(rules) { rule in
+                    ruleRow(rule)
+                }
+            }
+            .listStyle(.plain)
+            .focusSection()
+        }
+    }
+
+    /// Select (or press and hold) offers Stop Recording This Show when allowed.
+    private func ruleRow(_ rule: RecordingRule) -> some View {
+        let rowView = RecordingRuleRowView(rule: rule, large: true)
+        return Button {
+            if rule.canManage {
+                confirmStopRule = rule
+            }
+        } label: {
+            rowView
+        }
+        .listRowBackground(Theme.bg)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(rowView.accessibilityText)
+        .contextMenu {
+            if rule.canManage {
+                Button(role: .destructive) {
+                    confirmStopRule = rule
+                } label: {
+                    Label("Stop Recording This Show", systemImage: "stop.circle")
+                }
+            }
+        }
+    }
+
+    // MARK: - Recordings
+
+    @ViewBuilder
+    private func recordingsContent(_ model: RecordingsModel) -> some View {
         switch model.state {
         case .loading:
             loadingView
         case .empty:
-            Text(model.tab.emptyMessage)
-                .font(Theme.body(24))
-                .foregroundStyle(Theme.dim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 80)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            emptyView(model.tab.emptyMessage)
         case .failed(let message):
-            VStack(spacing: 24) {
-                Text(message)
-                    .font(Theme.body(24))
-                    .foregroundStyle(Theme.alert)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 80)
-                Button {
-                    Task { await model.load() }
-                } label: {
-                    Text("Try again")
-                        .font(Theme.label(22))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .focusSection()
+            failedView(message, model: model)
         case .loaded(let rows):
             List {
                 ForEach(rows) { recording in
