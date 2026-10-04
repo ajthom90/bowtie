@@ -738,6 +738,20 @@ export class ApiClient {
    * onAuthFail and throws.
    */
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.parseJSON<T>(await this.authedFetch(method, path, body))
+  }
+
+  /** Database backup (admin): the SQLite file and its suggested name. */
+  async downloadBackup(): Promise<{ blob: Blob; filename: string }> {
+    const res = await this.authedFetch('GET', '/api/v1/admin/backup')
+    if (!res.ok) {
+      await this.parseJSON<never>(res)
+    }
+    const m = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+    return { blob: await res.blob(), filename: m ? m[1] : 'bowtie-backup.db' }
+  }
+
+  private async authedFetch(method: string, path: string, body?: unknown): Promise<Response> {
     const doFetch = async (): Promise<Response> => {
       const headers: Record<string, string> = {}
       const token = this.getToken()
@@ -763,8 +777,7 @@ export class ApiClient {
         throw new ApiError(401, 'unauthorized')
       }
     }
-
-    return this.parseJSON<T>(res)
+    return res
   }
 
   private async tryRefreshOnce(): Promise<boolean> {

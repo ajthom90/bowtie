@@ -526,6 +526,28 @@ describe('ApiClient DVR admin', () => {
     expect((err as ApiError).status).toBe(503)
   })
 
+  it('downloads a database backup with its file name', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([83, 81, 76]), {
+        status: 200,
+        headers: { 'Content-Disposition': 'attachment; filename="bowtie-backup-20261004-0230.db"' },
+      }),
+    )
+    const b = await client.downloadBackup()
+    expect(b.filename).toBe('bowtie-backup-20261004-0230.db')
+    expect(b.blob.size).toBe(3)
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/v1/admin/backup')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok')
+  })
+
+  it('surfaces backup errors', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: 'backup failed' }, 500))
+    const err = await client.downloadBackup().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toBe('backup failed')
+  })
+
   it('saves the dvr settings section', async () => {
     fetchMock.mockResolvedValueOnce(json({ dvr: { padStartSeconds: 120, padEndSeconds: 600 } }))
     const res = await client.putSettings({ dvr: { padStartSeconds: 120, padEndSeconds: 600 } })
