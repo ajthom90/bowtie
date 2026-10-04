@@ -47,6 +47,9 @@ func New(deps Deps) http.Handler {
 	s := &Server{deps: deps}
 	mux := http.NewServeMux()
 	s.mountAPI(mux)
+	// Short APK download links for sideloading (docs/install/android.md).
+	mux.HandleFunc("GET /android", s.appDownload("android"))
+	mux.HandleFunc("GET /tv", s.appDownload("tv"))
 	// Embedded SPA (Task 17): catch-all for non-/api paths. More-specific
 	// /api/v1/... patterns above take precedence in Go 1.22 ServeMux.
 	mux.Handle("/", web.Handler())

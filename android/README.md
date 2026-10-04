@@ -53,11 +53,16 @@ Release APKs (local, uses debug key unless `BOWTIE_KEYSTORE_*` env vars are set)
 
 ## Install from GitHub Releases (sideload)
 
+User-facing steps (phone, Fire TV via Downloader, updates): [docs/install/android.md](../docs/install/android.md).
+
 Each version tag (`v*`) runs the release workflow, which attaches **signed**
 release APKs to the GitHub Release:
 
-- Phone: `bowtie-<version>.apk`
-- Fire TV: `bowtie-tv-<version>.apk`
+- Phone: `bowtie-<version>.apk` (also `bowtie-android.apk`)
+- Fire TV: `bowtie-tv-<version>.apk` (also `bowtie-tv.apk`)
+
+`versionName`/`versionCode` come from the tag (`BOWTIE_VERSION`, see
+`build.gradle.kts`), so each release installs over the last.
 
 1. On the phone: **Settings → Apps → Special app access → Install unknown apps**
    (wording varies by OEM) and allow your browser or Files app to install APKs.
