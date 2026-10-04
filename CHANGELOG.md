@@ -5,6 +5,27 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **DVR: record shows.** Pick a program in the web guide (or long-press a
+  channel on iPhone/iPad, Apple TV, Android and Fire TV) and choose
+  **Record**. Recordings capture the broadcast from the antenna (a recording
+  on a channel someone is watching shares their tuner), start a minute early
+  and end three minutes late, and keep trying for the whole show if every
+  tuner is busy. When the show ends Bowtie converts it for playback; then it
+  appears under **Recordings** with seeking and resume where you left off.
+  Missed recordings say why ("No tuner was free"). Scheduling more shows at
+  once than you have tuners asks before going ahead. Mark a recording
+  **Keep** so it's never deleted to free space. Recordings are stored in
+  `/data/recordings` (`BOWTIE_RECORDINGS_DIR`); see the TrueNAS guide.
+
+### Fixed
+
+- **Signed out in a second tab.** Two tabs (or an app waking up twice)
+  refreshing at the same moment no longer signs you out.
+
 ## [0.10.0] — 2026-10-04
 
 ### Added

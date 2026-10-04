@@ -110,3 +110,24 @@ presence-seeded from env/yaml into the DB (defaults: encoder `auto`,
 refreshHours `12`, allowHevc `false`). After that, **Admin → Settings** is the
 control plane — changing `BOWTIE_ENCODER` or yaml EPG/transcode keys will not
 override values already stored.
+
+## Recordings (DVR)
+
+Recordings are kept in `/data/recordings` unless you point
+`BOWTIE_RECORDINGS_DIR` elsewhere. A dedicated dataset is best: recordings
+are large (about 2 GB per hour once converted to 720p; the raw capture is
+6–8 GB per hour for HD and is deleted after conversion).
+
+1. Create a dataset, e.g. `tank/media/recordings`.
+2. Add it to the app's volumes and environment:
+   ```yaml
+   volumes:
+     - /mnt/tank/media/recordings:/recordings
+   environment:
+     BOWTIE_RECORDINGS_DIR: /recordings
+   ```
+3. Never put recordings on the segment tmpfs.
+
+When free space drops below `BOWTIE_DVR_MIN_FREE_GB` (default 20), Bowtie
+deletes the oldest recordings that aren't marked **Keep**. Conversion uses
+the same encoder as live TV (Quick Sync on TrueNAS with `/dev/dri`).
