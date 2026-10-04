@@ -13,7 +13,7 @@
 // as "foobar" (use lowercase output names), and FormatJson refuses an object
 // that appears twice in `out` (store snapshot(x), a deep copy, instead).
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -50,8 +50,9 @@ export function runBrs(libs, body) {
     try {
         stdout = execFileSync(brsBin, [file], { cwd: workDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
-        throw new Error(`brs failed:\n${err.stdout ?? ''}${err.stderr ?? ''}`);
+        throw new Error(`brs failed (${file}):\n${err.stdout ?? ''}${err.stderr ?? ''}`);
     }
+    rmSync(file);
     const line = stdout.split(/\r?\n/).reverse().find((l) => l.startsWith(SENTINEL));
     const json = line?.slice(SENTINEL.length);
     if (!json) throw new Error(`brs produced no result:\n${stdout}`);

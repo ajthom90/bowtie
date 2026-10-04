@@ -340,10 +340,12 @@ sub handleChannelsResponse(resp as object)
         return
     end if
 
-    ' Fetch guide for now/next join, then recents (an older server without
-    ' favorites has no /me/recents either).
-    loadGuide()
+    ' Recents first (ApiTask is FIFO), so the row is ready when the guide
+    ' response shows the rail and both paint together. An older server
+    ' without favorites has no /me/recents either.
     if m.fav.supported then loadRecents()
+    ' Fetch guide for now/next join.
+    loadGuide()
 end sub
 
 sub handleGuideResponse(resp as object)
