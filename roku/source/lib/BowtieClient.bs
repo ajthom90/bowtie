@@ -2,12 +2,19 @@
 ' Transport (roUrlTransfer) lives in ApiTask — this module has no I/O.
 '
 ' buildRequest kinds: healthz, login, refresh, logout, me, changePassword,
-'   channels, guide, createSession, deleteSession, heartbeat, setFavorite, recents
+'   channels, guide, createSession, deleteSession, heartbeat, setFavorite, recents,
+'   recordings, createRecording, deleteRecording, stopRecording, playRecording,
+'   setRecordingPosition, protectRecording
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
 ' heartbeat: stream-token query only (no Bearer); 204 success.
 ' setFavorite: params {channelId, on} → PUT (on) / DELETE (off); 204 success.
 ' recents: GET /me/recents?limit=n; 404 (older server) → notFound.
+' DVR (tag dvr): recordings {state?}; createRecording {channelId, programStart,
+'   force?} → 201 {recording, warnings} or 409 kind "conflict" {tunerCount,
+'   conflicts}; deleteRecording / stopRecording {id} → 204; playRecording {id}
+'   → {playlistUrl (absolute), positionSec, durationSec}; setRecordingPosition
+'   {id, positionSec} → 204; protectRecording {id, keep} → PATCH {protected}.
 
 namespace bowtie.client
 
@@ -88,6 +95,52 @@ namespace bowtie.client
             method = "GET"
             headers = bowtie.client.authHeaders(accessToken)
 
+        else if kind = "recordings"
+            url = base + "/api/v1/recordings"
+            if params.state <> invalid and params.state <> "" then url = url + "?state=" + params.state
+            method = "GET"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "createRecording"
+            url = base + "/api/v1/recordings"
+            method = "POST"
+            headers = bowtie.client.jsonAuthHeaders(accessToken)
+            payload = {
+                "channelId": params.channelId
+                "programStart": params.programStart
+            }
+            if params.force = true then payload["force"] = true
+            body = FormatJson(payload)
+
+        else if kind = "deleteRecording"
+            url = bowtie.client.recordingUrl(base, params.id, "")
+            method = "DELETE"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "stopRecording"
+            url = bowtie.client.recordingUrl(base, params.id, "/stop")
+            method = "POST"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "playRecording"
+            url = bowtie.client.recordingUrl(base, params.id, "/play")
+            method = "POST"
+            headers = bowtie.client.authHeaders(accessToken)
+
+        else if kind = "setRecordingPosition"
+            url = bowtie.client.recordingUrl(base, params.id, "/position")
+            method = "PUT"
+            headers = bowtie.client.jsonAuthHeaders(accessToken)
+            positionSec = 0
+            if params.positionSec <> invalid and params.positionSec > 0 then positionSec = Int(params.positionSec)
+            body = FormatJson({ "positionSec": positionSec })
+
+        else if kind = "protectRecording"
+            url = bowtie.client.recordingUrl(base, params.id, "")
+            method = "PATCH"
+            headers = bowtie.client.jsonAuthHeaders(accessToken)
+            body = FormatJson({ "protected": (params.keep = true) })
+
         else if kind = "createSession"
             url = base + "/api/v1/sessions"
             method = "POST"
@@ -155,7 +208,7 @@ namespace bowtie.client
             return { ok: false, error: { code: httpCode, message: "healthz failed" } }
         end if
 
-        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite"
+        if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite" or kind = "deleteRecording" or kind = "stopRecording" or kind = "setRecordingPosition"
             ' Best-effort: 2xx and empty bodies are success; delete swallows errors at ApiTask.
             if httpCode >= 200 and httpCode < 300
                 return { ok: true, data: true }
@@ -178,6 +231,10 @@ namespace bowtie.client
 
         if kind = "createSession" and httpCode = 503
             return bowtie.client.parseTunersBusy(body)
+        end if
+
+        if kind = "createRecording" and httpCode = 409
+            return bowtie.client.parseRecordingConflict(body)
         end if
 
         if kind = "createSession" and httpCode = 422
@@ -222,6 +279,10 @@ namespace bowtie.client
 
         if kind = "createSession"
             return bowtie.client.parseCreatedSession(body, baseUrl)
+        end if
+
+        if kind = "playRecording"
+            return bowtie.client.parseRecordingPlay(body, baseUrl)
         end if
 
         parsed = ParseJson(body)
@@ -292,6 +353,56 @@ namespace bowtie.client
         return { ok: true, data: data }
     end function
 
+    ' 409 from createRecording → { kind: "conflict", message, tunerCount, conflicts }.
+    ' Quoted keys keep their case for callers that serialize the error.
+    function parseRecordingConflict(body as string) as object
+        parsed = ParseJson(body)
+        message = ""
+        tunerCount = 0
+        conflicts = []
+        if parsed <> invalid and Type(parsed) = "roAssociativeArray"
+            if parsed.error <> invalid then message = parsed.error
+            if parsed.tunerCount <> invalid then tunerCount = parsed.tunerCount
+            if parsed.conflicts <> invalid and Type(parsed.conflicts) = "roArray" then conflicts = parsed.conflicts
+        end if
+        return {
+            ok: false
+            error: {
+                "code": 409
+                "kind": "conflict"
+                "message": message
+                "tunerCount": tunerCount
+                "conflicts": conflicts
+            }
+        }
+    end function
+
+    ' POST /recordings/{id}/play → absolute playlistUrl (the server sends a path).
+    function parseRecordingPlay(body as string, baseUrl as string) as object
+        parsed = ParseJson(body)
+        if parsed = invalid or Type(parsed) <> "roAssociativeArray"
+            return { ok: false, error: { code: 200, message: "invalid play response" } }
+        end if
+        playlistUrl = parsed.playlistUrl
+        if playlistUrl = invalid then playlistUrl = ""
+        positionSec = parsed.positionSec
+        if positionSec = invalid then positionSec = 0
+        durationSec = parsed.durationSec
+        if durationSec = invalid then durationSec = 0
+        return {
+            ok: true
+            data: {
+                "playlistUrl": bowtie.client.resolveUrl(playlistUrl, baseUrl)
+                "positionSec": positionSec
+                "durationSec": durationSec
+            }
+        }
+    end function
+
+    function recordingUrl(base as string, id as dynamic, suffix as string) as string
+        return base + "/api/v1/recordings/" + bowtie.client.idString(id) + suffix
+    end function
+
     function parseTunersBusy(body as string) as object
         parsed = ParseJson(body)
         sessions = []
@@ -358,6 +469,12 @@ namespace bowtie.client
         if accessToken <> invalid and accessToken <> ""
             headers["Authorization"] = "Bearer " + accessToken
         end if
+        return headers
+    end function
+
+    function jsonAuthHeaders(accessToken as string) as object
+        headers = bowtie.client.authHeaders(accessToken)
+        headers["Content-Type"] = "application/json"
         return headers
     end function
 
