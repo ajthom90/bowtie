@@ -38,6 +38,9 @@ const vttTimestampMap = "X-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000"
 // StreamController is the stream manager surface consumed by HTTP handlers.
 type StreamController interface {
 	Start(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
+	// Join adds a viewer to an existing session (SharePlay); stream.ErrNotJoinable
+	// means start normally instead.
+	Join(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
 	Touch(string) bool
 	StopViewer(string)
 	Sessions() []stream.SessionInfo
@@ -50,6 +53,18 @@ type StreamController interface {
 	ChannelReception(channelID int64) (stream.Reception, bool)
 	// SessionMediaOf returns the viewer's session layout and quality ceiling.
 	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
+	// BlockedReason reports why parental controls stopped a viewer.
+	BlockedReason(viewerID string) (string, bool)
+}
+
+// viewerGone answers a request for a viewer that no longer exists: 403 with
+// the reason if parental controls stopped it, else 404.
+func (s *Server) viewerGone(w http.ResponseWriter, viewerID string) {
+	if why, ok := s.deps.Streams.BlockedReason(viewerID); ok {
+		writeParentalBlock(w, why)
+		return
+	}
+	writeError(w, http.StatusNotFound, "viewer not found")
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +90,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ChannelID int64                `json:"channelId"`
 		Caps      transcode.ClientCaps `json:"caps"`
+		// JoinSessionID: watch in the same session as a SharePlay sharer.
+		JoinSessionID string `json:"joinSessionId"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -85,7 +102,20 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h, err := s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+	if why := s.parentalStartBlock(r, u, req.ChannelID); why != "" {
+		writeParentalBlock(w, why)
+		return
+	}
+
+	var h stream.ViewerHandle
+	if req.JoinSessionID != "" {
+		h, err = s.deps.Streams.Join(r.Context(), u, req.JoinSessionID, req.ChannelID, req.Caps)
+		if errors.Is(err, stream.ErrNotJoinable) {
+			h, err = s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+		}
+	} else {
+		h, err = s.deps.Streams.Start(r.Context(), u, req.ChannelID, req.Caps)
+	}
 	if err != nil {
 		s.writeStartError(w, err, u)
 		return
@@ -102,6 +132,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if info, ok := s.deps.Streams.SessionInfoOf(h.ViewerID); ok {
 		resp["session"] = map[string]string{
+			"id":          h.SessionID,
 			"videoCodec":  info.VideoCodec,
 			"profile":     info.Profile,
 			"backend":     info.Backend,
@@ -232,7 +263,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	media, ok := s.deps.Streams.SessionMediaOf(viewerID)
@@ -263,7 +294,7 @@ func fileExists(path string) bool {
 // URLs. Players poll these (not index.m3u8), so each fetch keeps the viewer alive.
 func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, viewerID, name string) {
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	dir, ok := s.deps.Streams.SessionDirOf(viewerID)
@@ -426,7 +457,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.deps.Streams.Touch(viewerID) {
-		writeError(w, http.StatusNotFound, "viewer not found")
+		s.viewerGone(w, viewerID)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

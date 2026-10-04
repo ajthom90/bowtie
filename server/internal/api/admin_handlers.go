@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -36,9 +37,18 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		MaxQuality string `json:"maxQuality"`
 		MaxStreams int    `json:"maxStreams"`
 		MaxTuners  int    `json:"maxTuners"`
+		// Parental controls (optional).
+		AllowedChannelIDs json.RawMessage `json:"allowedChannelIds"`
+		MaxRating         *string         `json:"maxRating"`
+		BlockUnrated      *bool           `json:"blockUnrated"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var pc store.User
+	if err := applyParentalPatch(&pc, req.AllowedChannelIDs, req.MaxRating, req.BlockUnrated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if !validLimit(req.MaxStreams) || !validLimit(req.MaxTuners) {
@@ -61,13 +71,16 @@ func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.deps.Store.CreateUser(store.User{
-		Username:     req.Username,
-		PasswordHash: hash,
-		Role:         req.Role,
-		MaxQuality:   req.MaxQuality,
-		MaxStreams:   req.MaxStreams,
-		MaxTuners:    req.MaxTuners,
-		CreatedAt:    time.Now().UTC(),
+		Username:        req.Username,
+		PasswordHash:    hash,
+		Role:            req.Role,
+		MaxQuality:      req.MaxQuality,
+		MaxStreams:      req.MaxStreams,
+		MaxTuners:       req.MaxTuners,
+		AllowedChannels: pc.AllowedChannels,
+		MaxRating:       pc.MaxRating,
+		BlockUnrated:    pc.BlockUnrated,
+		CreatedAt:       time.Now().UTC(),
 	})
 	if err != nil {
 		if isUniqueConstraint(err) {
@@ -107,6 +120,10 @@ func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 		MaxStreams *int    `json:"maxStreams"`
 		MaxTuners  *int    `json:"maxTuners"`
 		Password   *string `json:"password"`
+		// Parental controls: allowedChannelIds absent = keep, null = all.
+		AllowedChannelIDs json.RawMessage `json:"allowedChannelIds"`
+		MaxRating         *string         `json:"maxRating"`
+		BlockUnrated      *bool           `json:"blockUnrated"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -144,6 +161,10 @@ func (s *Server) handleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxTuners != nil {
 		u.MaxTuners = *req.MaxTuners
+	}
+	if err := applyParentalPatch(&u, req.AllowedChannelIDs, req.MaxRating, req.BlockUnrated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err := s.deps.Store.UpdateUser(u); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update user")
@@ -540,8 +561,12 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	favs := s.callerFavorites(r)
+	policy := s.callerPolicy(r)
 	out := make([]viewerChannelJSON, 0, len(chans))
 	for _, c := range chans {
+		if !policy.ChannelAllowed(c.ID) {
+			continue
+		}
 		logo := ""
 		if c.EPGChannelID != "" {
 			logo = epgIcons[c.EPGChannelID]

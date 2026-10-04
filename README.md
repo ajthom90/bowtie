@@ -9,7 +9,7 @@ Bowtie is a single Go binary (with an embedded React web viewer) that:
 
 - Discovers Silicondust HDHomeRun tuners on your LAN
 - Transcodes over-the-air channels to HLS with hardware acceleration when available
-- Serves a TV guide (XMLTV and/or Schedules Direct)
+- Serves a TV guide (free from your HDHomeRun, plus optional XMLTV and/or Schedules Direct)
 - Lets an admin manage users, devices, channels, and active sessions
 - Live pause/rewind within a settings-backed buffer, with one tuner per channel
   shared across quality variants
@@ -136,6 +136,21 @@ The Docker Compose file passes `/dev/dri` into the container for QSV/VAAPI on In
 ## EPG setup
 
 Guide data is **optional** — channels are fully watchable with no EPG configured.
+
+### Free guide from your HDHomeRun (default)
+
+Out of the box Bowtie fetches the free guide SiliconDust offers every
+HDHomeRun owner (about 2-3 days ahead; 14 days with an HDHomeRun DVR
+subscription). No account or setup is needed: Bowtie reads each tuner's
+`DeviceAuth` from its `discover.json`, downloads the guide from
+`api.hdhomerun.com` every 20-28 hours at a random time, and maps each
+unmapped channel to it by guide number (for example `9.1`). Channels you
+mapped yourself are never changed. Turn it off with
+`PUT /api/v1/admin/settings` `{"hdhomerun": {"enabled": false}}`
+(setting `epg.hdhomerun`); its health is under `hdhomerun` in
+`GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
+
+### XMLTV and Schedules Direct
 
 **Preferred:** configure XMLTV and/or Schedules Direct in **Admin → Settings**
 (lineup picker, clear credentials by emptying username). Changes apply without

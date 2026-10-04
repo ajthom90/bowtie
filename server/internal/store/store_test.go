@@ -626,3 +626,58 @@ func TestUserLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("updated: %+v err=%v", users, err)
 	}
 }
+
+func TestProgramRatingRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	st := time.Date(2026, 10, 4, 6, 0, 0, 0, time.UTC)
+	if err := s.ReplaceEPG("xmltv", []store.EPGChannel{{ID: "e", Source: "xmltv"}},
+		[]store.Program{{EPGChannelID: "e", Start: st, Stop: st.Add(time.Hour), Title: "Late Show", Rating: "TV-14"}}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ProgramsInRange([]string{"e"}, st, st.Add(time.Hour))
+	if err != nil || len(ps) != 1 || ps[0].Rating != "TV-14" {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}
+
+func TestUserParentalRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	id, err := s.CreateUser(store.User{Username: "kid", PasswordHash: "h", Role: "viewer",
+		AllowedChannels: []int64{3, 7}, MaxRating: 4, BlockUnrated: true, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := s.UserByID(id)
+	if len(u.AllowedChannels) != 2 || u.AllowedChannels[1] != 7 || u.MaxRating != 4 || !u.BlockUnrated {
+		t.Fatalf("created %+v", u)
+	}
+	u.AllowedChannels, u.MaxRating, u.BlockUnrated = nil, 0, false
+	if err := s.UpdateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	u, _ = s.UserByID(id)
+	if u.AllowedChannels != nil || u.MaxRating != 0 || u.BlockUnrated {
+		t.Fatalf("cleared %+v", u)
+	}
+}
+
+func TestProgramSeriesFieldsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	st := time.Date(2026, 10, 4, 6, 0, 0, 0, time.UTC)
+	if err := s.ReplaceEPG("sd", []store.EPGChannel{{ID: "e", Source: "sd"}}, []store.Program{
+		{EPGChannelID: "e", Start: st, Stop: st.Add(time.Hour), Title: "Show", ProgramID: "EP012345670012", SeriesID: "SH01234567", IsNew: true}}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ProgramsInRange([]string{"e"}, st, st.Add(time.Hour))
+	if err != nil || len(ps) != 1 || ps[0].ProgramID != "EP012345670012" || ps[0].SeriesID != "SH01234567" || !ps[0].IsNew {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}
+
+func TestSeriesIDOf(t *testing.T) {
+	for in, want := range map[string]string{"EP012345670012": "SH01234567", "SH012345670000": "SH01234567", "MV000111220000": "", "": "", "EP12": ""} {
+		if got := store.SeriesIDOf(in); got != want {
+			t.Errorf("SeriesIDOf(%q)=%q want %q", in, got, want)
+		}
+	}
+}

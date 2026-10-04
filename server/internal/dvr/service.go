@@ -108,8 +108,11 @@ type ScheduleRequest struct {
 	Description string
 	Category    string
 	IconURL     string
+	Rating      string
 	Start, Stop time.Time
 	Force       bool // schedule despite a tuner conflict
+	RuleID      int64
+	ProgramID   string
 }
 
 // Service runs the DVR.
@@ -228,7 +231,8 @@ func (s *Service) Schedule(req ScheduleRequest) (store.Recording, []Warning, err
 		UserID: req.UserID, ChannelID: req.Channel.ID,
 		ChannelName: strings.TrimSpace(req.Channel.GuideNumber + " " + req.Channel.Name),
 		Title:       title, Subtitle: req.Subtitle, Description: req.Description,
-		Category: req.Category, IconURL: req.IconURL,
+		Category: req.Category, IconURL: req.IconURL, Rating: req.Rating,
+		RuleID: req.RuleID, ProgramID: req.ProgramID,
 		Start: req.Start.UTC(), Stop: req.Stop.UTC(),
 		PadStartSec: int(DefaultPadStart / time.Second), PadEndSec: int(DefaultPadEnd / time.Second),
 		State: store.RecScheduled, CreatedAt: now.UTC(),
@@ -354,6 +358,7 @@ func (s *Service) Tick() {
 	}
 	if now.Sub(s.lastSweep) >= sweepEvery {
 		s.lastSweep = now
+		s.ApplyRules()
 		s.sweep()
 	}
 }
@@ -383,11 +388,16 @@ func (s *Service) StopNow(id int64) error {
 }
 
 // Delete cancels a scheduled recording or removes a finished one, with its
-// files.
+// files. An upcoming episode a series rule scheduled is marked skipped
+// instead, so the rule doesn't schedule it again.
 func (s *Service) Delete(id int64) error {
 	r, err := s.deps.Store.RecordingByID(id)
 	if err != nil {
 		return err
+	}
+	if r.RuleID != 0 && r.State == store.RecScheduled {
+		r.State, r.Failure, r.FailureDetail = store.RecFailed, "skipped", "Skipped"
+		return s.deps.Store.UpdateRecording(r)
 	}
 	s.mu.Lock()
 	s.deleting[id] = true
@@ -748,6 +758,7 @@ func (s *Service) convert(id int64) {
 	for _, p := range parts {
 		_ = os.Remove(p)
 	}
+	s.pruneRule(r.RuleID)
 }
 
 // sweep deletes the oldest unprotected finished recordings while free space
@@ -774,7 +785,7 @@ func (s *Service) sweep() {
 			log.Printf("dvr: low on space, but deleting recordings isn't freeing any; stopping")
 			return
 		}
-		if r.Protected {
+		if r.Protected || r.Failure == "skipped" { // a skip marker keeps a series rule from rescheduling
 			continue
 		}
 		if watching, _ := s.deps.Store.RecordingWatchedSince(r.ID, s.deps.Clock().Add(-inUseWindow)); watching {

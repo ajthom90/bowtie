@@ -731,3 +731,46 @@ func TestPutSettingsStreamingAdaptive(t *testing.T) {
 		t.Fatalf("omitted adaptive must be kept: %v", sec)
 	}
 }
+
+// hdhomerun.enabled (the free SiliconDust guide) defaults on, is set by PUT,
+// and is untouched by PUTs that omit the section.
+func TestPutSettingsHDHomeRunGuide(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+
+	rr := doJSON(t, h, "GET", "/api/v1/admin/settings", nil, authHeader(tok))
+	if got := section(decodeSettings(t, rr), "hdhomerun")["enabled"]; got != true {
+		t.Fatalf("GET enabled = %v, want true", got)
+	}
+
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"hdhomerun": map[string]any{"enabled": false},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := section(decodeSettings(t, rr), "hdhomerun")["enabled"]; got != false {
+		t.Fatalf("PUT response enabled = %v", got)
+	}
+	if g, err := prov.HDHomeRunGuide(); err != nil || g.Enabled {
+		t.Fatalf("provider = %+v err=%v", g, err)
+	}
+
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"streaming": map[string]any{"bufferMinutes": 20},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d", rr.Code)
+	}
+	if g, _ := prov.HDHomeRunGuide(); g.Enabled {
+		t.Fatal("omitted hdhomerun section must leave the setting off")
+	}
+
+	// enabled is required within the section.
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"hdhomerun": map[string]any{},
+	}, authHeader(tok))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing enabled: status = %d, want 400", rr.Code)
+	}
+}

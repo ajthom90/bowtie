@@ -26,6 +26,12 @@ type Program struct {
 	Description  string
 	Category     string
 	IconURL      string
+	Rating       string // e.g. "TV-14" (see internal/parental); "" = not rated
+	// Series recording: ProgramID identifies the episode (SD programID, e.g.
+	// EP012345670012), SeriesID the show (SH01234567); IsNew is a first airing.
+	ProgramID string
+	SeriesID  string
+	IsNew     bool
 }
 
 // ReplaceEPG transactionally replaces all EPG data for the given source.
@@ -61,10 +67,12 @@ func (s *Store) ReplaceEPG(source string, chans []EPGChannel, progs []Program) e
 	for _, p := range progs {
 		if _, err := tx.Exec(`
 			INSERT INTO programs (
-				epg_channel_id, start, stop, title, subtitle, description, category, icon_url
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				epg_channel_id, start, stop, title, subtitle, description, category, icon_url, rating,
+				program_id, series_id, is_new
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, p.EPGChannelID, formatTime(p.Start), formatTime(p.Stop),
-			p.Title, p.Subtitle, p.Description, p.Category, p.IconURL); err != nil {
+			p.Title, p.Subtitle, p.Description, p.Category, p.IconURL, p.Rating,
+			p.ProgramID, p.SeriesID, boolToInt(p.IsNew)); err != nil {
 			return fmt.Errorf("insert program %q: %w", p.Title, err)
 		}
 	}
@@ -110,7 +118,8 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 	args = append(args, formatTime(start), formatTime(stop))
 
 	q := fmt.Sprintf(`
-		SELECT id, epg_channel_id, start, stop, title, subtitle, description, category, icon_url
+		SELECT id, epg_channel_id, start, stop, title, subtitle, description, category, icon_url, rating,
+		       program_id, series_id, is_new
 		FROM programs
 		WHERE epg_channel_id IN (%s)
 		  AND stop > ?
@@ -128,12 +137,15 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 	for rows.Next() {
 		var p Program
 		var startS, stopS string
+		var isNew int
 		if err := rows.Scan(
 			&p.ID, &p.EPGChannelID, &startS, &stopS,
-			&p.Title, &p.Subtitle, &p.Description, &p.Category, &p.IconURL,
+			&p.Title, &p.Subtitle, &p.Description, &p.Category, &p.IconURL, &p.Rating,
+			&p.ProgramID, &p.SeriesID, &isNew,
 		); err != nil {
 			return nil, err
 		}
+		p.IsNew = isNew != 0
 		p.Start, err = parseTime(startS)
 		if err != nil {
 			return nil, err
@@ -151,4 +163,18 @@ func (s *Store) ProgramsInRange(epgChannelIDs []string, start, stop time.Time) (
 func (s *Store) PrunePrograms(olderThan time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM programs WHERE stop < ?`, formatTime(olderThan))
 	return err
+}
+
+// SeriesIDOf derives a show's series ID from a Schedules Direct style
+// program ID: episodes (EP…) and shows (SH…) share "SH" + the 8-digit series
+// number; movies and others have none.
+func SeriesIDOf(programID string) string {
+	if len(programID) < 10 {
+		return ""
+	}
+	switch programID[:2] {
+	case "EP", "SH":
+		return "SH" + programID[2:10]
+	}
+	return ""
 }

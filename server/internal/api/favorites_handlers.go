@@ -94,8 +94,12 @@ func (s *Server) handleRecents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		icons = map[string]string{}
 	}
+	policy := s.callerPolicy(r)
 	out := make([]recentJSON, 0, len(rows))
 	for _, rc := range rows {
+		if !policy.ChannelAllowed(rc.ChannelID) {
+			continue
+		}
 		logo := ""
 		if ch, err := s.deps.Store.ChannelByID(rc.ChannelID); err == nil && ch.EPGChannelID != "" {
 			logo = icons[ch.EPGChannelID]

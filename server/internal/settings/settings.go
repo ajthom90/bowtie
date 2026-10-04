@@ -28,6 +28,9 @@ const (
 	KeyStreamingBufferMinutes = "streaming.bufferMinutes"
 	// KeyStreamingAdaptive: one shared multi-quality transcode per channel.
 	KeyStreamingAdaptive = "streaming.adaptive"
+	// KeyEPGHDHomeRun: fetch the free guide from SiliconDust's HDHomeRun
+	// XMLTV API (default on).
+	KeyEPGHDHomeRun = "epg.hdhomerun"
 )
 
 // Default product values used when seeding from empty/zero config.
@@ -72,6 +75,33 @@ type Streaming struct {
 	BufferMinutes int
 	// Adaptive: every viewer of a channel shares one quality ladder (more GPU).
 	Adaptive bool
+}
+
+// HDHomeRunGuide is the free SiliconDust guide section.
+type HDHomeRunGuide struct {
+	Enabled bool
+}
+
+// HDHomeRunGuide returns the free-guide setting. An absent or empty key
+// means on (the default).
+func (p *Provider) HDHomeRunGuide() (HDHomeRunGuide, error) {
+	raw, err := p.st.GetSetting(KeyEPGHDHomeRun)
+	if err != nil {
+		return HDHomeRunGuide{}, err
+	}
+	if raw == "" {
+		return HDHomeRunGuide{Enabled: true}, nil
+	}
+	on, err := strconv.ParseBool(raw)
+	if err != nil {
+		return HDHomeRunGuide{}, fmt.Errorf("%s: %w", KeyEPGHDHomeRun, err)
+	}
+	return HDHomeRunGuide{Enabled: on}, nil
+}
+
+// SetHDHomeRunGuide writes the free-guide setting.
+func (p *Provider) SetHDHomeRunGuide(v HDHomeRunGuide) error {
+	return p.st.SetSetting(KeyEPGHDHomeRun, strconv.FormatBool(v.Enabled))
 }
 
 // XMLTV returns the current XMLTV settings.
@@ -214,6 +244,7 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC)},
 		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes)},
 		{KeyStreamingAdaptive, "false"},
+		{KeyEPGHDHomeRun, "true"},
 	}
 
 	for _, s := range seeds {
