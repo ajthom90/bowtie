@@ -42,6 +42,20 @@ requests that come up most in their forums and subreddits.
 6. **More free guide data.** Over-the-air PSIP/EIT from the tuner itself
    (about 12 hours, no account) as a last-resort fallback.
 
+## Known rough edges
+
+- **Web: browser Back and refresh.** Only `/link` and `/multiview` are real
+  URLs, so Back from Recordings/Admin/Account leaves the app and refresh
+  returns to the guide. Needs proper routes.
+- **First start on some channels takes ~20 s** when FFmpeg's full layout
+  (all renditions, captions) times out and Bowtie falls back to one rung.
+  Seen intermittently on FOX 9 locally.
+- **Manual (time-based) recordings** — the API takes a channel, start and
+  stop, but no app has a "record 8–9 PM on 9.1" form yet, so without guide
+  data there's nothing to press Record on.
+- **Recording list/details** can't tell "commercial detection hasn't run"
+  from "no ads found".
+
 ## Platforms people ask about
 
 - **Xbox:** no native app; use Kodi for Xbox with the M3U/XMLTV feed
