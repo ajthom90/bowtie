@@ -168,8 +168,8 @@ func TestToStoreSkipsBad(t *testing.T) {
 		if p.Subtitle != "August 4 Edition" {
 			t.Errorf("prog[0].Subtitle = %q", p.Subtitle)
 		}
-		if p.Category != "News" {
-			t.Errorf("prog[0].Category = %q, want News (first category)", p.Category)
+		if p.Category != "News; Local" {
+			t.Errorf("prog[0].Category = %q, want every category, first first", p.Category)
 		}
 		if p.EPGChannelID != "ch1.example" {
 			t.Errorf("prog[0].EPGChannelID = %q", p.EPGChannelID)
@@ -311,5 +311,16 @@ func TestHDHomeRunStyleGuide(t *testing.T) {
 	}
 	if p2.SeriesID != "SH00001648" {
 		t.Fatalf("p2 (non-cseries series-id ignored) %+v", p2)
+	}
+}
+
+// Every <category> is kept (joined with "; "), so guide filters see "Sports
+// event" and "Football" alike.
+func TestToStoreKeepsAllCategories(t *testing.T) {
+	tv := &TV{Programmes: []Programme{{Start: "20261004120000 +0000", Stop: "20261004150000 +0000", Channel: "c",
+		Title: "Game", Categories: []string{"Sports event", "Football"}}}}
+	_, progs, _ := ToStore(tv)
+	if len(progs) != 1 || progs[0].Category != "Sports event; Football" {
+		t.Fatalf("programs %+v", progs)
 	}
 }
