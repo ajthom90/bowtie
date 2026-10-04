@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="BowtieApp.Pages.ConnectPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid>
+        <StackPanel MaxWidth="420" Margin="24" Spacing="16"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Image Source="ms-appx:///Assets/Square150x150Logo.scale-200.png"
+                   Width="96" Height="96" HorizontalAlignment="Left" />
+            <TextBlock Text="Connect to Bowtie" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock TextWrapping="Wrap" Opacity="0.8"
+                       Text="Enter the address of your Bowtie server, the one you open in a browser to watch TV." />
+            <TextBox x:Name="ServerBox" Header="Server address"
+                     PlaceholderText="192.168.1.20:8400"
+                     IsSpellCheckEnabled="False" InputScope="Url"
+                     KeyDown="OnServerKeyDown" />
+            <TextBlock x:Name="ErrorLabel" TextWrapping="Wrap" Visibility="Collapsed"
+                       Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button x:Name="ConnectButton" Content="Connect"
+                        Style="{StaticResource AccentButtonStyle}" Click="OnConnectClick" />
+                <ProgressRing x:Name="Busy" IsActive="False" Width="24" Height="24" />
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Page>

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="BowtieApp.Pages.RecordingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BowtieApp.Pages"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <DataTemplate x:Key="RecordingTemplate" x:DataType="local:RecordingItem">
+            <Grid Padding="16,12" Margin="0,4" ColumnSpacing="16" CornerRadius="8"
+                  Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind Subtitle}" Visibility="{x:Bind SubtitleVisibility}" Opacity="0.8" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind WhenLine}" Opacity="0.7" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind Badges}" Visibility="{x:Bind BadgesVisibility}"
+                               Foreground="{x:Bind BadgeBrush}" Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind Status}" Visibility="{x:Bind StatusVisibility}" TextWrapping="Wrap"
+                               Style="{StaticResource CaptionTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind Detail}" Visibility="{x:Bind DetailVisibility}" Opacity="0.7"
+                               Style="{StaticResource CaptionTextBlockStyle}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Play" Visibility="{x:Bind PlayVisibility}" Click="OnPlayClick"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    <Button Content="Stop" Visibility="{x:Bind StopVisibility}" Click="OnStopClick" />
+                    <Button Content="{x:Bind KeepLabel}" Visibility="{x:Bind KeepVisibility}" Click="OnKeepClick" />
+                    <Button Content="{x:Bind DeleteLabel}" Visibility="{x:Bind DeleteVisibility}" Click="OnDeleteClick" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+    </Page.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="24,16,24,0">
+            <TextBlock Text="Recordings" Style="{StaticResource TitleTextBlockStyle}" />
+            <Button HorizontalAlignment="Right" Click="OnRefreshClick"
+                    ToolTipService.ToolTip="Refresh" AutomationProperties.Name="Refresh">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="F5" />
+                </Button.KeyboardAccelerators>
+                <FontIcon Glyph="&#xE72C;" />
+            </Button>
+        </Grid>
+
+        <SelectorBar x:Name="Tabs" Grid.Row="1" Margin="16,8,16,0" SelectionChanged="OnTabChanged">
+            <SelectorBarItem x:Name="UpcomingTab" Text="Upcoming" />
+            <SelectorBarItem x:Name="RecordedTab" Text="Recorded" IsSelected="True" />
+            <SelectorBarItem x:Name="MissedTab" Text="Missed" />
+        </SelectorBar>
+
+        <ScrollViewer Grid.Row="2">
+            <StackPanel Padding="24,8,24,24" Spacing="8">
+                <InfoBar x:Name="MessageBar" IsOpen="False" Severity="Error" IsClosable="True"
+                         Closed="OnMessageClosed" />
+                <ProgressRing x:Name="LoadingRing" IsActive="False" HorizontalAlignment="Left" />
+                <StackPanel x:Name="FailedPanel" Spacing="8" Visibility="Collapsed">
+                    <TextBlock x:Name="FailedLabel" TextWrapping="Wrap" />
+                    <Button Content="Try again" Click="OnRefreshClick" />
+                </StackPanel>
+                <TextBlock x:Name="EmptyLabel" Visibility="Collapsed" TextWrapping="Wrap" Opacity="0.8" />
+                <ItemsControl x:Name="RecordingsList" ItemTemplate="{StaticResource RecordingTemplate}" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>
