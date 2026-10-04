@@ -252,6 +252,28 @@ run at all (missing library, an ini without `output_edl=1`), detection stops
 until the next restart and nothing is marked; a recording it fails on is
 tried again after a restart.
 
+## Notifications
+
+Bowtie can tell you when something needs attention, on your phone or in a
+chat, without any app-store push setup. In **Admin → Settings →
+Notifications**, paste a URL, pick the events, **Save**, and **Send test**:
+
+- **ntfy** (free phone app): `https://ntfy.sh/your-topic` (pick a hard-to-guess
+  topic), or your own ntfy server — any host with `ntfy` in its name. For a
+  protected topic use `https://user:pass@ntfy.example.com/topic`.
+- **Discord**: a channel webhook URL (`https://discord.com/api/webhooks/…`).
+- **Anything else** gets a JSON POST:
+  `{"event": "recordingFailed", "title": "…", "message": "…", "recordingId": 42, "time": "2026-10-04T18:30:00Z"}`
+  (Home Assistant, n8n, your own script, …).
+
+Events: a recording failed (with the reason — no tuner, no signal, disk
+full…; skipped episodes don't count), disk space is low (checked hourly after
+old recordings are cleaned up), guide data hasn't updated for a day, and
+(off by default) a recording is ready to watch. Each event is sent at most
+once every 6 hours (a failed recording once), with one retry 30 s later if
+the server didn't answer. The URL can contain a secret, so Bowtie only ever
+logs its host name.
+
 ## Backup and restore
 
 **Admin → Settings → Download backup** (or `GET /api/v1/admin/backup` with an
@@ -259,8 +281,8 @@ admin token) saves a snapshot of the database: accounts, channels, guide
 mappings, series rules, the recording list and settings. It is taken safely
 while Bowtie runs. Recorded video is not included — back up
 `<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
-The file holds password hashes and the Schedules Direct password; keep it
-private. Token-signing keys and sign-in sessions are left out, so a restored
+The file holds password hashes, the Schedules Direct password and the
+notification URL; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
 server makes new keys and everyone signs in again.
 
 The snapshot is written next to `bowtie.db` while the download is prepared

@@ -3,7 +3,29 @@
  * Server is authority for validation; client hints are advisory only.
  */
 
-export type SettingsSection = 'xmltv' | 'schedulesDirect' | 'transcode' | 'streaming' | 'hdhomerun'
+export type SettingsSection =
+  | 'xmltv'
+  | 'schedulesDirect'
+  | 'transcode'
+  | 'streaming'
+  | 'hdhomerun'
+  | 'notifications'
+
+/** Admin notification events (GET/PUT notifications.events). */
+export interface NotificationEvents {
+  recordingFailed: boolean
+  diskLow: boolean
+  recordingReady: boolean
+  guideFailed: boolean
+}
+
+/** POST /api/v1/admin/notifications/test result. */
+export interface NotificationTestResult {
+  target: 'ntfy' | 'discord' | 'webhook'
+  ok: boolean
+  status?: number
+  error?: string
+}
 
 export interface SettingsXMLTV {
   source: string
@@ -39,6 +61,8 @@ export interface SettingsResponse {
   hdhomerun?: { enabled: boolean }
   /** Recording padding (absent on older servers; edited on the Recordings tab). */
   dvr?: { padStartSeconds: number; padEndSeconds: number }
+  /** Admin notifications (absent on older servers). */
+  notifications?: { url: string; events: NotificationEvents }
 }
 
 export interface SDLineupSummary {
@@ -72,6 +96,8 @@ export interface SettingsFormState {
   }
   /** null when the server has no HDHomeRun guide setting (toggle hidden). */
   hdhomerun: { enabled: boolean } | null
+  /** null when the server has no notifications (card hidden). */
+  notifications: { url: string; events: NotificationEvents } | null
 }
 
 export type PutSettingsRequest = {
@@ -80,6 +106,7 @@ export type PutSettingsRequest = {
   transcode?: { encoder: string; allowHevc: boolean }
   streaming?: { bufferMinutes: number; adaptive: boolean }
   hdhomerun?: { enabled: boolean }
+  notifications?: { url: string; events: NotificationEvents }
 }
 
 /** Seed form state from a GET response. Password field starts empty. */
@@ -105,6 +132,12 @@ export function settingsToForm(s: SettingsResponse): SettingsFormState {
       adaptive: Boolean(s.streaming?.adaptive),
     },
     hdhomerun: s.hdhomerun ? { enabled: Boolean(s.hdhomerun.enabled) } : null,
+    notifications: s.notifications
+      ? {
+          url: s.notifications.url ?? '',
+          events: { ...DEFAULT_NOTIFICATION_EVENTS, ...s.notifications.events },
+        }
+      : null,
   }
 }
 
@@ -127,7 +160,89 @@ export function buildSectionPayload(
       return buildStreamingPayload(form)
     case 'hdhomerun':
       return { hdhomerun: { enabled: form.hdhomerun?.enabled ?? true } }
+    case 'notifications':
+      return buildNotificationsPayload(form)
   }
+}
+
+/** Server defaults: failures, low disk and stuck guide on; ready recordings off. */
+export const DEFAULT_NOTIFICATION_EVENTS: NotificationEvents = {
+  recordingFailed: true,
+  diskLow: true,
+  recordingReady: false,
+  guideFailed: true,
+}
+
+/** The event checkboxes, in display order. */
+export const NOTIFICATION_EVENT_OPTIONS: { key: keyof NotificationEvents; label: string }[] = [
+  { key: 'recordingFailed', label: 'A recording failed' },
+  { key: 'diskLow', label: 'Disk space is low' },
+  { key: 'guideFailed', label: "Guide data hasn't updated for a day" },
+  { key: 'recordingReady', label: 'A recording is ready to watch' },
+]
+
+export const NOTIFICATIONS_PLACEHOLDER = 'https://ntfy.sh/your-topic'
+
+export const NOTIFICATIONS_HINT =
+  'Works with ntfy (free phone app), Discord webhooks, or any URL that accepts a JSON POST.'
+
+export function buildNotificationsPayload(form: SettingsFormState): PutSettingsRequest {
+  const n = form.notifications ?? { url: '', events: DEFAULT_NOTIFICATION_EVENTS }
+  return { notifications: { url: n.url.trim(), events: { ...n.events } } }
+}
+
+/** Client-side hint: empty (off) or an http(s) URL with a host. */
+export function validateNotificationsHint(url: string): string | null {
+  const u = url.trim()
+  if (u === '') return null
+  let parsed: URL
+  try {
+    parsed = new URL(u)
+  } catch {
+    return 'Notification URL must be an http(s) URL'
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname === '') {
+    return 'Notification URL must be an http(s) URL'
+  }
+  return null
+}
+
+/** How the server will format messages for this URL (mirrors the server's rule). */
+export function notificationTarget(url: string): 'ntfy' | 'discord' | 'webhook' | null {
+  const u = url.trim()
+  if (u === '') return null
+  let parsed: URL
+  try {
+    parsed = new URL(u)
+  } catch {
+    return null
+  }
+  const host = parsed.hostname.toLowerCase()
+  if (host.includes('ntfy')) return 'ntfy'
+  const discord = ['discord.com', 'discordapp.com'].some((d) => host === d || host.endsWith(`.${d}`))
+  if (discord && parsed.pathname.startsWith('/api/webhooks/')) return 'discord'
+  return 'webhook'
+}
+
+/** Label for the detected target, shown under the URL field. */
+export function notificationTargetLabel(url: string): string | null {
+  switch (notificationTarget(url)) {
+    case 'ntfy':
+      return 'Sends as an ntfy notification.'
+    case 'discord':
+      return 'Sends as a Discord message.'
+    case 'webhook':
+      return 'Sends a JSON POST (event, title, message, recordingId, time).'
+    default:
+      return null
+  }
+}
+
+/** One line describing a test delivery's outcome. */
+export function describeTestResult(r: NotificationTestResult): string {
+  if (r.ok) return 'Test sent.'
+  const why = r.error?.trim() || (r.status ? `HTTP ${r.status}` : 'no answer')
+  return `Test failed: ${why}`
 }
 
 export function buildXmltvPayload(form: SettingsFormState): PutSettingsRequest {
