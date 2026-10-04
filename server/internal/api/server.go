@@ -46,12 +46,13 @@ type Deps struct {
 
 // Server is the HTTP API surface.
 type Server struct {
-	deps Deps
+	deps    Deps
+	devices *deviceAuths // quick sign-in (device_auth.go)
 }
 
 // New builds the API handler (stdlib ServeMux with Go 1.22 method patterns).
 func New(deps Deps) http.Handler {
-	s := &Server{deps: deps}
+	s := &Server{deps: deps, devices: newDeviceAuths()}
 	mux := http.NewServeMux()
 	s.mountAPI(mux)
 	// Short APK download links for sideloading (docs/install/android.md).
@@ -87,6 +88,10 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handleFunc("POST /api/v1/auth/login", s.handleLogin)
 	handleFunc("POST /api/v1/auth/refresh", s.handleRefresh)
 	handleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	handleFunc("POST /api/v1/auth/device", s.handleDeviceStart)
+	handleFunc("POST /api/v1/auth/device/token", s.handleDeviceToken)
+	handle("GET /api/v1/auth/device/{userCode}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeviceLookup)))
+	handle("POST /api/v1/auth/device/approve", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeviceApprove)))
 
 	handle("GET /api/v1/me", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleMe)))
 	handle("POST /api/v1/me/password", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleChangePassword)))

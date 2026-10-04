@@ -103,6 +103,137 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/device:
+    post:
+      summary: Start a quick sign-in (TV apps)
+      description: |
+        The TV shows `userCode` and a QR code of `verifyUrl` (the web app's
+        /link page). A signed-in phone or browser approves it; the TV polls
+        /auth/device/token every `interval` seconds until it gets tokens.
+      operationId: deviceStart
+      tags: [auth]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deviceName:
+                  type: string
+                  description: Shown to the approver ("Living room Apple TV")
+      responses:
+        '200':
+          description: Codes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceCode, userCode, verifyUrl, expiresIn, interval]
+                properties:
+                  deviceCode:
+                    type: string
+                    description: Secret; only the TV knows it
+                  userCode:
+                    type: string
+                    example: BCDF-2345
+                  verifyUrl:
+                    type: string
+                  expiresIn:
+                    type: integer
+                  interval:
+                    type: integer
+        '429':
+          description: Too many sign-ins in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/auth/device/token:
+    post:
+      summary: Poll for a quick sign-in's tokens (TV apps)
+      operationId: deviceToken
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceCode]
+              properties:
+                deviceCode:
+                  type: string
+      responses:
+        '200':
+          description: Approved (one use)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '410':
+          description: Expired, used or unknown (`{"error":"expired_token"}`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '428':
+          description: Not approved yet (`{"error":"authorization_pending"}`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/auth/device/{userCode}:
+    parameters:
+      - name: userCode
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Look up a quick sign-in code before approving it
+      operationId: deviceLookup
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The device asking
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceName]
+                properties:
+                  deviceName:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/auth/device/approve:
+    post:
+      summary: Approve a quick sign-in; the device signs in as the caller
+      operationId: deviceApprove
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userCode]
+              properties:
+                userCode:
+                  type: string
+      responses:
+        '204':
+          description: Approved
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/me/password:
     post:
       summary: Change the current user's password
