@@ -25,6 +25,8 @@ export interface ViewerChannel {
   logoUrl: string
   reception: Reception
   receptionCheckedAt?: string
+  /** Starred by the caller. Absent on servers older than Favorites/Recents. */
+  favorite?: boolean
 }
 
 export interface GuideProgram {
@@ -43,7 +45,18 @@ export interface GuideChannel {
   logoUrl: string
   reception: Reception
   receptionCheckedAt?: string
+  /** Starred by the caller. Absent on servers older than Favorites/Recents. */
+  favorite?: boolean
   programs: GuideProgram[]
+}
+
+/** GET /api/v1/me/recents item, newest first. */
+export interface RecentChannel {
+  channelId: number
+  guideNumber: string
+  name: string
+  logoUrl: string
+  watchedAt: string
 }
 
 export interface ClientCapsPayload {
@@ -293,6 +306,26 @@ export class ApiClient {
 
   async getChannels(): Promise<ViewerChannel[]> {
     return this.request<ViewerChannel[]>('GET', '/api/v1/channels')
+  }
+
+  // ── Favorites / recents (per user) ───────────────────────────────────────
+
+  async addFavorite(channelId: number): Promise<void> {
+    await this.request<void>('PUT', `/api/v1/me/favorites/${channelId}`)
+  }
+
+  async removeFavorite(channelId: number): Promise<void> {
+    await this.request<void>('DELETE', `/api/v1/me/favorites/${channelId}`)
+  }
+
+  /** Newest first. Throws ApiError 404 on servers without recents. */
+  async getRecents(limit = 8): Promise<RecentChannel[]> {
+    const q = new URLSearchParams({ limit: String(limit) })
+    return this.request<RecentChannel[]>('GET', `/api/v1/me/recents?${q}`)
+  }
+
+  async clearRecents(): Promise<void> {
+    await this.request<void>('DELETE', '/api/v1/me/recents')
   }
 
   async createSession(
