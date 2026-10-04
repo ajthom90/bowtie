@@ -3,6 +3,8 @@ package app.bowtie.core.vm
 import app.bowtie.core.BowtieClient
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.TOKEN_PAIR
 import app.bowtie.core.InMemoryTokenStore
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -16,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /** ContinueWatchingViewModel over a real [BowtieClient] and MockWebServer. */
 class ContinueWatchingViewModelTest {
@@ -24,9 +27,10 @@ class ContinueWatchingViewModelTest {
 
     private lateinit var server: MockWebServer
     private val requests = CopyOnWriteArrayList<Req>()
-    private var listCode = 200
-    private var putCode = 204
-    private var list = "[]"
+    @Volatile private var listCode = 200
+    @Volatile private var putCode = 204
+    @Volatile private var list = "[]"
+    @Volatile private var listDelayMs = 0L
 
     private fun rec(id: Long, positionSec: Int, state: String = "ready", updated: String? = null) = """
         {"id":$id,"title":"Show $id","channelId":5,
@@ -47,6 +51,7 @@ class ContinueWatchingViewModelTest {
                     r.method == "GET" && r.path.startsWith("/api/v1/recordings?state=") ->
                         MockResponse().setResponseCode(listCode)
                             .setBody(if (listCode == 200) list else """{"error":"boom"}""")
+                            .setBodyDelay(listDelayMs, TimeUnit.MILLISECONDS)
                     r.method == "PUT" && r.path.endsWith("/position") ->
                         MockResponse().setResponseCode(putCode)
                             .setBody(if (putCode == 204) "" else """{"error":"not found"}""")
@@ -127,5 +132,42 @@ class ContinueWatchingViewModelTest {
         assertEquals("That recording is gone.", vm.message.value)
         vm.clearMessage()
         assertNull(vm.message.value)
+    }
+
+    @Test
+    fun removeDuringARefresh_keepsItRemoved() = runBlocking {
+        list = "[${rec(2, positionSec = 600)},${rec(5, positionSec = 700)}]"
+        val vm = vm()
+        vm.refresh()
+        val target = vm.items.value.first { it.id == 2L }
+        // A list fetch already under way answers after the remove, with the old position.
+        listDelayMs = 400
+
+        val stale = launch { vm.refresh() }
+        delay(100)
+        assertTrue(vm.remove(target))
+        stale.join()
+
+        assertEquals(listOf(5L), vm.items.value.map { it.id })
+    }
+
+    @Test
+    fun removed_staysHiddenUntilTheServerConfirms() = runBlocking {
+        list = "[${rec(2, positionSec = 600)},${rec(5, positionSec = 700)}]"
+        val vm = vm()
+        vm.refresh()
+        assertTrue(vm.remove(vm.items.value.first { it.id == 2L }))
+
+        // A list read that hasn't caught up with the reset yet.
+        vm.refresh()
+        assertEquals(listOf(5L), vm.items.value.map { it.id })
+
+        // The server confirms (position 0); watching it again later brings it back.
+        list = "[${rec(2, positionSec = 0)},${rec(5, positionSec = 700)}]"
+        vm.refresh()
+        assertEquals(listOf(5L), vm.items.value.map { it.id })
+        list = "[${rec(2, positionSec = 900)},${rec(5, positionSec = 700)}]"
+        vm.refresh()
+        assertEquals(setOf(2L, 5L), vm.items.value.map { it.id }.toSet())
     }
 }
