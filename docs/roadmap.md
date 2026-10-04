@@ -44,9 +44,6 @@ requests that come up most in their forums and subreddits.
 
 ## Known rough edges
 
-- **Web: browser Back and refresh.** Only `/link` and `/multiview` are real
-  URLs, so Back from Recordings/Admin/Account leaves the app and refresh
-  returns to the guide. Needs proper routes.
 - **First start on some channels takes ~20 s** when FFmpeg's full layout
   (all renditions, captions) times out and Bowtie falls back to one rung.
   Seen intermittently on FOX 9 locally.
