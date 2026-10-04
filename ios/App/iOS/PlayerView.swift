@@ -1,6 +1,8 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import GroupActivities
+import UIKit // with GroupActivities: GroupActivitySharingController
 import BowtieKit
 
 /// Full-screen HLS player: AVPlayerViewController wrapper with auto-hiding chrome,
@@ -27,6 +29,10 @@ struct PlayerView: View {
     @State private var statsPollTask: Task<Void, Never>?
     @State private var outOfWindowNotice: String?
     @State private var noticeHideTask: Task<Void, Never>?
+    /// "On a FaceTime call" for SharePlay purposes.
+    @StateObject private var groupState = GroupStateObserver()
+    @State private var sharingActivity: SharingActivity?
+    @State private var isStartingSharePlay = false
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -144,10 +150,34 @@ struct PlayerView: View {
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
         }
+        .task(id: coordinationKey) {
+            coordinatePlayback()
+        }
+        .sheet(item: $sharingActivity) { item in
+            GroupActivitySharingView(activity: item.activity)
+        }
+        .alert(
+            "Leave Watch Together?",
+            isPresented: groupZapBinding,
+            presenting: playerModel.pendingGroupZap
+        ) { zap in
+            Button("Watch \(zap.name)", role: .destructive) {
+                Task { await playerModel.confirmGroupZap(zap) }
+            }
+            Button("Keep Watching Together", role: .cancel) {
+                playerModel.cancelGroupZap()
+            }
+        } message: { zap in
+            Text("You're watching \(playerModel.currentChannel?.name ?? "this channel") with your group. Watching \(zap.name) leaves the group.")
+        }
     }
 
     private func showOutOfWindowNotice() {
-        outOfWindowNotice = PlayerModel.outOfWindowNotice
+        showNotice(PlayerModel.outOfWindowNotice)
+    }
+
+    private func showNotice(_ text: String) {
+        outOfWindowNotice = text
         noticeHideTask?.cancel()
         noticeHideTask = Task { @MainActor in
             do {
@@ -218,18 +248,18 @@ struct PlayerView: View {
 
     private var identityRow: some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(channel.guideNumber)
+            Text(shownChannel.guideNumber)
                 .font(Theme.channelNumber(36))
                 .foregroundStyle(Theme.amber)
                 .fixedSize()
-                .accessibilityLabel("Channel \(channel.guideNumber)")
+                .accessibilityLabel("Channel \(shownChannel.guideNumber)")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(channel.name)
+                Text(shownChannel.name)
                     .font(Theme.label(16))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if let title = nowTitle, !title.isEmpty {
+                if shownChannel.id == channel.id, let title = nowTitle, !title.isEmpty {
                     Text(title)
                         .font(Theme.body(14))
                         .foregroundStyle(Theme.dim)
@@ -295,6 +325,9 @@ struct PlayerView: View {
             if bridge.audioOptionNames.count > 1 {
                 audioMenu
             }
+            if canShare || playerModel.groupRole != nil {
+                sharePlayButton
+            }
 
             Button {
                 showStats.toggle()
@@ -308,6 +341,80 @@ struct PlayerView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(showStats ? "Hide stats" : "Show stats")
         }
+    }
+
+    // MARK: - SharePlay
+
+    /// The channel actually playing: a SharePlay group can change it under
+    /// this view (and a participant may decline a channel they picked).
+    private var shownChannel: Channel {
+        playerModel.currentChannel ?? channel
+    }
+
+    /// The server gave this stream a session ID, so others can join it.
+    private var canShare: Bool {
+        guard case .playing(let session) = playerModel.state else { return false }
+        return !(session.session?.id ?? "").isEmpty
+    }
+
+    /// "Watch Together": on a FaceTime call, start SharePlay; otherwise offer
+    /// the system sheet that starts a call with the activity.
+    private var sharePlayButton: some View {
+        let inGroup = playerModel.groupRole != nil
+        return Button {
+            bumpChrome()
+            Task { await startSharePlay() }
+        } label: {
+            Image(systemName: "shareplay")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(inGroup ? Theme.bg : Theme.amber)
+                .frame(width: 44, height: 44)
+                .background(inGroup ? Theme.amber : Theme.raised.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(inGroup || isStartingSharePlay)
+        .accessibilityLabel(inGroup ? "Watching together" : "Watch Together")
+        .accessibilityHint(inGroup ? "" : "Watch this channel with people on a FaceTime call")
+        .accessibilityIdentifier("bowtie.shareplay")
+    }
+
+    private func startSharePlay() async {
+        guard !isStartingSharePlay else { return }
+        isStartingSharePlay = true
+        defer { isStartingSharePlay = false }
+        guard let activity = await playerModel.makeWatchActivity() else {
+            showNotice("SharePlay needs a newer Bowtie server")
+            return
+        }
+        if groupState.isEligibleForGroupSession {
+            do {
+                _ = try await activity.activate()
+            } catch {
+                showNotice("Couldn't start SharePlay")
+            }
+        } else {
+            sharingActivity = SharingActivity(activity: activity)
+        }
+    }
+
+    /// Bind the group (if any) to the current AVPlayer, whichever came first.
+    private var coordinationKey: String {
+        let player = bridge.player.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        let group = playerModel.group.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        return "\(player)|\(group)"
+    }
+
+    private func coordinatePlayback() {
+        guard let group = playerModel.group, let player = bridge.player else { return }
+        group.coordinate(player)
+    }
+
+    private var groupZapBinding: Binding<Bool> {
+        Binding(
+            get: { playerModel.pendingGroupZap != nil },
+            set: { if !$0 { playerModel.cancelGroupZap() } }
+        )
     }
 
     /// Broadcast audio language (e.g. Español). AVKit's inline controls on
@@ -560,6 +667,7 @@ struct PlayerView: View {
         }
 
         let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+        SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
         bridge.load(url: url)
         stallAttempt = 0
     }
@@ -616,6 +724,7 @@ struct PlayerView: View {
                 // Re-seek / re-load the same playlist URL.
                 if let session = playerModel.lastSession {
                     let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+                    SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
                     bridge.load(url: url)
                 }
             }
@@ -1112,6 +1221,25 @@ private struct PlayerContainer: UIViewControllerRepresentable {
             }
         }
     }
+}
+
+// MARK: - SharePlay sheet
+
+private struct SharingActivity: Identifiable {
+    let id = UUID()
+    let activity: WatchChannelActivity
+}
+
+/// The system sheet that starts a FaceTime call (or Messages) with the
+/// activity, for sharing when not already on a call.
+private struct GroupActivitySharingView: UIViewControllerRepresentable {
+    let activity: WatchChannelActivity
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        (try? GroupActivitySharingController(activity)) ?? UIViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 }
 
 // MARK: - Preview

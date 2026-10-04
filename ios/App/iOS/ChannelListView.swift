@@ -60,6 +60,7 @@ struct ChannelListView: View {
                         .bowtieScreenBackground()
                     }
                 }
+                .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)

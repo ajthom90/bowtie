@@ -118,6 +118,35 @@ struct TVPlayerView: View {
         .task(id: sessionIdentity) {
             await loadPlayerIfNeeded()
         }
+        // SharePlay: bind the group to the AVPlayer, whichever came first.
+        .task(id: coordinationKey) {
+            if let group = playerModel.group, let player = bridge.player {
+                group.coordinate(player)
+            }
+        }
+        .alert(
+            "Leave Watch Together?",
+            isPresented: Binding(
+                get: { playerModel.pendingGroupZap != nil },
+                set: { if !$0 { playerModel.cancelGroupZap() } }
+            ),
+            presenting: playerModel.pendingGroupZap
+        ) { zap in
+            Button("Watch \(zap.name)", role: .destructive) {
+                Task { await playerModel.confirmGroupZap(zap) }
+            }
+            Button("Keep Watching Together", role: .cancel) {
+                playerModel.cancelGroupZap()
+            }
+        } message: { zap in
+            Text("You're watching \(playerModel.currentChannel?.name ?? "this channel") with your group. Watching \(zap.name) leaves the group.")
+        }
+    }
+
+    private var coordinationKey: String {
+        let player = bridge.player.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        let group = playerModel.group.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        return "\(player)|\(group)"
     }
 
     private func showOutOfWindowNotice() {
@@ -293,6 +322,7 @@ struct TVPlayerView: View {
         }
 
         let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+        SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
         bridge.load(url: url)
         stallAttempt = 0
     }
@@ -344,6 +374,7 @@ struct TVPlayerView: View {
                 guard case .stalled = playerModel.state else { return }
                 if let session = playerModel.lastSession {
                     let url = ServerURL.resolve(path: session.playlistUrl, against: serverURL)
+                    SharedItemIdentity.register(playlistURL: url, sessionId: session.session?.id)
                     bridge.load(url: url)
                 }
             }
