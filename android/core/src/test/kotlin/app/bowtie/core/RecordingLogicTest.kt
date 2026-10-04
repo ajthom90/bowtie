@@ -148,6 +148,32 @@ class RecordingLogicTest {
         assertEquals("Delete", RecordingLogic.deleteLabel(rec(state = "failed")))
     }
 
+    @Test
+    fun actionLabel_plainWords() {
+        assertEquals("Play", RecordingLogic.actionLabel(rec(), Action.Play))
+        assertEquals("Stop", RecordingLogic.actionLabel(rec(state = "recording"), Action.Stop))
+        assertEquals("Keep", RecordingLogic.actionLabel(rec(protected = false), Action.Keep))
+        assertEquals("Don't keep", RecordingLogic.actionLabel(rec(protected = true), Action.Keep))
+        assertEquals("Cancel", RecordingLogic.actionLabel(rec(state = "scheduled"), Action.Delete))
+        assertEquals("Delete", RecordingLogic.actionLabel(rec(state = "ready"), Action.Delete))
+    }
+
+    @Test
+    fun detailLine_lengthPositionSizeAndOwner() {
+        val ready = rec(state = "ready").copy(durationSec = 1800, positionSec = 754, sizeBytes = 950_000_000)
+        assertEquals("30 min · stopped at 12:34 · 950 MB", RecordingLogic.detailLine(ready))
+        assertEquals("30 min · 950 MB", RecordingLogic.detailLine(ready.copy(positionSec = 0)))
+        assertEquals(
+            "30 min · 950 MB · by bob",
+            RecordingLogic.detailLine(ready.copy(positionSec = 0, canManage = false, scheduledBy = "bob")),
+        )
+        assertNull(RecordingLogic.detailLine(rec(state = "scheduled")))
+        assertEquals(
+            "by bob",
+            RecordingLogic.detailLine(rec(state = "scheduled", canManage = false).copy(scheduledBy = "bob")),
+        )
+    }
+
     // ── Resume decision ─────────────────────────────────────────────────────
 
     @Test

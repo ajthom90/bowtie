@@ -88,6 +88,31 @@ object RecordingLogic {
     fun deleteLabel(r: Recording): String =
         if (r.state == Recording.SCHEDULED || r.state == Recording.WAITING) "Cancel" else "Delete"
 
+    /** Button text for [action] on [r]. */
+    fun actionLabel(r: Recording, action: Action): String = when (action) {
+        Action.Play -> "Play"
+        Action.Stop -> "Stop"
+        Action.Keep -> if (r.isProtected) "Don't keep" else "Keep"
+        Action.Delete -> deleteLabel(r)
+    }
+
+    /** Length, saved position and size for a recording; who scheduled it when it isn't yours. */
+    fun detailLine(r: Recording): String? {
+        val parts = mutableListOf<String>()
+        if (r.state == Recording.READY && r.durationSec > 0) {
+            parts += formatDuration(r.durationSec)
+            if (shouldOfferResume(r.positionSec, r.durationSec)) {
+                parts += "stopped at ${formatClock(r.positionSec)}"
+            }
+        }
+        if (r.sizeBytes > 0) parts += formatSize(r.sizeBytes)
+        if (!r.canManage && r.scheduledBy.isNotEmpty()) parts += "by ${r.scheduledBy}"
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    /** Deleting a recording's files is permanent, so confirm; cancelling a schedule isn't. */
+    fun deleteNeedsConfirm(r: Recording): Boolean = deleteLabel(r) == "Delete"
+
     /** Offer "Resume" when past the first 10 s and not within the last 30 s. */
     fun shouldOfferResume(positionSec: Int, durationSec: Int): Boolean =
         positionSec > RESUME_MIN_SEC && positionSec < durationSec - RESUME_END_MARGIN_SEC
