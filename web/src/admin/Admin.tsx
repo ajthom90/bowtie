@@ -24,9 +24,11 @@ type Props = {
   onBack: () => void
   /** A5: open the player for a channel (admin preview from Channels). */
   onPreview: (target: WatchTarget) => void
+  /** Opens the Recordings page. */
+  onRecordings?: () => void
 }
 
-export function Admin({ onBack, onPreview }: Props) {
+export function Admin({ onBack, onPreview, onRecordings }: Props) {
   const { user, logout } = useAuth()
   const [tab, setTab] = useState<AdminTab>('tuners')
 
@@ -55,6 +57,11 @@ export function Admin({ onBack, onPreview }: Props) {
           <button type="button" className={styles.btn} onClick={onBack}>
             Guide
           </button>
+          {onRecordings ? (
+            <button type="button" className={styles.btn} onClick={onRecordings}>
+              Recordings
+            </button>
+          ) : null}
           <span className={styles.subtitle}>{user.username}</span>
           <button type="button" className={styles.btn} onClick={() => void logout()}>
             Sign out
