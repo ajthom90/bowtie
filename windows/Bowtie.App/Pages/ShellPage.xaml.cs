@@ -9,7 +9,8 @@ using Microsoft.UI.Xaml.Navigation;
 namespace BowtieApp.Pages;
 
 /// <summary>
-/// Signed-in shell: Live TV and Recordings, plus the account menu. Cached
+/// Signed-in shell: Live TV and Recordings, plus the account menu (server,
+/// Skip ads automatically, sign out). Cached
 /// (NavigationCacheMode=Required) so coming back from the player keeps the
 /// list where it was; a new sign-in rebuilds it.
 /// </summary>
@@ -52,8 +53,14 @@ public sealed partial class ShellPage : Page
         }
     }
 
-    private void OnAccountTapped(object sender, TappedRoutedEventArgs e) =>
+    private void OnAccountTapped(object sender, TappedRoutedEventArgs e)
+    {
+        AutoSkipItem.IsChecked = AppServices.Preferences.AutoSkipAds;
         FlyoutBase.ShowAttachedFlyout((FrameworkElement)sender);
+    }
+
+    private void OnAutoSkipClick(object sender, RoutedEventArgs e) =>
+        AppServices.Preferences.AutoSkipAds = AutoSkipItem.IsChecked;
 
     private async void OnSignOutClick(object sender, RoutedEventArgs e) => await AppServices.App.SignOutAsync();
 

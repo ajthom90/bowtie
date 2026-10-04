@@ -12,7 +12,11 @@ public sealed class ChannelItem
     private const string StarOutline = "";
     private const string StarFilled = "";
 
-    public ChannelItem(ChannelRow row, Uri? logo, bool favoritesSupported, DateTimeOffset now)
+    /// <summary>Opacity of a now/next line outside the guide filter.</summary>
+    private const double Dimmed = 0.4;
+
+    public ChannelItem(ChannelRow row, Uri? logo, bool favoritesSupported, DateTimeOffset now,
+        GuideFilters.RowHighlight? highlight = null)
     {
         Channel = row.Channel;
         Number = row.Channel.GuideNumber;
@@ -31,7 +35,20 @@ public sealed class ChannelItem
         StarLabel = row.IsFavorite ? $"Remove {Name} from favorites" : $"Add {Name} to favorites";
         StarBrush = row.IsFavorite ? Res("BowtieAmberBrush") : Res("TextFillColorSecondaryBrush");
         NoSignalVisibility = row.Channel.HasNoSignal ? Visibility.Visible : Visibility.Collapsed;
-        AccessibleName = string.IsNullOrEmpty(NowTitle) ? $"{Number} {Name}" : $"{Number} {Name}, now {NowTitle}";
+        var h = highlight ?? new GuideFilters.RowHighlight(true, true, null);
+        NowOpacity = h.NowMatches || current == null ? 1 : Dimmed;
+        NextOpacity = h.NextMatches || next == null ? 0.7 : 0.7 * Dimmed;
+        LaterLine = h.Later == null ? "" : GuideFilters.LaterLine(h.Later, TimeZoneInfo.Local);
+        LaterVisibility = h.Later == null ? Visibility.Collapsed : Visibility.Visible;
+
+        var spoken = $"{Number} {Name}";
+        if (!string.IsNullOrEmpty(NowTitle))
+        {
+            spoken += $", now {NowTitle}";
+            if (current != null && !h.NowMatches) spoken += " (outside the filter)";
+        }
+        if (LaterLine.Length > 0) spoken += $", {LaterLine}";
+        AccessibleName = spoken;
     }
 
     /// <summary>An app resource brush, or gray when it's missing.</summary>
@@ -56,6 +73,11 @@ public sealed class ChannelItem
     public Brush StarBrush { get; }
     public Visibility NoSignalVisibility { get; }
     public string AccessibleName { get; }
+    public double NowOpacity { get; }
+    public double NextOpacity { get; }
+    /// <summary>"Later: Title · 8:00 PM" when the filter matches nothing now or next.</summary>
+    public string LaterLine { get; }
+    public Visibility LaterVisibility { get; }
 }
 
 /// <summary>Display data for one Recent tile.</summary>

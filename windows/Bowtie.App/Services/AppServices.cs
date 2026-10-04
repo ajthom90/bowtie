@@ -27,10 +27,21 @@ public static class AppServices
 
     public static AppViewModel App { get; private set; } = null!;
 
+    /// <summary>Per-device choices (guide filter, auto-skip ads), kept in %LOCALAPPDATA%\Bowtie\settings.json.</summary>
+    public static AppPreferences Preferences { get; private set; } = new(new InMemoryPreferences());
+
     public static void Initialize()
     {
         var store = new PasswordVaultTokenStore();
         App = new AppViewModel(store, server => new BowtieClient(server, store));
+        Preferences = new AppPreferences(new JsonFilePreferences(SettingsPath()));
+    }
+
+    private static string SettingsPath()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(root)) root = Path.GetTempPath();
+        return Path.Combine(root, "Bowtie", "settings.json");
     }
 
     public static BowtieClient Client => App.Client ?? throw new InvalidOperationException("Not connected");
@@ -40,7 +51,7 @@ public static class AppServices
         get
         {
             EnsureForCurrentClient();
-            return s_channels ??= new ChannelListViewModel(Client);
+            return s_channels ??= new ChannelListViewModel(Client, prefs: Preferences);
         }
     }
 

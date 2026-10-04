@@ -68,6 +68,16 @@
                         <MenuFlyout x:Name="CaptionsMenu" Placement="Bottom" />
                     </DropDownButton.Flyout>
                 </DropDownButton>
+                <DropDownButton x:Name="SleepButton"
+                                ToolTipService.ToolTip="Sleep timer" AutomationProperties.Name="Sleep timer">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE708;" />
+                        <TextBlock x:Name="SleepLabel" Text="Sleep" />
+                    </StackPanel>
+                    <DropDownButton.Flyout>
+                        <MenuFlyout x:Name="SleepMenu" Placement="Bottom" Opening="OnSleepMenuOpening" />
+                    </DropDownButton.Flyout>
+                </DropDownButton>
                 <Button x:Name="FullScreenButton" Click="OnFullScreenClick"
                         ToolTipService.ToolTip="Full screen (F11)" AutomationProperties.Name="Full screen">
                     <Button.KeyboardAccelerators>
@@ -94,6 +104,17 @@
             </MediaPlayerElement.TransportControls>
         </MediaPlayerElement>
 
+        <!-- Skip ad: shown while a recording plays a detected commercial break (S). -->
+        <Button x:Name="SkipAdButton" Grid.Row="1" Visibility="Collapsed"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,120"
+                Style="{StaticResource AccentButtonStyle}" Click="OnSkipAdClick"
+                ToolTipService.ToolTip="Skip ad (S)" AutomationProperties.Name="Skip ad">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Skip ad" />
+                <FontIcon Glyph="&#xEB9D;" FontSize="14" />
+            </StackPanel>
+        </Button>
+
         <!-- Status overlay: tuning, buffering, errors, tuners busy. -->
         <Grid x:Name="Overlay" Grid.Row="1" Visibility="Collapsed" Background="{StaticResource BowtieOverlayBrush}">
             <StackPanel MaxWidth="480" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24">
@@ -109,7 +130,15 @@
             </StackPanel>
         </Grid>
 
-        <!-- Short notices (jumped to live, etc.). -->
+        <!-- Sleep timer's last minute. -->
+        <InfoBar x:Name="SleepBar" Grid.Row="1" IsOpen="False" Severity="Informational" IsClosable="False"
+                 Title="Sleep timer" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,120">
+            <InfoBar.ActionButton>
+                <Button Content="Keep watching" Click="OnKeepWatchingClick" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <!-- Short notices (jumped to live, skipped ad, etc.). -->
         <InfoBar x:Name="NoticeBar" Grid.Row="1" IsOpen="False" Severity="Informational"
                  VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,16,0,0" IsClosable="True" />
     </Grid>

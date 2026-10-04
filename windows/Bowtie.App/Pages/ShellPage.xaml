@@ -35,6 +35,10 @@
                     <MenuFlyout>
                         <MenuFlyoutItem x:Name="ServerMenuItem" IsEnabled="False" />
                         <MenuFlyoutSeparator />
+                        <ToggleMenuFlyoutItem x:Name="AutoSkipItem" Text="Skip ads automatically"
+                                              Click="OnAutoSkipClick"
+                                              ToolTipService.ToolTip="In recordings, skip each detected commercial break once as it starts." />
+                        <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="Sign out" Click="OnSignOutClick" />
                         <MenuFlyoutItem Text="Use a different server" Click="OnChangeServerClick" />
                     </MenuFlyout>

@@ -1,7 +1,8 @@
 # Bowtie for Windows
 
 A native Windows app for watching your Bowtie server: live TV with
-favorites, Recent, pause/rewind and Go Live, and DVR recordings with resume.
+favorites, Recent, guide filters, pause/rewind, Go Live and a sleep timer,
+and DVR recordings with resume and Skip ad.
 Windows 10 version 1809 or later and Windows 11, on **x64** (Intel/AMD) and
 **ARM64** (Snapdragon, Surface Pro X, Copilot+ PCs).
 
@@ -76,7 +77,10 @@ in the app first).
 ## Using it
 
 - **Live TV**: favorites first, then every channel; **Recent** shows what you
-  watched lately. Click ☆ to star a channel. F5 refreshes.
+  watched lately. Click ☆ to star a channel. F5 refreshes. **All · Sports ·
+  Movies · News · Kids · New** filter by what's on in the next four hours:
+  channels with nothing matching are hidden, lines outside the filter dim,
+  and a later match shows as "Later: …". The choice is remembered on this PC.
 - **Player**: the system controls play/pause, show the seek bar and volume.
   - ← / → skip 30 seconds; the pause/rewind buffer is set by your server
     admin (15 minutes by default). **Go Live** (or End) jumps back to live.
@@ -85,9 +89,17 @@ in the app first).
     account allows); audio and captions menus appear when the broadcast has
     choices.
   - F11, double-click or the full-screen button toggle full screen; Esc leaves it.
+  - **Sleep** stops playback after 15 minutes to 2 hours, or at the end of the
+    live program. A minute before, "Still watching?" offers **Keep watching**;
+    otherwise the player closes and the tuner is freed.
+  - In recordings, **Skip ad** (or S) appears during a detected commercial
+    break. Turn on **Skip ads automatically** in the account menu to skip each
+    break once.
 - **Recordings**: Upcoming / Recorded / Missed. Play asks whether to resume
   where you stopped; your position is saved every 15 seconds. Keep protects a
-  recording from automatic cleanup; Delete removes it for everyone.
+  recording from automatic cleanup; Delete removes it for everyone. A
+  recording blocked by parental controls shows 🔒 and its rating and can't
+  be played.
 
 ## Build
 

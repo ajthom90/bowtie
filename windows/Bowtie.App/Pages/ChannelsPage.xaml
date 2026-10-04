@@ -36,11 +36,15 @@
                                 <TextBlock Text="No signal" Visibility="{x:Bind NoSignalVisibility}"
                                            Foreground="{ThemeResource SystemFillColorCautionBrush}" />
                             </StackPanel>
-                            <TextBlock Text="{x:Bind NowTitle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{x:Bind NowTitle}" TextTrimming="CharacterEllipsis"
+                                       Opacity="{x:Bind NowOpacity}" />
                             <ProgressBar Value="{x:Bind Progress}" Maximum="100" MaxWidth="320"
                                          HorizontalAlignment="Left" Width="320"
                                          Visibility="{x:Bind ProgressVisibility}" />
-                            <TextBlock Text="{x:Bind NextLine}" Opacity="0.7" TextTrimming="CharacterEllipsis"
+                            <TextBlock Text="{x:Bind NextLine}" Opacity="{x:Bind NextOpacity}" TextTrimming="CharacterEllipsis"
+                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                            <TextBlock Text="{x:Bind LaterLine}" Visibility="{x:Bind LaterVisibility}"
+                                       Foreground="{StaticResource BowtieAmberBrush}" TextTrimming="CharacterEllipsis"
                                        Style="{StaticResource CaptionTextBlockStyle}" />
                         </StackPanel>
                     </Grid>
@@ -73,6 +77,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -87,7 +92,18 @@
             </Button>
         </Grid>
 
-        <ScrollViewer Grid.Row="1">
+        <!-- Guide category filter (remembered on this PC). -->
+        <SelectorBar x:Name="FilterBar" Grid.Row="1" Margin="16,0,16,0" Visibility="Collapsed"
+                     SelectionChanged="OnFilterChanged" AutomationProperties.Name="Show programs">
+            <SelectorBarItem Text="All" Tag="all" />
+            <SelectorBarItem Text="Sports" Tag="sports" />
+            <SelectorBarItem Text="Movies" Tag="movies" />
+            <SelectorBarItem Text="News" Tag="news" />
+            <SelectorBarItem Text="Kids" Tag="kids" />
+            <SelectorBarItem Text="New" Tag="new" />
+        </SelectorBar>
+
+        <ScrollViewer Grid.Row="2">
             <StackPanel Padding="24,0,24,24" Spacing="8">
                 <InfoBar x:Name="MessageBar" IsOpen="False" Severity="Warning" IsClosable="True"
                          Closed="OnMessageClosed" />
@@ -123,6 +139,12 @@
                 <TextBlock x:Name="AllHeader" Text="All channels" Visibility="Collapsed"
                            Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
                 <ItemsControl x:Name="OthersList" ItemTemplate="{StaticResource ChannelTemplate}" />
+
+                <StackPanel x:Name="FilterEmptyPanel" Spacing="8" Visibility="Collapsed" Margin="0,24,0,0"
+                            HorizontalAlignment="Center">
+                    <TextBlock x:Name="FilterEmptyLabel" Opacity="0.7" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <Button Content="Show all channels" Click="OnShowAllClick" HorizontalAlignment="Center" />
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
     </Grid>

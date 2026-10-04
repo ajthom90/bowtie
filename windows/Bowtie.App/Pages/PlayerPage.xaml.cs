@@ -23,11 +23,15 @@ namespace BowtieApp.Pages;
 /// added. Live sessions are driven by <see cref="PlayerViewModel"/> (session
 /// replace, 15 s heartbeats, 403 → one silent replace); the live window
 /// math (Go Live, behind-live label, skips) is <see cref="LiveEdge"/>.
+/// The sleep timer (<see cref="SleepTimer"/>) leaves the player like Back;
+/// recordings offer Skip ad over detected breaks (<see cref="CommercialSkipper"/>).
 /// </summary>
 public sealed partial class PlayerPage : Page
 {
     private readonly MediaPlayer _player;
     private readonly DispatcherQueueTimer _tick;
+    private readonly SleepTimer _sleep;
+    private CommercialSkipper? _skipper;
 
     private PlayerRequest? _request;
     private PlayerViewModel? _live;
@@ -65,6 +69,11 @@ public sealed partial class PlayerPage : Page
         _tick.Interval = TimeSpan.FromMilliseconds(500);
         _tick.Tick += (_, _) => OnTick();
 
+        // Fires the same leave as Back: the live session is deleted (tuner freed)
+        // or the recording position saved. Deferred so the tick finishes first.
+        _sleep = new SleepTimer(() => DispatcherQueue.TryEnqueue(GoBack));
+        _sleep.PropertyChanged += (_, _) => RenderSleep();
+
         PreviewKeyDown += OnPreviewKeyDown;
     }
 
@@ -91,6 +100,7 @@ public sealed partial class PlayerPage : Page
 
             case PlayerRequest.Vod vod:
                 TitleLabel.Text = vod.Start.Recording.Title;
+                _skipper = new CommercialSkipper(vod.Start.Recording.Commercials);
                 _pendingResume = vod.ResumeAtSec > 0 ? TimeSpan.FromSeconds(vod.ResumeAtSec) : null;
                 ShowOverlay(busy: true, title: "Opening the recording…", body: null, retry: false);
                 await LoadAsync(vod.Start.PlaylistUri);
@@ -125,6 +135,7 @@ public sealed partial class PlayerPage : Page
         if (_leaving) return;
         _leaving = true;
         _tick.Stop();
+        _sleep.Cancel();
         App.MainWindow.Closed -= OnWindowClosed;
         App.MainWindow.SetFullScreen(false);
 
@@ -471,6 +482,10 @@ public sealed partial class PlayerPage : Page
             GoLiveButton.Visibility = Visibility.Collapsed;
         }
 
+        _sleep.Tick();
+        if (_leaving) return;
+        RenderCommercials(session);
+
         if (_request is PlayerRequest.Vod vod && _opened &&
             session.PlaybackState == MediaPlaybackState.Playing &&
             DateTimeOffset.UtcNow - _lastSave >= RecordingLogic.PositionSaveInterval)
@@ -479,6 +494,95 @@ public sealed partial class PlayerPage : Page
             AppServices.Recordings.SavePosition(vod.Start.Recording.Id, session.Position);
         }
     }
+
+    // ── Commercials ─────────────────────────────────────────────────────────
+
+    /// <summary>Skip ad while inside a break; auto-skip (only while playing, so scrubbing never jumps) once per break.</summary>
+    private void RenderCommercials(MediaPlaybackSession session)
+    {
+        if (_skipper is not { Segments.Count: > 0 } skipper || !_opened)
+        {
+            SkipAdButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var at = session.Position.TotalSeconds;
+        if (AppServices.Preferences.AutoSkipAds && session.PlaybackState == MediaPlaybackState.Playing &&
+            skipper.AutoSkipTarget(at) is { } target)
+        {
+            session.Position = TimeSpan.FromSeconds(target);
+            ShowNotice("Skipped ad");
+            at = target;
+        }
+        SkipAdButton.Visibility = skipper.Active(at) != null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Skip ad pressed (button or S); false when not in a break.</summary>
+    private bool SkipAd()
+    {
+        if (_skipper == null || !_opened) return false;
+        var session = _player.PlaybackSession;
+        if (_skipper.Skip(session.Position.TotalSeconds) is not { } target) return false;
+        session.Position = TimeSpan.FromSeconds(target);
+        SkipAdButton.Visibility = Visibility.Collapsed;
+        return true;
+    }
+
+    // ── Sleep timer ─────────────────────────────────────────────────────────
+
+    /// <summary>When the live program ends (for "End of this program"); null for recordings or without guide data.</summary>
+    private DateTimeOffset? ProgramEnd(DateTimeOffset now) =>
+        _live?.CurrentChannel is { } channel ? AppServices.Channels.ProgramEndFor(channel.Id, now) : null;
+
+    /// <summary>Rebuilt on open so "End of this program" follows the current channel.</summary>
+    private void OnSleepMenuOpening(object? sender, object e)
+    {
+        SleepMenu.Items.Clear();
+        var now = DateTimeOffset.UtcNow;
+        var status = _sleep.Status;
+        if (status.Remaining is { } left)
+        {
+            SleepMenu.Items.Add(new MenuFlyoutItem { Text = $"Sleeping in {SleepTimer.Format(left)}", IsEnabled = false });
+            SleepMenu.Items.Add(new MenuFlyoutSeparator());
+        }
+        var end = ProgramEnd(now);
+        foreach (var option in SleepTimer.Options(end, now))
+        {
+            var item = new RadioMenuFlyoutItem
+            {
+                Text = SleepTimer.Label(option),
+                GroupName = "sleep",
+                IsChecked = status.Option == option,
+            };
+            item.Click += (_, _) =>
+            {
+                if (!_sleep.Start(option, ProgramEnd(DateTimeOffset.UtcNow)))
+                {
+                    ShowNotice("The guide doesn't know when this program ends.");
+                }
+            };
+            SleepMenu.Items.Add(item);
+        }
+    }
+
+    private void RenderSleep()
+    {
+        if (_leaving) return;
+        var status = _sleep.Status;
+        SleepLabel.Text = SleepTimer.ButtonLabel(status);
+        if (status.Warning && status.Remaining is { } left)
+        {
+            SleepBar.Message = SleepTimer.PromptText(left);
+            SleepBar.IsOpen = true;
+        }
+        else
+        {
+            SleepBar.IsOpen = false;
+        }
+    }
+
+    private void OnKeepWatchingClick(object sender, RoutedEventArgs e) => _sleep.Extend();
+
+    private void OnSkipAdClick(object sender, RoutedEventArgs e) => SkipAd();
 
     private void GoLive()
     {
@@ -591,6 +695,9 @@ public sealed partial class PlayerPage : Page
                 break;
             case Windows.System.VirtualKey.PageDown:
                 Zap(1);
+                break;
+            case Windows.System.VirtualKey.S:
+                if (!SkipAd()) return;
                 break;
             default:
                 return;
