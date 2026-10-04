@@ -43,7 +43,12 @@ func (s *Server) handleGuideSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = min(n, 200)
 	}
-	hits, err := s.deps.Store.SearchPrograms(q, time.Now().UTC(), limit)
+	policy := s.callerPolicy(r)
+	fetch := limit
+	if policy.Restricted() {
+		fetch = min(limit*5, 1000) // filtered below; don't let blocked matches eat the limit
+	}
+	hits, err := s.deps.Store.SearchPrograms(q, time.Now().UTC(), fetch)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
@@ -53,13 +58,20 @@ func (s *Server) handleGuideSearch(w http.ResponseWriter, r *http.Request) {
 		icons = map[string]string{}
 	}
 	recs := s.recordingsByProgram()
-	policy := s.callerPolicy(r)
-	out := make([]searchHitJSON, 0, len(hits))
+	lq := strings.ToLower(q)
+	out := make([]searchHitJSON, 0, min(len(hits), limit))
 	for _, h := range hits {
+		if len(out) == limit {
+			break
+		}
 		if !policy.ChannelAllowed(h.ChannelID) {
 			continue
 		}
 		if !policy.ProgramAllowed(h.Rating) {
+			// A blocked program's description is hidden; it mustn't be searchable.
+			if !strings.Contains(strings.ToLower(h.Title), lq) && !strings.Contains(strings.ToLower(h.Subtitle), lq) {
+				continue
+			}
 			h.Description = ""
 		}
 		out = append(out, searchHitJSON{

@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ajthom90/bowtie/server/internal/auth"
@@ -139,10 +141,24 @@ func (s *Server) handleIPTVStream(w http.ResponseWriter, r *http.Request) {
 	}
 	caps := transcode.ClientCaps{VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"}, Profile: r.URL.Query().Get("quality")}
 	h, err := s.deps.Streams.Start(r.Context(), u, id, caps)
+	// IPTV players can't say they stopped: at the account's limit, a channel
+	// change replaces this account's oldest IPTV stream. Tracked viewers may
+	// have ended on their own already (stopping those frees nothing), so walk
+	// from oldest to newest until the start fits.
+	var limitErr *stream.UserLimitError
+	for errors.As(err, &limitErr) {
+		old, ok := s.iptv.oldest(u.ID)
+		if !ok {
+			break
+		}
+		s.deps.Streams.StopViewer(old)
+		h, err = s.deps.Streams.Start(r.Context(), u, id, caps)
+	}
 	if err != nil {
 		s.writeStartError(w, err, u)
 		return
 	}
+	s.iptv.add(u.ID, h.ViewerID)
 	tok := signViewerToken(s.deps.StreamTokenSecret, h.ViewerID)
 	http.Redirect(w, r, baseURL(r)+"/api/v1/stream/"+h.ViewerID+"/index.m3u8?token="+tok, http.StatusFound)
 }
@@ -249,4 +265,36 @@ func xmltvProgramme(g epg.GuideChannel, p epg.GuideProgram) xmltvProg {
 
 func signViewerToken(secret []byte, viewerID string) string {
 	return stream.SignStreamToken(secret, viewerID, time.Now().UTC().Add(streamTokenTTL))
+}
+
+// iptvViewers remembers the viewers each account started through its IPTV
+// feed, oldest first.
+type iptvViewers struct {
+	mu     sync.Mutex
+	byUser map[int64][]string
+}
+
+func (v *iptvViewers) add(userID int64, viewerID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.byUser == nil {
+		v.byUser = map[int64][]string{}
+	}
+	ids := append(v.byUser[userID], viewerID)
+	if len(ids) > 16 {
+		ids = ids[len(ids)-16:]
+	}
+	v.byUser[userID] = ids
+}
+
+// oldest removes and returns the account's oldest IPTV viewer.
+func (v *iptvViewers) oldest(userID int64) (string, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	ids := v.byUser[userID]
+	if len(ids) == 0 {
+		return "", false
+	}
+	v.byUser[userID] = ids[1:]
+	return ids[0], true
 }

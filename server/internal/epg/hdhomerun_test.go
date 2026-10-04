@@ -320,3 +320,30 @@ func TestHDHomeRunSupervisorRespectsRecentSuccess(t *testing.T) {
 		t.Fatalf("hits = %d, want 0", hits.Load())
 	}
 }
+
+// Turning the free guide off removes its programs and the mappings it made
+// (admin mappings stay).
+func TestClearHDHomeRunRemovesItsDataAndMappings(t *testing.T) {
+	svc, st, _, _ := hdhrFixture(t)
+	if err := svc.refreshHDHomeRun(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := channelByGuide(t, st, "AAAA0001", "9.1"); !strings.HasPrefix(c.EPGChannelID, hdhomerunIDPrefix) {
+		t.Fatalf("precondition: 9.1 mapped to %q", c.EPGChannelID)
+	}
+	if err := svc.ClearHDHomeRun(); err != nil {
+		t.Fatal(err)
+	}
+	if c := channelByGuide(t, st, "AAAA0001", "9.1"); c.EPGChannelID != "" {
+		t.Fatalf("auto mapping kept: %q", c.EPGChannelID)
+	}
+	if c := channelByGuide(t, st, "BBBB0002", "9.1"); c.EPGChannelID != "my.custom.id" {
+		t.Fatalf("admin mapping changed: %q", c.EPGChannelID)
+	}
+	chans, _ := st.ListEPGChannels()
+	for _, c := range chans {
+		if c.Source == sourceHDHomeRun {
+			t.Fatalf("hdhomerun guide channel kept: %+v", c)
+		}
+	}
+}

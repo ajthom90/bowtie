@@ -5,6 +5,22 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] — 2026-10-04
+
+### Fixed
+
+- **Changing channels from an IPTV player at your stream limit.** Players
+  like TiviMate and Kodi often open the next channel before closing the last;
+  at an account's stream limit the new channel now replaces the old one
+  instead of failing.
+- **Deleting a recording while it converts** stops the conversion right away
+  instead of letting FFmpeg finish into a deleted folder.
+- **Turning off the free HDHomeRun guide** now removes its listings and the
+  channel matches it made (matches you set by hand stay).
+- **Guide search on restricted accounts** fills its results from allowed
+  programs, and blocked programs no longer match on their descriptions.
+- **TV sign-in codes** are limited to 10 per device every 10 minutes.
+
 ## [0.12.0] — 2026-10-04
 
 ### Added

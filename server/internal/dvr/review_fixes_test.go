@@ -293,3 +293,42 @@ func TestDeleteActiveRuleEpisodeStopsCapture(t *testing.T) {
 		t.Fatal("capture kept running after delete")
 	}
 }
+
+// blockingConverter waits until its context ends (a long FFmpeg run).
+type blockingConverter struct{ started, ended chan struct{} }
+
+func (c *blockingConverter) Convert(ctx context.Context, _ []string, _ string) (time.Duration, error) {
+	close(c.started)
+	<-ctx.Done()
+	close(c.ended)
+	return 0, ctx.Err()
+}
+
+// Deleting a recording while it converts stops the conversion.
+func TestDeleteDuringConversionStopsFFmpeg(t *testing.T) {
+	e := newEnv(t)
+	conv := &blockingConverter{started: make(chan struct{}), ended: make(chan struct{})}
+	e.svc.Shutdown()
+	e.svc = New(Deps{Store: e.st, Source: e.src, Converter: conv, Dir: e.dir, Clock: e.clock.Now,
+		RetryEvery: 5 * time.Millisecond, FreeBytes: func(string) (int64, error) { return 1 << 40, nil }})
+	t.Cleanup(e.svc.Shutdown)
+	r := e.schedule(t, "9.1", t0.Add(time.Minute), t0.Add(3*time.Minute))
+	e.clock.Set(r.WindowStart())
+	e.svc.Tick()
+	waitPartData(t, e.st, r.ID, "part-001.ts")
+	e.clock.Set(r.WindowStop())
+	e.svc.Tick()
+	select {
+	case <-conv.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("conversion never started")
+	}
+	if err := e.svc.Delete(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-conv.ended:
+	case <-time.After(2 * time.Second):
+		t.Fatal("FFmpeg kept running after the recording was deleted")
+	}
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -131,6 +132,12 @@ func (s *Server) handleAdminPutSettings(w http.ResponseWriter, r *http.Request) 
 		if err := s.deps.Settings.Apply(kv); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save settings")
 			return
+		}
+		// Turning the free guide off removes its data and automatic mappings.
+		if kv[settings.KeyEPGHDHomeRun] == "false" && s.deps.EPG != nil {
+			if err := s.deps.EPG.ClearHDHomeRun(); err != nil {
+				log.Printf("settings: clear hdhomerun guide: %v", err)
+			}
 		}
 	}
 
