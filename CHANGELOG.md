@@ -179,9 +179,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   captions, change channels with Page Up/Page Down, and go full screen with
   F11 or a double-click. **Recordings** play with resume and can be kept,
   stopped or deleted, with **Skip ad** over detected commercial breaks (and
-  **Skip ads automatically** in the account menu). A **sleep timer** and the
-  **All · Sports · Movies · News · Kids · New** guide filters work like the
-  other apps. Each release attaches `bowtie-windows.msixbundle` (and
+  **Skip ads automatically** in the account menu). A **sleep timer**, the
+  **All · Sports · Movies · News · Kids · New** guide filters and **Continue
+  watching** work like the other apps. Each release attaches `bowtie-windows.msixbundle` (and
   the `.cer` to trust before installing) plus zips that run without
   installing; see `windows/README.md`.
 
