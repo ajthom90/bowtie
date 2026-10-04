@@ -5,6 +5,25 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.15.0] — 2026-10-04
+
+### Added
+
+- **Guide filters: All · Sports · Movies · News · Kids · New** on the web,
+  iPhone/iPad, Apple TV, Mac, Android and Android TV / Fire TV. Programs
+  outside the filter dim and channels with nothing matching in view are
+  hidden ("No sports on in this time window" if nothing is). Your choice is
+  remembered on each device. Bowtie now keeps every category the guide gives
+  a program (it used to keep only the first), so filters catch more.
+- **Recording quality (Admin → Recordings).** Keep recordings at 720p
+  (about 1.7 GB an hour, as before) or up to 1080p (up to about 3.4 GB an
+  hour; 1080i is deinterlaced, 720p broadcasts aren't upscaled). Applies to
+  recordings made after the change.
+
+### Changed
+
+- The IPTV XMLTV feed lists each of a program's categories separately.
+
 ## [0.14.0] — 2026-10-04
 
 ### Added
