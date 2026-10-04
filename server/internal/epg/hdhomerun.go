@@ -272,3 +272,12 @@ func matchGuideNumber(guide []xmltv.Channel, guideNumber string) string {
 	}
 	return ""
 }
+
+// ClearHDHomeRun removes the free guide's programs and the channel mappings it
+// made (call when the source is turned off). Admin mappings stay.
+func (s *Service) ClearHDHomeRun() error {
+	if err := s.store.ReplaceEPG(sourceHDHomeRun, nil, nil); err != nil {
+		return err
+	}
+	return s.store.ClearMappingsWithPrefix(hdhomerunIDPrefix)
+}

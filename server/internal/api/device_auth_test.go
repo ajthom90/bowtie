@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -85,5 +86,28 @@ func TestDeviceQRCodeImage(t *testing.T) {
 	}
 	if rr := doJSON(t, h, "GET", "/api/v1/auth/device/qr/ZZZZZZZZ.png", nil, nil); rr.Code != http.StatusNotFound {
 		t.Fatalf("unknown code %d", rr.Code)
+	}
+}
+
+// One client can't fill every pending sign-in slot and lock out real TVs.
+func TestDeviceStartRateLimitedPerClient(t *testing.T) {
+	h, _, _ := testAPI(t)
+	start := func(ip string) int {
+		req := httptest.NewRequest("POST", "/api/v1/auth/device", strings.NewReader(`{"deviceName":"TV"}`))
+		req.RemoteAddr = ip + ":5555"
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for i := 0; i < 10; i++ {
+		if c := start("10.0.0.9"); c != http.StatusOK {
+			t.Fatalf("start %d: %d", i, c)
+		}
+	}
+	if c := start("10.0.0.9"); c != http.StatusTooManyRequests {
+		t.Fatalf("11th start from one client: %d", c)
+	}
+	if c := start("10.0.0.10"); c != http.StatusOK {
+		t.Fatalf("another client: %d", c)
 	}
 }

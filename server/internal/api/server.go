@@ -48,11 +48,12 @@ type Deps struct {
 type Server struct {
 	deps    Deps
 	devices *deviceAuths // quick sign-in (device_auth.go)
+	iptv    *iptvViewers // IPTV feed viewers per account (iptv_handlers.go)
 }
 
 // New builds the API handler (stdlib ServeMux with Go 1.22 method patterns).
 func New(deps Deps) http.Handler {
-	s := &Server{deps: deps, devices: newDeviceAuths()}
+	s := &Server{deps: deps, devices: newDeviceAuths(), iptv: &iptvViewers{}}
 	mux := http.NewServeMux()
 	s.mountAPI(mux)
 	// Short APK download links for sideloading (docs/install/android.md).

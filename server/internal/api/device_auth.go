@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"math/big"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -34,9 +35,37 @@ type pendingDevice struct {
 type deviceAuths struct {
 	mu       sync.Mutex
 	byDevice map[string]*pendingDevice // deviceCode → pending
+	starts   map[string][]time.Time    // client IP → recent sign-in starts
 }
 
-func newDeviceAuths() *deviceAuths { return &deviceAuths{byDevice: map[string]*pendingDevice{}} }
+// maxStartsPerClient sign-in starts per client IP per deviceAuthTTL.
+const maxStartsPerClient = 10
+
+func newDeviceAuths() *deviceAuths {
+	return &deviceAuths{byDevice: map[string]*pendingDevice{}, starts: map[string][]time.Time{}}
+}
+
+// allowStartLocked records a start from ip and reports whether it is within
+// the per-client limit.
+func (d *deviceAuths) allowStartLocked(ip string, now time.Time) bool {
+	recent := d.starts[ip][:0]
+	for _, t := range d.starts[ip] {
+		if now.Sub(t) < deviceAuthTTL {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) >= maxStartsPerClient {
+		d.starts[ip] = recent
+		return false
+	}
+	d.starts[ip] = append(recent, now)
+	for k, ts := range d.starts { // forget idle clients
+		if len(ts) == 0 || now.Sub(ts[len(ts)-1]) >= deviceAuthTTL {
+			delete(d.starts, k)
+		}
+	}
+	return true
+}
 
 func (d *deviceAuths) pruneLocked(now time.Time) {
 	for k, p := range d.byDevice {
@@ -93,6 +122,11 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	d := s.devices
 	d.mu.Lock()
 	d.pruneLocked(now)
+	if !d.allowStartLocked(clientIP(r), now) {
+		d.mu.Unlock()
+		writeError(w, http.StatusTooManyRequests, "too many sign-ins from this device; try again in a few minutes")
+		return
+	}
 	if len(d.byDevice) >= maxPendingDevices {
 		d.mu.Unlock()
 		writeError(w, http.StatusTooManyRequests, "too many sign-ins in progress; try again shortly")
@@ -231,4 +265,12 @@ func (s *Server) handleDeviceQR(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(png)
+}
+
+// clientIP is the request's remote address without the port.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }

@@ -45,6 +45,7 @@ type stubStreams struct {
 	reception  map[int64]stream.Reception
 	media      map[string]stream.SessionMedia // viewerID → media
 	blocked    map[string]string              // viewerID → parental reason
+	onStop     func(id string)
 }
 
 func newStubStreams() *stubStreams {
@@ -85,9 +86,13 @@ func (s *stubStreams) Touch(id string) bool {
 
 func (s *stubStreams) StopViewer(id string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.stopped = append(s.stopped, id)
 	delete(s.viewers, id)
+	onStop := s.onStop
+	s.mu.Unlock()
+	if onStop != nil {
+		onStop(id)
+	}
 }
 
 func (s *stubStreams) Sessions() []stream.SessionInfo {

@@ -119,16 +119,17 @@ type ScheduleRequest struct {
 type Service struct {
 	deps Deps
 
-	mu        sync.Mutex
-	captures  map[int64]*capture // in-flight captures by recording ID
-	deleting  map[int64]bool     // Delete in progress: never start a capture
-	tickMu    sync.Mutex         // one Tick at a time; Shutdown waits for it
-	rulesMu   sync.Mutex         // one ApplyRules at a time
-	convQueue chan int64
-	queued    map[int64]bool
-	lastSweep time.Time
-	stopped   bool
-	onDeleted func() // test hook: after the sweep deletes a recording
+	mu         sync.Mutex
+	captures   map[int64]*capture           // in-flight captures by recording ID
+	deleting   map[int64]bool               // Delete in progress: never start a capture
+	tickMu     sync.Mutex                   // one Tick at a time; Shutdown waits for it
+	rulesMu    sync.Mutex                   // one ApplyRules at a time
+	converting map[int64]context.CancelFunc // running conversions (Delete stops them)
+	convQueue  chan int64
+	queued     map[int64]bool
+	lastSweep  time.Time
+	stopped    bool
+	onDeleted  func() // test hook: after the sweep deletes a recording
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -160,13 +161,14 @@ func New(deps Deps) *Service {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		deps:      deps,
-		captures:  map[int64]*capture{},
-		deleting:  map[int64]bool{},
-		convQueue: make(chan int64, 256),
-		queued:    map[int64]bool{},
-		ctx:       ctx,
-		cancel:    cancel,
+		deps:       deps,
+		captures:   map[int64]*capture{},
+		deleting:   map[int64]bool{},
+		converting: map[int64]context.CancelFunc{},
+		convQueue:  make(chan int64, 256),
+		queued:     map[int64]bool{},
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	s.wg.Add(1)
 	go s.convertWorker()
@@ -415,6 +417,9 @@ func (s *Service) delete(id int64, allowSkip bool) error {
 	s.mu.Lock()
 	s.deleting[id] = true // no capture may start for this row from here on
 	c := s.captures[id]
+	if stopConvert := s.converting[id]; stopConvert != nil {
+		stopConvert() // FFmpeg would only write into a folder that's going away
+	}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -743,7 +748,15 @@ func (s *Service) convert(id int64) {
 		dur = playlistDuration(video)
 	} else {
 		_ = os.RemoveAll(out)
-		dur, err = s.deps.Converter.Convert(s.ctx, parts, out)
+		cctx, cancel := context.WithCancel(s.ctx)
+		s.mu.Lock()
+		s.converting[id] = cancel
+		s.mu.Unlock()
+		dur, err = s.deps.Converter.Convert(cctx, parts, out)
+		s.mu.Lock()
+		delete(s.converting, id)
+		s.mu.Unlock()
+		cancel()
 		if s.ctx.Err() != nil {
 			return // shutting down: convert again after restart
 		}
