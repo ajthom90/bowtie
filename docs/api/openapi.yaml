@@ -693,6 +693,131 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/me/feed:
+    post:
+      summary: Create (or rotate) the caller's IPTV feed key
+      description: |
+        Returns M3U and XMLTV URLs for apps that can't sign in — Kodi
+        (including on Xbox), VLC, TiviMate, Plex, Jellyfin, Channels. The key
+        is in the URL; anyone with it watches as this account (limits and
+        parental controls apply). A new key replaces the old one.
+      operationId: createFeed
+      tags: [iptv]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Feed URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, m3uUrl, xmltvUrl]
+                properties:
+                  key:
+                    type: string
+                  m3uUrl:
+                    type: string
+                  xmltvUrl:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      summary: Turn the caller's IPTV feed off
+      operationId: deleteFeed
+      tags: [iptv]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Off
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/iptv/{key}/playlist.m3u:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: M3U playlist of the feed account's channels
+      operationId: iptvPlaylist
+      tags: [iptv]
+      responses:
+        '200':
+          description: Extended M3U (tvg-id matches guide.xml channel ids)
+          content:
+            audio/x-mpegurl:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/iptv/{key}/guide.xml:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: XMLTV guide (next 72 hours) for the feed account's channels
+      operationId: iptvGuide
+      tags: [iptv]
+      responses:
+        '200':
+          description: XMLTV document
+          content:
+            application/xml:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/iptv/{key}/stream/{channelId}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: quality
+        in: query
+        schema:
+          type: string
+          enum: [original, high, medium, low]
+    get:
+      summary: Start or join a channel as the feed account; redirects to its HLS playlist
+      operationId: iptvStream
+      tags: [iptv]
+      responses:
+        '302':
+          description: Redirect to /api/v1/stream/{viewerId}/index.m3u8?token=…
+        '403':
+          description: Blocked by parental controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: Account limit reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserLimitError'
+        '503':
+          description: All tuners in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunersBusyError'
   /api/v1/admin/users:
     get:
       summary: List all users

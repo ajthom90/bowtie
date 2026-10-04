@@ -103,6 +103,11 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("POST /api/v1/recordings/{id}/play", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePlayRecording)))
 	handle("PUT /api/v1/recordings/{id}/position", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecordingPosition)))
 	handleFunc("GET /api/v1/recordings/{id}/hls/{file}", s.handleRecordingFile)
+	handle("POST /api/v1/me/feed", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateFeed)))
+	handle("DELETE /api/v1/me/feed", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeleteFeed)))
+	handleFunc("GET /api/v1/iptv/{key}/playlist.m3u", s.handleIPTVPlaylist)
+	handleFunc("GET /api/v1/iptv/{key}/guide.xml", s.handleIPTVGuide)
+	handleFunc("GET /api/v1/iptv/{key}/stream/{channelId}", s.handleIPTVStream)
 	handle("GET /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleRecents)))
 	handle("DELETE /api/v1/me/recents", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleClearRecents)))
 
