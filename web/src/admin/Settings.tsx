@@ -132,6 +132,11 @@ export function Settings() {
     void saveSection('streaming')
   }
 
+  function onHdhomerunSubmit(e: FormEvent) {
+    e.preventDefault()
+    void saveSection('hdhomerun')
+  }
+
   if (loading && !form) {
     return <p className={styles.status}>Loading settings…</p>
   }
@@ -161,6 +166,47 @@ export function Settings() {
 
       {error ? <p className={styles.statusError}>{error}</p> : null}
       {hint ? <p className={styles.statusError}>{hint}</p> : null}
+
+      {/* HDHomeRun free guide (servers that support it) */}
+      {form.hdhomerun ? (
+        <form className={styles.settingsCard} onSubmit={onHdhomerunSubmit}>
+          <div className={styles.sectionHead}>
+            <h3 className={styles.cardTitle}>HDHomeRun guide</h3>
+          </div>
+          <div className={styles.settingsFields}>
+            <label
+              className={styles.label}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <input
+                className={styles.toggle}
+                type="checkbox"
+                checked={form.hdhomerun.enabled}
+                onChange={(e) =>
+                  setForm((f) => (f ? { ...f, hdhomerun: { enabled: e.target.checked } } : f))
+                }
+                disabled={saving === 'hdhomerun'}
+              />
+              Use the free HDHomeRun guide
+            </label>
+            <p className={styles.dim} style={{ margin: 0, fontSize: '0.85rem' }}>
+              Fetches the TV guide from SiliconDust (no account needed) and matches channels that
+              have no guide yet by channel number. Existing matches are never changed. It has no
+              ratings, so use Schedules Direct to limit viewers by rating.
+            </p>
+          </div>
+          <div className={styles.settingsFooter}>
+            {saved === 'hdhomerun' ? <span className={styles.savedFlash}>{SAVE_FEEDBACK}</span> : null}
+            <button
+              type="submit"
+              className={`${styles.btn} ${styles.btnPrimary} ${styles.settingsSave}`}
+              disabled={saving === 'hdhomerun'}
+            >
+              {saving === 'hdhomerun' ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {/* XMLTV */}
       <form className={styles.settingsCard} onSubmit={onXmltvSubmit}>

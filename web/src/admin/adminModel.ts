@@ -1,4 +1,4 @@
-import type { AdminChannel } from '../api/client'
+import type { AdminChannel, EPGSourceState, EPGSourceStatus } from '../api/client'
 
 /**
  * Parse a guide number into numeric segments for natural sort.
@@ -81,6 +81,33 @@ export function formatUptime(startedAt: string, now: Date = new Date()): string 
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
   if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
   return `${s}s`
+}
+
+export type EPGSourceKey = 'hdhomerun' | 'xmltv' | 'sd'
+
+export const EPG_SOURCE_LABELS: Record<EPGSourceKey, string> = {
+  hdhomerun: 'HDHomeRun (free guide)',
+  xmltv: 'XMLTV',
+  sd: 'Schedules Direct',
+}
+
+/** Guide sources to show, HDHomeRun first (absent on older servers). */
+export function epgSources(
+  status: EPGSourceStatus,
+): { key: EPGSourceKey; label: string; state: EPGSourceState }[] {
+  const keys: EPGSourceKey[] = ['hdhomerun', 'xmltv', 'sd']
+  return keys.flatMap((key) => {
+    const state = status[key]
+    return state ? [{ key, label: EPG_SOURCE_LABELS[key], state }] : []
+  })
+}
+
+export function anyEpgStale(status: EPGSourceStatus): boolean {
+  return epgSources(status).some((s) => s.state.stale)
+}
+
+export function anyEpgConfigured(status: EPGSourceStatus): boolean {
+  return epgSources(status).some((s) => s.state.configured)
 }
 
 /** Clamp a percent for signal bars; null/undefined → 0. */

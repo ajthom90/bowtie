@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, type EPGSourceState, type EPGSourceStatus } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { formatTimestamp, isZeroTime } from './adminModel'
+import {
+  anyEpgConfigured,
+  anyEpgStale,
+  epgSources,
+  formatTimestamp,
+  isZeroTime,
+  type EPGSourceKey,
+} from './adminModel'
 import styles from './Admin.module.css'
 
-type SourceKey = 'xmltv' | 'sd'
-
-const SOURCE_LABELS: Record<SourceKey, string> = {
-  xmltv: 'XMLTV',
-  sd: 'Schedules Direct',
+const SOURCE_NOTES: Partial<Record<EPGSourceKey, string>> = {
+  hdhomerun: 'From SiliconDust, no account needed. Refreshes about once a day. No ratings.',
 }
 
-function SourceCard({ name, state }: { name: string; state: EPGSourceState }) {
+function SourceCard({ name, note, state }: { name: string; note?: string; state: EPGSourceState }) {
   const lastSuccess = isZeroTime(state.lastSuccess)
     ? 'never'
     : formatTimestamp(state.lastSuccess)
@@ -22,6 +26,7 @@ function SourceCard({ name, state }: { name: string; state: EPGSourceState }) {
       <div className={styles.cardMeta}>
         {state.configured ? 'Configured' : 'Not configured'}
       </div>
+      {note ? <div className={styles.dim}>{note}</div> : null}
       <div>
         <span className={styles.dim}>Last success </span>
         <span className={styles.mono}>{lastSuccess}</span>
@@ -80,7 +85,7 @@ export function Epg() {
     }
   }
 
-  const anyStale = Boolean(status?.xmltv.stale || status?.sd.stale)
+  const anyStale = status ? anyEpgStale(status) : false
 
   return (
     <div>
@@ -110,14 +115,16 @@ export function Epg() {
 
       {status ? (
         <div className={styles.cardGrid}>
-          <SourceCard name={SOURCE_LABELS.xmltv} state={status.xmltv} />
-          <SourceCard name={SOURCE_LABELS.sd} state={status.sd} />
+          {epgSources(status).map((s) => (
+            <SourceCard key={s.key} name={s.label} note={SOURCE_NOTES[s.key]} state={s.state} />
+          ))}
         </div>
       ) : null}
 
-      {!loading && status && !status.xmltv.configured && !status.sd.configured ? (
+      {!loading && status && !anyEpgConfigured(status) ? (
         <p className={styles.empty} style={{ marginTop: '1rem' }}>
-          No EPG sources configured. Set XMLTV and/or Schedules Direct in Settings, then refresh.
+          No EPG sources configured. Turn on the HDHomeRun free guide or set XMLTV and/or
+          Schedules Direct in Settings, then refresh.
         </p>
       ) : null}
     </div>
