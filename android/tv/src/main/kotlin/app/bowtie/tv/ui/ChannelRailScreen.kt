@@ -1,9 +1,11 @@
 package app.bowtie.tv.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,16 +14,27 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -33,6 +46,7 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import app.bowtie.core.Channel
+import app.bowtie.core.RecentChannel
 import app.bowtie.core.User
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.PlayerViewModel
@@ -59,8 +73,23 @@ fun ChannelRailScreen(
     val state by channelListViewModel.state.collectAsStateWithLifecycle()
     val playingChannel by playerViewModel.currentChannel.collectAsStateWithLifecycle()
     val channelsStale by playerViewModel.channelsStale.collectAsStateWithLifecycle()
+    val recents by channelListViewModel.recents.collectAsStateWithLifecycle()
+    val message by channelListViewModel.message.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+
+    // Back from the player (a route change, not ON_START): the Recent row may have grown.
+    LaunchedEffect(channelListViewModel) {
+        channelListViewModel.refreshRecents()
+    }
+
+    // A favorite toggle the server refused (already reverted).
+    LaunchedEffect(message) {
+        val text = message ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        channelListViewModel.consumeMessage()
+    }
 
     // Foreground + 5-minute refresh while STARTED (identical to phone).
     LaunchedEffect(channelListViewModel, lifecycleOwner) {
@@ -104,6 +133,13 @@ fun ChannelRailScreen(
                     style = BowtieType.label,
                     color = BowtieColors.dim,
                 )
+                if ((state as? ChannelListViewModel.LoadState.Loaded)?.favoritesSupported == true) {
+                    Text(
+                        text = "Hold OK or press ☰ to star a channel",
+                        style = BowtieType.label,
+                        color = BowtieColors.dim,
+                    )
+                }
             }
             Button(
                 onClick = onOpenSettings,
@@ -197,17 +233,104 @@ fun ChannelRailScreen(
                 }
             }
             is ChannelListViewModel.LoadState.Loaded -> {
+                val supported = s.favoritesSupported
+                val listState = rememberLazyListState()
+                // A toggled row moves (favorites first); keep it on screen and focused.
+                var refocusId by remember { mutableStateOf<Long?>(null) }
+                LaunchedEffect(s.rows, refocusId) {
+                    val id = refocusId ?: return@LaunchedEffect
+                    val index = s.rows.indexOfFirst { it.id == id }
+                    if (index < 0) {
+                        refocusId = null
+                    } else if (listState.layoutInfo.visibleItemsInfo.none { it.key == id }) {
+                        listState.scrollToItem(index)
+                    }
+                }
+
+                if (supported && recents.isNotEmpty()) {
+                    RecentRail(
+                        recents = recents,
+                        onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
+                    )
+                }
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(s.rows, key = { it.id }) { row ->
+                        val focusRequester = remember { FocusRequester() }
+                        LaunchedEffect(refocusId == row.id) {
+                            if (refocusId != row.id) return@LaunchedEffect
+                            withFrameNanos { }
+                            runCatching { focusRequester.requestFocus() }
+                            refocusId = null
+                        }
+                        val toggle: (() -> Unit)? = if (supported) {
+                            {
+                                refocusId = row.id
+                                channelListViewModel.toggleFavorite(row.id)
+                            }
+                        } else {
+                            null
+                        }
                         ChannelRailRow(
                             row = row,
                             isPlaying = playingChannel?.id == row.channel.id,
+                            showStar = supported,
                             onClick = { onOpenChannel(row.channel) },
+                            onToggleFavorite = toggle,
+                            modifier = Modifier.focusRequester(focusRequester),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Recently watched channels above the rail; DPAD up from the rail reaches it. */
+@Composable
+private fun RecentRail(
+    recents: List<RecentChannel>,
+    onOpen: (RecentChannel) -> Unit,
+) {
+    Column(modifier = Modifier.padding(top = 16.dp)) {
+        Text(
+            text = "RECENT",
+            style = BowtieType.label,
+            color = BowtieColors.dim,
+            modifier = Modifier.padding(horizontal = BowtieDimens.screenPadding),
+        )
+        Spacer(Modifier.height(8.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = BowtieDimens.screenPadding, vertical = 4.dp),
+        ) {
+            items(recents, key = { it.channelId }) { recent ->
+                Surface(
+                    onClick = { onOpen(recent) },
+                    modifier = Modifier.width(180.dp),
+                    colors = railSurfaceColors(),
+                    shape = ClickableSurfaceDefaults.shape(
+                        shape = RoundedCornerShape(BowtieDimens.cornerRadius),
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Text(
+                            text = recent.guideNumber,
+                            style = BowtieType.channelNumber,
+                            color = BowtieColors.text,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = recent.name,
+                            style = BowtieType.label,
+                            color = BowtieColors.dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -217,10 +340,29 @@ fun ChannelRailScreen(
 }
 
 @Composable
+private fun railSurfaceColors() = ClickableSurfaceDefaults.colors(
+    containerColor = BowtieColors.surface,
+    contentColor = BowtieColors.text,
+    focusedContainerColor = BowtieColors.raised,
+    focusedContentColor = BowtieColors.text,
+    pressedContainerColor = BowtieColors.raised,
+    pressedContentColor = BowtieColors.text,
+    disabledContainerColor = BowtieColors.surface,
+    disabledContentColor = BowtieColors.dim,
+)
+
+/**
+ * One rail item. With [onToggleFavorite]: long-press OK (Surface `onLongClick`)
+ * or the ☰ key ([RailKeys]) stars / unstars it.
+ */
+@Composable
 private fun ChannelRailRow(
     row: ChannelListViewModel.Row,
     isPlaying: Boolean,
+    showStar: Boolean,
     onClick: () -> Unit,
+    onToggleFavorite: (() -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
     val now = row.nowNext.now
     val next = row.nowNext.next
@@ -229,7 +371,21 @@ private fun ChannelRailRow(
 
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        onLongClick = onToggleFavorite,
+        modifier = modifier
+            .fillMaxWidth()
+            .onPreviewKeyEvent { event ->
+                val toggle = onToggleFavorite ?: return@onPreviewKeyEvent false
+                val native = event.nativeKeyEvent
+                when (RailKeys.onKey(native.keyCode, native.action, native.repeatCount)) {
+                    RailKeys.Outcome.ToggleFavorite -> {
+                        toggle()
+                        true
+                    }
+                    RailKeys.Outcome.Consume -> true
+                    RailKeys.Outcome.PassThrough -> false
+                }
+            },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = BowtieColors.surface,
             contentColor = BowtieColors.text,
@@ -263,11 +419,21 @@ private fun ChannelRailRow(
             )
             Spacer(Modifier.width(20.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = row.channel.name,
-                    style = BowtieType.body,
-                    color = BowtieColors.text,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = row.channel.name,
+                        style = BowtieType.body,
+                        color = BowtieColors.text,
+                    )
+                    if (showStar && row.isFavorite) {
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = "★",
+                            style = BowtieType.body,
+                            color = BowtieColors.amber,
+                        )
+                    }
+                }
                 if (row.channel.hasNoSignal) {
                     Text(
                         text = "NO SIGNAL",
