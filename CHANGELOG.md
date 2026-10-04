@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.19.1] — 2026-10-04
+
+### Fixed
+
+- **Web: Back, Forward and refresh.** Recordings, Admin and Account have
+  their own addresses (`/recordings`, `/admin/epg`, …), so the browser's Back
+  button — and the Back gesture on phones — moves between them and closes a
+  player instead of leaving Bowtie, and refreshing keeps you where you were.
+  Refreshing on a player goes back to the list without starting a stream.
+
 ## [0.19.0] — 2026-10-04
 
 ### Added
