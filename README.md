@@ -148,8 +148,7 @@ unmapped channel to it by guide number (for example `9.1`). Channels you
 mapped yourself are never changed. Turn it off with
 `PUT /api/v1/admin/settings` `{"hdhomerun": {"enabled": false}}`
 (setting `epg.hdhomerun`); its health is under `hdhomerun` in
-**Admin → EPG** status (`GET /api/v1/admin/epg/status`). It works alongside
-XMLTV and Schedules Direct.
+`GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
 
 ### XMLTV and Schedules Direct
 
