@@ -11,7 +11,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 - **Continue watching.** Recordings you've started show up in a row at the
   top of the guide and Recordings (web, iPhone/iPad, Mac Recordings, Apple
-  TV home, Android, Android TV / Fire TV) — most recently watched first, with
+  TV home, Android, Android TV / Fire TV, Roku home) — most recently watched
+  first, with
   how much is left. Pick one to carry on where you stopped; remove one to
   start it over. Recordings carry `positionUpdatedAt` in the API.
 
