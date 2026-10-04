@@ -8,6 +8,8 @@ export interface GuideProgram {
   category: string
   /** Series ID of the show (when the guide source has one). */
   seriesId?: string
+  /** Episode / movie / event ID (Schedules Direct style: EP…, MV…, SP…). */
+  programId?: string
   /** First airing. */
   isNew?: boolean
   /** Rating from the guide source (e.g. TV-14; "" = not rated). */
