@@ -26,6 +26,8 @@ const (
 	KeyTranscodeEncoder       = "transcode.encoder"
 	KeyTranscodeAllowHEVC     = "transcode.allowHevc"
 	KeyStreamingBufferMinutes = "streaming.bufferMinutes"
+	// KeyStreamingAdaptive: one shared multi-quality transcode per channel.
+	KeyStreamingAdaptive = "streaming.adaptive"
 )
 
 // Default product values used when seeding from empty/zero config.
@@ -68,6 +70,8 @@ type Transcode struct {
 // Streaming is the live DVR buffer section (pause/rewind window).
 type Streaming struct {
 	BufferMinutes int
+	// Adaptive: every viewer of a channel shares one quality ladder (more GPU).
+	Adaptive bool
 }
 
 // XMLTV returns the current XMLTV settings.
@@ -131,7 +135,13 @@ func (p *Provider) Streaming() (Streaming, error) {
 	if err != nil {
 		return Streaming{}, fmt.Errorf("%s: %w", KeyStreamingBufferMinutes, err)
 	}
-	return Streaming{BufferMinutes: mins}, nil
+	adaptive := false
+	if raw, err := p.st.GetSetting(KeyStreamingAdaptive); err == nil && raw != "" {
+		if adaptive, err = strconv.ParseBool(raw); err != nil {
+			return Streaming{}, fmt.Errorf("%s: %w", KeyStreamingAdaptive, err)
+		}
+	}
+	return Streaming{BufferMinutes: mins, Adaptive: adaptive}, nil
 }
 
 // SetXMLTV writes the full XMLTV section atomically.
@@ -163,6 +173,7 @@ func (p *Provider) SetTranscode(v Transcode) error {
 func (p *Provider) SetStreaming(v Streaming) error {
 	return p.st.SetSettings(map[string]string{
 		KeyStreamingBufferMinutes: strconv.Itoa(v.BufferMinutes),
+		KeyStreamingAdaptive:      strconv.FormatBool(v.Adaptive),
 	})
 }
 
@@ -202,6 +213,7 @@ func (p *Provider) SeedFromConfig(cfg config.Config) error {
 		{KeyTranscodeEncoder, encoder},
 		{KeyTranscodeAllowHEVC, strconv.FormatBool(cfg.AllowHEVC)},
 		{KeyStreamingBufferMinutes, strconv.Itoa(DefaultBufferMinutes)},
+		{KeyStreamingAdaptive, "false"},
 	}
 
 	for _, s := range seeds {

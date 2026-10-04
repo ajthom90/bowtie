@@ -275,3 +275,34 @@ func TestStreamingRoundTripAndSeedDefault(t *testing.T) {
 		t.Fatalf("raw bufferMinutes = %q, want 45", raw)
 	}
 }
+
+// streaming.adaptive (shared ladder) is seeded off and round-trips.
+func TestStreamingAdaptiveSeededOffAndRoundTrips(t *testing.T) {
+	p, st := openProvider(t)
+	if err := p.SeedFromConfig(config.Config{}); err != nil {
+		t.Fatalf("SeedFromConfig: %v", err)
+	}
+	s, err := p.Streaming()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Adaptive {
+		t.Fatal("adaptive must default to false")
+	}
+	if raw, _ := st.GetSetting(settings.KeyStreamingAdaptive); raw != "false" {
+		t.Fatalf("raw seed = %q, want false", raw)
+	}
+	if err := p.SetStreaming(settings.Streaming{BufferMinutes: 15, Adaptive: true}); err != nil {
+		t.Fatal(err)
+	}
+	s, err = p.Streaming()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Adaptive || s.BufferMinutes != 15 {
+		t.Fatalf("round trip = %+v", s)
+	}
+	if raw, _ := st.GetSetting(settings.KeyStreamingAdaptive); raw != "true" {
+		t.Fatalf("raw = %q, want true", raw)
+	}
+}

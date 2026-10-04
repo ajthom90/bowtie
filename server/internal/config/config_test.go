@@ -51,3 +51,25 @@ func TestLoadYAMLAndEnvOverride(t *testing.T) {
 		t.Errorf("ListenAddr = %q, want :9100 (env should override yaml)", cfg.ListenAddr)
 	}
 }
+
+// BOWTIE_MULTITRACK=off|0|false turns off captions and extra audio.
+func TestMultitrackKillSwitchEnv(t *testing.T) {
+	for _, v := range []string{"off", "0", "false", "OFF"} {
+		t.Setenv("BOWTIE_MULTITRACK", v)
+		cfg, err := config.Load(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.DisableMultitrack {
+			t.Errorf("BOWTIE_MULTITRACK=%q: DisableMultitrack=false", v)
+		}
+	}
+	t.Setenv("BOWTIE_MULTITRACK", "")
+	cfg, err := config.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableMultitrack {
+		t.Error("unset: DisableMultitrack=true")
+	}
+}

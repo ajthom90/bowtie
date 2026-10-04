@@ -135,6 +135,9 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Runner:   &stream.FFmpegRunner{Path: cfg.FFmpegPath},
 		Settings: settingsProv,
 		Ingest:   ingest,
+		// Captions, every broadcast audio track and the 5.1 copy, unless the
+		// BOWTIE_MULTITRACK kill switch is set.
+		Multitrack: !cfg.DisableMultitrack,
 	})
 	go streamMgr.Run(rootCtx)
 

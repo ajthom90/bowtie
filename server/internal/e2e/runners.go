@@ -206,7 +206,8 @@ func (r *StubRunner) BytesIn() int64 { return r.bytesIn.Load() }
 // Start implements stream.Runner.
 func (r *StubRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.Process, error) {
 	p := &stubProc{done: make(chan error, 1), stop: make(chan struct{})}
-	if err := writeStubPlaylist(spec.OutDir, 1); err != nil {
+	name := strings.TrimSuffix(spec.Layout.ReadyPlaylist(), ".m3u8")
+	if err := writeStubPlaylist(spec.OutDir, name, 1); err != nil {
 		return nil, err
 	}
 	eof := make(chan struct{})
@@ -240,28 +241,29 @@ func (r *StubRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.
 				return
 			case <-tick.C:
 				n++
-				_ = writeStubPlaylist(spec.OutDir, n)
+				_ = writeStubPlaylist(spec.OutDir, name, n)
 			}
 		}
 	}()
 	return p, nil
 }
 
-func writeStubPlaylist(dir string, n int) error {
+// writeStubPlaylist writes <name>.m3u8 with n segments <name>_%05d.ts.
+func writeStubPlaylist(dir, name string, n int) error {
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n")
 	for i := 0; i < n; i++ {
-		name := fmt.Sprintf("seg%05d.ts", i)
-		if err := os.WriteFile(filepath.Join(dir, name), []byte{0x47, 0x1F, 0xFF, 0x10}, 0o644); err != nil {
+		seg := fmt.Sprintf("%s_%05d.ts", name, i)
+		if err := os.WriteFile(filepath.Join(dir, seg), []byte{0x47, 0x1F, 0xFF, 0x10}, 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintf(&b, "#EXTINF:4.000000,\n%s\n", name)
+		fmt.Fprintf(&b, "#EXTINF:4.000000,\n%s\n", seg)
 	}
-	tmp := filepath.Join(dir, "live.m3u8.tmp")
+	tmp := filepath.Join(dir, name+".m3u8.tmp")
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, "live.m3u8"))
+	return os.Rename(tmp, filepath.Join(dir, name+".m3u8"))
 }
 
 type stubProc struct {
