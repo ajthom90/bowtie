@@ -17,6 +17,11 @@ struct TVRecordingsView: View {
     private let refreshInterval: Duration = .seconds(30)
 
     var body: some View {
+        withDialogs(screen)
+    }
+
+    /// The screen without its dialogs (split up so the type checker keeps up).
+    private var screen: some View {
         VStack(spacing: 0) {
             if let model {
                 Picker("Show", selection: tabBinding(model)) {
@@ -65,6 +70,14 @@ struct TVRecordingsView: View {
                 TVRecordingPlayerView(playback: playback, model: model)
             }
         }
+    }
+
+    private func withDialogs<V: View>(_ v: V) -> some View {
+        errorAlert(deleteDialog(actionsDialog(resumeDialog(v))))
+    }
+
+    private func resumeDialog<V: View>(_ v: V) -> some View {
+        v
         .confirmationDialog(
             pendingResume?.recording.title ?? "",
             isPresented: Binding(
@@ -84,6 +97,10 @@ struct TVRecordingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private func actionsDialog<V: View>(_ v: V) -> some View {
+        v
         .confirmationDialog(
             actionsFor?.title ?? "",
             isPresented: Binding(
@@ -100,6 +117,10 @@ struct TVRecordingsView: View {
         } message: { recording in
             Text(RecordingLogic.detailLine(recording) ?? RecordingLogic.stateLabel(recording))
         }
+    }
+
+    private func deleteDialog<V: View>(_ v: V) -> some View {
+        v
         .confirmationDialog(
             "Delete this recording?",
             isPresented: Binding(
@@ -116,6 +137,10 @@ struct TVRecordingsView: View {
         } message: { _ in
             Text("The recording is removed from the server for everyone.")
         }
+    }
+
+    private func errorAlert<V: View>(_ v: V) -> some View {
+        v
         .alert(
             "Something Went Wrong",
             isPresented: Binding(
