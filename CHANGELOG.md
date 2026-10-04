@@ -5,6 +5,26 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] — 2026-10-04
+
+### Added
+
+- **Skip commercials.** When [Comskip](https://github.com/erikkaashoek/Comskip)
+  is available (the Docker image includes it), Bowtie finds the commercial
+  breaks in each finished recording in the background, and every recording
+  player — web, iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and
+  Roku — shows **Skip ad** while you're in one. Turn on **Skip ads
+  automatically** to skip each break once. Older recordings are scanned too,
+  newest first. Set `BOWTIE_COMSKIP_PATH=off` to turn it off. See README →
+  Commercial detection.
+- **Sleep timer on Roku** (live TV and recordings), like the other apps.
+
+### Changed
+
+- **Roku:** Right in the live player now opens **Options** (quality and the
+  sleep timer); Down in a recording opens the sleep timer; Settings can be
+  moved through with Up/Down.
+
 ## [0.13.0] — 2026-10-04
 
 ### Added
