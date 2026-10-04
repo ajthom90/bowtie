@@ -77,6 +77,7 @@ type ScheduledProgram struct {
 	AirDateTime time.Time `json:"airDateTime"`
 	Duration    int       `json:"duration"` // seconds
 	Ratings     []Rating  `json:"ratings"`  // per airing
+	New         bool      `json:"new"`      // first airing
 }
 
 // ProgramDetail is program metadata from POST /programs.
@@ -297,6 +298,9 @@ func ToStore(lineup Lineup, scheds []StationSchedule, details map[string]Program
 				Description:  desc,
 				Category:     cat,
 				Rating:       pickRating(sp.Ratings, d.ContentRating),
+				ProgramID:    sp.ProgramID,
+				SeriesID:     store.SeriesIDOf(sp.ProgramID),
+				IsNew:        sp.New,
 			})
 		}
 	}

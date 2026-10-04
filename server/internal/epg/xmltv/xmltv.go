@@ -43,6 +43,11 @@ type Programme struct {
 		System string `xml:"system,attr"`
 		Value  string `xml:"value"`
 	} `xml:"rating"`
+	EpisodeNums []struct {
+		System string `xml:"system,attr"`
+		Value  string `xml:",chardata"`
+	} `xml:"episode-num"`
+	New *struct{} `xml:"new"`
 }
 
 // Parse streams an XMLTV document from r, decoding channel and programme
@@ -135,6 +140,7 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 		if len(p.Categories) > 0 {
 			category = p.Categories[0]
 		}
+		pid := programID(p)
 		progs = append(progs, store.Program{
 			EPGChannelID: p.Channel,
 			Start:        start,
@@ -145,6 +151,9 @@ func ToStore(tv *TV) ([]store.EPGChannel, []store.Program, int) {
 			Category:     category,
 			IconURL:      p.Icon.Src,
 			Rating:       rating(p),
+			ProgramID:    pid,
+			SeriesID:     store.SeriesIDOf(pid),
+			IsNew:        p.New != nil,
 		})
 	}
 	return chans, progs, skipped
@@ -175,4 +184,15 @@ func rating(p Programme) string {
 		rs = append(rs, parental.Rated{System: r.System, Code: r.Value})
 	}
 	return parental.Pick(rs)
+}
+
+// programID is the Schedules Direct program ID from a dd_progid episode-num
+// ("EP01234567.0012" → "EP012345670012"), or "".
+func programID(p Programme) string {
+	for _, e := range p.EpisodeNums {
+		if e.System == "dd_progid" {
+			return strings.ReplaceAll(strings.TrimSpace(e.Value), ".", "")
+		}
+	}
+	return ""
 }

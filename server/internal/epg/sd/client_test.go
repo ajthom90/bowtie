@@ -562,3 +562,19 @@ func TestToStoreRatings(t *testing.T) {
 		t.Fatalf("%+v", progs)
 	}
 }
+
+func TestToStoreSeriesIDs(t *testing.T) {
+	var scheds []StationSchedule
+	if err := json.Unmarshal([]byte(`[{"stationID":"1","programs":[
+		{"programID":"EP012345670012","airDateTime":"2026-10-04T01:00:00Z","duration":3600,"new":true},
+		{"programID":"MV000111220000","airDateTime":"2026-10-04T02:00:00Z","duration":3600}]}]`), &scheds); err != nil {
+		t.Fatal(err)
+	}
+	_, progs := ToStore(Lineup{}, scheds, map[string]ProgramDetail{})
+	if progs[0].ProgramID != "EP012345670012" || progs[0].SeriesID != "SH01234567" || !progs[0].IsNew {
+		t.Fatalf("episode %+v", progs[0])
+	}
+	if progs[1].SeriesID != "" || progs[1].IsNew {
+		t.Fatalf("movie %+v", progs[1])
+	}
+}

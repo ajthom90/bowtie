@@ -660,3 +660,24 @@ func TestUserParentalRoundTrip(t *testing.T) {
 		t.Fatalf("cleared %+v", u)
 	}
 }
+
+func TestProgramSeriesFieldsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	st := time.Date(2026, 10, 4, 6, 0, 0, 0, time.UTC)
+	if err := s.ReplaceEPG("sd", []store.EPGChannel{{ID: "e", Source: "sd"}}, []store.Program{
+		{EPGChannelID: "e", Start: st, Stop: st.Add(time.Hour), Title: "Show", ProgramID: "EP012345670012", SeriesID: "SH01234567", IsNew: true}}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ProgramsInRange([]string{"e"}, st, st.Add(time.Hour))
+	if err != nil || len(ps) != 1 || ps[0].ProgramID != "EP012345670012" || ps[0].SeriesID != "SH01234567" || !ps[0].IsNew {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}
+
+func TestSeriesIDOf(t *testing.T) {
+	for in, want := range map[string]string{"EP012345670012": "SH01234567", "SH012345670000": "SH01234567", "MV000111220000": "", "": "", "EP12": ""} {
+		if got := store.SeriesIDOf(in); got != want {
+			t.Errorf("SeriesIDOf(%q)=%q want %q", in, got, want)
+		}
+	}
+}

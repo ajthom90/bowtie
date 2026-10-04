@@ -240,3 +240,25 @@ func TestRatingsToStore(t *testing.T) {
 		t.Fatalf("%+v", progs)
 	}
 }
+
+func TestSeriesIDsToStore(t *testing.T) {
+	doc := `<tv><channel id="c"><display-name>C</display-name></channel>
+<programme start="20261004010000 +0000" stop="20261004020000 +0000" channel="c">
+  <title>Drama</title><episode-num system="dd_progid">EP01234567.0012</episode-num><new/>
+</programme>
+<programme start="20261004020000 +0000" stop="20261004030000 +0000" channel="c">
+  <title>Drama</title><episode-num system="xmltv_ns">1.4.</episode-num>
+</programme></tv>`
+	tv, err := Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, progs, _ := ToStore(tv)
+	p0, p1 := progs[0], progs[1]
+	if p0.ProgramID != "EP012345670012" || p0.SeriesID != "SH01234567" || !p0.IsNew {
+		t.Fatalf("p0 %+v", p0)
+	}
+	if p1.ProgramID != "" || p1.SeriesID != "" || p1.IsNew {
+		t.Fatalf("p1 %+v", p1)
+	}
+}
