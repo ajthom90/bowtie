@@ -81,8 +81,14 @@ func (s *Store) SyncLineup(deviceID string, chans []Channel) error {
 		if seen[guide] {
 			continue
 		}
-		if _, err := tx.Exec(`DELETE FROM channels WHERE id = ?`, ex.id); err != nil {
-			return err
+		for _, q := range []string{
+			`DELETE FROM channels WHERE id = ?`,
+			`DELETE FROM user_favorites WHERE channel_id = ?`,
+			`DELETE FROM user_recents WHERE channel_id = ?`,
+		} {
+			if _, err := tx.Exec(q, ex.id); err != nil {
+				return err
+			}
 		}
 	}
 

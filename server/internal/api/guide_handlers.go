@@ -52,7 +52,9 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load guide")
 		return
 	}
+	favs := s.callerFavorites(r)
 	for i := range guide {
+		guide[i].Favorite = favs[guide[i].ChannelID]
 		guide[i].Reception = "unknown"
 		if s.deps.Streams != nil {
 			if rx, ok := s.deps.Streams.ChannelReception(guide[i].ChannelID); ok {

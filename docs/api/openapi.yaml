@@ -123,6 +123,88 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/me/favorites/{channelId}:
+    parameters:
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      summary: Star a channel for the current user
+      operationId: addFavorite
+      tags: [me]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Starred (idempotent)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown or disabled channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Unstar a channel for the current user
+      operationId: removeFavorite
+      tags: [me]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Unstarred (idempotent)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/me/recents:
+    get:
+      summary: Channels the current user watched recently
+      description: |
+        Newest first; enabled channels only. A channel is recorded after 30 s
+        of watching, so zapping through doesn't add it.
+      operationId: listRecents
+      tags: [me]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 8
+      responses:
+        '200':
+          description: Recently watched channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecentChannel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      summary: Clear the current user's watch history
+      operationId: clearRecents
+      tags: [me]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Cleared
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/admin/users:
     get:
       summary: List all users
@@ -1117,10 +1199,29 @@ components:
           type: boolean
         epgChannelId:
           type: string
+    RecentChannel:
+      type: object
+      required: [channelId, guideNumber, name, logoUrl, watchedAt]
+      properties:
+        channelId:
+          type: integer
+          format: int64
+        guideNumber:
+          type: string
+        name:
+          type: string
+        logoUrl:
+          type: string
+        watchedAt:
+          type: string
+          format: date-time
     ViewerChannel:
       type: object
-      required: [id, guideNumber, name, logoUrl, reception]
+      required: [id, guideNumber, name, logoUrl, reception, favorite]
       properties:
+        favorite:
+          type: boolean
+          description: The caller has starred this channel
         id:
           type: integer
           format: int64
@@ -1145,8 +1246,11 @@ components:
           description: When reception was last learned; absent when unknown.
     GuideChannel:
       type: object
-      required: [channelId, guideNumber, name, logoUrl, programs, reception]
+      required: [channelId, guideNumber, name, logoUrl, programs, reception, favorite]
       properties:
+        favorite:
+          type: boolean
+          description: The caller has starred this channel
         channelId:
           type: integer
           format: int64

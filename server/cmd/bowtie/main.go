@@ -138,6 +138,12 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		// Captions, every broadcast audio track and the 5.1 copy, unless the
 		// BOWTIE_MULTITRACK kill switch is set.
 		Multitrack: !cfg.DisableMultitrack,
+		// Recently watched channels (Favorites/Recents).
+		OnWatched: func(userID, channelID int64, at time.Time) {
+			if err := st.RecordWatch(userID, channelID, at); err != nil {
+				log.Printf("recents: record watch user=%d channel=%d: %v", userID, channelID, err)
+			}
+		},
 	})
 	go streamMgr.Run(rootCtx)
 

@@ -210,6 +210,56 @@ export function receptionNote(reception: string | undefined): string | null {
   return reception === 'noSignal' ? GUIDE_COPY.noSignal : null
 }
 
+/** Title of the program on air at `now`, if any. */
+export function currentProgramTitle(programs: GuideProgram[], now: Date): string | undefined {
+  const n = now.getTime()
+  return programs.find((p) => n >= Date.parse(p.start) && n < Date.parse(p.stop))?.title
+}
+
+// ── Favorites ─────────────────────────────────────────────────────────────
+
+/** Compare guide numbers ("9.1", "11.2", "5.10") part by part, numerically. */
+export function compareGuideNumber(a: string, b: string): number {
+  const pa = a.split('.')
+  const pb = b.split('.')
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if (pa[i] === undefined) return -1
+    if (pb[i] === undefined) return 1
+    const na = Number(pa[i])
+    const nb = Number(pb[i])
+    const d = Number.isNaN(na) || Number.isNaN(nb) ? pa[i].localeCompare(pb[i]) : na - nb
+    if (d !== 0) return d
+  }
+  return 0
+}
+
+/**
+ * Favorites first (guide-number order), then the rest in their incoming
+ * (server) order. Returns a new array.
+ */
+export function sortFavoritesFirst<T extends { guideNumber: string; favorite?: boolean }>(
+  channels: T[],
+): T[] {
+  const favs = channels
+    .filter((c) => c.favorite === true)
+    .sort((a, b) => compareGuideNumber(a.guideNumber, b.guideNumber))
+  return [...favs, ...channels.filter((c) => c.favorite !== true)]
+}
+
+/** The server sends `favorite`; older servers omit it (hide star and Recent row). */
+export function supportsFavorites(channels: { favorite?: boolean }[]): boolean {
+  return channels.some((c) => typeof c.favorite === 'boolean')
+}
+
+/** Copy of `channels` with one channel's favorite flag set to `on`. */
+export function withFavorite<T extends { channelId: number; favorite?: boolean }>(
+  channels: T[],
+  channelId: number,
+  on: boolean,
+): T[] {
+  return channels.map((c) => (c.channelId === channelId ? { ...c, favorite: on } : c))
+}
+
 export type GuidePageState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }

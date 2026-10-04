@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="RecentChannelItem" extends="Group">
+    <!-- Recent row card: channel number over name. -->
+    <interface>
+        <field id="width" type="float" onChange="onSizeChanged" />
+        <field id="height" type="float" onChange="onSizeChanged" />
+        <field id="itemContent" type="node" onChange="onItemContent" />
+        <field id="focusPercent" type="float" onChange="onFocusChanged" />
+        <field id="gridHasFocus" type="boolean" onChange="onFocusChanged" />
+        <field id="itemHasFocus" type="boolean" onChange="onFocusChanged" />
+    </interface>
+    <script type="text/brightscript" uri="RecentChannelItem.bs" />
+    <children>
+        <Rectangle
+            id="cardBg"
+            width="208"
+            height="88"
+            color="0x1A2028FF"
+        />
+        <Label
+            id="numberLabel"
+            translation="[16, 8]"
+            width="176"
+            height="40"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0xF2EFE8FF"
+            font="font:MediumBoldSystemFont"
+        />
+        <Label
+            id="nameLabel"
+            translation="[16, 48]"
+            width="176"
+            height="32"
+            text=""
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+        />
+    </children>
+</component>

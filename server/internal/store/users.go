@@ -101,9 +101,14 @@ func (s *Store) UpdatePassword(id int64, hash string) error {
 	return nil
 }
 
-// DeleteUser removes a user by id.
+// DeleteUser removes a user by id, with their favorites and recents.
 func (s *Store) DeleteUser(id int64) error {
-	res, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -114,7 +119,15 @@ func (s *Store) DeleteUser(id int64) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	for _, q := range []string{
+		`DELETE FROM user_favorites WHERE user_id = ?`,
+		`DELETE FROM user_recents WHERE user_id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // CountUsers returns the number of users.

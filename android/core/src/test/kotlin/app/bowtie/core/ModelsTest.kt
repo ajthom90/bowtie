@@ -228,6 +228,34 @@ class ModelsTest {
         assertEquals(false, channels[1].hasNoSignal)
         assertEquals("an older server sends no reception field", false, channels[2].hasNoSignal)
     }
+
+    @Test
+    fun decode_channel_favorite() {
+        val json = """[{"id":1,"guideNumber":"4.1","name":"A","logoUrl":"","favorite":true},{"id":2,"guideNumber":"5.1","name":"B","logoUrl":"","favorite":false},{"id":3,"guideNumber":"7.1","name":"C","logoUrl":""}]"""
+        val channels = BowtieJson.decodeFromString<List<Channel>>(json)
+        assertEquals(true, channels[0].favorite)
+        assertEquals(false, channels[1].favorite)
+        assertNull("an older server sends no favorite field", channels[2].favorite)
+    }
+
+    @Test
+    fun decode_guideChannel_favorite() {
+        val json = """[{"channelId":1,"guideNumber":"4.1","name":"A","logoUrl":"","programs":[],"reception":"ok","favorite":true},{"channelId":2,"guideNumber":"5.1","name":"B","logoUrl":"","programs":[]}]"""
+        val guide = BowtieJson.decodeFromString<List<GuideChannel>>(json)
+        assertEquals(true, guide[0].favorite)
+        assertNull(guide[1].favorite)
+    }
+
+    @Test
+    fun decode_recentChannel() {
+        val json = """[{"channelId":7,"guideNumber":"9.1","name":"FOX9","logoUrl":"","watchedAt":"2026-10-03T19:42:10Z"}]"""
+        val recents = BowtieJson.decodeFromString<List<RecentChannel>>(json)
+        assertEquals(1, recents.size)
+        assertEquals(7L, recents[0].channelId)
+        assertEquals("9.1", recents[0].guideNumber)
+        assertEquals("FOX9", recents[0].name)
+        assertEquals(Instant.parse("2026-10-03T19:42:10Z"), recents[0].watchedAt)
+    }
 }
 
 /** Wire envelope for 503 tuners-busy; kept here so Models stays viewer-DTO focused. */

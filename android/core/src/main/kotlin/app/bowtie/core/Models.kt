@@ -57,10 +57,23 @@ data class Channel(
     val logoUrl: String,
     /** Last tune outcome learned by the server: "ok", "noSignal" or "unknown"; null from servers older than 0.6.3. */
     val reception: String? = null,
+    /** The caller starred this channel; null from servers without favorites (hide the star). */
+    val favorite: Boolean? = null,
 ) {
     /** The antenna got no signal the last time this channel was tuned. */
     val hasNoSignal: Boolean get() = reception == "noSignal"
 }
+
+/** A channel the caller watched recently (`GET /api/v1/me/recents`), newest first. */
+@Serializable
+data class RecentChannel(
+    val channelId: Long,
+    val guideNumber: String,
+    val name: String,
+    val logoUrl: String,
+    @Serializable(with = InstantIso8601Serializer::class)
+    val watchedAt: Instant,
+)
 
 @Serializable
 data class GuideProgram(
@@ -81,6 +94,8 @@ data class GuideChannel(
     val name: String,
     val logoUrl: String,
     val programs: List<GuideProgram>,
+    /** The caller starred this channel; null from servers without favorites. */
+    val favorite: Boolean? = null,
 )
 
 @Serializable

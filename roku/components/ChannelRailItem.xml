@@ -77,5 +77,14 @@
             color="0x9BA5AEFF"
             font="font:SmallSystemFont"
         />
+        <!-- ★ for the user's favorites (trailing edge; placed in onSizeChanged). -->
+        <Poster
+            id="favoriteStar"
+            translation="[1616, 40]"
+            width="40"
+            height="40"
+            uri="pkg:/images/star_amber.png"
+            visible="false"
+        />
     </children>
 </component>

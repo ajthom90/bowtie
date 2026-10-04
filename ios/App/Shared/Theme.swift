@@ -117,6 +117,42 @@ private struct BowtiePlainButtonBody: View {
     }
 }
 
+// MARK: - Toast
+
+extension View {
+    /// Brief bottom banner for a failed background action (e.g. a favorite that
+    /// didn't save). Announced to VoiceOver; dismisses itself after a few seconds.
+    func bowtieToast(_ message: String?, onDismiss: @escaping () -> Void) -> some View {
+        overlay(alignment: .bottom) {
+            if let message {
+                Text(message)
+                    #if os(tvOS)
+                    .font(Theme.label(24))
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 18)
+                    #else
+                    .font(Theme.label(15))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    #endif
+                    .foregroundStyle(Theme.text)
+                    .background(Theme.raised, in: Capsule())
+                    .overlay(Capsule().stroke(Theme.alert.opacity(0.6), lineWidth: 1))
+                    .padding(.bottom, 24)
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task(id: message) {
+                        AccessibilityNotification.Announcement(message).post()
+                        try? await Task.sleep(for: .seconds(3))
+                        guard !Task.isCancelled else { return }
+                        onDismiss()
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: message)
+    }
+}
+
 // MARK: - Color hex helper
 
 private extension Color {

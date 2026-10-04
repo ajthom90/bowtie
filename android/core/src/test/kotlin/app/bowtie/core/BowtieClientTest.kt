@@ -490,4 +490,95 @@ class BowtieClientTest {
             // expected
         }
     }
+
+    // ── favorites / recents ─────────────────────────────────────────────────
+
+    @Test
+    fun setFavoriteOnIsPutAndOffIsDelete() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(204))
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        val c = client()
+        c.login("alice", "secret")
+        c.setFavorite(7, true)
+        c.setFavorite(7, false)
+
+        take("/api/v1/auth/login")
+        val put = take("/api/v1/me/favorites/7")
+        assertEquals("PUT", put.method)
+        assertEquals("/api/v1/me/favorites/7", put.path)
+        assertEquals("Bearer access-1", put.getHeader("Authorization"))
+        val del = take("/api/v1/me/favorites/7")
+        assertEquals("DELETE", del.method)
+        assertEquals("Bearer access-1", del.getHeader("Authorization"))
+    }
+
+    @Test
+    fun setFavoriteUnknownChannelIsNotFound() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"channel not found"}"""))
+
+        val c = client()
+        c.login("alice", "secret")
+        try {
+            c.setFavorite(99, true)
+            fail("expected NotFound")
+        } catch (_: BowtieError.NotFound) {
+            // expected
+        }
+    }
+
+    @Test
+    fun recentsRequestAndDecode() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(
+            MockResponse().setBody(
+                """[{"channelId":7,"guideNumber":"9.1","name":"FOX9","logoUrl":"","watchedAt":"2026-10-03T19:42:10Z"},""" +
+                    """{"channelId":2,"guideNumber":"5.1","name":"KSTP","logoUrl":"","watchedAt":"2026-10-03T18:00:00Z"}]""",
+            ),
+        )
+
+        val c = client()
+        c.login("alice", "secret")
+        val recents = c.recents(limit = 8)
+
+        take("/api/v1/auth/login")
+        val req = take("/api/v1/me/recents")
+        assertEquals("GET", req.method)
+        assertEquals("/api/v1/me/recents?limit=8", req.path)
+        assertEquals("Bearer access-1", req.getHeader("Authorization"))
+        assertEquals(listOf(7L, 2L), recents.map { it.channelId })
+    }
+
+    @Test
+    fun recentsOnOlderServerIsNotFound() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(404).setBody("404 page not found"))
+
+        val c = client()
+        c.login("alice", "secret")
+        try {
+            c.recents()
+            fail("expected NotFound")
+        } catch (_: BowtieError.NotFound) {
+            // expected
+        }
+    }
+
+    @Test
+    fun clearRecentsIsDelete() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        val c = client()
+        c.login("alice", "secret")
+        c.clearRecents()
+
+        take("/api/v1/auth/login")
+        val req = take("/api/v1/me/recents")
+        assertEquals("DELETE", req.method)
+        assertEquals("/api/v1/me/recents", req.path)
+        assertEquals("Bearer access-1", req.getHeader("Authorization"))
+    }
 }

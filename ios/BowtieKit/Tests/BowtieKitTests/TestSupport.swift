@@ -111,6 +111,29 @@ enum TestFixtures {
         return "[\(items)]".data(using: .utf8)!
     }
 
+    /// Channels as a favorites-aware server returns them.
+    static func favoriteChannelJSON(
+        _ channels: [(id: Int64, number: String, name: String, favorite: Bool)]
+    ) -> Data {
+        let items = channels.map { ch in
+            """
+            {"id":\(ch.id),"guideNumber":"\(ch.number)","name":"\(ch.name)","logoUrl":"","reception":"ok","favorite":\(ch.favorite)}
+            """
+        }.joined(separator: ",")
+        return "[\(items)]".data(using: .utf8)!
+    }
+
+    static func recentsJSON(
+        _ recents: [(channelId: Int64, number: String, name: String, watchedAt: String)]
+    ) -> Data {
+        let items = recents.map { r in
+            """
+            {"channelId":\(r.channelId),"guideNumber":"\(r.number)","name":"\(r.name)","logoUrl":"","watchedAt":"\(r.watchedAt)"}
+            """
+        }.joined(separator: ",")
+        return "[\(items)]".data(using: .utf8)!
+    }
+
     static func guideJSON(
         _ entries: [(channelId: Int64, number: String, name: String, programs: [(start: String, stop: String, title: String)])]
     ) -> Data {

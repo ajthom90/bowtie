@@ -93,6 +93,8 @@ type GuideChannel struct {
 	// "noSignal" or "unknown" (see stream.Reception).
 	Reception          string     `json:"reception"`
 	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
+	// Favorite is filled by the API layer: the caller starred this channel.
+	Favorite bool `json:"favorite"`
 }
 
 // GuideProgram is a single programme block for the guide grid.

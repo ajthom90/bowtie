@@ -167,3 +167,42 @@ func TestConcurrentStartsRespectLimit(t *testing.T) {
 		t.Fatalf("errs=%v: want exactly one start", errs)
 	}
 }
+
+// OnWatched fires once, after 30 s of watching (a zap through a channel isn't
+// "recent"), outside m.mu.
+func TestOnWatchedAfter30Seconds(t *testing.T) {
+	m, _, clock, ch, alice, _ := limitsEnv(t)
+	type call struct{ user, ch int64 }
+	var calls []call
+	m.onWatched = func(userID, channelID int64, _ time.Time) {
+		if !m.mu.TryLock() {
+			t.Error("OnWatched called under m.mu")
+		} else {
+			m.mu.Unlock()
+		}
+		calls = append(calls, call{userID, channelID})
+	}
+	zap, err := m.Start(context.Background(), alice, ch[0], clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(10 * time.Second)
+	m.Touch(zap.ViewerID)
+	m.StopViewer(zap.ViewerID)
+
+	h, err := m.Start(context.Background(), alice, ch[1], clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(20 * time.Second)
+	m.Touch(h.ViewerID)
+	if len(calls) != 0 {
+		t.Fatalf("recorded too early: %v", calls)
+	}
+	clock.Advance(11 * time.Second)
+	m.Touch(h.ViewerID)
+	m.Touch(h.ViewerID)
+	if len(calls) != 1 || calls[0] != (call{alice.ID, ch[1]}) {
+		t.Fatalf("calls=%v", calls)
+	}
+}
