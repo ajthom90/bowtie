@@ -164,3 +164,106 @@ describe('ApiClient.heartbeat', () => {
     })
   })
 })
+
+describe('ApiClient recordings', () => {
+  let client: ApiClient
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    client = new ApiClient(
+      () => 'tok',
+      () => {},
+    )
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  const call = (i = 0) => {
+    const [path, init] = fetchMock.mock.calls[i] as [string, RequestInit]
+    return {
+      path,
+      method: init.method,
+      body: init.body ? JSON.parse(String(init.body)) : undefined,
+      auth: (init.headers as Record<string, string>).Authorization,
+    }
+  }
+
+  it('lists recordings with a state filter', async () => {
+    fetchMock.mockResolvedValueOnce(json([]))
+    await client.listRecordings('failed')
+    expect(call()).toMatchObject({
+      path: '/api/v1/recordings?state=failed',
+      method: 'GET',
+      auth: 'Bearer tok',
+    })
+  })
+
+  it('schedules a guide program', async () => {
+    fetchMock.mockResolvedValueOnce(json({ recording: { id: 1 }, warnings: [] }, 201))
+    const res = await client.createRecording({ channelId: 3, programStart: '2026-10-05T00:00:00Z' })
+    expect(res.recording.id).toBe(1)
+    expect(call()).toMatchObject({
+      path: '/api/v1/recordings',
+      method: 'POST',
+      body: { channelId: 3, programStart: '2026-10-05T00:00:00Z' },
+    })
+  })
+
+  it('passes a 409 conflict body through on ApiError', async () => {
+    const body = { error: 'tuner conflict', tunerCount: 2, conflicts: [{ id: 4, title: 'News' }] }
+    fetchMock.mockResolvedValueOnce(json(body, 409))
+    const err = await client
+      .createRecording({ channelId: 3, programStart: '2026-10-05T00:00:00Z' })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(409)
+    expect((err as ApiError).body).toEqual(body)
+  })
+
+  it('protects, stops, deletes and saves positions', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ id: 7, protected: true }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    await client.patchRecording(7, { protected: true })
+    await client.stopRecording(7)
+    await client.deleteRecording(7)
+    await client.setRecordingPosition(7, 412)
+    expect(call(0)).toMatchObject({
+      path: '/api/v1/recordings/7',
+      method: 'PATCH',
+      body: { protected: true },
+    })
+    expect(call(1)).toMatchObject({ path: '/api/v1/recordings/7/stop', method: 'POST' })
+    expect(call(2)).toMatchObject({ path: '/api/v1/recordings/7', method: 'DELETE' })
+    expect(call(3)).toMatchObject({
+      path: '/api/v1/recordings/7/position',
+      method: 'PUT',
+      body: { positionSec: 412 },
+    })
+  })
+
+  it('gets a playback URL', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        playlistUrl: '/api/v1/recordings/7/hls/index.m3u8?token=x',
+        positionSec: 412,
+        durationSec: 1980,
+      }),
+    )
+    const res = await client.playRecording(7)
+    expect(res.positionSec).toBe(412)
+    expect(call()).toMatchObject({ path: '/api/v1/recordings/7/play', method: 'POST' })
+  })
+})

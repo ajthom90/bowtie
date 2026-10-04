@@ -6,6 +6,8 @@ export interface GuideProgram {
   subtitle: string
   description: string
   category: string
+  /** Present when this program is scheduled, recording or recorded. */
+  recording?: { id: number; state: string }
 }
 
 export type ProgramCell = {
