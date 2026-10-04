@@ -152,6 +152,12 @@ mapped yourself are never changed. Turn it off with
 (setting `epg.hdhomerun`); its health is under `hdhomerun` in
 `GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
 
+SiliconDust allows about one download a day: a second download soon after
+the first gets HTTP 403, and Bowtie simply retries hourly until it's allowed.
+The free guide carries titles, episodes, series IDs (series recording works)
+and new/repeat flags, but **no age ratings**; to limit accounts by rating
+(parental controls), add Schedules Direct. Channel restrictions work either way.
+
 ### XMLTV and Schedules Direct
 
 **Preferred:** configure XMLTV and/or Schedules Direct in **Admin → Settings**
