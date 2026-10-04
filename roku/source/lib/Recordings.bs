@@ -97,6 +97,7 @@ namespace bowtie.recordings
             "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
             "canManage": (r.canManage = true)
             "ruleId": bowtie.recordings.asNumber(r.ruleId)
+            "locked": bowtie.recordings.isTrue(r.locked)
         }
     end function
 
@@ -133,7 +134,13 @@ namespace bowtie.recordings
         if state = "recording" then parts.push("Recording now")
         if state = "converting" then parts.push("Converting")
         if r.partial = true and (state = "ready" or state = "converting") then parts.push("Partial")
+        if bowtie.recordings.isTrue(r.locked) then parts.push("Locked")
         return bowtie.recordings.joinParts(parts, " · ")
+    end function
+
+    ' Why a locked recording won't play (parental controls; play is 403).
+    function lockedText() as string
+        return "Locked by parental controls — it can't be played on this account."
     end function
 
     ' A guide program's recording mark in words.
@@ -304,7 +311,7 @@ namespace bowtie.recordings
             if upcoming then remove = "cancel"
         end if
         return {
-            "play": (state = "ready")
+            "play": (state = "ready" and not bowtie.recordings.isTrue(r.locked))
             "stop": (manage and state = "recording")
             "remove": remove
             "keep": (manage and (state = "ready" or state = "converting"))
@@ -545,6 +552,14 @@ namespace bowtie.recordings
         t = Type(v)
         if t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" then return v
         return 0
+    end function
+
+    ' A field that may be missing (older servers): true only for a real true.
+    function isTrue(v as dynamic) as boolean
+        if v = invalid then return false
+        t = Type(v)
+        if t = "Boolean" or t = "roBoolean" then return v
+        return false
     end function
 
     function pad2(n as integer) as string

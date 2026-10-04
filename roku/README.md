@@ -120,7 +120,9 @@ three tabs: **Upcoming** (scheduled, waiting for a tuner, recording now),
 plain words, e.g. "No tuner was free"), plus **Shows**, the series being
 recorded (`GET /api/v1/recording-rules`). Recordings a series scheduled
 (`ruleId` > 0) say **Series**; an episode skipped by deleting it ahead of time
-says **Skipped** (not tinted red like a real miss).
+says **Skipped** (not tinted red like a real miss). A recording parental
+controls block for this account (`locked`) says **Locked** and OK explains
+instead of playing.
 
 | Key | Action |
 |-----|--------|
@@ -176,6 +178,7 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 503 tuners busy | Full copy + who’s-watching list + Try again |
 | 422 negotiation | Reset quality to Auto, retry once; second → device-can’t-play |
 | 404 | Channel not found; rail refreshes on return |
+| 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
 | Mid-play failure | Bounded retry, then error + Try again |
 
 ## Design tokens

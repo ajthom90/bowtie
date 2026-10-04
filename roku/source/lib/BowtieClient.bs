@@ -517,12 +517,32 @@ namespace bowtie.client
         }
     end function
 
+    ' Parental controls answer 403 {"error", "code": "parental"} (session
+    ' start, recording play, a stopped viewer's heartbeat) → kind "parental".
     function mapError(httpCode as integer, body as string) as object
+        kind = "server"
+        if httpCode = 403 and body <> invalid and body <> ""
+            parsed = ParseJson(body)
+            if parsed <> invalid and Type(parsed) = "roAssociativeArray" and bowtie.client.isString(parsed.code, "parental") then kind = "parental"
+        end if
         return {
             code: httpCode
-            kind: "server"
+            kind: kind
             message: bowtie.client.extractError(body)
         }
+    end function
+
+    function isParental(err as dynamic) as boolean
+        if err = invalid or Type(err) <> "roAssociativeArray" then return false
+        return bowtie.client.isString(err.kind, "parental")
+    end function
+
+    ' v is a string equal to s (false for invalid / other types, no mismatch).
+    function isString(v as dynamic, s as string) as boolean
+        if v = invalid then return false
+        t = Type(v)
+        if t <> "String" and t <> "roString" then return false
+        return v = s
     end function
 
     function extractError(body as string) as string

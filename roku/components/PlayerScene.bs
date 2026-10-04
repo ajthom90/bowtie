@@ -7,6 +7,7 @@
 '   404 channelsStale + inform; mid-play allowlist EMPTY (keyed on Video
 '   errorCode/errorMsg) → else bounded retry 1s/2s/4s ×3 without new sessions.
 
+import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Caps.bs"
 import "pkg:/source/lib/GuideLogic.bs"
 
@@ -19,6 +20,8 @@ const DEVICE_CANT_PLAY = "This device can't play this channel at that quality"
 const CHANNEL_NOT_FOUND = "Channel not found"
 const PLAYBACK_AUTH_FAILED = "Playback authorization failed"
 const PLAYBACK_FAILED = "Playback failed. Try again or pick a lower quality."
+const PARENTAL_BLOCKED = "Blocked by parental controls"
+const PARENTAL_DETAIL = "Parental controls on your account block this channel or the program on now. Pick another channel."
 
 function authErrorPatterns() as object
     ' EMPTY allowlist — extend after on-device token-kill capture.
@@ -58,6 +61,9 @@ sub init()
     m.pendingCreateId = ""
     m.pendingDeletePrefix = "player-delete-"
     m.pendingHeartbeatPrefix = "player-heartbeat-"
+    ' Latest heartbeat sent and the viewer it was for (parental stop mid-play).
+    m.lastHeartbeatId = ""
+    m.lastHeartbeatViewerId = ""
     m.is422Retry = false
     m.authRetried = false
     m.retryAttempt = 0
@@ -279,6 +285,11 @@ sub onApiResponse()
         return
     end if
     if Left(rid, Len(m.pendingHeartbeatPrefix)) = m.pendingHeartbeatPrefix
+        ' A viewer stopped later by parental controls (the program changed)
+        ' gets 403 {"code": "parental"} from its heartbeat.
+        if resp.ok <> true and rid = m.lastHeartbeatId and bowtie.client.isParental(resp.error)
+            handleParentalStop(resp.error)
+        end if
         return
     end if
 
@@ -363,6 +374,13 @@ sub handleCreateError(resp as object)
         return
     end if
 
+    ' 403 {"code": "parental"}: the channel or the program on now is blocked
+    ' for this account. Show the server's words; retrying won't help.
+    if code = 403 and bowtie.client.isParental(err)
+        showFailed(parentalTitle(err), PARENTAL_DETAIL)
+        return
+    end if
+
     msg = PLAYBACK_FAILED
     if err <> invalid and err.message <> invalid and err.message <> ""
         msg = err.message
@@ -404,6 +422,8 @@ sub onHeartbeatFire()
 
     m.reqSeq = m.reqSeq + 1
     rid = m.pendingHeartbeatPrefix + m.reqSeq.toStr()
+    m.lastHeartbeatId = rid
+    m.lastHeartbeatViewerId = m.activeViewerId
     task.request = {
         id: rid
         kind: "heartbeat"
@@ -413,6 +433,24 @@ sub onHeartbeatFire()
         }
     }
 end sub
+
+' The server ended this viewer for parental controls: stop and say why.
+' Only for the viewer still playing (a zap since then has its own session).
+sub handleParentalStop(err as object)
+    if m.activeViewerId = invalid or m.activeViewerId = "" then return
+    if m.lastHeartbeatViewerId <> m.activeViewerId then return
+    stopHeartbeat()
+    ' Already gone on the server: nothing to DELETE.
+    m.activeViewerId = ""
+    m.playlistUrl = ""
+    showFailed(parentalTitle(err), PARENTAL_DETAIL)
+end sub
+
+' The server's message ("Blocked by parental controls (rated TV-MA)").
+function parentalTitle(err as dynamic) as string
+    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
+    return PARENTAL_BLOCKED
+end function
 
 ' Extract `token` query from playlist path/URL (relative or absolute).
 function streamTokenFromPlaylist(playlistUrl as string) as string

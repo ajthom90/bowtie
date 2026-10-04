@@ -262,15 +262,19 @@ end sub
 sub openOptions(r as dynamic)
     if r = invalid then return
     m.target = r
+    message = [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset())]
+    ' Locked (parental controls): OK lands here instead of playing; say why.
+    if r.locked = true then message.push(bowtie.recordings.lockedText())
     menu = bowtie.recordings.optionButtons(r)
     if menu.count() = 0
         who = r.scheduledBy
         if who = invalid or who = "" then who = "the person who scheduled it"
-        showDialog("info", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset()), "Only " + who + " or an admin can change this recording."], ["OK"])
+        if r.locked <> true or r.state <> "ready" then message.push("Only " + who + " or an admin can change this recording.")
+        showDialog("info", bowtie.recordings.titleLine(r), message, ["OK"])
         return
     end if
     m.menu = menu
-    showDialog("options", bowtie.recordings.titleLine(r), [bowtie.recordings.detailLine(r, isoNow(), localUtcOffset())], bowtie.recordings.buttonLabels(menu))
+    showDialog("options", bowtie.recordings.titleLine(r), message, bowtie.recordings.buttonLabels(menu))
 end sub
 
 ' A show (series rule): Stop recording this show for whoever set it up or an
