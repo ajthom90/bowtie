@@ -81,7 +81,8 @@ test('recording: Down opens the sleep timer (no End of this program); it stops p
     assert.match(body(recs, 'sub openSleepDialog('), /bowtie\.sleep\.options\(0, nowSec\(\)\)/);
     assert.match(body(recs, 'sub onDialogButton('), /mode = "sleep"[\s\S]*?chooseSleep\(idx\)/);
     assert.match(body(recs, 'sub onSleepTick('), /r\.fired = true[\s\S]*?stopPlayback\(\)/);
-    assert.match(body(recs, 'sub stopPlayback('), /resetPlaybackOverlays\(\)/);
+    assert.match(body(recs, 'sub stopPlayback('), /endPlayback\(\)/);
+    assert.match(body(recs, 'sub endPlayback('), /resetPlaybackOverlays\(\)/);
     assert.match(body(recs, 'sub startPlayback('), /resetPlaybackOverlays\(\)/);
     assert.match(body(recs, 'sub resetPlaybackOverlays('), /bowtie\.sleep\.cancel\(m\.sleep\)/);
     assert.match(recsXml, /text="Down: sleep timer"/);

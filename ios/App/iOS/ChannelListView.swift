@@ -15,6 +15,10 @@ struct ChannelListView: View {
     @State private var searchModel: GuideSearchModel?
     @State private var searchText = ""
     @State private var now = Date()
+    /// Continue watching: its shelf, and the recordings model that plays from it.
+    @State private var continueModel: ContinueWatchingModel?
+    @State private var recordingsModel: RecordingsModel?
+    @State private var activePlayback: RecordingsModel.Playback?
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -82,6 +86,25 @@ struct ChannelListView: View {
                 }
                 .recordFlowAlerts(recordFlow)
                 .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
+                .fullScreenCover(item: $activePlayback, onDismiss: {
+                    // Back from a recording: it moves to the front (or leaves if finished).
+                    Task { await reloadContinueWatchingAfterPlayback() }
+                }) { playback in
+                    if let recordingsModel {
+                        RecordingPlayerView(playback: playback, model: recordingsModel)
+                    }
+                }
+                .alert(
+                    "Something Went Wrong",
+                    isPresented: Binding(
+                        get: { recordingsModel?.actionError != nil },
+                        set: { if !$0 { recordingsModel?.actionError = nil } }
+                    )
+                ) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(recordingsModel?.actionError ?? "")
+                }
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)
@@ -100,6 +123,10 @@ struct ChannelListView: View {
         .task {
             await ensureListModel()
             await listModel?.load()
+        }
+        // Alongside the channel list, not after it.
+        .task(id: continueModel != nil) {
+            await continueModel?.load()
         }
         // Auto-refresh every 5 minutes while the list is visible.
         .task(id: listModel != nil) {
@@ -127,6 +154,9 @@ struct ChannelListView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task { await listModel?.refreshIfStale() }
+                if activePlayback == nil {
+                    Task { await continueModel?.load() }
+                }
             }
         }
         // Player create-session 404 → reload channel list (disabled/unknown channel).
@@ -137,6 +167,12 @@ struct ChannelListView: View {
         .onChange(of: playingChannel) { old, new in
             if old != nil, new == nil {
                 Task { await listModel?.refreshRecents() }
+            }
+        }
+        // Back from Recordings: something may have been watched or removed there.
+        .onChange(of: showRecordings) { old, new in
+            if old, !new {
+                Task { await continueModel?.load() }
             }
         }
     }
@@ -245,6 +281,22 @@ struct ChannelListView: View {
     private func listView(rows: [ChannelListModel.Row], model: ChannelListModel) -> some View {
         let visible = model.filteredRows(at: now)
         return List {
+            if let continueModel, !continueModel.items.isEmpty {
+                Section {
+                    ContinueWatchingShelf(
+                        items: continueModel.items,
+                        showsTitle: false,
+                        onPlay: { recording in Task { await resume(recording) } },
+                        onRemove: { recording in Task { await continueModel.remove(recording) } }
+                    )
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Theme.bg)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    sectionHeader(ContinueWatchingShelf.title)
+                }
+            }
+
             GuideFilterBar(selection: Bindable(model).filter)
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Theme.bg)
@@ -299,9 +351,14 @@ struct ChannelListView: View {
         .scrollContentBackground(.hidden)
         .refreshable {
             await model.load()
+            await continueModel?.load()
         }
-        .bowtieToast(model.actionError) {
-            model.dismissActionError()
+        .bowtieToast(model.actionError ?? continueModel?.actionError) {
+            if model.actionError != nil {
+                model.dismissActionError()
+            } else {
+                continueModel?.actionError = nil
+            }
         }
     }
 
@@ -379,6 +436,8 @@ struct ChannelListView: View {
         let search = GuideSearchModel(client: client)
         listModel = model
         searchModel = search
+        continueModel = ContinueWatchingModel(client: client)
+        recordingsModel = RecordingsModel(client: client)
         // Reload after scheduling so the program shows its REC mark.
         recordFlow = RecordFlow(client: client) {
             Task {
@@ -388,6 +447,20 @@ struct ChannelListView: View {
                 }
             }
         }
+    }
+
+    /// Continue watching: plays the recording from where it was left.
+    private func resume(_ recording: Recording) async {
+        guard let recordingsModel,
+              let playback = await recordingsModel.resume(recording, stopping: playerModel)
+        else { return }
+        activePlayback = playback
+    }
+
+    /// After the recording player closes: wait for its last position save.
+    private func reloadContinueWatchingAfterPlayback() async {
+        await recordingsModel?.waitForSaves()
+        await continueModel?.load()
     }
 
     private func open(channel: Channel) {

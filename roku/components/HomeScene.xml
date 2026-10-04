@@ -8,6 +8,9 @@
         <field id="openRecordings" type="boolean" alwaysNotify="true" value="false" />
         <!-- Channel AA selected for play: {id, guideNumber, name, index, channels}. -->
         <field id="selectedChannel" type="assocarray" alwaysNotify="true" />
+        <!-- Continue watching item to resume (a normalized recording); AppScene
+             hands it to RecordingsScene, which plays it from its saved position. -->
+        <field id="resumeRecording" type="assocarray" alwaysNotify="true" />
     </interface>
     <script type="text/brightscript" uri="HomeScene.bs" />
     <children>
@@ -114,8 +117,45 @@
             />
         </Group>
 
+        <!-- Continue watching (part-watched recordings, GET /recordings?state=recorded
+             filtered by bowtie.continueWatching). Shown only when non-empty, above
+             Recent; HomeScene places the rows with bowtie.continueWatching.homeLayout.
+             A one-row RowList so up to 10 cards scroll sideways; floatingFocus
+             (not the default fixedFocusWrap) so Up/Down reach HomeScene. -->
+        <Label
+            id="continueLabel"
+            translation="[80, 136]"
+            width="800"
+            height="32"
+            text="Continue watching"
+            horizAlign="left"
+            vertAlign="center"
+            color="0x9BA5AEFF"
+            font="font:SmallSystemFont"
+            visible="false"
+        />
+        <RowList
+            id="continueList"
+            translation="[80, 172]"
+            itemComponentName="ContinueItem"
+            itemSize="[1760, 112]"
+            rowItemSize="[[344, 112]]"
+            rowItemSpacing="[[10, 0]]"
+            itemSpacing="[0, 0]"
+            numRows="1"
+            showRowLabel="[false]"
+            showRowCounter="[false]"
+            rowFocusAnimationStyle="floatingFocus"
+            vertFocusAnimationStyle="floatingFocus"
+            drawFocusFeedback="true"
+            drawFocusFeedbackOnTop="true"
+            focusBitmapUri="pkg:/images/focus_amber.9.png"
+            visible="false"
+        />
+
         <!-- Recent row (GET /me/recents). Shown only when non-empty; while it is,
-             HomeScene moves the rail to y=280 and drops it to 6 rows.
+             HomeScene moves the rail to y=280 and drops it to 6 rows (both rows:
+             Recent at y=336, rail at y=444 with 5 rows).
              Horizontal, so a one-row MarkupGrid (MarkupList is vertical-only). -->
         <Label
             id="recentLabel"

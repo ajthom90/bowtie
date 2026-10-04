@@ -58,7 +58,9 @@ enum RecordingFixtures {
         canManage: Bool = true,
         rating: String = "",
         ruleId: Int64 = 0,
-        locked: Bool = false
+        locked: Bool = false,
+        start: String = "2026-10-05T00:00:00Z",
+        positionUpdatedAt: Date? = nil
     ) -> Recording {
         Recording(
             id: id,
@@ -68,7 +70,7 @@ enum RecordingFixtures {
             category: "Game show",
             channelId: 3,
             channelName: "5.1 KSTP",
-            start: TestFixtures.iso("2026-10-05T00:00:00Z"),
+            start: TestFixtures.iso(start),
             stop: TestFixtures.iso("2026-10-05T00:30:00Z"),
             state: state,
             partial: partial,
@@ -82,7 +84,8 @@ enum RecordingFixtures {
             canManage: canManage,
             rating: rating,
             ruleId: ruleId,
-            locked: locked
+            locked: locked,
+            positionUpdatedAt: positionUpdatedAt
         )
     }
 }

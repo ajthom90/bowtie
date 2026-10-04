@@ -176,6 +176,54 @@ func (s *Store) RecordingPosition(recordingID, userID int64) (int, error) {
 	return sec, err
 }
 
+// PlaybackPosition is where a user stopped watching a recording, and when
+// they last saved it.
+type PlaybackPosition struct {
+	Sec       int
+	UpdatedAt time.Time
+}
+
+// RecordingPositionInfo returns userID's saved position for a recording; the
+// zero value (UpdatedAt zero) when they never saved one.
+func (s *Store) RecordingPositionInfo(recordingID, userID int64) (PlaybackPosition, error) {
+	var p PlaybackPosition
+	var at string
+	err := s.db.QueryRow(`SELECT position_sec, updated_at FROM recording_positions WHERE recording_id = ? AND user_id = ?`,
+		recordingID, userID).Scan(&p.Sec, &at)
+	if err == sql.ErrNoRows {
+		return PlaybackPosition{}, nil
+	}
+	if err != nil {
+		return PlaybackPosition{}, err
+	}
+	p.UpdatedAt, err = parseTime(at)
+	return p, err
+}
+
+// RecordingPositions returns every position userID has saved, keyed by
+// recording ID (one query, for listing many recordings).
+func (s *Store) RecordingPositions(userID int64) (map[int64]PlaybackPosition, error) {
+	rows, err := s.db.Query(`SELECT recording_id, position_sec, updated_at FROM recording_positions WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]PlaybackPosition{}
+	for rows.Next() {
+		var id int64
+		var p PlaybackPosition
+		var at string
+		if err := rows.Scan(&id, &p.Sec, &at); err != nil {
+			return nil, err
+		}
+		if p.UpdatedAt, err = parseTime(at); err != nil {
+			return nil, err
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}
+
 func formatOptTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -286,7 +334,7 @@ func (s *Store) StopRecordingAt(id int64, stop time.Time) (bool, error) {
 // the recording since t (someone is watching it).
 func (s *Store) RecordingWatchedSince(id int64, t time.Time) (bool, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(1) FROM recording_positions WHERE recording_id = ? AND updated_at >= ?`,
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM recording_positions WHERE recording_id = ? AND position_sec > 0 AND updated_at >= ?`,
 		id, formatTime(t)).Scan(&n)
 	return n > 0, err
 }

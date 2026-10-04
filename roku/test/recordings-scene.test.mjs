@@ -100,7 +100,9 @@ test('position is saved every 15 s and on the way out, before the stop', () => {
     assert.match(timer, /duration="15"/);
     assert.match(timer, /repeat="true"/);
     assert.match(scene, /kind: "setRecordingPosition"/);
-    const stop = body(scene, 'sub stopPlayback(');
+    // stopPlayback = endPlayback (save + stop) then leavePlayback (where to).
+    assert.match(body(scene, 'sub stopPlayback('), /endPlayback\(\)[\s\S]*?leavePlayback\(\)/);
+    const stop = body(scene, 'sub endPlayback(');
     const save = stop.indexOf('savePosition(');
     const halt = stop.indexOf('control = "stop"');
     assert.ok(save >= 0 && halt > save, 'position must be read before the Video stops');

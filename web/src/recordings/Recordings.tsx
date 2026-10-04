@@ -20,6 +20,8 @@ import {
   type RecordingsTab,
 } from './recordingsModel'
 import { ruleSummary, stopShowConfirmText } from './seriesModel'
+import { ContinueWatching } from './ContinueWatching'
+import { selectContinueWatching, withPositionReset } from './continueModel'
 import styles from './Recordings.module.css'
 
 /** Refresh while open so states (recording → converting → ready) move on their own. */
@@ -33,13 +35,24 @@ type Props = {
   onAdmin?: () => void
   onAccount?: () => void
   onPlay: (rec: Recording) => void
+  /** Plays from the saved position without asking (Continue watching). */
+  onResume?: (rec: Recording) => void
 }
 
 function errorText(err: unknown, fallback: string): string {
   return err instanceof ApiError && err.message ? err.message : fallback
 }
 
-export function Recordings({ tab, onTab, onGuide, onMultiview, onAdmin, onAccount, onPlay }: Props) {
+export function Recordings({
+  tab,
+  onTab,
+  onGuide,
+  onMultiview,
+  onAdmin,
+  onAccount,
+  onPlay,
+  onResume,
+}: Props) {
   const { user, logout } = useAuth()
 
   return (
@@ -91,14 +104,26 @@ export function Recordings({ tab, onTab, onGuide, onMultiview, onAdmin, onAccoun
       </nav>
 
       <main className={styles.body}>
-        {isListTab(tab) ? <RecordingList key={tab} tab={tab} onPlay={onPlay} /> : <ShowsList />}
+        {isListTab(tab) ? (
+          <RecordingList key={tab} tab={tab} onPlay={onPlay} onResume={onResume ?? onPlay} />
+        ) : (
+          <ShowsList />
+        )}
       </main>
     </div>
   )
 }
 
 /** Upcoming / Recorded / Missed. */
-function RecordingList({ tab, onPlay }: { tab: RecordingListTab; onPlay: (rec: Recording) => void }) {
+function RecordingList({
+  tab,
+  onPlay,
+  onResume,
+}: {
+  tab: RecordingListTab
+  onPlay: (rec: Recording) => void
+  onResume: (rec: Recording) => void
+}) {
   const { client } = useAuth()
   const [rows, setRows] = useState<Recording[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -188,7 +213,20 @@ function RecordingList({ tab, onPlay }: { tab: RecordingListTab; onPlay: (rec: R
     )
   }
 
+  /** Remove from Continue watching: reset the position so it drops out everywhere. */
+  const onForget = (rec: Recording) => {
+    void act(
+      rec,
+      async () => {
+        await client.setRecordingPosition(rec.id, 0)
+        setRows((rs) => rs?.map((r) => (r.id === rec.id ? withPositionReset(r) : r)) ?? rs)
+      },
+      'Could not remove it from Continue watching.',
+    )
+  }
+
   const now = new Date()
+  const continueItems = tab === 'recorded' && rows ? selectContinueWatching(rows) : []
 
   return (
     <>
@@ -197,6 +235,12 @@ function RecordingList({ tab, onPlay }: { tab: RecordingListTab; onPlay: (rec: R
           {actionError}
         </p>
       ) : null}
+      <ContinueWatching
+        items={continueItems}
+        onPlay={onResume}
+        onRemove={onForget}
+        busyId={busyId}
+      />
 
       {loading && rows === null ? <p className={styles.status}>Loading…</p> : null}
 
@@ -210,6 +254,10 @@ function RecordingList({ tab, onPlay }: { tab: RecordingListTab; onPlay: (rec: R
       ) : null}
 
       {rows && rows.length === 0 ? <p className={styles.status}>{EMPTY_TAB_COPY[tab]}</p> : null}
+
+      {rows && rows.length > 0 && continueItems.length > 0 ? (
+        <h2 className={styles.listHeading}>All recordings</h2>
+      ) : null}
 
       {rows && rows.length > 0 ? (
         <ul className={styles.list}>

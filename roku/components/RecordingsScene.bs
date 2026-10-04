@@ -12,8 +12,13 @@
 ' or an automatic skip once per segment when Settings → Skip ads
 ' automatically is on. Down opens the sleep timer (bowtie.sleep); when it
 ' runs out, playback stops as Back does (position saved, back to the list).
+' Resume mode (resumeRecording set by Home's Continue watching): skip the
+' list, POST /play that recording and start at its saved position with no
+' Resume / Start over question; when playback ends (Back, finished, sleep,
+' error) the scene closes back to Home, which reloads Continue watching.
 
 import "pkg:/source/lib/Commercials.bs"
+import "pkg:/source/lib/ContinueWatching.bs"
 import "pkg:/source/lib/Recordings.bs"
 import "pkg:/source/lib/Registry.bs"
 import "pkg:/source/lib/SleepTimer.bs"
@@ -70,6 +75,8 @@ sub init()
     ' Sleep timer for this playback (never persisted) and the open menu's options.
     m.sleep = bowtie.sleep.newState()
     m.sleepOptions = []
+    ' Opened from Home's Continue watching: play one recording, then close.
+    m.resumeMode = false
 
     for each b in m.tabButtons
         b.observeField("buttonSelected", "onTabSelected")
@@ -114,15 +121,40 @@ sub onVisible()
         m.top.closed = false
         observeApi()
         m.restoreIndex = -1
+        resume = m.top.resumeRecording
+        m.top.resumeRecording = invalid
+        if resume <> invalid and resume.id <> invalid
+            startResume(resume)
+            return
+        end if
+        m.resumeMode = false
         currentTabButton().setFocus(true)
         loadTab()
     else
         ' Leaving (Back, sign-out): save the position before anything else.
         if m.playing <> invalid then stopPlayback()
+        m.resumeMode = false
+        ' Left while POST /play was pending: never start it on the next visit.
+        m.pendingPlayId = ""
         closeDialog()
         unobserveApi()
         setLoading(false)
     end if
+end sub
+
+' Resume mode: no list behind the spinner, and focus on the Group itself
+' (not a tab button, whose OK would load a tab) so onKeyEvent sees Back.
+sub startResume(r as object)
+    m.resumeMode = true
+    m.recordingList.visible = false
+    m.messageLabel.visible = false
+    m.top.setFocus(true)
+    requestPlay(r)
+end sub
+
+' After playback (or a failed start) in resume mode: back to Home.
+sub finishResume()
+    if m.top.visible = true then m.top.closed = true
 end sub
 
 ' ── Tabs and list ────────────────────────────────────────────────────────────
@@ -153,6 +185,7 @@ end sub
 
 sub onTabSelected()
     ' OK on a tab: show it and move into its list.
+    if m.resumeMode = true then return
     idx = focusedTabIndex()
     if idx >= 0 and idx <> m.tabIndex then selectTab(idx)
     if m.recordingList.visible = true then m.recordingList.setFocus(true)
@@ -361,6 +394,13 @@ sub onDialogButton()
             startPlayback(pb.rec, pb.url, 0)
         end if
     end if
+    resumeDialogDone()
+end sub
+
+' Resume mode: an error dialog with nothing playing (POST /play or the
+' Video failed) was dismissed: back to Home.
+sub resumeDialogDone()
+    if m.resumeMode = true and m.video.visible <> true and m.pendingPlayId = "" and m.dialog = invalid then finishResume()
 end sub
 
 sub sendAction(kind as string, params as object)
@@ -420,6 +460,11 @@ sub handlePlayResponse(resp as object)
     end if
     durationSec = data.durationSec
     if durationSec = invalid or durationSec <= 0 then durationSec = r.durationSec
+    if m.resumeMode = true
+        ' Continue watching: straight to the saved position, no question.
+        startPlayback(r, url, bowtie.continueWatching.startPosition(data.positionSec, r.positionSec, durationSec))
+        return
+    end if
     decision = bowtie.recordings.resumeDecision(data.positionSec, durationSec)
     if decision.kind = "ask"
         m.pendingPlayback = { rec: r, url: url, positionSec: decision.positionSec }
@@ -453,8 +498,14 @@ sub startPlayback(r as object, url as string, startSec as integer)
     m.playHintTimer.control = "start"
 end sub
 
-' Save (if moved), then stop and return to the list.
+' Save (if moved), then stop and return to the list (or Home in resume mode).
 sub stopPlayback()
+    endPlayback()
+    leavePlayback()
+end sub
+
+' Save (if moved) and stop the video.
+sub endPlayback()
     savePosition()
     m.positionTimer.control = "stop"
     resetPlaybackOverlays()
@@ -462,11 +513,18 @@ sub stopPlayback()
     m.video.control = "stop"
     m.video.content = invalid
     m.video.visible = false
-    if m.top.visible = true
-        ' Reload so a deleted/converted recording and the focus come back right.
-        loadTab()
-        currentTabButton().setFocus(true)
+end sub
+
+' Where playback ends up: Home (resume mode), else the reloaded list.
+sub leavePlayback()
+    if m.top.visible <> true then return
+    if m.resumeMode = true
+        finishResume()
+        return
     end if
+    ' Reload so a deleted/converted recording and the focus come back right.
+    loadTab()
+    currentTabButton().setFocus(true)
 end sub
 
 sub onVideoPosition()
@@ -510,7 +568,9 @@ sub onVideoState()
     else if st = "error"
         msg = m.video.errorMsg
         if msg = invalid then msg = ""
-        stopPlayback()
+        ' In resume mode the scene closes once this dialog is dismissed.
+        endPlayback()
+        if m.resumeMode <> true then leavePlayback()
         showDialog("error", "Playback failed", [msg], ["OK"])
     end if
 end sub
@@ -677,6 +737,7 @@ sub onDialogClosed()
     m.dialogMode = ""
     m.pendingPlayback = invalid
     if m.top.visible = true then restoreFocus()
+    resumeDialogDone()
 end sub
 
 sub closeDialog()
@@ -762,6 +823,9 @@ function onKeyEvent(key as string, press as boolean) as boolean
         m.top.closed = true
         return true
     end if
+
+    ' Resume mode, waiting on POST /play: only Back (above) does anything.
+    if m.resumeMode = true then return true
 
     if m.recordingList.hasFocus()
         if key = "options"

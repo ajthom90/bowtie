@@ -2243,6 +2243,13 @@ components:
         positionSec:
           type: integer
           description: The caller's resume position
+        positionUpdatedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the caller last saved a playback position for this recording
+            (PUT /recordings/{id}/position, including a reset to 0). Omitted
+            when they never did. Clients sort "Continue watching" by it.
         scheduledBy:
           type: string
         canManage:

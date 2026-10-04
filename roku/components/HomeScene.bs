@@ -5,20 +5,23 @@
 ' the guide has a current program; 409 → conflicts + Record anyway), Record
 ' series (POST /recording-rules → "Scheduled N episodes"), Cancel.
 ' A Recent row (recentList) sits above the rail when the server has watch
-' history. Focus: [Recordings | Settings] <-> recentList <-> rail.
+' history, and a Continue watching row (continueList: part-watched
+' recordings, bowtie.continueWatching) above that when there are any.
+' OK on a Continue item resumes it (resumeRecording -> AppScene ->
+' RecordingsScene plays it from its saved position, then comes back here,
+' which reloads everything); * offers Remove from Continue watching
+' (PUT position 0).
+' Focus: [Recordings | Settings] <-> continueList <-> recentList <-> rail
+' (hidden rows are skipped). Row placement: bowtie.continueWatching.homeLayout.
 
 import "pkg:/source/lib/GuideLogic.bs"
 import "pkg:/source/lib/Favorites.bs"
 import "pkg:/source/lib/Recordings.bs"
+import "pkg:/source/lib/ContinueWatching.bs"
 
 const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 const GUIDE_WINDOW_SECS = 4 * 3600
 const RECENTS_LIMIT = 8
-' Rail placement without / with the Recent row above it.
-const RAIL_Y = 160
-const RAIL_ROWS = 7
-const RAIL_Y_WITH_RECENTS = 280
-const RAIL_ROWS_WITH_RECENTS = 6
 
 sub init()
     m.titleLabel = m.top.findNode("titleLabel")
@@ -34,6 +37,8 @@ sub init()
     m.channelList = m.top.findNode("channelList")
     m.recentLabel = m.top.findNode("recentLabel")
     m.recentList = m.top.findNode("recentList")
+    m.continueLabel = m.top.findNode("continueLabel")
+    m.continueList = m.top.findNode("continueList")
     m.refreshTimer = m.top.findNode("refreshTimer")
 
     m.observing = false
@@ -41,6 +46,7 @@ sub init()
     m.pendingChannelsId = ""
     m.pendingGuideId = ""
     m.pendingRecentsId = ""
+    m.pendingContinueId = ""
     ' In-flight star toggles: request id -> {channelId, on}.
     m.pendingFavs = {}
     m.favSeq = 0
@@ -49,6 +55,17 @@ sub init()
     m.channels = []
     m.guideById = {}
     m.recents = []
+    ' Continue watching items (normalized recordings, display order).
+    m.continueItems = []
+    ' In-flight Remove from Continue watching: {id, recordingId}.
+    m.pendingRemove = invalid
+    m.removeSeq = 0
+    ' The recording a Continue item's * dialog acts on.
+    m.optionsRecording = invalid
+    ' Focus the Continue row when the list next shows (back from resuming).
+    m.focusContinueOnShow = false
+    ' Where focus goes when a dialog closes (invalid: the rail).
+    m.returnFocus = invalid
     m.busy = false
     m.lastLoadedAt = 0
     ' * dialog: menu shown, and the channel + current program it acts on.
@@ -68,6 +85,7 @@ sub init()
     m.retryButton.observeField("buttonSelected", "onRetryButton")
     m.channelList.observeField("itemSelected", "onItemSelected")
     m.recentList.observeField("itemSelected", "onRecentSelected")
+    m.continueList.observeField("rowItemSelected", "onContinueSelected")
     m.refreshTimer.observeField("fire", "onRefreshTimer")
     m.top.observeField("visible", "onVisible")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -101,6 +119,7 @@ sub onVisible()
         m.top.openSettings = false
         m.top.openRecordings = false
         m.top.selectedChannel = invalid
+        m.top.resumeRecording = invalid
         updateUserLabel()
         observeApi()
         startRefreshTimer()
@@ -110,6 +129,7 @@ sub onVisible()
         stopRefreshTimer()
         closeDialog()
         m.pendingRecord = invalid
+        m.pendingRemove = invalid
         unobserveApi()
         setLoading(false)
     end if
@@ -168,6 +188,30 @@ sub onRecentSelected()
     selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.recents[idx].channelId))
 end sub
 
+' OK on a Continue watching item: resume it (RecordingsScene plays it from
+' its saved position and comes back here, focusing this row again).
+sub onContinueSelected()
+    sel = m.continueList.rowItemSelected
+    if sel = invalid or sel.count() < 2 then return
+    r = continueItemAt(sel[1])
+    if r = invalid then return
+    m.focusContinueOnShow = true
+    m.top.resumeRecording = r
+end sub
+
+' The Continue item at a column, or invalid.
+function continueItemAt(idx as dynamic) as dynamic
+    if idx = invalid or idx < 0 or idx >= m.continueItems.count() then return invalid
+    return m.continueItems[idx]
+end function
+
+' Column of the focused Continue item (-1 when none).
+function focusedContinueIndex() as integer
+    f = m.continueList.rowItemFocused
+    if f = invalid or f.count() < 2 then return -1
+    return f[1]
+end function
+
 sub selectChannelAt(idx as dynamic)
     if idx = invalid or idx < 0 then return
     if m.channels = invalid or idx >= m.channels.count() then return
@@ -185,9 +229,10 @@ sub selectChannelAt(idx as dynamic)
     }
 end sub
 
-' Focus chain [Recordings | Settings] <-> recentList <-> rail, and * for the
-' focused rail item's dialog. Only rail focus takes *; PlayerScene is a
-' sibling, so its keys (where * belongs to the system menu) never reach here.
+' Focus chain [Recordings | Settings] <-> continueList <-> recentList <-> rail
+' (hidden rows skipped), and * for the focused rail item's or Continue item's
+' dialog. PlayerScene is a sibling, so its keys (where * belongs to the
+' system menu) never reach here.
 function onKeyEvent(key as string, press as boolean) as boolean
     if press <> true then return false
 
@@ -199,6 +244,8 @@ function onKeyEvent(key as string, press as boolean) as boolean
         if key = "up"
             if m.recentList.visible = true
                 m.recentList.setFocus(true)
+            else if m.continueList.visible = true
+                m.continueList.setFocus(true)
             else
                 focusHeader()
             end if
@@ -211,6 +258,34 @@ function onKeyEvent(key as string, press as boolean) as boolean
         if key = "down" and m.channelList.visible = true
             m.channelList.setFocus(true)
             return true
+        end if
+        if key = "up"
+            if m.continueList.visible = true
+                m.continueList.setFocus(true)
+            else
+                focusHeader()
+            end if
+            return true
+        end if
+        return false
+    end if
+
+    ' Continue watching: a single-row RowList (floatingFocus) lets Up/Down
+    ' through; Left/Right move along it.
+    if m.continueList.hasFocus()
+        if key = "options"
+            return openContinueOptions()
+        end if
+        if key = "down"
+            if m.recentList.visible = true
+                m.recentList.setFocus(true)
+                return true
+            end if
+            if m.channelList.visible = true
+                m.channelList.setFocus(true)
+                return true
+            end if
+            return false
         end if
         if key = "up"
             focusHeader()
@@ -232,6 +307,10 @@ function onKeyEvent(key as string, press as boolean) as boolean
         if key = "down"
             m.headerButton = m.recordingsButton
             if m.settingsButton.hasFocus() then m.headerButton = m.settingsButton
+            if m.continueList.visible = true
+                m.continueList.setFocus(true)
+                return true
+            end if
             if m.recentList.visible = true
                 m.recentList.setFocus(true)
                 return true
@@ -270,10 +349,22 @@ function openChannelOptions() as boolean
 
     m.optionsChannelId = ch.id
     m.optionsProgram = nowProgram
+    m.returnFocus = invalid
     m.menu = opts.buttons
     message = []
     if opts.note <> "" then message.push(opts.note)
     showDialog("channel", ch.guideNumber + "  " + ch.name, message, bowtie.recordings.buttonLabels(opts.buttons))
+    return true
+end function
+
+' * on a Continue watching item: Remove from Continue watching, Cancel.
+function openContinueOptions() as boolean
+    r = continueItemAt(focusedContinueIndex())
+    if r = invalid then return false
+    m.optionsRecording = r
+    m.returnFocus = m.continueList
+    m.menu = bowtie.continueWatching.optionButtons()
+    showDialog("continue", bowtie.recordings.titleLine(r), [bowtie.continueWatching.cardDetail(r)], bowtie.recordings.buttonLabels(m.menu))
     return true
 end function
 
@@ -285,7 +376,9 @@ sub onDialogButton()
     closeDialog()
     restoreRailFocus()
 
-    if mode = "channel"
+    if mode = "continue"
+        if bowtie.recordings.buttonId(menu, idx) = "remove" then sendRemoveContinue(m.optionsRecording)
+    else if mode = "channel"
         choice = bowtie.recordings.buttonId(menu, idx)
         if choice = "favorite"
             toggleFavorite(m.optionsChannelId)
@@ -387,6 +480,37 @@ sub handleRecordResponse(resp as object)
     showDialog("info", "Can't record", [msg], ["OK"])
 end sub
 
+' Remove from Continue watching: reset this account's saved position to 0
+' (the same PUT …/position playback uses); the item leaves the row once the
+' server agrees.
+sub sendRemoveContinue(r as dynamic)
+    task = m.top.apiTask
+    if task = invalid or r = invalid then return
+    m.removeSeq = m.removeSeq + 1
+    reqId = "home-continue-remove-" + m.removeSeq.toStr()
+    m.pendingRemove = { id: reqId, recordingId: r.id }
+    task.request = {
+        id: reqId
+        kind: "setRecordingPosition"
+        params: { id: r.id, positionSec: 0 }
+    }
+end sub
+
+sub handleRemoveResponse(resp as object)
+    pending = m.pendingRemove
+    m.pendingRemove = invalid
+    if resp.ok <> true
+        msg = "Couldn't remove it from Continue watching. Try again."
+        if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> "" then msg = resp.error.message
+        showDialog("info", "Can't remove", [msg], ["OK"])
+        return
+    end if
+    idx = focusedContinueIndex()
+    m.continueItems = bowtie.continueWatching.without(m.continueItems, pending.recordingId)
+    renderContinue(idx)
+    updateRows()
+end sub
+
 sub showDialog(mode as string, title as string, message as object, buttons as object)
     closeDialog()
     m.dialogMode = mode
@@ -422,7 +546,11 @@ sub closeDialog()
 end sub
 
 sub restoreRailFocus()
-    if m.channelList.visible = true
+    ' Back to the Continue row when its dialog closes (if it's still shown).
+    target = m.returnFocus
+    if target <> invalid and target.visible = true
+        target.setFocus(true)
+    else if m.channelList.visible = true
         m.channelList.setFocus(true)
     else
         focusHeader()
@@ -472,8 +600,11 @@ sub loadChannels()
     m.pendingChannelsId = "home-channels-" + gen.toStr()
     m.pendingGuideId = ""
     m.pendingRecentsId = ""
+    m.pendingContinueId = ""
     ' The reload is queued behind any PUT/DELETE, so it returns server truth.
     m.pendingFavs = {}
+    ' A timed refresh while on the Continue row lands back on it.
+    if m.continueList.hasFocus() then m.focusContinueOnShow = true
     showLoading()
 
     task.request = {
@@ -511,6 +642,19 @@ sub loadRecents()
     }
 end sub
 
+' Continue watching: this account's recorded list (ready + converting) with
+' positions; bowtie.continueWatching keeps the part-watched ones.
+sub loadContinue()
+    task = m.top.apiTask
+    if task = invalid then return
+    m.pendingContinueId = "home-continue-" + m.loadGen.toStr()
+    task.request = {
+        id: m.pendingContinueId
+        kind: "recordings"
+        params: { state: "recorded" }
+    }
+end sub
+
 sub onApiResponse()
     task = m.top.apiTask
     if task = invalid then return
@@ -528,6 +672,14 @@ sub onApiResponse()
     end if
     if resp.id = m.pendingRecentsId and m.pendingRecentsId <> ""
         handleRecentsResponse(resp)
+        return
+    end if
+    if resp.id = m.pendingContinueId and m.pendingContinueId <> ""
+        handleContinueResponse(resp)
+        return
+    end if
+    if m.pendingRemove <> invalid and resp.id = m.pendingRemove.id
+        handleRemoveResponse(resp)
         return
     end if
     if resp.id <> invalid and m.pendingFavs.DoesExist(resp.id)
@@ -556,6 +708,8 @@ sub handleChannelsResponse(resp as object)
     m.fav = bowtie.favorites.newState(resp.data)
     m.channels = m.fav.channels
     m.recents = []
+    m.continueItems = []
+    renderContinue(-1)
 
     if m.channels.count() = 0
         m.busy = false
@@ -568,6 +722,8 @@ sub handleChannelsResponse(resp as object)
     ' response shows the rail and both paint together. An older server
     ' without favorites has no /me/recents either.
     if m.fav.supported then loadRecents()
+    ' Continue watching likewise lands before the guide.
+    loadContinue()
     ' Fetch guide for now/next join.
     loadGuide()
 end sub
@@ -597,7 +753,42 @@ sub handleRecentsResponse(resp as object)
         end for
     end if
     m.recents = recents
-    updateRecentsRow()
+    updateRows()
+end sub
+
+sub handleContinueResponse(resp as object)
+    m.pendingContinueId = ""
+    ' Any error (404 from a server without recordings included) hides the row.
+    items = []
+    if resp.ok = true then items = bowtie.continueWatching.fromResponse(resp.data)
+    m.continueItems = items
+    renderContinue(-1)
+    updateRows()
+end sub
+
+' Rebuild the Continue row's cards from m.continueItems; keep focus near
+' column focusIdx when given (after a remove).
+sub renderContinue(focusIdx as integer)
+    root = CreateObject("roSGNode", "ContentNode")
+    n = m.continueItems.count()
+    ' No empty row: the RowList just has no content while the row is hidden.
+    if n > 0
+        row = root.createChild("ContentNode")
+        for each r in m.continueItems
+            item = row.createChild("ContentNode")
+            item.title = bowtie.recordings.titleLine(r)
+            item.addFields({
+                detail: bowtie.continueWatching.cardDetail(r)
+                progress: bowtie.continueWatching.progress(r)
+                recordingId: r.id
+            })
+        end for
+    end if
+    m.continueList.content = root
+    if focusIdx >= 0 and n > 0
+        if focusIdx >= n then focusIdx = n - 1
+        m.continueList.jumpToRowItem = [0, focusIdx]
+    end if
 end sub
 
 ' Rebuild the rail from m.channels and the last guide; keep focus on
@@ -610,11 +801,14 @@ sub renderRail(focusChannelId as dynamic)
     end if
 end sub
 
-' Show the Recent row only beside a visible rail with history; the rail
-' shifts down and loses a row to make room.
-sub updateRecentsRow()
-    show = (m.channelList.visible = true and m.recents.count() > 0)
-    if show
+' Show the Continue and Recent rows only beside a visible rail, each when it
+' has items; the rows below shift down and the rail loses rows to make room
+' (bowtie.continueWatching.homeLayout). Focus on a row being hidden moves
+' down to the next shown row.
+sub updateRows()
+    showContinue = (m.channelList.visible = true and m.continueItems.count() > 0)
+    showRecent = (m.channelList.visible = true and m.recents.count() > 0)
+    if showRecent
         root = CreateObject("roSGNode", "ContentNode")
         for each r in m.recents
             item = root.createChild("ContentNode")
@@ -622,17 +816,36 @@ sub updateRecentsRow()
             item.addFields({ guideNumber: r.guideNumber, channelId: r.channelId })
         end for
         m.recentList.content = root
-        m.channelList.translation = [80, RAIL_Y_WITH_RECENTS]
-        m.channelList.numRows = RAIL_ROWS_WITH_RECENTS
-    else
-        if m.recentList.hasFocus() and m.channelList.visible = true
-            m.channelList.setFocus(true)
-        end if
-        m.channelList.translation = [80, RAIL_Y]
-        m.channelList.numRows = RAIL_ROWS
     end if
-    m.recentLabel.visible = show
-    m.recentList.visible = show
+
+    if not showContinue and m.continueList.hasFocus()
+        if showRecent
+            m.recentList.setFocus(true)
+        else if m.channelList.visible = true
+            m.channelList.setFocus(true)
+        else
+            focusHeader()
+        end if
+    end if
+    if not showRecent and m.recentList.hasFocus()
+        if m.channelList.visible = true
+            m.channelList.setFocus(true)
+        else
+            focusHeader()
+        end if
+    end if
+
+    layout = bowtie.continueWatching.homeLayout(showContinue, showRecent)
+    m.continueLabel.translation = [80, layout.continueLabelY]
+    m.continueList.translation = [80, layout.continueY]
+    m.recentLabel.translation = [80, layout.recentLabelY]
+    m.recentList.translation = [80, layout.recentY]
+    m.channelList.translation = [80, layout.railY]
+    m.channelList.numRows = layout.railRows
+    m.continueLabel.visible = showContinue
+    m.continueList.visible = showContinue
+    m.recentLabel.visible = showRecent
+    m.recentList.visible = showRecent
 end sub
 
 function indexGuide(data as object) as object
@@ -751,7 +964,7 @@ sub showLoading()
     m.errorGroup.visible = false
     m.channelList.visible = false
     m.settingsButton.setFocus(true)
-    updateRecentsRow()
+    updateRows()
 end sub
 
 sub showEmpty()
@@ -761,7 +974,8 @@ sub showEmpty()
     m.errorGroup.visible = false
     m.channelList.visible = false
     m.settingsButton.setFocus(true)
-    updateRecentsRow()
+    m.focusContinueOnShow = false
+    updateRows()
 end sub
 
 sub showError(message as string)
@@ -771,7 +985,8 @@ sub showError(message as string)
     m.errorLabel.text = message
     m.channelList.visible = false
     m.retryButton.setFocus(true)
-    updateRecentsRow()
+    m.focusContinueOnShow = false
+    updateRows()
 end sub
 
 sub showList()
@@ -779,8 +994,16 @@ sub showList()
     m.emptyLabel.visible = false
     m.errorGroup.visible = false
     m.channelList.visible = true
-    updateRecentsRow()
-    m.channelList.setFocus(true)
+    updateRows()
+    ' Back from resuming a Continue item: land on that row (its first card
+    ' is the one just watched) if it's still there; else the rail.
+    if m.focusContinueOnShow = true and m.continueList.visible = true
+        m.continueList.jumpToRowItem = [0, 0]
+        m.continueList.setFocus(true)
+    else
+        m.channelList.setFocus(true)
+    end if
+    m.focusContinueOnShow = false
 end sub
 
 sub setLoading(on as boolean)

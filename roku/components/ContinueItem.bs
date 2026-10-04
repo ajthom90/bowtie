@@ -1,0 +1,62 @@
+' RowList item for HomeScene's Continue watching row: title, detail
+' ("Ice · 37 min left") and a progress bar (content.progress, 0..1).
+
+sub init()
+    m.cardBg = m.top.findNode("cardBg")
+    m.titleLabel = m.top.findNode("titleLabel")
+    m.detailLabel = m.top.findNode("detailLabel")
+    m.progressTrack = m.top.findNode("progressTrack")
+    m.progressFill = m.top.findNode("progressFill")
+    m.progress = 0.0
+end sub
+
+sub onItemContent()
+    content = m.top.itemContent
+    if content = invalid then return
+    title = content.title
+    if title = invalid then title = ""
+    detail = content.detail
+    if detail = invalid then detail = ""
+    m.titleLabel.text = title
+    m.detailLabel.text = detail
+    p = content.progress
+    if p = invalid then p = 0.0
+    m.progress = p
+    layoutProgress()
+end sub
+
+sub onSizeChanged()
+    w = m.top.width
+    h = m.top.height
+    if w = invalid or w <= 0 then w = 344
+    if h = invalid or h <= 0 then h = 112
+    m.cardBg.width = w
+    m.cardBg.height = h
+    m.titleLabel.width = w - 32
+    m.detailLabel.width = w - 32
+    m.progressTrack.width = w - 32
+    m.progressTrack.translation = [16, h - 18]
+    m.progressFill.translation = [16, h - 18]
+    layoutProgress()
+end sub
+
+sub layoutProgress()
+    p = m.progress
+    if p < 0 then p = 0
+    if p > 1 then p = 1
+    m.progressFill.width = m.progressTrack.width * p
+end sub
+
+sub onFocusChanged()
+    ' Focus ring comes from RowList focusBitmapUri; tint the title like the rail.
+    focused = false
+    if m.top.rowListHasFocus = true and m.top.focusPercent <> invalid and m.top.focusPercent > 0.5
+        focused = true
+    end if
+    if m.top.itemHasFocus = true then focused = true
+    if focused
+        m.titleLabel.color = "0xF0A428FF"
+    else
+        m.titleLabel.color = "0xF2EFE8FF"
+    end if
+end sub
