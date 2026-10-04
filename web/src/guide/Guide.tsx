@@ -98,8 +98,10 @@ export function Guide({
   /** Finished recordings, for the Continue watching row. */
   const [recorded, setRecorded] = useState<Recording[]>([])
   const [continueBusy, setContinueBusy] = useState<number | null>(null)
-  /** Hidden from the guide until something newer is watched; remembered per browser. */
-  const [continueHiddenAt, setContinueHiddenAt] = useState<string | null>(() => loadHiddenAt())
+  /** Hidden from the guide until something newer is watched; remembered per account in this browser. */
+  const [continueHiddenAt, setContinueHiddenAt] = useState<string | null>(() =>
+    user ? loadHiddenAt(user.id) : null,
+  )
 
   function chooseFilter(next: GuideFilter) {
     setFilter(next)
@@ -207,7 +209,7 @@ export function Guide({
 
   function hideContinue() {
     const stamp = hiddenStamp(continueItems)
-    saveHiddenAt(stamp)
+    if (user) saveHiddenAt(user.id, stamp)
     setContinueHiddenAt(stamp)
   }
 

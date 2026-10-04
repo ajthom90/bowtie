@@ -334,7 +334,7 @@ func (s *Store) StopRecordingAt(id int64, stop time.Time) (bool, error) {
 // the recording since t (someone is watching it).
 func (s *Store) RecordingWatchedSince(id int64, t time.Time) (bool, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(1) FROM recording_positions WHERE recording_id = ? AND updated_at >= ?`,
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM recording_positions WHERE recording_id = ? AND position_sec > 0 AND updated_at >= ?`,
 		id, formatTime(t)).Scan(&n)
 	return n > 0, err
 }

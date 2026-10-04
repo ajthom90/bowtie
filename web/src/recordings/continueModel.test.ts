@@ -206,13 +206,15 @@ describe('guide row hiding', () => {
     expect(guideRowVisible([a], 'garbage')).toBe(true)
   })
 
-  it('remembers the stamp per browser (and survives blocked storage)', () => {
+  it('remembers the stamp per user in this browser (and survives blocked storage)', () => {
     const m = new Map<string, string>()
     const kv = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) }
-    expect(loadHiddenAt(kv)).toBeNull()
-    saveHiddenAt('2026-10-03T12:00:00.000Z', kv)
-    expect(m.get(CONTINUE_HIDDEN_KEY)).toBe('2026-10-03T12:00:00.000Z')
-    expect(loadHiddenAt(kv)).toBe('2026-10-03T12:00:00.000Z')
+    expect(loadHiddenAt(7, kv)).toBeNull()
+    saveHiddenAt(7, '2026-10-03T12:00:00.000Z', kv)
+    expect(m.get(`${CONTINUE_HIDDEN_KEY}.7`)).toBe('2026-10-03T12:00:00.000Z')
+    expect(loadHiddenAt(7, kv)).toBe('2026-10-03T12:00:00.000Z')
+    // Another account on the same browser still sees its row.
+    expect(loadHiddenAt(8, kv)).toBeNull()
     const broken = {
       getItem: () => {
         throw new Error('blocked')
@@ -221,8 +223,8 @@ describe('guide row hiding', () => {
         throw new Error('blocked')
       },
     }
-    expect(loadHiddenAt(broken)).toBeNull()
-    expect(() => saveHiddenAt('x', broken)).not.toThrow()
-    expect(loadHiddenAt(null)).toBeNull()
+    expect(loadHiddenAt(7, broken)).toBeNull()
+    expect(() => saveHiddenAt(7, 'x', broken)).not.toThrow()
+    expect(loadHiddenAt(7, null)).toBeNull()
   })
 })

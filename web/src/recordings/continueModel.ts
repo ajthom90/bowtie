@@ -137,19 +137,24 @@ function defaultStorage(): KV | null {
   }
 }
 
-export function loadHiddenAt(storage: KV | null = defaultStorage()): string | null {
+/** Per account: two people sharing a browser each hide their own row. */
+function hiddenKey(userId: number): string {
+  return `${CONTINUE_HIDDEN_KEY}.${userId}`
+}
+
+export function loadHiddenAt(userId: number, storage: KV | null = defaultStorage()): string | null {
   if (!storage) return null
   try {
-    return storage.getItem(CONTINUE_HIDDEN_KEY)
+    return storage.getItem(hiddenKey(userId))
   } catch {
     return null
   }
 }
 
-export function saveHiddenAt(stamp: string, storage: KV | null = defaultStorage()): void {
+export function saveHiddenAt(userId: number, stamp: string, storage: KV | null = defaultStorage()): void {
   if (!storage) return
   try {
-    storage.setItem(CONTINUE_HIDDEN_KEY, stamp)
+    storage.setItem(hiddenKey(userId), stamp)
   } catch {
     // Private mode / blocked storage: the row just isn't hidden next time.
   }

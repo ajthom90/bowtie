@@ -141,3 +141,28 @@ func TestRecordingPositionsForUser(t *testing.T) {
 		t.Fatalf("no positions %+v err=%v", empty, err)
 	}
 }
+
+// Resetting a position to 0 ("Remove from Continue watching") isn't
+// watching: it doesn't shield the recording from clean-up.
+func TestRecordingWatchedSinceIgnoresReset(t *testing.T) {
+	s := openTestStore(t)
+	t0 := time.Date(2026, 10, 4, 1, 0, 0, 0, time.UTC)
+	id, err := s.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, ChannelName: "x", Title: "t",
+		Start: t0, Stop: t0.Add(time.Hour), State: store.RecReady, CreatedAt: t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Add(-time.Minute)
+	if err := s.SetRecordingPosition(id, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if w, err := s.RecordingWatchedSince(id, since); err != nil || w {
+		t.Fatalf("reset counted as watching: %v %v", w, err)
+	}
+	if err := s.SetRecordingPosition(id, 2, 300); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.RecordingWatchedSince(id, since); !w {
+		t.Fatal("a real position isn't counted")
+	}
+}
