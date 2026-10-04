@@ -209,12 +209,14 @@ struct MacMainView: View {
                 }
             }
 
-            let visible = model.filteredRows(at: now)
-            let favorites = visible.filter { $0.channel.isFavorite }
+            // The selected channel stays listed (dimmed) under a filter it
+            // doesn't match: dropping its row would clear the selection and stop playback.
+            let shown = model.filteredRows(at: now, keeping: keptChannelID)
+            let favorites = shown.rows.filter { $0.channel.isFavorite }
             if !favorites.isEmpty {
                 Section("Favorites") {
                     ForEach(favorites) { row in
-                        rowWithMenu(row, section: .favorites, model: model)
+                        rowWithMenu(row, section: .favorites, model: model, dimmed: row.id == shown.keptId)
                     }
                 }
             }
@@ -224,11 +226,12 @@ struct MacMainView: View {
                     Text(Self.emptyCopy)
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.dim)
-                } else if visible.isEmpty, model.filter != .all, case .loaded = model.state {
-                    GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                 } else {
-                    ForEach(visible.filter { !$0.channel.isFavorite }) { row in
-                        rowWithMenu(row, section: .all, model: model)
+                    ForEach(shown.rows.filter { !$0.channel.isFavorite }) { row in
+                        rowWithMenu(row, section: .all, model: model, dimmed: row.id == shown.keptId)
+                    }
+                    if shown.hasNoMatches, model.filter != .all, case .loaded = model.state {
+                        GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     }
                 }
             }
@@ -295,7 +298,12 @@ struct MacMainView: View {
         searchModel?.results.first { $0.id == id }
     }
 
-    private func rowWithMenu(_ row: ChannelListModel.Row, section: ChannelSection, model: ChannelListModel) -> some View {
+    private func rowWithMenu(
+        _ row: ChannelListModel.Row,
+        section: ChannelSection,
+        model: ChannelListModel,
+        dimmed: Bool = false
+    ) -> some View {
         channelRow(
             row.channel,
             nowNext: row.nowNext,
@@ -303,6 +311,8 @@ struct MacMainView: View {
             model: model,
             highlight: model.highlight(for: row, at: now)
         )
+            // Kept only because it's selected: it doesn't match the filter.
+            .opacity(dimmed ? 0.45 : 1)
             .contextMenu {
                 if model.supportsFavorites {
                     Button {
@@ -473,11 +483,20 @@ struct MacMainView: View {
         Task { await playerModel.play(channel: channel) }
     }
 
+    /// The channel the sidebar keeps listed under a category filter: the
+    /// selected one (Recent isn't filtered, so it never drops), else the one playing.
+    private var keptChannelID: Int64? {
+        if case .channel(let id, let section) = selection {
+            return section == .recent ? nil : id
+        }
+        return playerModel.currentChannel?.id
+    }
+
     /// Next / previous in the sidebar's order (favorites, then the rest), wrapping.
     /// Under a category filter it steps through the channels the sidebar shows.
     private func stepChannel(by delta: Int) {
         guard let model = listModel else { return }
-        let shown = model.filteredRows(at: now)
+        let shown = model.filteredRows(at: now, keeping: keptChannelID).rows
         let rows = shown.isEmpty ? model.rows : shown
         guard !rows.isEmpty else { return }
         let current = playerModel.currentChannel?.id
