@@ -113,7 +113,19 @@ public final class PlayerModel {
     // MARK: - Public API
 
     /// Session-replace play: cancel in-flight create, DELETE old, debounce, POST new.
+    ///
+    /// SharePlay: a participant picking another channel doesn't zap — it
+    /// parks the channel in `pendingGroupZap` for the player to confirm
+    /// leaving the group. A sharer's zap moves the group along.
     public func play(channel: Channel) async {
+        if groupRole == .participant {
+            guard channel.id == currentChannel?.id else {
+                pendingGroupZap = channel
+                return
+            }
+        } else {
+            joinSessionId = nil
+        }
         currentChannel = channel
         authFailureRetried = false
         await scheduleReplace()
@@ -129,6 +141,9 @@ public final class PlayerModel {
 
     /// Real leave only: DELETE active session and return to idle.
     public func stop() async {
+        leaveGroup()
+        groupPresentation = nil
+        sharedSessionId = nil
         replaceTask?.cancel()
         replaceTask = nil
         stopHeartbeat()
@@ -188,6 +203,144 @@ public final class PlayerModel {
         await scheduleReplace()
     }
 
+    // MARK: - SharePlay
+
+    public enum GroupRole: Equatable {
+        /// This device shared the channel; its zaps move the group.
+        case sharer
+        /// Joined someone else's share; follows the sharer.
+        case participant
+    }
+
+    public private(set) var groupRole: GroupRole?
+    /// A participant chose another channel; the player asks before leaving the group.
+    public private(set) var pendingGroupZap: Channel?
+    /// The group picked a channel to watch: the channel list opens the player.
+    private(set) var groupPresentation: GroupPresentation?
+    private(set) var group: (any WatchGroup)?
+    /// Sent as `joinSessionId` on every create while following a group.
+    private var joinSessionId: String?
+    /// Server session this device offered to share (marks its own group as ours).
+    private var sharedSessionId: String?
+
+    /// The activity for sharing what's playing, or nil when the server can't
+    /// do SharePlay (no `session.id` or `serverId` — an older server).
+    func makeWatchActivity() async -> WatchChannelActivity? {
+        guard let channel = currentChannel,
+              let sessionId = lastSession?.session?.id,
+              !sessionId.isEmpty,
+              let version = try? await client.version(),
+              let serverId = version.serverId,
+              !serverId.isEmpty,
+              currentChannel?.id == channel.id
+        else {
+            return nil
+        }
+        sharedSessionId = sessionId
+        return WatchChannelActivity(
+            serverId: serverId,
+            serverName: version.serverName ?? "",
+            channelId: channel.id,
+            channelName: channel.name,
+            sessionId: sessionId
+        )
+    }
+
+    /// A SharePlay session the app decided to join. Our own share: join and
+    /// keep playing. Someone else's: join and play their session.
+    func receiveGroup(_ newGroup: any WatchGroup) async {
+        if let group, group !== newGroup {
+            group.leave()
+        }
+        group = newGroup
+        pendingGroupZap = nil
+        newGroup.onActivityChange = { [weak self, weak newGroup] activity in
+            guard let self, let newGroup, self.group === newGroup, self.groupRole == .participant else {
+                return
+            }
+            Task { await self.follow(activity) }
+        }
+        newGroup.onEnd = { [weak self, weak newGroup] in
+            guard let self, let newGroup, self.group === newGroup else { return }
+            self.dropGroup()
+        }
+
+        let activity = newGroup.activity
+        if let sharedSessionId, activity.sessionId == sharedSessionId {
+            groupRole = .sharer
+            newGroup.join()
+            return
+        }
+        groupRole = .participant
+        newGroup.join()
+        await follow(activity)
+    }
+
+    /// Leave the group and play the channel the participant picked.
+    /// Pass the channel when the confirmation UI may already have cleared it.
+    func confirmGroupZap(_ channel: Channel? = nil) async {
+        guard let channel = channel ?? pendingGroupZap else { return }
+        leaveGroup()
+        await play(channel: channel)
+    }
+
+    func cancelGroupZap() {
+        pendingGroupZap = nil
+    }
+
+    func groupPresentationShown() {
+        groupPresentation = nil
+    }
+
+    /// Leave the SharePlay group (if any); playback continues.
+    func leaveGroup() {
+        group?.leave()
+        dropGroup()
+    }
+
+    private func dropGroup() {
+        group = nil
+        groupRole = nil
+        joinSessionId = nil
+        pendingGroupZap = nil
+    }
+
+    /// Participant: play the group's channel on the sharer's server session.
+    private func follow(_ activity: WatchChannelActivity) async {
+        if currentChannel?.id == activity.channelId,
+           joinSessionId == activity.sessionId,
+           lastSession?.session?.id == activity.sessionId {
+            return
+        }
+        let channel = currentChannel?.id == activity.channelId
+            ? currentChannel!
+            : Channel(id: activity.channelId, guideNumber: "", name: activity.channelName, logoUrl: "")
+        joinSessionId = activity.sessionId
+        pendingGroupZap = nil
+        currentChannel = channel
+        groupPresentation = GroupPresentation(channel: channel)
+        authFailureRetried = false
+        await scheduleReplace()
+
+        // The activity carries only id and name; fill in number and logo.
+        if channel.guideNumber.isEmpty,
+           let full = try? await client.channels().first(where: { $0.id == activity.channelId }),
+           currentChannel?.id == full.id {
+            currentChannel = full
+        }
+    }
+
+    /// Sharer: a new session (zap or quality change) moves the group to it.
+    private func moveGroupIfSharing(channel: Channel, session: CreatedSession) {
+        guard groupRole == .sharer, let group, let sessionId = session.session?.id, !sessionId.isEmpty else {
+            return
+        }
+        let activity = group.activity
+        guard activity.sessionId != sessionId || activity.channelId != channel.id else { return }
+        sharedSessionId = sessionId
+        group.update(activity.following(channelId: channel.id, channelName: channel.name, sessionId: sessionId))
+    }
+
     // MARK: - Replace machine
 
     private func scheduleReplace() async {
@@ -231,7 +384,8 @@ public final class PlayerModel {
         do {
             let session = try await client.createSession(
                 channelId: channel.id,
-                caps: effectiveCaps
+                caps: effectiveCaps,
+                joinSessionId: joinSessionId
             )
             guard isCurrent(gen) else {
                 // Orphaned success — tear down so we don't leak a tuner.
@@ -241,6 +395,7 @@ public final class PlayerModel {
             activeViewerId = session.viewerId
             lastSession = session
             state = .playing(session)
+            moveGroupIfSharing(channel: channel, session: session)
             startHeartbeat(viewerId: session.viewerId, playlistUrl: session.playlistUrl)
         } catch let error as BowtieError {
             guard isCurrent(gen) else { return }

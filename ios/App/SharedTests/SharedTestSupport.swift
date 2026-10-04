@@ -74,13 +74,15 @@ enum SharedFixtures {
     static func createdSessionJSON(
         viewerId: String = "viewer-1",
         playlistUrl: String = "/api/v1/stream/viewer-1/index.m3u8?token=abc",
-        channelName: String = "WABC"
+        channelName: String = "WABC",
+        sessionId: String? = nil
     ) -> Data {
         """
         {
           "viewerId": "\(viewerId)",
           "playlistUrl": "\(playlistUrl)",
           "session": {
+            \(sessionId.map { "\"id\": \"\($0)\"," } ?? "")
             "videoCodec": "h264",
             "profile": "high",
             "backend": "ffmpeg",

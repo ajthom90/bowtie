@@ -76,6 +76,7 @@ struct ChannelRailView: View {
                     }
                 }
                 .recordFlowAlerts(recordFlow)
+                .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
                 .sheet(isPresented: $showSettings) {
                     NavigationStack {
                         SettingsView(appModel: appModel)

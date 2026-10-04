@@ -19,6 +19,16 @@ final class MultiServerStoreTests: XCTestCase {
         XCTAssertEqual(store.loadRefreshToken(), "prod-tok", "switching back keeps that server's login")
     }
 
+    func testHasLoginForAnySavedServer() {
+        let store = InMemorySessionStore()
+        store.save(server: prod, refreshToken: "prod-tok")
+        store.save(server: local, refreshToken: nil)
+
+        XCTAssertTrue(store.hasLogin(for: prod), "inactive server keeps its login")
+        XCTAssertFalse(store.hasLogin(for: local))
+        XCTAssertFalse(store.hasLogin(for: URL(string: "http://unknown:8400")!))
+    }
+
     func testClearingServerKeepsSavedServersAndLogins() {
         let store = InMemorySessionStore()
         store.save(server: prod, refreshToken: "prod-tok")

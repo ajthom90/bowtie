@@ -19,6 +19,8 @@ private struct ChangePasswordBody: Encodable {
 private struct CreateSessionBody: Encodable {
     let channelId: Int64
     let caps: ClientCaps
+    /// SharePlay: join the sharer's server session. Omitted when nil.
+    let joinSessionId: String?
 }
 
 private struct ScheduleRecordingBody: Encodable {
@@ -202,11 +204,17 @@ public actor BowtieClient {
         )
     }
 
-    public func createSession(channelId: Int64, caps: ClientCaps) async throws -> CreatedSession {
+    /// - Parameter joinSessionId: SharePlay — join this server session (the
+    ///   sharer's `session.id`); the server starts a normal session if it can't.
+    public func createSession(
+        channelId: Int64,
+        caps: ClientCaps,
+        joinSessionId: String? = nil
+    ) async throws -> CreatedSession {
         try await send(
             path: "/api/v1/sessions",
             method: "POST",
-            body: CreateSessionBody(channelId: channelId, caps: caps),
+            body: CreateSessionBody(channelId: channelId, caps: caps, joinSessionId: joinSessionId),
             authorize: true,
             retryOn401: true
         )
@@ -384,6 +392,21 @@ public actor BowtieClient {
             authorize: true,
             retryOn401: true
         )
+    }
+
+    /// Server version and identity. Unauthenticated, with a short timeout:
+    /// SharePlay asks every saved server who it is.
+    public func version(timeout: TimeInterval = 4) async throws -> ServerVersion {
+        let url = ServerURL.resolve(path: "/api/v1/version", against: server)
+        var request = makeRequest(url: url, method: "GET", bodyData: nil, authorize: false)
+        request.timeoutInterval = timeout
+        let (data, response) = try await perform(request)
+        let body = try mapSuccess(data: data, response: response)
+        do {
+            return try decoder.decode(ServerVersion.self, from: body)
+        } catch {
+            throw BowtieError.network("decode failed: \(error.localizedDescription)")
+        }
     }
 
     public func me() async throws -> User {
