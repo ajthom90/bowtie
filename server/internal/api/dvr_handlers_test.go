@@ -414,3 +414,39 @@ func TestPlay1080Recording(t *testing.T) {
 		t.Fatalf("segment %d", seg.Code)
 	}
 }
+
+// Saving a position needs the same access as playing: a recording the
+// account can't watch (or one that isn't ready) can't be marked as watched,
+// which would also shield it from clean-up.
+func TestRecordingPositionNeedsPlayAccess(t *testing.T) {
+	e := newDVREnv(t)
+	mk := func(rating, state string) int64 {
+		id, err := e.st.CreateRecording(store.Recording{UserID: e.aliceID, ChannelID: e.ids["9.1"], ChannelName: "9.1 B",
+			Title: "x", Start: e.showAt, Stop: e.showAt.Add(time.Hour), State: store.RecScheduled, Rating: rating, CreatedAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := e.st.RecordingByID(id)
+		r.State = state
+		_ = e.st.UpdateRecording(r)
+		return id
+	}
+	mature := mk("TV-MA", store.RecReady)
+	pending := mk("TV-G", store.RecScheduled)
+	ok := mk("TV-G", store.RecReady)
+	if rr := doJSON(t, e.h, "PATCH", fmt.Sprintf("/api/v1/admin/users/%d", e.aliceID), map[string]any{"maxRating": "TV-PG"}, e.admin); rr.Code != http.StatusOK {
+		t.Fatalf("set rating %d %s", rr.Code, rr.Body.String())
+	}
+	put := func(id int64) int {
+		return doJSON(t, e.h, "PUT", fmt.Sprintf("/api/v1/recordings/%d/position", id), map[string]int{"positionSec": 120}, e.alice).Code
+	}
+	if c := put(mature); c != http.StatusForbidden {
+		t.Fatalf("blocked recording: %d, want 403", c)
+	}
+	if c := put(pending); c != http.StatusConflict {
+		t.Fatalf("not-ready recording: %d, want 409", c)
+	}
+	if c := put(ok); c != http.StatusNoContent {
+		t.Fatalf("allowed recording: %d, want 204", c)
+	}
+}

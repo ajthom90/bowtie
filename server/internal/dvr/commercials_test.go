@@ -468,3 +468,41 @@ func TestRedetectRefusals(t *testing.T) {
 		t.Fatalf("scheduled recording: err=%v, want ErrNotReady", err)
 	}
 }
+
+// Comskip exits 1 when it finds no commercials; if it also skips writing an
+// .edl that's still "none found", not a setup problem.
+func TestComskipNoneFoundWithoutEDL(t *testing.T) {
+	bin, _ := fakeComskip(t, "", 1, false)
+	got, err := (ComskipDetector{Path: bin, DataDir: t.TempDir()}).Detect(context.Background(), "/x/index.m3u8", t.TempDir())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v; want none and no error", got, err)
+	}
+}
+
+// "Find ads again" while a scan is running restarts it (the admin probably
+// just edited comskip.ini), and the new run's result is what's kept.
+func TestRedetectDuringARunRestartsIt(t *testing.T) {
+	e := newEnv(t)
+	r := e.readyRow(t, "show", t0.Add(-time.Hour))
+	d := newFakeDetector()
+	d.block = true
+	e.withDetector(t, d)
+	<-d.started
+	d.mu.Lock()
+	d.block, d.segs = false, []seg{c(300, 400)}
+	d.mu.Unlock()
+	if err := e.svc.Redetect(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, _ := e.st.RecordingByID(r.ID)
+		if reflect.DeepEqual(got.Commercials, []seg{c(300, 400)}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("commercials %v; the restart didn't happen", got.Commercials)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
