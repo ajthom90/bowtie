@@ -3,7 +3,8 @@ import BowtieKit
 
 /// Full-screen tvOS VOD player for a recording: native AVPlayerViewController
 /// transport (scrubbing, title from item metadata). Menu goes back; swipe
-/// down for the Sleep Timer.
+/// down for the Sleep Timer. In a commercial break, Skip ad is the player's
+/// contextual action (focused, so one click skips).
 struct TVRecordingPlayerView: View {
     @State private var controller: RecordingPlayerController
 
@@ -23,7 +24,8 @@ struct TVRecordingPlayerView: View {
             RecordingVideoContainer(
                 player: controller.player,
                 sleepTimer: sleepTimer,
-                sleepWarning: sleepTimer.isWarning
+                sleepWarning: sleepTimer.isWarning,
+                skipAd: controller.activeCommercial == nil ? nil : { controller.skipCommercial() }
             )
             .ignoresSafeArea()
 
@@ -43,6 +45,8 @@ struct TVRecordingPlayerView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
             }
         }
+        // Skipped ad (the Skip ad button is the player's contextual action).
+        .skipAdOverlay(controller, bottomInset: 60)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             controller.start()

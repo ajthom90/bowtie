@@ -7,6 +7,8 @@ import AppKit
 struct PlaybackActions {
     var togglePlay: (() -> Void)?
     var goLive: (() -> Void)?
+    /// Recording player inside a commercial break.
+    var skipAd: (() -> Void)?
     var channelUp: () -> Void
     var channelDown: () -> Void
     var toggleFullScreen: () -> Void
@@ -23,9 +25,9 @@ extension FocusedValues {
     }
 }
 
-/// Playback menu: Space play/pause, L live, ⌘↑ / ⌘↓ channels, ⌘F full screen.
+/// Playback menu: Space play/pause, L live, S skip ad, ⌘↑ / ⌘↓ channels, ⌘F full screen.
 ///
-/// Space and L have no modifier, and AppKit offers key equivalents to the
+/// Space, L and S have no modifier, and AppKit offers key equivalents to the
 /// menu before a text field sees the key. So each shortcut is attached only
 /// while its action exists; with no action the item has no key equivalent and
 /// typing a space or "l" into a field is untouched.
@@ -44,6 +46,10 @@ struct PlaybackCommands: Commands {
             Button("Go to Live") { actions?.goLive?() }
                 .keyboardShortcut(actions?.goLive == nil ? nil : KeyboardShortcut("l", modifiers: []))
                 .disabled(actions?.goLive == nil)
+
+            Button("Skip Ad") { actions?.skipAd?() }
+                .keyboardShortcut(actions?.skipAd == nil ? nil : KeyboardShortcut("s", modifiers: []))
+                .disabled(actions?.skipAd == nil)
 
             Divider()
 
