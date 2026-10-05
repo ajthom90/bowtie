@@ -1,6 +1,12 @@
 package store
 
-import "database/sql"
+import (
+	"cmp"
+	"database/sql"
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // Channel is a lineup entry from an HDHomeRun device.
 type Channel struct {
@@ -95,8 +101,9 @@ func (s *Store) SyncLineup(deviceID string, chans []Channel) error {
 	return tx.Commit()
 }
 
-// ListChannels returns channels ordered by device_id, guide_number.
-// If enabledOnly is true, only enabled channels are returned.
+// ListChannels returns channels in channel-number order (5.1, 5.2, 5.10,
+// 11.1), then by device_id. If enabledOnly is true, only enabled channels
+// are returned.
 func (s *Store) ListChannels(enabledOnly bool) ([]Channel, error) {
 	q := `
 		SELECT id, device_id, guide_number, name, enabled, epg_channel_id
@@ -121,7 +128,48 @@ func (s *Store) ListChannels(enabledOnly bool) ([]Channel, error) {
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if d := CompareGuideNumbers(out[i].GuideNumber, out[j].GuideNumber); d != 0 {
+			return d < 0
+		}
+		return out[i].DeviceID < out[j].DeviceID
+	})
+	return out, nil
+}
+
+// CompareGuideNumbers orders guide numbers ("9.1", "11.2", "5.10") part by
+// part, numerically; a part that isn't a number sorts after numeric ones,
+// then as text. Negative when a comes first.
+func CompareGuideNumbers(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		switch {
+		case i >= len(pa):
+			return -1
+		case i >= len(pb):
+			return 1
+		}
+		na, ea := strconv.Atoi(pa[i])
+		nb, eb := strconv.Atoi(pb[i])
+		switch {
+		case ea == nil && eb == nil:
+			if na != nb {
+				return cmp.Compare(na, nb)
+			}
+		case ea == nil:
+			return -1
+		case eb == nil:
+			return 1
+		default:
+			if d := strings.Compare(pa[i], pb[i]); d != 0 {
+				return d
+			}
+		}
+	}
+	return 0
 }
 
 // ChannelByID returns a channel by primary key.

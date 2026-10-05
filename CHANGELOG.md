@@ -5,6 +5,14 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Channels in number order.** Channel lists, the guide and the IPTV
+  playlist listed channels as text, so 11.1 came before 5.1. They're now in
+  channel-number order (5.1, 5.2, 5.10, 9.1, 11.1) in every app.
+
 ## [0.19.2] — 2026-10-05
 
 ### Added
