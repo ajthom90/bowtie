@@ -299,6 +299,10 @@ describe('notifications', () => {
     )
     expect(form.notifications).toEqual({
       url: 'https://ntfy.sh/bowtie',
+      username: '',
+      password: '',
+      passwordConfigured: false,
+      clearPassword: false,
       events: { recordingFailed: true, diskLow: true, recordingReady: true, guideFailed: true },
     })
   })
@@ -313,9 +317,49 @@ describe('notifications', () => {
     expect(buildSectionPayload('notifications', form)).toEqual({
       notifications: {
         url: 'https://ntfy.sh/bowtie',
+        username: '',
         events: { recordingFailed: false, diskLow: true, recordingReady: true, guideFailed: false },
       },
     })
+  })
+
+  it('maps the username and whether a password is saved (never the password)', () => {
+    const form = formFrom(
+      sampleSettings({
+        notifications: {
+          url: 'https://ntfy.example.com/alerts',
+          username: 'alice',
+          passwordConfigured: true,
+          events: DEFAULT_NOTIFICATION_EVENTS,
+        },
+      }),
+    )
+    expect(form.notifications?.username).toBe('alice')
+    expect(form.notifications?.passwordConfigured).toBe(true)
+    expect(form.notifications?.password).toBe('')
+  })
+
+  it('payload sends a typed password, trims the username, and omits an empty password', () => {
+    const form = withNotifications('https://ntfy.example.com/alerts')
+    form.notifications = { ...form.notifications!, username: ' alice ', password: 'p@ss:w/rd' }
+    expect(buildSectionPayload('notifications', form).notifications).toMatchObject({
+      username: 'alice',
+      password: 'p@ss:w/rd',
+    })
+    form.notifications = { ...form.notifications!, password: '' }
+    const n = buildSectionPayload('notifications', form).notifications!
+    expect('password' in n).toBe(false)
+    expect('clearPassword' in n).toBe(false)
+  })
+
+  it('payload asks to remove the saved password only when no new one is typed', () => {
+    const form = withNotifications('https://ntfy.example.com/alerts')
+    form.notifications = { ...form.notifications!, passwordConfigured: true, clearPassword: true }
+    expect(buildSectionPayload('notifications', form).notifications?.clearPassword).toBe(true)
+    form.notifications = { ...form.notifications!, password: 'new' }
+    const n = buildSectionPayload('notifications', form).notifications!
+    expect(n.password).toBe('new')
+    expect('clearPassword' in n).toBe(false)
   })
 
   it('empty url is allowed (turns notifications off)', () => {

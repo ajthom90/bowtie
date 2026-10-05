@@ -64,9 +64,12 @@ type settingsResponseJSON struct {
 }
 
 // settingsNotifyJSON is the admin notification section.
+// The password is write-only: only whether one is saved is returned.
 type settingsNotifyJSON struct {
-	URL    string                   `json:"url"`
-	Events settingsNotifyEventsJSON `json:"events"`
+	URL                string                   `json:"url"`
+	Username           string                   `json:"username"`
+	PasswordConfigured bool                     `json:"passwordConfigured"`
+	Events             settingsNotifyEventsJSON `json:"events"`
 }
 
 type settingsNotifyEventsJSON struct {
@@ -90,11 +93,17 @@ type putSettingsRequest struct {
 	Notifications   *putNotifySection    `json:"notifications"`
 }
 
-// putNotifySection: url is required (empty turns notifications off); events
-// and each event are optional (absent keeps the stored choice).
+// putNotifySection: url is required (empty turns notifications off and
+// forgets the credentials); events and each event are optional (absent keeps
+// the stored choice). username: absent keeps it. password: absent or empty
+// keeps it; clearPassword removes it. Credentials written into the URL
+// (user:pass@) are moved into username/password.
 type putNotifySection struct {
-	URL    *string `json:"url"`
-	Events *struct {
+	URL           *string `json:"url"`
+	Username      *string `json:"username,omitempty"`
+	Password      string  `json:"password,omitempty"`
+	ClearPassword bool    `json:"clearPassword,omitempty"`
+	Events        *struct {
 		RecordingFailed *bool `json:"recordingFailed,omitempty"`
 		DiskLow         *bool `json:"diskLow,omitempty"`
 		RecordingReady  *bool `json:"recordingReady,omitempty"`
@@ -381,7 +390,7 @@ func (s *Server) buildSettingsResponse() (settingsResponseJSON, error) {
 		},
 		HDHomeRun: settingsHDHomeRunJSON{Enabled: hdhrGuide.Enabled},
 		DVR:       settingsDVRJSON{PadStartSeconds: dvrCfg.PadStartSeconds, PadEndSeconds: dvrCfg.PadEndSeconds, Quality: dvrCfg.Quality},
-		Notifications: settingsNotifyJSON{URL: notif.URL, Events: settingsNotifyEventsJSON{
+		Notifications: settingsNotifyJSON{URL: notif.URL, Username: notif.Username, PasswordConfigured: notif.Password != "", Events: settingsNotifyEventsJSON{
 			RecordingFailed: notif.Events.RecordingFailed,
 			DiskLow:         notif.Events.DiskLow,
 			RecordingReady:  notif.Events.RecordingReady,
@@ -487,12 +496,39 @@ func (s *Server) validateAndBuildSettingsMap(req putSettingsRequest) (map[string
 			return nil, "notifications.url is required"
 		}
 		u := strings.TrimSpace(*n.URL)
+		username, password := n.Username, n.Password
 		if u != "" {
 			if err := notify.ValidateURL(u); err != nil {
 				return nil, "notifications.url " + err.Error()
 			}
+			// Keep secrets out of the URL, which the settings page shows.
+			if parsed, err := url.Parse(u); err == nil && parsed.User != nil {
+				if username == nil || strings.TrimSpace(*username) == "" {
+					name := parsed.User.Username()
+					username = &name
+				}
+				if pw, ok := parsed.User.Password(); ok && password == "" {
+					password = pw
+				}
+				parsed.User = nil
+				u = parsed.String()
+			}
 		}
 		kv[settings.KeyNotifyURL] = u
+		switch {
+		case u == "":
+			kv[settings.KeyNotifyUsername] = ""
+			kv[settings.KeyNotifyPassword] = ""
+		default:
+			if username != nil {
+				kv[settings.KeyNotifyUsername] = strings.TrimSpace(*username)
+			}
+			if password != "" {
+				kv[settings.KeyNotifyPassword] = password
+			} else if n.ClearPassword {
+				kv[settings.KeyNotifyPassword] = ""
+			}
+		}
 		if e := n.Events; e != nil {
 			for key, v := range map[string]*bool{
 				settings.KeyNotifyRecordingFailed: e.RecordingFailed,

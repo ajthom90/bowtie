@@ -1540,7 +1540,8 @@ paths:
       description: |
         A consistent snapshot of the SQLite database (accounts, channels,
         guide, recording list, rules and settings — not the recorded video).
-        It contains password hashes and the Schedules Direct password, so
+        It contains password hashes and the Schedules Direct and
+        notification passwords, so
         store it safely. Token-signing secrets and refresh tokens are removed.
         Restore: stop Bowtie, replace `bowtie.db` in the data directory with
         the file (removing any `-journal`/`-wal` file), start Bowtie; everyone
@@ -1611,9 +1612,13 @@ paths:
           required when `dvr` is present)
         - `dvr.quality` `"720p"` or `"1080p"` (optional; absent keeps the
           stored value)
-        - `notifications.url` empty (off) or an http(s) URL (required when
-          `notifications` is present); `notifications.events` and each event
-          are optional (absent keeps the stored choice)
+        - `notifications.url` empty (off, and forgets the username and
+          password) or an http(s) URL (required when `notifications` is
+          present); `notifications.events` and each event are optional
+          (absent keeps the stored choice); `notifications.username` absent
+          keeps it; `notifications.password` absent or empty keeps it and
+          `clearPassword: true` removes it. `user:pass@` in the URL is moved
+          into username/password (the stored URL has no credentials).
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -1641,8 +1646,10 @@ paths:
     post:
       summary: Send a test notification
       description: |
-        Sends "Bowtie test notification" to `url` from the body, or to the
-        saved `notifications.url` when the body (or its `url`) is absent, and
+        Sends "Bowtie test notification" to `url` from the body (with its
+        `username` and `password`; an empty password uses the saved one), or
+        to the saved destination and credentials when the body (or its
+        `url`) is absent, and
         reports how the target answered. The event choices and rate limit
         don't apply. One attempt, 5 s timeout, no retry. A failed delivery is
         still `200` with `ok: false`; `error` never contains the URL's path,
@@ -1661,6 +1668,14 @@ paths:
                 url:
                   type: string
                   description: Try this URL instead of the saved one (not saved)
+                username:
+                  type: string
+                  description: Basic-auth username to try with `url`
+                password:
+                  type: string
+                  description: |
+                    Basic-auth password or ntfy access token to try with
+                    `url`; empty uses the saved password
       responses:
         '200':
           description: Delivery result
@@ -2610,17 +2625,24 @@ components:
       description: |
         Admin notifications. Delivery follows the URL: a host containing
         "ntfy" (ntfy.sh or self-hosted) gets an ntfy message (plain-text body
-        with `Title`, `Priority` and `Tags` headers; `https://user:pass@host/topic`
-        sends Basic auth); `discord.com`/`discordapp.com` `/api/webhooks/...`
+        with `Title`, `Priority` and `Tags` headers); `discord.com`/`discordapp.com` `/api/webhooks/...`
         gets Discord JSON `{"content": "**title**\nmessage"}`; anything else
         gets a JSON POST `{event, title, message, recordingId?, time}` (time
         RFC 3339). 5 s timeout, one retry after 30 s on no answer, 429 or
         5xx. The same event is sent at most once per 6 hours (a failed
-        recording once per recording).
+        recording once per recording). A username and/or password is sent
+        as HTTP Basic auth to any target (an ntfy access token goes in the
+        password with an empty username).
       properties:
         url:
           type: string
           description: Empty turns notifications off; otherwise an http(s) URL
+        username:
+          type: string
+          description: Basic-auth username (empty when none)
+        passwordConfigured:
+          type: boolean
+          description: A password or token is saved (it is never returned)
         events:
           $ref: '#/components/schemas/SettingsNotificationEvents'
     SettingsNotificationEvents:
@@ -2649,7 +2671,21 @@ components:
       properties:
         url:
           type: string
-          description: Empty turns notifications off; otherwise an http(s) URL
+          description: |
+            Empty turns notifications off (and forgets the credentials);
+            otherwise an http(s) URL. `user:pass@` is moved into username
+            and password.
+        username:
+          type: string
+          description: Basic-auth username; absent keeps the saved one
+        password:
+          type: string
+          description: |
+            Basic-auth password or ntfy access token; absent or empty keeps
+            the saved one
+        clearPassword:
+          type: boolean
+          description: Remove the saved password (ignored when `password` is set)
         events:
           type: object
           description: Each event is optional; absent keeps the stored choice.

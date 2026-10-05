@@ -9,6 +9,7 @@ import {
   encoderOptions,
   lineupOptionLabel,
   settingsToForm,
+  NOTIFICATIONS_CREDENTIALS_HINT,
   NOTIFICATIONS_HINT,
   NOTIFICATIONS_PLACEHOLDER,
   NOTIFICATION_EVENT_OPTIONS,
@@ -219,7 +220,10 @@ export function Settings() {
     }
     setTestBusy(true)
     try {
-      const r = await client.testNotification(url)
+      const r = await client.testNotification(url, {
+        username: form.notifications.username.trim(),
+        password: form.notifications.clearPassword ? '' : form.notifications.password,
+      })
       setTestResult({ ok: r.ok, text: describeTestResult(r) })
     } catch (err) {
       setTestResult({
@@ -742,6 +746,78 @@ export function Settings() {
                 {notificationTargetLabel(form.notifications.url)}
               </p>
             ) : null}
+            <div className={styles.settingsFields}>
+              <label className={styles.label}>
+                Username
+                <input
+                  className={styles.input}
+                  type="text"
+                  value={form.notifications.username}
+                  onChange={(e) => {
+                    const username = e.target.value
+                    setTestResult(null)
+                    setForm((f) =>
+                      f && f.notifications
+                        ? { ...f, notifications: { ...f.notifications, username } }
+                        : f,
+                    )
+                  }}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={saving === 'notifications'}
+                />
+              </label>
+              <label className={styles.label}>
+                Password or access token
+                <input
+                  className={styles.input}
+                  type="password"
+                  value={form.notifications.password}
+                  onChange={(e) => {
+                    const password = e.target.value
+                    setTestResult(null)
+                    setForm((f) =>
+                      f && f.notifications
+                        ? { ...f, notifications: { ...f.notifications, password } }
+                        : f,
+                    )
+                  }}
+                  placeholder={
+                    form.notifications.passwordConfigured && !form.notifications.clearPassword
+                      ? PASSWORD_PLACEHOLDER_CONFIGURED
+                      : undefined
+                  }
+                  autoComplete="new-password"
+                  disabled={saving === 'notifications'}
+                />
+              </label>
+            </div>
+            <p className={styles.dim} style={{ margin: 0, fontSize: '0.8rem' }}>
+              {NOTIFICATIONS_CREDENTIALS_HINT}
+            </p>
+            {form.notifications.passwordConfigured ? (
+              <label
+                className={styles.label}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}
+              >
+                <input
+                  className={styles.toggle}
+                  type="checkbox"
+                  checked={form.notifications.clearPassword}
+                  onChange={(e) => {
+                    const clearPassword = e.target.checked
+                    setTestResult(null)
+                    setForm((f) =>
+                      f && f.notifications
+                        ? { ...f, notifications: { ...f.notifications, clearPassword } }
+                        : f,
+                    )
+                  }}
+                  disabled={saving === 'notifications'}
+                />
+                Remove the saved password
+              </label>
+            ) : null}
             {NOTIFICATION_EVENT_OPTIONS.map((opt) => (
               <label
                 key={opt.key}
@@ -842,7 +918,7 @@ function BackupCard() {
       <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
         Saves accounts, channels, guide matches, series rules, the recording list and these
         settings (not recorded video). It includes password hashes, the Schedules Direct
-        password and the notification URL, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
+        password and the notification URL and password, so keep it private. To restore, stop Bowtie, replace bowtie.db in the data
         folder with this file (delete any bowtie.db-journal or -wal file next to it) and
         start Bowtie; everyone signs in again.
       </p>

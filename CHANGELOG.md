@@ -5,6 +5,19 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Notifications: username and password.** Admin → Settings →
+  Notifications has **Username** and **Password or access token** fields
+  for a protected ntfy topic (or any URL behind a login); for an ntfy
+  access token, leave Username empty. The password is never sent back to
+  the page, an empty field keeps the saved one, and **Remove the saved
+  password** clears it. A `user:pass@` already in the URL keeps working
+  and moves into the fields the next time you save, so it's no longer
+  shown in the URL. **Send test** uses what's in the form.
+
 ## [0.19.2] — 2026-10-05
 
 ### Added

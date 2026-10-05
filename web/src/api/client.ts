@@ -748,14 +748,18 @@ export class ApiClient {
   }
 
   /**
-   * Admin: send a test notification to `url`, or to the saved URL when
+   * Admin: send a test notification to `url` (with `username`/`password`; an
+   * empty password uses the saved one), or to the saved destination when
    * omitted. Resolves with the delivery result (ok=false when it failed).
    */
-  async testNotification(url?: string): Promise<NotificationTestResult> {
+  async testNotification(
+    url?: string,
+    creds?: { username: string; password: string },
+  ): Promise<NotificationTestResult> {
     return this.request<NotificationTestResult>(
       'POST',
       '/api/v1/admin/notifications/test',
-      url ? { url } : {},
+      url ? { url, ...(creds ?? {}) } : {},
     )
   }
 
