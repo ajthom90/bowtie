@@ -187,3 +187,139 @@ func TestNotificationTestAdminOnly(t *testing.T) {
 		t.Fatalf("viewer: status = %d, want 403", rr.Code)
 	}
 }
+
+// authHook records the Basic auth of each request it receives.
+type authHook struct {
+	*httptest.Server
+	mu    sync.Mutex
+	auths []string
+}
+
+func newAuthHook(t *testing.T) *authHook {
+	t.Helper()
+	a := &authHook{}
+	a.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		a.mu.Lock()
+		if ok {
+			a.auths = append(a.auths, u+":"+p)
+		} else {
+			a.auths = append(a.auths, "(none)")
+		}
+		a.mu.Unlock()
+	}))
+	t.Cleanup(a.Close)
+	return a
+}
+
+func (a *authHook) last(t *testing.T) string {
+	t.Helper()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.auths) == 0 {
+		t.Fatal("no request received")
+	}
+	return a.auths[len(a.auths)-1]
+}
+
+func TestSettingsNotificationsCredentials(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+
+	rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{
+			"url": "https://ntfy.example.com/alerts", "username": " alice ", "password": "p@ss:w/rd",
+		},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "p@ss") {
+		t.Fatal("password must never be returned")
+	}
+	n := section(decodeSettings(t, rr), "notifications")
+	if n["username"] != "alice" || n["passwordConfigured"] != true {
+		t.Fatalf("notifications = %v", n)
+	}
+	if got, _ := prov.Notifications(); got.Username != "alice" || got.Password != "p@ss:w/rd" {
+		t.Fatalf("provider = %+v", got)
+	}
+
+	// Password absent or empty keeps it; username is updated.
+	rr = doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{"url": "https://ntfy.example.com/alerts", "username": "", "password": ""},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT keep status = %d", rr.Code)
+	}
+	if got, _ := prov.Notifications(); got.Username != "" || got.Password != "p@ss:w/rd" {
+		t.Fatalf("after keep = %+v", got)
+	}
+
+	// clearPassword removes it.
+	doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{"url": "https://ntfy.example.com/alerts", "clearPassword": true},
+	}, authHeader(tok))
+	if got, _ := prov.Notifications(); got.Password != "" {
+		t.Fatalf("after clearPassword = %+v", got)
+	}
+
+	// Turning notifications off (empty URL) forgets the credentials.
+	doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{"url": "https://ntfy.example.com/alerts", "username": "bob", "password": "x"},
+	}, authHeader(tok))
+	doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{"url": ""},
+	}, authHeader(tok))
+	if got, _ := prov.Notifications(); got.Username != "" || got.Password != "" {
+		t.Fatalf("after off = %+v", got)
+	}
+}
+
+func TestSettingsNotificationsMovesURLCredentialsIntoFields(t *testing.T) {
+	// user:pass@ in the URL would be shown back on the settings page.
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+	rr := doJSON(t, h, "PUT", "/api/v1/admin/settings", map[string]any{
+		"notifications": map[string]any{"url": "https://alice:s%40cret@ntfy.example.com/alerts"},
+	}, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	n := section(decodeSettings(t, rr), "notifications")
+	if n["url"] != "https://ntfy.example.com/alerts" || n["username"] != "alice" || n["passwordConfigured"] != true {
+		t.Fatalf("notifications = %v", n)
+	}
+	if got, _ := prov.Notifications(); got.Password != "s@cret" {
+		t.Fatalf("provider password = %q", got.Password)
+	}
+}
+
+func TestNotificationTestSendsCredentials(t *testing.T) {
+	h, st, prov := testAPIWithSettings(t, "", nil)
+	tok := adminAuth(t, h, st)
+	hook := newAuthHook(t)
+
+	// Saved destination: saved credentials.
+	if err := prov.SetNotifications(settings.Notifications{URL: hook.URL + "/saved", Username: "alice", Password: "saved-pw"}); err != nil {
+		t.Fatal(err)
+	}
+	if res := decodeTestResult(t, doJSON(t, h, "POST", "/api/v1/admin/notifications/test", nil, authHeader(tok))); !res.OK {
+		t.Fatalf("saved: %+v", res)
+	}
+	if got := hook.last(t); got != "alice:saved-pw" {
+		t.Fatalf("saved auth = %q", got)
+	}
+
+	// Form values (before saving); an empty password falls back to the saved one.
+	doJSON(t, h, "POST", "/api/v1/admin/notifications/test",
+		map[string]any{"url": hook.URL + "/try", "username": "bob", "password": "typed"}, authHeader(tok))
+	if got := hook.last(t); got != "bob:typed" {
+		t.Fatalf("typed auth = %q", got)
+	}
+	doJSON(t, h, "POST", "/api/v1/admin/notifications/test",
+		map[string]any{"url": hook.URL + "/try", "username": "bob"}, authHeader(tok))
+	if got := hook.last(t); got != "bob:saved-pw" {
+		t.Fatalf("fallback auth = %q", got)
+	}
+}

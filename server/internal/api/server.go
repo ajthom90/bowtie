@@ -51,7 +51,7 @@ type Deps struct {
 
 // NotificationSender delivers one notification now (*notify.Service).
 type NotificationSender interface {
-	Send(ctx context.Context, rawURL string, ev notify.Event) notify.Result
+	Send(ctx context.Context, dest notify.Destination, ev notify.Event) notify.Result
 }
 
 // Server is the HTTP API surface.

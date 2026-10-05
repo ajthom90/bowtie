@@ -61,8 +61,13 @@ export interface SettingsResponse {
   hdhomerun?: { enabled: boolean }
   /** Recording padding (absent on older servers; edited on the Recordings tab). */
   dvr?: { padStartSeconds: number; padEndSeconds: number }
-  /** Admin notifications (absent on older servers). */
-  notifications?: { url: string; events: NotificationEvents }
+  /** Admin notifications (absent on older servers). The password is write-only. */
+  notifications?: {
+    url: string
+    username?: string
+    passwordConfigured?: boolean
+    events: NotificationEvents
+  }
 }
 
 export interface SDLineupSummary {
@@ -97,7 +102,18 @@ export interface SettingsFormState {
   /** null when the server has no HDHomeRun guide setting (toggle hidden). */
   hdhomerun: { enabled: boolean } | null
   /** null when the server has no notifications (card hidden). */
-  notifications: { url: string; events: NotificationEvents } | null
+  notifications: NotificationsFormState | null
+}
+
+/** Notification form state; password is write-only (starts empty). */
+export interface NotificationsFormState {
+  url: string
+  username: string
+  password: string
+  passwordConfigured: boolean
+  /** Remove the saved password on save (when none is typed). */
+  clearPassword: boolean
+  events: NotificationEvents
 }
 
 export type PutSettingsRequest = {
@@ -106,7 +122,13 @@ export type PutSettingsRequest = {
   transcode?: { encoder: string; allowHevc: boolean }
   streaming?: { bufferMinutes: number; adaptive: boolean }
   hdhomerun?: { enabled: boolean }
-  notifications?: { url: string; events: NotificationEvents }
+  notifications?: {
+    url: string
+    username?: string
+    password?: string
+    clearPassword?: boolean
+    events: NotificationEvents
+  }
 }
 
 /** Seed form state from a GET response. Password field starts empty. */
@@ -135,6 +157,10 @@ export function settingsToForm(s: SettingsResponse): SettingsFormState {
     notifications: s.notifications
       ? {
           url: s.notifications.url ?? '',
+          username: s.notifications.username ?? '',
+          password: '',
+          passwordConfigured: Boolean(s.notifications.passwordConfigured),
+          clearPassword: false,
           events: { ...DEFAULT_NOTIFICATION_EVENTS, ...s.notifications.events },
         }
       : null,
@@ -186,9 +212,21 @@ export const NOTIFICATIONS_PLACEHOLDER = 'https://ntfy.sh/your-topic'
 export const NOTIFICATIONS_HINT =
   'Works with ntfy (free phone app), Discord webhooks, or any URL that accepts a JSON POST.'
 
+export const NOTIFICATIONS_CREDENTIALS_HINT =
+  'Optional, for a protected ntfy topic (or any URL behind a login). ' +
+  'For an ntfy access token, leave Username empty and paste the token as the password.'
+
 export function buildNotificationsPayload(form: SettingsFormState): PutSettingsRequest {
-  const n = form.notifications ?? { url: '', events: DEFAULT_NOTIFICATION_EVENTS }
-  return { notifications: { url: n.url.trim(), events: { ...n.events } } }
+  const n = form.notifications
+  if (!n) return { notifications: { url: '', events: { ...DEFAULT_NOTIFICATION_EVENTS } } }
+  const out: NonNullable<PutSettingsRequest['notifications']> = {
+    url: n.url.trim(),
+    username: n.username.trim(),
+    events: { ...n.events },
+  }
+  if (n.password !== '') out.password = n.password
+  else if (n.clearPassword) out.clearPassword = true
+  return { notifications: out }
 }
 
 /** Client-side hint: empty (off) or an http(s) URL with a host. */

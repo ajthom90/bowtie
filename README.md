@@ -272,7 +272,9 @@ Notifications**, paste a URL, pick the events, **Save**, and **Send test**:
 
 - **ntfy** (free phone app): `https://ntfy.sh/your-topic` (pick a hard-to-guess
   topic), or your own ntfy server — any host with `ntfy` in its name. For a
-  protected topic use `https://user:pass@ntfy.example.com/topic`.
+  protected topic fill in **Username** and **Password**; for an ntfy access
+  token leave Username empty and paste the token as the password. The
+  password is never shown again (Remove the saved password clears it).
 - **Discord**: a channel webhook URL (`https://discord.com/api/webhooks/…`).
 - **Anything else** gets a JSON POST:
   `{"event": "recordingFailed", "title": "…", "message": "…", "recordingId": 42, "time": "2026-10-04T18:30:00Z"}`
@@ -294,7 +296,7 @@ mappings, series rules, the recording list and settings. It is taken safely
 while Bowtie runs. Recorded video is not included — back up
 `<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
 The file holds password hashes, the Schedules Direct password and the
-notification URL; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
+notification URL and password; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
 server makes new keys and everyone signs in again.
 
 The snapshot is written next to `bowtie.db` while the download is prepared
