@@ -1,0 +1,36 @@
+<Page
+    x:Class="BowtieXbox.Pages.PlayerPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="Black">
+    <Grid XYFocusKeyboardNavigation="Enabled">
+        <!-- Video fills the screen; text stays inside the TV-safe margin. -->
+        <MediaPlayerElement x:Name="PlayerElement" AreTransportControlsEnabled="False" Stretch="Uniform"
+                            IsTabStop="False" />
+
+        <Grid Margin="{StaticResource SafeMargin}">
+            <Border x:Name="TitleBar" VerticalAlignment="Top" HorizontalAlignment="Left"
+                    Background="#B0101418" CornerRadius="6" Padding="20,10">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Border Background="#E53935" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+                        <TextBlock Text="LIVE" FontSize="18" FontWeight="Bold" />
+                    </Border>
+                    <TextBlock x:Name="TitleLabel" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="Overlay" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Background="#E0101418" CornerRadius="8" Padding="40,32" MaxWidth="1000">
+                <StackPanel Spacing="16">
+                    <ProgressRing x:Name="Spinner" Width="56" Height="56" IsActive="True" />
+                    <TextBlock x:Name="OverlayTitle" Style="{StaticResource TitleText}" FontSize="32" TextAlignment="Center" />
+                    <TextBlock x:Name="OverlayBody" Style="{StaticResource BodyText}" TextAlignment="Center" />
+                    <StackPanel x:Name="OverlayButtons" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center">
+                        <Button x:Name="RetryButton" Content="Try again" Style="{StaticResource TvButton}" Click="OnRetry" />
+                        <Button x:Name="BackButton" Content="Back to channels" Style="{StaticResource TvButton}" Click="OnBack" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

@@ -1,0 +1,109 @@
+name: Xbox
+
+# Bowtie for Xbox: the UWP app in windows/Bowtie.Xbox (also runs on Windows
+# PCs). Classic UWP compiled with .NET Native, so it needs Visual Studio's
+# msbuild with the UWP workload; windows-2025 ships VS 2022 with
+# Microsoft.VisualStudio.Workload.Universal and the Windows SDK 10.0.26100.
+# Kept apart from windows.yml so desktop builds and releases aren't slowed
+# by the (long) .NET Native compile.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/Bowtie.Core/**"
+      - "windows/Bowtie.Xbox/**"
+      - "windows/Bowtie.App/Assets/**"
+      - "windows/scripts/package-xbox.ps1"
+      - ".github/workflows/xbox.yml"
+  pull_request:
+    paths:
+      - "windows/Bowtie.Core/**"
+      - "windows/Bowtie.Xbox/**"
+      - "windows/Bowtie.App/Assets/**"
+      - "windows/scripts/package-xbox.ps1"
+      - ".github/workflows/xbox.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  xbox:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # Fast failure: Bowtie.Core's .NET Standard 2.0 build (what UWP consumes).
+      - name: Build Bowtie.Core for .NET Standard 2.0
+        working-directory: windows
+        run: dotnet build Bowtie.Core/Bowtie.Core.csproj -c Release -f netstandard2.0
+
+      # Fast failure for C# / XAML errors before the long .NET Native compile.
+      - name: Compile the app (Debug, no .NET Native)
+        working-directory: windows
+        run: msbuild Bowtie.Xbox/Bowtie.Xbox.csproj /restore /m /v:minimal /nologo /p:Configuration=Debug /p:Platform=x64 /p:AppxPackageSigningEnabled=false
+
+      - name: Version
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          $ref = $env:REF_NAME
+          if ($env:REF_TYPE -eq "tag" -and $ref -match '^v(\d+)\.(\d+)\.(\d+)([-+][0-9A-Za-z.-]+)?$') {
+            $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+            $label = $ref.Substring(1)
+          } else {
+            $version = "0.0.$env:RUN_NUMBER"
+            $label = "dev.$env:RUN_NUMBER"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "LABEL=$label" >> $env:GITHUB_ENV
+          Write-Host "Version $version, files labelled $label"
+
+      # Release (.NET Native) build, bundled and signed. Signs with the
+      # WINDOWS_PFX_B64 / WINDOWS_PFX_PASSWORD secrets when set, otherwise
+      # with a self-signed CN=Bowtie certificate made for this build.
+      - name: Build, package and sign
+        shell: pwsh
+        env:
+          WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: ./windows/scripts/package-xbox.ps1 -Version $env:VERSION -Label $env:LABEL
+
+      - name: Check the package
+        shell: pwsh
+        run: |
+          $dist = "windows/out-xbox/dist"
+          $bundle = Get-ChildItem $dist -Filter "bowtie-xbox-$env:LABEL.*bundle" | Select-Object -First 1
+          if (-not $bundle) { throw "no bundle in $dist" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($bundle.FullName)
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            $names | Write-Host
+            if (-not ($names | Where-Object { $_ -match '_x64\.(msix|appx)$' })) { throw "bundle is missing the x64 package" }
+          } finally { $zip.Dispose() }
+          $deps = Get-ChildItem "$dist/Dependencies/x64" -Filter *.appx -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }
+          $deps | Write-Host
+          foreach ($want in @("Microsoft.NET.Native.Framework", "Microsoft.NET.Native.Runtime", "Microsoft.VCLibs")) {
+            if (-not ($deps | Where-Object { $_ -like "$want*" })) { throw "Dependencies/x64 is missing $want" }
+          }
+          # Informational: a self-signed certificate isn't trusted on the runner.
+          $sig = Get-AuthenticodeSignature $bundle.FullName
+          Write-Host "Signature: $($sig.Status) $($sig.StatusMessage)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bowtie-xbox
+          path: windows/out-xbox/dist/
+          if-no-files-found: error
+          retention-days: 14

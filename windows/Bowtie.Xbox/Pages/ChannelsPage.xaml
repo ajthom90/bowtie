@@ -1,0 +1,81 @@
+<Page
+    x:Class="BowtieXbox.Pages.ChannelsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BowtieXbox.Pages">
+    <Grid Margin="{StaticResource SafeMargin}" XYFocusKeyboardNavigation="Enabled">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Live TV" Style="{StaticResource TitleText}" />
+                <TextBlock x:Name="UserLabel" Style="{StaticResource BodyText}" FontSize="20" Foreground="{StaticResource BowtieMuted}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                <Button x:Name="RefreshButton" Content="Refresh" Style="{StaticResource TvButton}" Click="OnRefresh" />
+                <Button x:Name="SignOutButton" Content="Sign out" Style="{StaticResource TvButton}" Click="OnSignOut" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock Grid.Row="1" x:Name="HintLabel" Style="{StaticResource BodyText}" FontSize="18"
+                   Foreground="{StaticResource BowtieMuted}" Margin="0,0,0,8"
+                   Text="A to watch · Y to add or remove a favorite · B to go back" />
+
+        <Grid Grid.Row="2">
+            <ListView x:Name="ChannelList"
+                      SelectionMode="None"
+                      IsItemClickEnabled="True"
+                      ItemClick="OnChannelClick"
+                      PreviewKeyDown="OnListKeyDown"
+                      XYFocusUp="{x:Bind RefreshButton}"
+                      TabIndex="0">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="16,10" />
+                        <Setter Property="Margin" Value="0,2" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:ChannelItem">
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="320" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Star}" FontSize="26" Foreground="#FFD54F" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Number}" FontSize="28" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind Name}" FontSize="26" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="No signal" FontSize="18" Foreground="#FF8A80" Visibility="{x:Bind NoSignalVisibility}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="{x:Bind Now}" FontSize="22" TextTrimming="CharacterEllipsis" />
+                                <ProgressBar Value="{x:Bind Progress}" Maximum="100" Height="4" MaxWidth="480"
+                                             HorizontalAlignment="Left" Width="480" Visibility="{x:Bind ProgressVisibility}" />
+                                <TextBlock Text="{x:Bind Next}" FontSize="18" Foreground="{StaticResource BowtieMuted}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <StackPanel x:Name="StatusPanel" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+                <ProgressRing x:Name="Spinner" Width="64" Height="64" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource BodyText}" TextAlignment="Center" />
+                <Button x:Name="RetryButton" Content="Try again" Style="{StaticResource TvButton}"
+                        HorizontalAlignment="Center" Click="OnRefresh" Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Page>
