@@ -17,6 +17,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   password** clears it. A `user:pass@` already in the URL keeps working
   and moves into the fields the next time you save, so it's no longer
   shown in the URL. **Send test** uses what's in the form.
+- **Mac app: SharePlay.** Watch Together works in the Mac app too, with
+  iPhone, iPad, Apple TV or another Mac on a FaceTime call: the SharePlay
+  button in the player's top bar shares the channel, and joining a group
+  opens its channel and follows the sharer's channel changes.
 - **`BOWTIE_HDHOMERUN_GUIDE=off`** stops a server from downloading the free
   HDHomeRun guide, so a test or second server sharing a tuner doesn't use
   up the downloads your main server needs.
