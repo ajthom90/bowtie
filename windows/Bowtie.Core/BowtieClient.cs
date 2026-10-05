@@ -21,6 +21,9 @@ public sealed class BowtieClient
 {
     private const string JsonMedia = "application/json";
 
+    /// <summary>HttpMethod.Patch is missing from .NET Standard 2.0; equal to it on .NET 8.</summary>
+    private static readonly HttpMethod Patch = new("PATCH");
+
     private readonly ITokenStore _store;
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -44,11 +47,16 @@ public sealed class BowtieClient
     public event EventHandler? SessionEnded;
 
     public static HttpClient CreateDefaultHttpClient() =>
+#if NETSTANDARD2_0
+        // UWP: the platform handler (no SocketsHttpHandler on .NET Standard 2.0).
+        new()
+#else
         new(new SocketsHttpHandler
         {
             ConnectTimeout = TimeSpan.FromSeconds(10),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         })
+#endif
         {
             // Tuning a channel can take several seconds; leave room.
             Timeout = TimeSpan.FromSeconds(45),
@@ -214,7 +222,7 @@ public sealed class BowtieClient
     /// <summary>Keep a recording from automatic deletion, or stop keeping it.</summary>
     public async Task<Recording> SetRecordingProtectedAsync(long id, bool isProtected, CancellationToken ct = default) =>
         BowtieJson.Deserialize<Recording>(
-            await AuthedAsync(HttpMethod.Patch, $"/api/v1/recordings/{Id(id)}",
+            await AuthedAsync(Patch, $"/api/v1/recordings/{Id(id)}",
                 BowtieJson.Serialize(new ProtectRequest(isProtected)), ct).ConfigureAwait(false));
 
     // ── Single-flight refresh ───────────────────────────────────────────────
@@ -372,7 +380,7 @@ public sealed class BowtieClient
         {
             request.Content = new StringContent(json, Encoding.UTF8, JsonMedia);
         }
-        else if (method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch)
+        else if (method == HttpMethod.Post || method == HttpMethod.Put || method == Patch)
         {
             request.Content = new StringContent("", Encoding.UTF8, JsonMedia);
         }

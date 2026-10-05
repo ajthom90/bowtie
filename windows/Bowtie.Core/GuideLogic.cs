@@ -30,7 +30,7 @@ public static class GuideLogic
         if (program == null) return 0;
         var total = (program.Stop - program.Start).TotalMilliseconds;
         if (total <= 0) return 0;
-        return Math.Clamp((at - program.Start).TotalMilliseconds / total, 0, 1);
+        return Shim.Clamp((at - program.Start).TotalMilliseconds / total, 0, 1);
     }
 
     /// <summary>
@@ -40,7 +40,7 @@ public static class GuideLogic
     public static IReadOnlyList<string> AllowedProfiles(string? maxQuality)
     {
         if (string.IsNullOrEmpty(maxQuality)) return QualityLadder;
-        var idx = IndexOf(QualityLadder, maxQuality);
+        var idx = IndexOf(QualityLadder, maxQuality!);
         return idx < 0 ? QualityLadder : QualityLadder.Skip(idx).ToList();
     }
 

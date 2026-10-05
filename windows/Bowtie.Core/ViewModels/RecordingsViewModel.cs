@@ -170,8 +170,12 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
 
     private async Task DrainSavesAsync()
     {
-        await foreach (var (id, sec, done) in _saves.Reader.ReadAllAsync().ConfigureAwait(false))
+        // WaitToRead/TryRead rather than ReadAllAsync, which .NET Standard 2.0 lacks.
+        var reader = _saves.Reader;
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
         {
+            if (!reader.TryRead(out var item)) continue;
+            var (id, sec, done) = item;
             try
             {
                 await _client.SaveRecordingPositionAsync(id, sec).ConfigureAwait(false);

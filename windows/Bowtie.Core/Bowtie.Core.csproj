@@ -3,10 +3,17 @@
   <!--
     Platform-neutral Bowtie client: API client, models, pure logic and view
     models. No Windows references, so it builds and tests on macOS and Linux
-    as well as Windows. The WinUI app (Bowtie.App) is the only Windows part.
+    as well as Windows.
+
+    Two targets:
+      net8.0          the WinUI desktop app (Bowtie.App) and the tests
+      netstandard2.0  the UWP Xbox app (Bowtie.Xbox): classic UWP compiles
+                      with .NET Native, which consumes .NET Standard 2.0
+    APIs missing from .NET Standard 2.0 are filled in by Compat.cs and by
+    PolySharp (compile-time only: no runtime dependency).
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
     <RootNamespace>Bowtie.Core</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -17,6 +24,15 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Bowtie.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+    <PackageReference Include="PolySharp" Version="1.15.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

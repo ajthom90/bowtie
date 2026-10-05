@@ -62,7 +62,7 @@ public sealed class JsonFilePreferences : IPreferences
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 var tmp = _path + ".tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(_values));
-                File.Move(tmp, _path, overwrite: true);
+                Shim.MoveOverwrite(tmp, _path);
             }
             catch (Exception)
             {

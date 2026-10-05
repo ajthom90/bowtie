@@ -162,7 +162,7 @@ public sealed class SleepTimer : ObservableObject
 
     /// <summary>Choices to offer: End of this program only when its end is known and still ahead.</summary>
     public static IReadOnlyList<SleepOption> Options(DateTimeOffset? programEnd, DateTimeOffset now) =>
-        Enum.GetValues<SleepOption>()
+        Shim.EnumValues<SleepOption>()
             .Where(o => o != SleepOption.EndOfProgram || (programEnd is { } end && end > now))
             .ToList();
 
