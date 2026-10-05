@@ -2434,8 +2434,19 @@ components:
           format: date-time
     ViewerChannel:
       type: object
-      required: [id, guideNumber, name, logoUrl, reception, favorite]
+      required: [id, guideNumber, name, logoUrl, reception, favorite, watchable]
       properties:
+        watchable:
+          type: boolean
+          description: |
+            The channel can start right now: its HDHomeRun has a free tuner,
+            or Bowtie is already streaming or recording it (a viewer joins
+            that). False only when every tuner on its HDHomeRun is known to
+            be busy with other channels (including other apps such as Plex);
+            an HDHomeRun whose status can't be read counts as free. Read live
+            from the tuners on each request. When any channel is false,
+            clients show only watchable channels in channel lists and dim the
+            rest in the guide.
         favorite:
           type: boolean
           description: The caller has starred this channel
@@ -2463,8 +2474,19 @@ components:
           description: When reception was last learned; absent when unknown.
     GuideChannel:
       type: object
-      required: [channelId, guideNumber, name, logoUrl, programs, reception, favorite]
+      required: [channelId, guideNumber, name, logoUrl, programs, reception, favorite, watchable]
       properties:
+        watchable:
+          type: boolean
+          description: |
+            The channel can start right now: its HDHomeRun has a free tuner,
+            or Bowtie is already streaming or recording it (a viewer joins
+            that). False only when every tuner on its HDHomeRun is known to
+            be busy with other channels (including other apps such as Plex);
+            an HDHomeRun whose status can't be read counts as free. Read live
+            from the tuners on each request. When any channel is false,
+            clients show only watchable channels in channel lists and dim the
+            rest in the guide.
         favorite:
           type: boolean
           description: The caller has starred this channel

@@ -111,6 +111,9 @@ type GuideChannel struct {
 	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
 	// Favorite is filled by the API layer: the caller starred this channel.
 	Favorite bool `json:"favorite"`
+	// Watchable is filled by the API layer: the channel can start right now
+	// (a free tuner, or Bowtie already streams or records it).
+	Watchable bool `json:"watchable"`
 }
 
 // GuideProgram is a single programme block for the guide grid.
