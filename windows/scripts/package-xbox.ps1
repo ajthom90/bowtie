@@ -20,10 +20,8 @@
   dist/ gets:
     bowtie-xbox-<label>.msixbundle   the app (x64, plus ARM64 when asked)
     bowtie-xbox-<label>.cer          the signing certificate, to trust first
-    Dependencies/x64/*.appx          .NET Native runtime + VCLibs (Xbox Device
+    Dependencies/<arch>/*.appx       .NET Native runtime + VCLibs (Xbox Device
                                      Portal asks for these alongside the bundle)
-    bowtie-xbox-<label>.zip          the whole sideload folder msbuild made
-                                     (bundle, cert, dependencies, Install.ps1)
 
 .PARAMETER Version
   Three-part version (0.11.0). The package version becomes 0.11.0.0.
@@ -129,11 +127,15 @@ Get-ChildItem $testDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName.S
 $ext = $bundle.Extension
 Copy-Item $bundle.FullName (Join-Path $dist "bowtie-xbox-$Label$ext")
 Copy-Item $bundle.FullName (Join-Path $dist "bowtie-xbox$ext")
-$deps = Join-Path $testDir.FullName "Dependencies"
-if (Test-Path $deps) {
-    Copy-Item $deps (Join-Path $dist "Dependencies") -Recurse
+# Only the dependency packages for the architectures in the bundle.
+foreach ($platform in $Platforms) {
+    $arch = $platform.ToLowerInvariant()
+    $deps = Join-Path $testDir.FullName "Dependencies\$arch"
+    if (-not (Test-Path $deps)) { throw "No dependency packages for $arch under $($testDir.FullName)" }
+    $target = Join-Path $dist "Dependencies\$arch"
+    New-Item -ItemType Directory -Force $target | Out-Null
+    Copy-Item (Join-Path $deps "*.appx") $target
 }
-Compress-Archive -Path (Join-Path $testDir.FullName "*") -DestinationPath (Join-Path $dist "bowtie-xbox-$Label.zip") -Force
 
 Write-Host "Packages:"
 Get-ChildItem $dist -Recurse -File | ForEach-Object {

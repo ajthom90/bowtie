@@ -22,7 +22,9 @@ artifact. It contains:
 | `bowtie-xbox-<version>.msixbundle` | The app (x64) |
 | `bowtie-xbox-<version>.cer` | The certificate the app is signed with |
 | `Dependencies/x64/*.appx` | .NET Native runtime and VC libraries the app needs |
-| `bowtie-xbox-<version>.zip` | The same, as the folder Visual Studio makes (with `Install.ps1`) |
+
+(`bowtie-xbox.msixbundle` and `bowtie-xbox.cer` are the same files without
+the version in the name.)
 
 Unless the repository's signing secrets are set, each build is signed with a
 new self-signed `CN=Bowtie` certificate, so trust the `.cer` that came with
