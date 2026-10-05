@@ -98,12 +98,15 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # SharePlay (Group Activities capability on the app.bowtie App ID).
+        com.apple.developer.group-session: true
     settings:
       base:
         # Same bundle ID as iOS / tvOS: macOS is added as a platform on the one
         # App Store Connect record (universal purchase).
         PRODUCT_BUNDLE_IDENTIFIER: app.bowtie
         PRODUCT_NAME: Bowtie
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SHAREPLAY"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: App/macOS/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Bowtie
