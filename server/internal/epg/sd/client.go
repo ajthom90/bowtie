@@ -244,7 +244,14 @@ func (c *Client) Headends(ctx context.Context, country, postalCode string) ([]Li
 // AddLineup adds a lineup to the account (SD allows a few adds a day).
 // PUT /lineups/{lineupID}
 func (c *Client) AddLineup(ctx context.Context, lineupID string) error {
-	return c.doAuthed(ctx, http.MethodPut, "/lineups/"+url.PathEscape(lineupID), nil, nil)
+	var resp apiError
+	if err := c.doAuthed(ctx, http.MethodPut, "/lineups/"+url.PathEscape(lineupID), nil, &resp); err != nil {
+		return err
+	}
+	if resp.Code != 0 {
+		return resp
+	}
+	return nil
 }
 
 // isNoLineups reports whether SD said the account has no lineups added

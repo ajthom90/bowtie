@@ -157,6 +157,14 @@ func (f *fakeSD) handler() http.Handler {
 		}
 		if r.Method == http.MethodPut {
 			id := strings.TrimPrefix(r.URL.Path, "/lineups/")
+			if id == "USA-SOFTFAIL-X" {
+				// HTTP 200 with a nonzero code: still a refusal.
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"response": "MAX_LINEUP_CHANGES_REACHED", "code": 4100,
+					"message": "Maximum number of lineup changes for today reached.",
+				})
+				return
+			}
 			if id == "USA-BOGUS-X" {
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -675,6 +683,16 @@ func TestAddLineupErrorCarriesSDMessage(t *testing.T) {
 	err := c.AddLineup(context.Background(), "USA-BOGUS-X")
 	msg, ok := APIMessage(err)
 	if !ok || msg != "The lineup you submitted doesn't exist. (code 2105)" {
+		t.Fatalf("APIMessage = %q, %v (err %v)", msg, ok, err)
+	}
+}
+
+func TestAddLineupHTTP200NonzeroCodeIsError(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	err := c.AddLineup(context.Background(), "USA-SOFTFAIL-X")
+	msg, ok := APIMessage(err)
+	if !ok || msg != "Maximum number of lineup changes for today reached. (code 4100)" {
 		t.Fatalf("APIMessage = %q, %v (err %v)", msg, ok, err)
 	}
 }
