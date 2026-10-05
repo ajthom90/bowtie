@@ -156,6 +156,8 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
 	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
 	handle("GET /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGLineups)))
+	handle("POST /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGAddLineup)))
+	handle("GET /api/v1/admin/epg/headends", admin(http.HandlerFunc(s.handleAdminEPGHeadends)))
 
 	handle("GET /api/v1/admin/backup", admin(http.HandlerFunc(s.handleAdminBackup)))
 

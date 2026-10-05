@@ -772,6 +772,17 @@ export class ApiClient {
     return this.request<SDLineupSummary[]>('GET', '/api/v1/admin/epg/lineups')
   }
 
+  /** Admin: lineups available in a postal code (antenna first). */
+  async searchEPGLineups(country: string, postalCode: string): Promise<SDLineupSummary[]> {
+    const q = new URLSearchParams({ country, postalcode: postalCode })
+    return this.request<SDLineupSummary[]>('GET', `/api/v1/admin/epg/headends?${q}`)
+  }
+
+  /** Admin: add a lineup to the Schedules Direct account. */
+  async addEPGLineup(lineupId: string): Promise<void> {
+    await this.request<void>('POST', '/api/v1/admin/epg/lineups', { lineupId })
+  }
+
   async getAdminUsers(): Promise<User[]> {
     return this.request<User[]>('GET', '/api/v1/admin/users')
   }

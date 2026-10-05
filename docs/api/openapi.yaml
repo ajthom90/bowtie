@@ -1379,12 +1379,16 @@ paths:
     get:
       summary: List Schedules Direct lineups on the configured account
       description: |
-        Requires SD username+password in settings. Error contract for the UI:
+        Requires SD username+password in settings. An account with no
+        lineups yet (SD 4102 NO_LINEUPS, e.g. a new trial) returns an empty
+        list. Error contract for the UI:
         - 422 when credentials are not configured
         - 401 when Schedules Direct rejects the credentials (auth-class:
           apiError code 4003/INVALID_USER, or Token() rejection including
           HTTP 200 with nonzero code)
-        - 502 when Schedules Direct is unreachable (transport/timeouts/5xx)
+        - 502 "Schedules Direct: <message> (code N)" when SD answers with
+          another error (e.g. an expired account), or "schedules direct is
+          unreachable" for transport failures
         Secrets are never echoed in error bodies.
       operationId: adminEPGLineups
       tags: [admin]
@@ -1414,7 +1418,118 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '502':
-          description: Schedules Direct is unreachable
+          description: Schedules Direct is unreachable or returned an error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Add a lineup to the Schedules Direct account
+      description: |
+        SD-JSON lineups are managed by the app (not on the SD website).
+        Schedules Direct limits accounts to a few lineups and a few adds per
+        day; its refusal comes back as a 502 with SD's message. Same 401/422
+        contract as GET.
+      operationId: adminEPGAddLineup
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lineupId]
+              properties:
+                lineupId:
+                  type: string
+                  example: USA-OTA-56071
+      responses:
+        '204':
+          description: Added (or already on the account)
+        '400':
+          description: Missing or malformed lineup id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing auth, or Schedules Direct rejected credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Schedules Direct credentials not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Schedules Direct is unreachable or returned an error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/admin/epg/headends:
+    get:
+      summary: Search Schedules Direct lineups by postal code
+      description: |
+        Lineups available in a postal code (SD GET /headends), flattened,
+        antenna lineups first. Add one with POST /api/v1/admin/epg/lineups.
+        Same 401/422/502 contract as the lineup list.
+      operationId: adminEPGHeadends
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: country
+          in: query
+          required: true
+          description: ISO 3166-1 alpha-3 country code
+          schema:
+            type: string
+            example: USA
+        - name: postalcode
+          in: query
+          required: true
+          schema:
+            type: string
+            example: '56071'
+      responses:
+        '200':
+          description: Lineups available in that postal code
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SDLineupSummary'
+        '400':
+          description: Missing country or postal code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing auth, or Schedules Direct rejected credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Schedules Direct credentials not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Schedules Direct is unreachable or returned an error
           content:
             application/json:
               schema:

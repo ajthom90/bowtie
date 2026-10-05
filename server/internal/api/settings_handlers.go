@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -197,41 +198,101 @@ func (s *Server) handleAdminPutSettings(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminEPGLineups(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.sdClientFromSettings(w)
+	if !ok {
+		return
+	}
+	list, err := client.Lineups(r.Context())
+	if err != nil {
+		writeSDError(w, "lineups", err)
+		return
+	}
+	writeLineups(w, list)
+}
+
+// handleAdminEPGHeadends searches the Schedules Direct lineups available in
+// a postal code: GET /api/v1/admin/epg/headends?country=USA&postalcode=56071
+func (s *Server) handleAdminEPGHeadends(w http.ResponseWriter, r *http.Request) {
+	country := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("country")))
+	postal := strings.TrimSpace(r.URL.Query().Get("postalcode"))
+	if !sdCountryRe.MatchString(country) || postal == "" || len(postal) > 16 {
+		writeError(w, http.StatusBadRequest, "country (3 letters, e.g. USA) and postal code are required")
+		return
+	}
+	client, ok := s.sdClientFromSettings(w)
+	if !ok {
+		return
+	}
+	list, err := client.Headends(r.Context(), country, postal)
+	if err != nil {
+		writeSDError(w, "headends", err)
+		return
+	}
+	writeLineups(w, list)
+}
+
+// handleAdminEPGAddLineup adds a lineup to the Schedules Direct account
+// (SD-JSON lineups are managed by the app, not on the SD website).
+func (s *Server) handleAdminEPGAddLineup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		LineupID string `json:"lineupId"`
+	}
+	if err := decodeJSON(r, &body); err != nil || !sdLineupIDRe.MatchString(body.LineupID) {
+		writeError(w, http.StatusBadRequest, "a lineup id is required")
+		return
+	}
+	client, ok := s.sdClientFromSettings(w)
+	if !ok {
+		return
+	}
+	if err := client.AddLineup(r.Context(), body.LineupID); err != nil {
+		writeSDError(w, "add lineup", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+var (
+	sdCountryRe  = regexp.MustCompile(`^[A-Z]{3}$`)
+	sdLineupIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+)
+
+// sdClientFromSettings builds an SD client from the saved credentials, or
+// writes the error and returns ok=false.
+func (s *Server) sdClientFromSettings(w http.ResponseWriter) (*sd.Client, bool) {
 	if s.deps.Settings == nil {
 		writeError(w, http.StatusInternalServerError, "settings not configured")
-		return
+		return nil, false
 	}
 	sdCfg, err := s.deps.Settings.SD()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load schedules direct settings")
-		return
+		return nil, false
 	}
 	if strings.TrimSpace(sdCfg.Username) == "" || sdCfg.Password == "" {
 		writeError(w, http.StatusUnprocessableEntity, "schedules direct credentials not configured")
+		return nil, false
+	}
+	return s.newSDClient(sdCfg.Username, sdCfg.Password), true
+}
+
+// writeSDError maps a Schedules Direct failure for the admin UI: 401 for
+// rejected credentials, 502 with SD's own message when SD answered with an
+// error, and 502 "unreachable" only for transport failures.
+func writeSDError(w http.ResponseWriter, op string, err error) {
+	log.Printf("api: schedules direct %s: %v", op, err)
+	if sd.IsAuthError(err) {
+		writeError(w, http.StatusUnauthorized, "schedules direct rejected the credentials")
 		return
 	}
-
-	client := s.newSDClient(sdCfg.Username, sdCfg.Password)
-	list, err := client.Lineups(r.Context())
-	if err != nil {
-		log.Printf("api: schedules direct lineups: %v", err)
-		if sd.IsAuthError(err) {
-			writeError(w, http.StatusUnauthorized, "schedules direct rejected the credentials")
-			return
-		}
-		if sd.IsNoLineups(err) {
-			writeError(w, http.StatusUnprocessableEntity,
-				"Your Schedules Direct account has no lineups yet. Add your lineup on the schedulesdirect.org website, then load lineups again.")
-			return
-		}
-		if msg, ok := sd.APIMessage(err); ok {
-			writeError(w, http.StatusBadGateway, "Schedules Direct: "+msg)
-			return
-		}
-		writeError(w, http.StatusBadGateway, "schedules direct is unreachable")
+	if msg, ok := sd.APIMessage(err); ok {
+		writeError(w, http.StatusBadGateway, "Schedules Direct: "+msg)
 		return
 	}
+	writeError(w, http.StatusBadGateway, "schedules direct is unreachable")
+}
 
+func writeLineups(w http.ResponseWriter, list []sd.LineupSummary) {
 	out := make([]lineupJSON, 0, len(list))
 	for _, lu := range list {
 		out = append(out, lineupJSON{

@@ -7,14 +7,25 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [0.19.2] — 2026-10-05
 
+### Added
+
+- **Find and add your Schedules Direct lineup in Bowtie.** Admin → Settings
+  → Schedules Direct → **Find your lineup**: enter a ZIP or postal code,
+  then **Add** a lineup (antenna lineups are listed first). Bowtie adds it
+  to your Schedules Direct account and picks it; press Save. Bowtie uses
+  Schedules Direct's newer JSON service, whose lineups are managed in the
+  app — the "Add a new lineup" link on the Schedules Direct website is for
+  its older XML service and doesn't apply.
+
 ### Fixed
 
-- **Schedules Direct: clear errors instead of "unreachable".** Load lineups
-  said "schedules direct is unreachable" for any problem other than a wrong
-  password. A new Schedules Direct account (a trial, say) has no lineups
-  yet, and Bowtie now says so and points you to schedulesdirect.org to add
-  one. Other Schedules Direct errors (an expired account, for one) show what
-  Schedules Direct said, and the server log records the underlying error.
+- **Schedules Direct: clear errors instead of "unreachable".** A new
+  account (a trial, say) has no lineups; Load lineups said "schedules
+  direct is unreachable" and now says the account has no lineups yet and
+  points you to Find your lineup. Other Schedules Direct errors (an expired
+  account, for one) show what Schedules Direct said; "unreachable" now
+  means only that the server couldn't reach Schedules Direct, and the
+  server log records the underlying error.
 
 ## [0.19.1] — 2026-10-04
 

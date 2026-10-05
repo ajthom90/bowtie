@@ -6,6 +6,7 @@ import {
   NOTIFICATION_EVENT_OPTIONS,
   buildSectionPayload,
   describeTestResult,
+  validateLineupSearch,
   notificationTarget,
   notificationTargetLabel,
   validateNotificationsHint,
@@ -364,5 +365,19 @@ describe('notifications', () => {
     expect(NOTIFICATIONS_HINT).toBe(
       'Works with ntfy (free phone app), Discord webhooks, or any URL that accepts a JSON POST.',
     )
+  })
+})
+
+describe('validateLineupSearch', () => {
+  it('accepts a 3-letter country and a postal code, normalizing both', () => {
+    expect(validateLineupSearch(' usa ', ' 56071 ')).toEqual({ country: 'USA', postalCode: '56071' })
+  })
+  it('explains a missing postal code', () => {
+    expect(validateLineupSearch('USA', '  ')).toEqual({ hint: 'Enter a ZIP or postal code.' })
+  })
+  it('explains a country that is not a 3-letter code', () => {
+    expect(validateLineupSearch('US', '56071')).toEqual({
+      hint: 'Use a 3-letter country code, e.g. USA or CAN.',
+    })
   })
 })

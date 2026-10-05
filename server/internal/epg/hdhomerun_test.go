@@ -158,6 +158,9 @@ func hdhrFixture(t *testing.T) (*Service, *store.Store, *settings.Provider, *ato
 	api, hits := fakeGuideAPI(t, "authAauthB")
 	svc := NewService(st, prov)
 	svc.hdhrGuideURL = api.URL + "/api/xmltv"
+	// The fake guide's airings are on 2026-10-04; pin the clock so the
+	// refresh's prune of day-old programs doesn't drop them as time passes.
+	svc.now = func() time.Time { return time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC) }
 	return svc, st, prov, hits
 }
 

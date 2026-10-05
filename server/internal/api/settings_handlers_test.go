@@ -577,6 +577,27 @@ func (f *fakeSDAPI) handler() http.Handler {
 			})
 		}
 	})
+	mux.HandleFunc("/headends", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("country") != "USA" || r.URL.Query().Get("postalcode") != "56071" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"headend": "56071", "transport": "Antenna", "location": "56071",
+			"lineups": []map[string]string{{"name": "Antenna", "lineup": "USA-OTA-56071"}},
+		}})
+	})
+	mux.HandleFunc("PUT /lineups/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "USA-OTA-56071" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"response": "INVALID_LINEUP", "code": 2105,
+				"message": "The lineup you submitted doesn't exist.",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"response": "OK", "code": 0, "changesRemaining": 5})
+	})
 	mux.HandleFunc("/lineups", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("token") == "" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -793,7 +814,7 @@ func TestPutSettingsHDHomeRunGuide(t *testing.T) {
 	}
 }
 
-func TestLineupsNoLineupsExplains(t *testing.T) {
+func TestLineupsNoLineupsIsEmptyList(t *testing.T) {
 	// A new Schedules Direct account has no lineups: SD answers 4102
 	// NO_LINEUPS, which must not read as "unreachable".
 	srv := startFakeSD(t, "nolineups")
@@ -804,13 +825,79 @@ func TestLineupsNoLineupsExplains(t *testing.T) {
 	}
 
 	rr := doJSON(t, h, "GET", "/api/v1/admin/epg/lineups", nil, authHeader(tok))
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422 body=%q", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%q", rr.Code, rr.Body.String())
+	}
+	if strings.TrimSpace(rr.Body.String()) != "[]" {
+		t.Fatalf("body = %q, want []", rr.Body.String())
+	}
+}
+
+func TestHeadendsSearch(t *testing.T) {
+	srv := startFakeSD(t, "ok")
+	h, st, prov := testAPIWithSettings(t, srv.URL, srv.Client())
+	tok := adminAuth(t, h, st)
+	if err := prov.SetSD(settings.SD{Username: "user", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doJSON(t, h, "GET", "/api/v1/admin/epg/headends?country=usa&postalcode=%2056071%20", nil, authHeader(tok))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rr.Code, rr.Body.String())
+	}
+	var list []struct {
+		LineupID  string `json:"lineupId"`
+		Transport string `json:"transport"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].LineupID != "USA-OTA-56071" || list[0].Transport != "Antenna" {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestHeadendsValidates(t *testing.T) {
+	srv := startFakeSD(t, "ok")
+	h, st, prov := testAPIWithSettings(t, srv.URL, srv.Client())
+	tok := adminAuth(t, h, st)
+	if err := prov.SetSD(settings.SD{Username: "user", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"country=USA", "postalcode=56071&country=US", "postalcode=56071&country=USA1"} {
+		rr := doJSON(t, h, "GET", "/api/v1/admin/epg/headends?"+q, nil, authHeader(tok))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", q, rr.Code)
+		}
+	}
+}
+
+func TestAddLineup(t *testing.T) {
+	srv := startFakeSD(t, "ok")
+	h, st, prov := testAPIWithSettings(t, srv.URL, srv.Client())
+	tok := adminAuth(t, h, st)
+	if err := prov.SetSD(settings.SD{Username: "user", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doJSON(t, h, "POST", "/api/v1/admin/epg/lineups", map[string]string{"lineupId": "USA-OTA-56071"}, authHeader(tok))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 body=%q", rr.Code, rr.Body.String())
+	}
+	rr = doJSON(t, h, "POST", "/api/v1/admin/epg/lineups", map[string]string{"lineupId": "USA-BOGUS-X"}, authHeader(tok))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("bogus: status = %d, want 502", rr.Code)
 	}
 	var body map[string]string
 	_ = json.NewDecoder(rr.Body).Decode(&body)
-	if !strings.Contains(body["error"], "no lineups") || !strings.Contains(body["error"], "schedulesdirect.org") {
-		t.Fatalf("error = %q, want a no-lineups explanation pointing at schedulesdirect.org", body["error"])
+	if body["error"] != "Schedules Direct: The lineup you submitted doesn't exist. (code 2105)" {
+		t.Fatalf("error = %q", body["error"])
+	}
+	for _, bad := range []string{"", "../token", "USA OTA"} {
+		rr = doJSON(t, h, "POST", "/api/v1/admin/epg/lineups", map[string]string{"lineupId": bad}, authHeader(tok))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%q: status = %d, want 400", bad, rr.Code)
+		}
 	}
 }
 
