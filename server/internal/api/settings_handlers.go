@@ -214,8 +214,18 @@ func (s *Server) handleAdminEPGLineups(w http.ResponseWriter, r *http.Request) {
 	client := s.newSDClient(sdCfg.Username, sdCfg.Password)
 	list, err := client.Lineups(r.Context())
 	if err != nil {
+		log.Printf("api: schedules direct lineups: %v", err)
 		if sd.IsAuthError(err) {
 			writeError(w, http.StatusUnauthorized, "schedules direct rejected the credentials")
+			return
+		}
+		if sd.IsNoLineups(err) {
+			writeError(w, http.StatusUnprocessableEntity,
+				"Your Schedules Direct account has no lineups yet. Add your lineup on the schedulesdirect.org website, then load lineups again.")
+			return
+		}
+		if msg, ok := sd.APIMessage(err); ok {
+			writeError(w, http.StatusBadGateway, "Schedules Direct: "+msg)
 			return
 		}
 		writeError(w, http.StatusBadGateway, "schedules direct is unreachable")

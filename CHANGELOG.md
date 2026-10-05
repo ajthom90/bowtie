@@ -5,6 +5,17 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.19.2] — 2026-10-05
+
+### Fixed
+
+- **Schedules Direct: clear errors instead of "unreachable".** Load lineups
+  said "schedules direct is unreachable" for any problem other than a wrong
+  password. A new Schedules Direct account (a trial, say) has no lineups
+  yet, and Bowtie now says so and points you to schedulesdirect.org to add
+  one. Other Schedules Direct errors (an expired account, for one) show what
+  Schedules Direct said, and the server log records the underlying error.
+
 ## [0.19.1] — 2026-10-04
 
 ### Fixed

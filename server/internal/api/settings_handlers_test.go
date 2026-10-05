@@ -546,6 +546,14 @@ func (f *fakeSDAPI) handler() http.Handler {
 				"message":  "Invalid username or password.",
 			})
 			return
+		case "expired":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"response": "ACCOUNT_EXPIRED",
+				"code":     4001,
+				"message":  "Account has expired.",
+			})
+			return
 		case "token200reject":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    4003,
@@ -576,6 +584,16 @@ func (f *fakeSDAPI) handler() http.Handler {
 		}
 		if f.mode == "down" {
 			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if f.mode == "nolineups" {
+			// What SD sends for an account with no lineups added (e.g. a new trial).
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"response": "NO_LINEUPS",
+				"code":     4102,
+				"message":  "No lineups have been added to this account.",
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -772,5 +790,46 @@ func TestPutSettingsHDHomeRunGuide(t *testing.T) {
 	}, authHeader(tok))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("missing enabled: status = %d, want 400", rr.Code)
+	}
+}
+
+func TestLineupsNoLineupsExplains(t *testing.T) {
+	// A new Schedules Direct account has no lineups: SD answers 4102
+	// NO_LINEUPS, which must not read as "unreachable".
+	srv := startFakeSD(t, "nolineups")
+	h, st, prov := testAPIWithSettings(t, srv.URL, srv.Client())
+	tok := adminAuth(t, h, st)
+	if err := prov.SetSD(settings.SD{Username: "user", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doJSON(t, h, "GET", "/api/v1/admin/epg/lineups", nil, authHeader(tok))
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 body=%q", rr.Code, rr.Body.String())
+	}
+	var body map[string]string
+	_ = json.NewDecoder(rr.Body).Decode(&body)
+	if !strings.Contains(body["error"], "no lineups") || !strings.Contains(body["error"], "schedulesdirect.org") {
+		t.Fatalf("error = %q, want a no-lineups explanation pointing at schedulesdirect.org", body["error"])
+	}
+}
+
+func TestLineupsSDErrorShowsItsMessage(t *testing.T) {
+	// SD answered, but with an account error: show what SD said.
+	srv := startFakeSD(t, "expired")
+	h, st, prov := testAPIWithSettings(t, srv.URL, srv.Client())
+	tok := adminAuth(t, h, st)
+	if err := prov.SetSD(settings.SD{Username: "user", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doJSON(t, h, "GET", "/api/v1/admin/epg/lineups", nil, authHeader(tok))
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 body=%q", rr.Code, rr.Body.String())
+	}
+	var body map[string]string
+	_ = json.NewDecoder(rr.Body).Decode(&body)
+	if body["error"] != "Schedules Direct: Account has expired. (code 4001)" {
+		t.Fatalf("error = %q", body["error"])
 	}
 }

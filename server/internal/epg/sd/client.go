@@ -207,6 +207,26 @@ func IsAuthError(err error) bool {
 	return strings.Contains(msg, "sd: token: code ")
 }
 
+// IsNoLineups reports whether SD said the account has no lineups added
+// (code 4102 NO_LINEUPS) — the normal state of a brand-new account.
+func IsNoLineups(err error) bool {
+	var ae apiError
+	return errors.As(err, &ae) && (ae.Code == 4102 || strings.EqualFold(ae.Response, "NO_LINEUPS"))
+}
+
+// APIMessage returns SD's own description when SD answered with an error
+// (as opposed to a transport failure, where ok is false).
+func APIMessage(err error) (msg string, ok bool) {
+	var ae apiError
+	if !errors.As(err, &ae) {
+		return "", false
+	}
+	if ae.Message == "" {
+		return fmt.Sprintf("error code %d", ae.Code), true
+	}
+	return fmt.Sprintf("%s (code %d)", ae.Message, ae.Code), true
+}
+
 // Schedules fetches schedule data for the given stations and dates.
 // POST /schedules with body [{stationID, date:[...]}, ...].
 // If dates is empty, the request omits the date field so the server returns
