@@ -45,6 +45,38 @@ public sealed record TokenPair
     public User User { get; init; } = new();
 }
 
+/// <summary><c>POST /auth/device</c>: a quick sign-in code for a TV to show.</summary>
+public sealed record DeviceSignIn
+{
+    /// <summary>Secret; only this device knows it. Polled with <c>/auth/device/token</c>.</summary>
+    public string DeviceCode { get; init; } = "";
+    /// <summary>What the person types on their phone ("BCDF-2345").</summary>
+    public string UserCode { get; init; } = "";
+    /// <summary>The web app's /link page with the code filled in.</summary>
+    public string VerifyUrl { get; init; } = "";
+    /// <summary>Server-relative PNG of <see cref="VerifyUrl"/> as a QR code; "" from older servers.</summary>
+    public string QrUrl { get; init; } = "";
+    /// <summary>Seconds the code lives.</summary>
+    public int ExpiresIn { get; init; }
+    /// <summary>Seconds between polls.</summary>
+    public int Interval { get; init; }
+}
+
+/// <summary>One <c>/auth/device/token</c> poll.</summary>
+public abstract record DevicePoll
+{
+    private DevicePoll() { }
+
+    /// <summary>428: not approved yet.</summary>
+    public sealed record Pending : DevicePoll;
+
+    /// <summary>410: expired, used or unknown; start over with a new code.</summary>
+    public sealed record Expired : DevicePoll;
+
+    /// <summary>200: approved; the client now holds the session, as after a password sign-in.</summary>
+    public sealed record SignedIn(User User) : DevicePoll;
+}
+
 /// <summary>A channel the viewer may watch (OpenAPI ViewerChannel).</summary>
 public sealed record Channel
 {
@@ -218,6 +250,10 @@ public sealed record RecordingPlayback
 internal sealed record LoginRequest(string Username, string Password);
 
 internal sealed record RefreshRequest(string RefreshToken);
+
+internal sealed record DeviceStartRequest(string DeviceName);
+
+internal sealed record DeviceTokenRequest(string DeviceCode);
 
 internal sealed record CreateSessionRequest(long ChannelId, ClientCaps Caps);
 

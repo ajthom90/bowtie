@@ -74,6 +74,50 @@ public sealed class BowtieClient
         return pair.User;
     }
 
+    // ── Quick sign-in (TV apps) ─────────────────────────────────────────────
+
+    /// <summary>Start a quick sign-in: a code and QR for a signed-in phone to approve.</summary>
+    public async Task<DeviceSignIn> StartDeviceSignInAsync(string deviceName, CancellationToken ct = default) =>
+        BowtieJson.Deserialize<DeviceSignIn>(await SendUnauthedAsync(
+            HttpMethod.Post, "/api/v1/auth/device",
+            BowtieJson.Serialize(new DeviceStartRequest(deviceName)), ct).ConfigureAwait(false));
+
+    /// <summary>
+    /// Poll a quick sign-in. On approval the tokens are applied exactly as
+    /// <see cref="LoginAsync"/> does (refresh token saved, user published).
+    /// </summary>
+    public async Task<DevicePoll> PollDeviceSignInAsync(string deviceCode, CancellationToken ct = default)
+    {
+        const string path = "/api/v1/auth/device/token";
+        using var request = JsonRequest(HttpMethod.Post, path, BowtieJson.Serialize(new DeviceTokenRequest(deviceCode)));
+        try
+        {
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            switch ((int)response.StatusCode)
+            {
+                case 200:
+                    var pair = BowtieJson.Deserialize<TokenPair>(body);
+                    ApplyTokens(pair);
+                    return new DevicePoll.SignedIn(pair.User);
+                case 428:
+                    return new DevicePoll.Pending();
+                case 410:
+                    return new DevicePoll.Expired();
+                default:
+                    throw MapHttpError((int)response.StatusCode, body, path);
+            }
+        }
+        catch (Exception e) when (IsTransport(e, ct))
+        {
+            throw new NetworkException(e);
+        }
+    }
+
+    /// <summary>Absolute URL of the sign-in's QR code PNG (no auth needed); null when the server sent none.</summary>
+    public Uri? DeviceQrUri(DeviceSignIn signIn) =>
+        string.IsNullOrEmpty(signIn.QrUrl) ? null : ServerUrl.Resolve(signIn.QrUrl, Server);
+
     /// <summary>
     /// Rotate the stored refresh token into a live session. Throws
     /// <see cref="UnauthorizedException"/> when there is none or it was refused.
