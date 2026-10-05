@@ -256,6 +256,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   once than you have tuners asks before going ahead. Mark a recording
   **Keep** so it's never deleted to free space. Recordings are stored in
   `/data/recordings` (`BOWTIE_RECORDINGS_DIR`); see the TrueNAS guide.
+- **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
+  and ARM PCs (Surface Pro X and Copilot+ PCs). Sign in to your server once
+  (it's remembered in the Windows Credential Locker), then watch live TV
+  with favorites first and a Recent row, pause and rewind live TV (← and →
+  skip 30 seconds), jump back with **Go Live**, pick quality, audio and
+  captions, change channels with Page Up/Page Down, and go full screen with
+  F11 or a double-click. **Recordings** play with resume and can be kept,
+  stopped or deleted, with **Skip ad** over detected commercial breaks (and
+  **Skip ads automatically** in the account menu). A **sleep timer**, the
+  **All · Sports · Movies · News · Kids · New** guide filters and **Continue
+  watching** work like the other apps. Each release attaches `bowtie-windows.msixbundle` (and
+  the `.cer` to trust before installing) plus zips that run without
+  installing; see `windows/README.md`.
 
 ### Fixed
 

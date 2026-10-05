@@ -1,0 +1,10 @@
+# .NET / Visual Studio build output
+bin/
+obj/
+out/
+AppPackages/
+BundleArtifacts/
+*.user
+.vs/
+*.pfx
+TestResults/
