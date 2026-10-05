@@ -129,7 +129,7 @@ namespace BowtieXbox.Pages
             ErrorLabel.Visibility = Visibility.Collapsed;
             try
             {
-                var error = await AppServices.App.SignInAsync(UserBox.Text, PasswordBox.Password);
+                var error = await AppServices.App.SignInAsync(UserBox.Text, PasswordInput.Password);
                 // Success changes the phase; App navigates to the channel list.
                 if (error != null)
                 {

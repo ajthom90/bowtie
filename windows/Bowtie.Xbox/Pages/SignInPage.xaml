@@ -42,7 +42,7 @@
             <TextBlock Text="Or sign in here" FontSize="30" FontWeight="SemiBold" />
             <TextBox x:Name="UserBox" Style="{StaticResource TvTextBox}" Header="Username"
                      IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" />
-            <PasswordBox x:Name="PasswordBox" FontSize="24" Width="560" HorizontalAlignment="Left"
+            <PasswordBox x:Name="PasswordInput" FontSize="24" Width="560" HorizontalAlignment="Left"
                          Header="Password" KeyDown="OnPasswordKeyDown" />
             <StackPanel Orientation="Horizontal" Spacing="16">
                 <Button x:Name="SignInButton" Content="Sign in" Style="{StaticResource TvButton}" Click="OnSignIn" />
