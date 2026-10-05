@@ -8,10 +8,12 @@ Windows 10 version 1809 or later and Windows 11, on **x64** (Intel/AMD) and
 
 | Folder | What it is |
 |--------|------------|
-| `Bowtie.Core/` | Plain .NET 8 class library: the API client (`docs/api/openapi.yaml`), models, guide/recording/live-edge logic and the view models. No Windows APIs, so it builds and tests on macOS and Linux too. |
+| `Bowtie.Core/` | Plain .NET 8 + .NET Standard 2.0 class library: the API client (`docs/api/openapi.yaml`), models, guide/recording/live-edge logic and the view models. No Windows APIs, so it builds and tests on macOS and Linux too. |
 | `Bowtie.Core.Tests/` | xUnit tests for Core (fake HTTP server; no real Bowtie needed). |
 | `Bowtie.App/` | The WinUI 3 app (Windows App SDK 1.6, single-project MSIX). Pages, playback, the Credential Locker token store. |
+| `Bowtie.Xbox/` | The UWP app for Xbox (also runs on PCs); see [its README](Bowtie.Xbox/README.md). |
 | `scripts/package.ps1` | Builds the signed `.msixbundle` and the unpackaged zips (CI runs it too). |
+| `scripts/package-xbox.ps1` | Builds the Xbox app's signed sideload bundle (`.github/workflows/xbox.yml` runs it). |
 | `scripts/make-icons.sh` | Regenerates `Bowtie.App/Assets/*` from the shared 1024 px app icon. |
 
 ## Install
