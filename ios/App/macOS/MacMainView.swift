@@ -91,6 +91,11 @@ struct MacMainView: View {
         .onChange(of: selection) { old, new in
             selectionChanged(from: old, to: new)
         }
+        // SharePlay: joining a group (or the group changing channel) shows
+        // that channel's player, whatever the sidebar had selected.
+        .onChange(of: groupChannelKey) { _, _ in
+            showGroupChannel()
+        }
         // PiP ended after the live view was left (e.g. for Recordings).
         .onChange(of: bridge.pipDidEndAndShouldStop) { _, shouldStop in
             if shouldStop {
@@ -457,6 +462,19 @@ struct MacMainView: View {
     private var isLiveSelected: Bool {
         if case .channel = selection { return true }
         return false
+    }
+
+    /// The channel a SharePlay group is on (changes when joining or zapping).
+    private var groupChannelKey: Int64? {
+        playerModel.groupRole == nil ? nil : playerModel.currentChannel?.id
+    }
+
+    private func showGroupChannel() {
+        guard let id = groupChannelKey else { return }
+        if case .channel(let selected, _) = selection, selected == id { return }
+        // The player is already starting this channel, so selecting it
+        // doesn't start another session (see selectionChanged).
+        selection = .channel(id, .all)
     }
 
     private func selectionChanged(from old: SidebarItem?, to new: SidebarItem?) {

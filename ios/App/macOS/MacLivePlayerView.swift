@@ -1,4 +1,7 @@
 import SwiftUI
+#if SHAREPLAY
+import GroupActivities
+#endif
 import AppKit
 import AVKit
 import BowtieKit
@@ -32,6 +35,11 @@ struct MacLivePlayerView: View {
     @State private var noticeHideTask: Task<Void, Never>?
     /// Survives channel changes (this view stays up); gone when Live TV is left.
     @State private var sleepTimer = SleepTimer()
+    #if SHAREPLAY
+    @StateObject private var groupState = GroupStateObserver()
+    @State private var sharingActivity: SharingActivity?
+    @State private var isStartingSharePlay = false
+    #endif
 
     /// Stall retry backoff: 1s, 2s, 4s (3 attempts).
     private static let stallBackoffs: [Duration] = [
@@ -138,6 +146,28 @@ struct MacLivePlayerView: View {
         .task(id: sessionIdentity) {
             loadPlayerIfNeeded()
         }
+        #if SHAREPLAY
+        .task(id: coordinationKey) {
+            coordinatePlayback()
+        }
+        .sheet(item: $sharingActivity) { item in
+            GroupActivitySharingView(activity: item.activity)
+        }
+        .alert(
+            "Leave Watch Together?",
+            isPresented: groupZapBinding,
+            presenting: playerModel.pendingGroupZap
+        ) { zap in
+            Button("Watch \(zap.name)", role: .destructive) {
+                Task { await playerModel.confirmGroupZap(zap) }
+            }
+            Button("Keep Watching Together", role: .cancel) {
+                playerModel.cancelGroupZap()
+            }
+        } message: { zap in
+            Text("You're watching \(playerModel.currentChannel?.name ?? "this channel") with your group. Watching \(zap.name) leaves the group.")
+        }
+        #endif
         .drivesSleepTimer(sleepTimer) {
             // Stop here, not in onDisappear: that keeps the session for PiP.
             stallRetryTask?.cancel()
@@ -208,6 +238,11 @@ struct MacLivePlayerView: View {
                 livePill
                 qualityMenu
                 SleepTimerMenu(timer: sleepTimer, programEnd: programEnd)
+                #if SHAREPLAY
+                if canShare || playerModel.groupRole != nil {
+                    sharePlayButton
+                }
+                #endif
                 Button {
                     showStats.toggle()
                     bumpChrome()
@@ -327,7 +362,11 @@ struct MacLivePlayerView: View {
     }
 
     private func showOutOfWindowNotice() {
-        outOfWindowNotice = PlayerModel.outOfWindowNotice
+        showNotice(PlayerModel.outOfWindowNotice)
+    }
+
+    private func showNotice(_ text: String) {
+        outOfWindowNotice = text
         noticeHideTask?.cancel()
         noticeHideTask = Task { @MainActor in
             do {
@@ -340,6 +379,78 @@ struct MacLivePlayerView: View {
             }
         }
     }
+
+    // MARK: - SharePlay
+
+    #if SHAREPLAY
+    /// The server gave this stream a session ID, so others can join it.
+    private var canShare: Bool {
+        guard case .playing(let session) = playerModel.state else { return false }
+        return !(session.session?.id ?? "").isEmpty
+    }
+
+    /// "Watch Together": on a FaceTime call, start SharePlay; otherwise offer
+    /// the system sheet that starts a call with the activity.
+    private var sharePlayButton: some View {
+        let inGroup = playerModel.groupRole != nil
+        return Button {
+            bumpChrome()
+            Task { await startSharePlay() }
+        } label: {
+            Image(systemName: "shareplay")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(inGroup ? Theme.bg : Theme.amber)
+                .frame(width: 32, height: 32)
+                .background(inGroup ? Theme.amber : Theme.raised.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(inGroup || isStartingSharePlay)
+        .help(inGroup ? "Watching together" : "Watch Together (SharePlay)")
+        .accessibilityLabel(inGroup ? "Watching together" : "Watch Together")
+        .accessibilityHint(inGroup ? "" : "Watch this channel with people on a FaceTime call")
+        .accessibilityIdentifier("bowtie.shareplay")
+    }
+
+    private func startSharePlay() async {
+        guard !isStartingSharePlay else { return }
+        isStartingSharePlay = true
+        defer { isStartingSharePlay = false }
+        guard let activity = await playerModel.makeWatchActivity() else {
+            showNotice("SharePlay needs a newer Bowtie server")
+            return
+        }
+        if groupState.isEligibleForGroupSession {
+            do {
+                _ = try await activity.activate()
+            } catch {
+                showNotice("Couldn't start SharePlay")
+            }
+        } else {
+            sharingActivity = SharingActivity(activity: activity)
+        }
+    }
+
+    /// Bind the group (if any) to the current AVPlayer, whichever came first.
+    private var coordinationKey: String {
+        let player = bridge.player.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        let group = playerModel.group.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+        return "\(player)|\(group)"
+    }
+
+    private func coordinatePlayback() {
+        guard let group = playerModel.group, let player = bridge.player else { return }
+        group.coordinate(player)
+    }
+
+    private var groupZapBinding: Binding<Bool> {
+        Binding(
+            get: { playerModel.pendingGroupZap != nil },
+            set: { if !$0 { playerModel.cancelGroupZap() } }
+        )
+    }
+    #endif
 
     // MARK: - Error panels
 
@@ -565,3 +676,24 @@ struct MacLivePlayerView: View {
         }
     }
 }
+
+#if SHAREPLAY
+// MARK: - SharePlay sheet
+
+private struct SharingActivity: Identifiable {
+    let id = UUID()
+    let activity: WatchChannelActivity
+}
+
+/// The system sheet that starts a FaceTime call (or Messages) with the
+/// activity, for sharing when not already on a call.
+private struct GroupActivitySharingView: NSViewControllerRepresentable {
+    let activity: WatchChannelActivity
+
+    func makeNSViewController(context: Context) -> NSViewController {
+        (try? GroupActivitySharingController(activity)) ?? NSViewController()
+    }
+
+    func updateNSViewController(_ nsViewController: NSViewController, context: Context) {}
+}
+#endif
