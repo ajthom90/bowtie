@@ -61,7 +61,7 @@ public sealed class JsonFilePreferences : IPreferences
                 var dir = Path.GetDirectoryName(_path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 var tmp = _path + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(_values));
+                File.WriteAllText(tmp, JsonSerializer.Serialize(Values(), BowtieJsonContext.Default.DictionaryStringString));
                 Shim.MoveOverwrite(tmp, _path);
             }
             catch (Exception)
@@ -77,7 +77,7 @@ public sealed class JsonFilePreferences : IPreferences
         try
         {
             _values = File.Exists(_path)
-                ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_path)) ?? new()
+                ? JsonSerializer.Deserialize(File.ReadAllText(_path), BowtieJsonContext.Default.DictionaryStringString) ?? new()
                 : new();
         }
         catch (Exception)
