@@ -164,8 +164,12 @@ mapped yourself are never changed. Turn it off with
 (setting `epg.hdhomerun`); its health is under `hdhomerun` in
 `GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
 
-SiliconDust allows about one download a day: a second download soon after
-the first gets HTTP 403, and Bowtie simply retries hourly until it's allowed.
+SiliconDust limits how often each tuner may download the guide: once a
+tuner has used its allowance, downloads get HTTP 403 for a while. After a
+403 Bowtie waits the same 20-28 hours before trying again (it remembers this
+across restarts, and Admin → EPG → Refresh follows the same schedule).
+**Only one Bowtie server per tuner should download it**: on test or
+secondary servers that share the tuner, set `BOWTIE_HDHOMERUN_GUIDE=off`.
 The free guide carries titles, episodes, series IDs (series recording works)
 and new/repeat flags, but **no age ratings**; to limit accounts by rating
 (parental controls), add Schedules Direct. Channel restrictions work either way.
@@ -222,7 +226,7 @@ add devices by IP.
 | Source | Keys |
 |--------|------|
 | Flag / env | `--data-dir` / `BOWTIE_DATA_DIR` (default `./data`, Docker `/data`) |
-| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
+| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_HDHOMERUN_GUIDE` (`off` stops this server downloading the free HDHomeRun guide — use it on test servers sharing a tuner), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
 | Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
 | Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC, buffer, adaptive quality (DB-backed) |
 | Control plane (DVR) | **Admin → Recordings** — padding, and recording quality: 720p (default, ~1.7 GB/hour) or up to 1080p (1080i kept at full resolution, deinterlaced; ~3.4 GB/hour), applied to recordings converted afterwards |

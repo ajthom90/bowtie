@@ -137,7 +137,7 @@ export function epgHealthLabel(h: EPGHealth): string {
   }
 }
 
-/** The free guide's rate limit, as the HDHomeRun source reports it. */
+/** SiliconDust refusing a download (too many recently for this tuner). */
 const HDHR_REFUSED = /\bHTTP 403\b/
 
 /** A source's last error in plain words ("" when there is none). */
@@ -146,8 +146,8 @@ export function epgErrorText(key: EPGSourceKey, raw: string): string {
   if (!err) return ''
   if (key === 'hdhomerun' && HDHR_REFUSED.test(err)) {
     return (
-      'SiliconDust allows about one guide download a day per tuner and refused this one (HTTP 403). ' +
-      'Bowtie tries again every hour; the guide fills in once a download succeeds.'
+      'SiliconDust refused this guide download (HTTP 403): it limits how often each HDHomeRun can download the guide. ' +
+      'Bowtie waits about a day before trying again, as SiliconDust asks. Only one Bowtie server per tuner should download it.'
     )
   }
   return `The last guide download failed: ${err}`

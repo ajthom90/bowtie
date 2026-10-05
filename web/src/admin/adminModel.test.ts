@@ -208,8 +208,8 @@ describe('EPG health and wording', () => {
 
   it('explains the HDHomeRun guide refusing a download (HTTP 403)', () => {
     expect(epgErrorText('hdhomerun', 'fetch: HTTP 403')).toBe(
-      'SiliconDust allows about one guide download a day per tuner and refused this one (HTTP 403). ' +
-        'Bowtie tries again every hour; the guide fills in once a download succeeds.',
+      'SiliconDust refused this guide download (HTTP 403): it limits how often each HDHomeRun can download the guide. ' +
+        'Bowtie waits about a day before trying again, as SiliconDust asks. Only one Bowtie server per tuner should download it.',
     )
   })
 
