@@ -17,6 +17,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   password** clears it. A `user:pass@` already in the URL keeps working
   and moves into the fields the next time you save, so it's no longer
   shown in the URL. **Send test** uses what's in the form.
+- **`BOWTIE_HDHOMERUN_GUIDE=off`** stops a server from downloading the free
+  HDHomeRun guide, so a test or second server sharing a tuner doesn't use
+  up the downloads your main server needs.
+
+### Fixed
+
+- **Free HDHomeRun guide never arriving.** SiliconDust limits how often each
+  tuner may download its guide and answers HTTP 403 once that's used up.
+  Bowtie retried every hour, which kept it refused. Now a 403 waits the
+  same 20-28 hours as a successful download, the next allowed time is kept
+  across restarts, and Admin → EPG → Refresh follows the same schedule. The
+  Admin message no longer claims a once-a-day limit.
 
 ## [0.19.2] — 2026-10-05
 

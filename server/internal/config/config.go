@@ -23,6 +23,11 @@ type Config struct {
 	// DisableMultitrack turns off captions, extra audio and the 5.1 option
 	// (video + first audio as AAC). Env BOWTIE_MULTITRACK=off|0|false.
 	DisableMultitrack bool `yaml:"disableMultitrack"`
+	// DisableHDHomeRunGuide stops downloads of SiliconDust's free guide on
+	// this server, whatever Admin → Settings says. SiliconDust limits how
+	// often a tuner may download, so only one server per tuner should.
+	// Env BOWTIE_HDHOMERUN_GUIDE=off|0|false.
+	DisableHDHomeRunGuide bool `yaml:"disableHDHomeRunGuide"`
 	// RecordingsDir holds DVR recordings (default <DataDir>/recordings; never
 	// the segment tmpfs). Env BOWTIE_RECORDINGS_DIR.
 	RecordingsDir string `yaml:"recordingsDir"`
@@ -49,6 +54,7 @@ type Config struct {
 // Load reads <dataDir>/config.yaml if present, applies defaults, then env overrides.
 // Env vars: BOWTIE_LISTEN_ADDR, BOWTIE_FFMPEG_PATH, BOWTIE_ENCODER, BOWTIE_SEGMENT_DIR,
 // BOWTIE_DEVICES (comma-separated), BOWTIE_MULTITRACK (off|0|false disables),
+// BOWTIE_HDHOMERUN_GUIDE (off|0|false stops SiliconDust guide downloads),
 // BOWTIE_RECORDINGS_DIR, BOWTIE_DVR_MIN_FREE_GB, BOWTIE_COMSKIP_PATH, BOWTIE_COMSKIP_INI.
 func Load(dataDir string) (Config, error) {
 	cfg := Config{
@@ -126,6 +132,10 @@ func Load(dataDir string) (Config, error) {
 	switch strings.ToLower(os.Getenv("BOWTIE_MULTITRACK")) {
 	case "off", "0", "false":
 		cfg.DisableMultitrack = true
+	}
+	switch strings.ToLower(os.Getenv("BOWTIE_HDHOMERUN_GUIDE")) {
+	case "off", "0", "false":
+		cfg.DisableHDHomeRunGuide = true
 	}
 	if v := os.Getenv("BOWTIE_DEVICES"); v != "" {
 		parts := strings.Split(v, ",")

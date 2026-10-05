@@ -139,6 +139,10 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 
 	// EPG supervisor always-on; sources/intervals from settingsProv (live, no restart).
 	epgSvc := epg.NewService(st, settingsProv)
+	if cfg.DisableHDHomeRunGuide {
+		epgSvc.DisableHDHomeRunGuide()
+		log.Printf("epg: HDHomeRun guide downloads are off on this server (BOWTIE_HDHOMERUN_GUIDE)")
+	}
 	epgSvc.SetNotifier(notifier)
 	go epgSvc.Run(rootCtx)
 

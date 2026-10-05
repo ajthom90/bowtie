@@ -350,3 +350,117 @@ func TestClearHDHomeRunRemovesItsDataAndMappings(t *testing.T) {
 		}
 	}
 }
+
+// refusingGuide points svc at a guide API that answers 403 to everything.
+func refusingGuide(t *testing.T, svc *Service) *atomic.Int32 {
+	t.Helper()
+	api, hits := fakeGuideAPI(t, "never-matches")
+	svc.hdhrGuideURL = api.URL + "/api/xmltv"
+	return hits
+}
+
+// SiliconDust refuses (403) when a tuner downloads too often; trying again
+// every hour keeps it refusing. A refusal waits the same 20-28 h as a success.
+func TestHDHomeRunRefusalWaitsPoliteInterval(t *testing.T) {
+	svc, _, _, _ := hdhrFixture(t)
+	hits := refusingGuide(t, svc)
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+	waitUntil(t, 2*time.Second, func() bool {
+		w := svc.lastWaitFor("hdhomerun")
+		return hits.Load() == 1 && w != 0 && w != unconfiguredPoll
+	})
+	if w := svc.lastWaitFor("hdhomerun"); w < 20*time.Hour-time.Minute || w > 28*time.Hour {
+		t.Fatalf("wait after 403 = %v, want 20-28h", w)
+	}
+}
+
+// Other failures (no tuner answering, network errors) still retry hourly.
+func TestHDHomeRunUnreachableTunerRetriesHourly(t *testing.T) {
+	st := testStore(t)
+	prov := testProvider(t, st)
+	addDevice(t, st, "CCCC0003", "127.0.0.1:1")
+	svc := NewService(st, prov)
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+	waitUntil(t, 2*time.Second, func() bool {
+		w := svc.lastWaitFor("hdhomerun")
+		return w != 0 && w != unconfiguredPoll
+	})
+	if w := svc.lastWaitFor("hdhomerun"); w < 50*time.Minute || w > 70*time.Minute {
+		t.Fatalf("wait = %v, want about an hour", w)
+	}
+}
+
+// A restart after a refusal does not download again right away.
+func TestHDHomeRunRestartRespectsRefusal(t *testing.T) {
+	svc, st, prov, _ := hdhrFixture(t)
+	hits := refusingGuide(t, svc)
+	if err := svc.RefreshAll(context.Background()); err == nil {
+		t.Fatal("want the 403 error")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d", hits.Load())
+	}
+
+	restarted := NewService(st, prov)
+	restarted.now = svc.now
+	restarted.hdhrGuideURL = svc.hdhrGuideURL
+	gate := &afterGate{}
+	startSupervisor(t, restarted, gate)
+	waitUntil(t, 2*time.Second, func() bool {
+		w := restarted.lastWaitFor("hdhomerun")
+		return w != 0 && w != unconfiguredPoll
+	})
+	if w := restarted.lastWaitFor("hdhomerun"); w < 20*time.Hour-time.Minute || w > 28*time.Hour {
+		t.Fatalf("wait after restart = %v, want the rest of 20-28h", w)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want no new download", hits.Load())
+	}
+}
+
+// Admin → Refresh follows the same schedule: it doesn't spend another
+// download right after a refusal or a success.
+func TestHDHomeRunManualRefreshRespectsSchedule(t *testing.T) {
+	svc, _, _, hits := hdhrFixture(t)
+	if err := svc.RefreshAll(context.Background()); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if err := svc.RefreshAll(context.Background()); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("hits after success + refresh = %d, want 1", hits.Load())
+	}
+
+	svc2, _, _, _ := hdhrFixture(t)
+	refused := refusingGuide(t, svc2)
+	_ = svc2.RefreshAll(context.Background())
+	_ = svc2.RefreshAll(context.Background())
+	if refused.Load() != 1 {
+		t.Fatalf("hits after 403 + refresh = %d, want 1", refused.Load())
+	}
+	if got := svc2.Status().HDHomeRun.LastError; !strings.Contains(got, "HTTP 403") {
+		t.Fatalf("lastError = %q, want the 403 kept", got)
+	}
+}
+
+// With guide downloads turned off for this server (BOWTIE_HDHOMERUN_GUIDE=off)
+// neither the supervisor nor Admin → Refresh contacts SiliconDust.
+func TestHDHomeRunGuideDisabledByServerNeverFetches(t *testing.T) {
+	svc, _, _, hits := hdhrFixture(t)
+	svc.DisableHDHomeRunGuide()
+	if err := svc.RefreshAll(context.Background()); err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+	gate := &afterGate{}
+	startSupervisor(t, svc, gate)
+	waitUntil(t, 2*time.Second, func() bool { return svc.lastWaitFor("hdhomerun") == unconfiguredPoll })
+	if hits.Load() != 0 {
+		t.Fatalf("hits = %d, want none", hits.Load())
+	}
+	if svc.Status().HDHomeRun.Configured {
+		t.Fatal("disabled by the server: not configured")
+	}
+}
