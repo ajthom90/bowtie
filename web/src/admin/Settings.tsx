@@ -17,6 +17,7 @@ import {
   validateNotificationsHint,
   validateStreamingHint,
   validateTranscodeHint,
+  validateLineupSearch,
   validateXmltvHint,
   type SettingsFormState,
   type SettingsSection,
@@ -35,6 +36,14 @@ export function Settings() {
   const [saved, setSaved] = useState<SaveFlash>(null)
   const [lineupBusy, setLineupBusy] = useState(false)
   const [lineupError, setLineupError] = useState<string | null>(null)
+  const [lineupsLoaded, setLineupsLoaded] = useState(false)
+  const [searchCountry, setSearchCountry] = useState('USA')
+  const [searchPostal, setSearchPostal] = useState('')
+  const [searchResults, setSearchResults] = useState<SDLineupSummary[] | null>(null)
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [addingId, setAddingId] = useState<string | null>(null)
+  const [addedNote, setAddedNote] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [testBusy, setTestBusy] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -118,12 +127,53 @@ export function Settings() {
     try {
       const list = await client.getEPGLineups()
       setLineups(list)
+      setLineupsLoaded(true)
     } catch (err) {
       setLineupError(
         err instanceof ApiError ? err.message || 'Failed to load lineups' : 'Failed to load lineups',
       )
     } finally {
       setLineupBusy(false)
+    }
+  }
+
+  async function onSearchLineups() {
+    setSearchError(null)
+    setAddedNote(null)
+    const checked = validateLineupSearch(searchCountry, searchPostal)
+    if ('hint' in checked) {
+      setSearchError(checked.hint)
+      return
+    }
+    setSearchBusy(true)
+    try {
+      setSearchResults(await client.searchEPGLineups(checked.country, checked.postalCode))
+    } catch (err) {
+      setSearchError(err instanceof ApiError ? err.message || 'Search failed' : 'Search failed')
+    } finally {
+      setSearchBusy(false)
+    }
+  }
+
+  async function onAddLineup(lu: SDLineupSummary) {
+    setSearchError(null)
+    setAddedNote(null)
+    setAddingId(lu.lineupId)
+    try {
+      await client.addEPGLineup(lu.lineupId)
+      const list = await client.getEPGLineups()
+      setLineups(list)
+      setLineupsLoaded(true)
+      setForm((f) =>
+        f ? { ...f, schedulesDirect: { ...f.schedulesDirect, lineupId: lu.lineupId } } : f,
+      )
+      setAddedNote(`Added ${lineupOptionLabel(lu)}. Press Save to use it for the guide.`)
+    } catch (err) {
+      setSearchError(
+        err instanceof ApiError ? err.message || 'Could not add the lineup' : 'Could not add the lineup',
+      )
+    } finally {
+      setAddingId(null)
     }
   }
 
@@ -410,6 +460,113 @@ export function Settings() {
           <p className={styles.dim} style={{ margin: '0.5rem 0 0', fontSize: '0.8rem' }}>
             {lineups.length} lineup{lineups.length === 1 ? '' : 's'} loaded.
           </p>
+        ) : lineupsLoaded ? (
+          <p className={styles.dim} style={{ margin: '0.5rem 0 0', fontSize: '0.85rem' }}>
+            Your Schedules Direct account has no lineups yet. Find yours by ZIP or postal code
+            below and add it.
+          </p>
+        ) : null}
+        <h4 style={{ margin: '1.25rem 0 0.5rem', fontSize: '0.95rem' }}>Find your lineup</h4>
+        <p className={styles.dim} style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+          Uses the saved username and password. Schedules Direct allows a few lineups per account
+          and a few adds a day; antenna lineups are listed first.
+        </p>
+        <div className={styles.settingsFields}>
+          <label className={styles.label}>
+            Country
+            <input
+              className={styles.input}
+              type="text"
+              value={searchCountry}
+              onChange={(e) => setSearchCountry(e.target.value)}
+              maxLength={3}
+              autoComplete="off"
+              aria-label="Country code"
+            />
+          </label>
+          <label className={styles.label}>
+            ZIP / postal code
+            <input
+              className={styles.input}
+              type="text"
+              value={searchPostal}
+              onChange={(e) => setSearchPostal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void onSearchLineups()
+                }
+              }}
+              inputMode="text"
+              autoComplete="postal-code"
+            />
+          </label>
+          <div className={styles.actions} style={{ alignSelf: 'end' }}>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => void onSearchLineups()}
+              disabled={searchBusy}
+            >
+              {searchBusy ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+        </div>
+        {searchError ? <p className={styles.statusError}>{searchError}</p> : null}
+        {addedNote ? (
+          <p className={styles.savedFlash} role="status" style={{ margin: '0.5rem 0 0' }}>
+            {addedNote}
+          </p>
+        ) : null}
+        {searchResults && searchResults.length === 0 ? (
+          <p className={styles.dim} style={{ margin: '0.5rem 0 0', fontSize: '0.85rem' }}>
+            No lineups found there.
+          </p>
+        ) : null}
+        {searchResults && searchResults.length > 0 ? (
+          <div className={styles.tableWrap} style={{ marginTop: '0.75rem' }}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Lineup</th>
+                  <th>Type</th>
+                  <th>Location</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {searchResults.map((lu) => {
+                  const onAccount = lineups.some((l) => l.lineupId === lu.lineupId)
+                  return (
+                    <tr key={lu.lineupId}>
+                      <td>
+                        {lu.name}
+                        <div className={styles.dim} style={{ fontSize: '0.75rem' }}>
+                          {lu.lineupId}
+                        </div>
+                      </td>
+                      <td>{lu.transport}</td>
+                      <td>{lu.location}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {onAccount ? (
+                          <span className={styles.dim}>On your account</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.btn}
+                            onClick={() => void onAddLineup(lu)}
+                            disabled={addingId !== null}
+                          >
+                            {addingId === lu.lineupId ? 'Adding…' : 'Add'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : null}
         <div className={styles.settingsFooter}>
           {saved === 'schedulesDirect' ? (

@@ -355,6 +355,18 @@ export function lineupOptionLabel(lu: SDLineupSummary): string {
   return `${parts.join(' · ')} (${lu.lineupId})`
 }
 
+/** Checks a Schedules Direct lineup search (country code + ZIP/postal code). */
+export function validateLineupSearch(
+  country: string,
+  postalCode: string,
+): { country: string; postalCode: string } | { hint: string } {
+  const c = country.trim().toUpperCase()
+  const p = postalCode.trim()
+  if (!/^[A-Z]{3}$/.test(c)) return { hint: 'Use a 3-letter country code, e.g. USA or CAN.' }
+  if (!p) return { hint: 'Enter a ZIP or postal code.' }
+  return { country: c, postalCode: p }
+}
+
 /** Password field placeholder when a password is already stored. */
 export const PASSWORD_PLACEHOLDER_CONFIGURED = 'unchanged'
 
