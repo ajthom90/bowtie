@@ -29,6 +29,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   same 20-28 hours as a successful download, the next allowed time is kept
   across restarts, and Admin → EPG → Refresh follows the same schedule. The
   Admin message no longer claims a once-a-day limit.
+- **Channels in number order.** Channel lists, the guide and the IPTV
+  playlist listed channels as text, so 11.1 came before 5.1. They're now in
+  channel-number order (5.1, 5.2, 5.10, 9.1, 11.1) in every app.
 
 ## [0.19.2] — 2026-10-05
 
