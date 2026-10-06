@@ -130,7 +130,7 @@ namespace bowtie.fixtures.client
             accessToken: "access-should-not-attach"
             baseUrl: base
             expectMethod: "POST"
-            expectUrlContains: "/api/v1/sessions/viewer-abc/heartbeat?token=stream-tok-xyz"
+            expectUrlContains: "/api/v1/sessions/viewer-abc/heartbeat?signal=1&token=stream-tok-xyz"
             expectNoAuth: true
         })
 

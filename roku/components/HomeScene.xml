@@ -201,8 +201,28 @@
             visible="false"
         />
 
+        <!-- All tuners busy (bowtie.tuners.busyNote): right of the chips,
+             directly above the rail, while some channels are hidden because
+             every tuner they need is in use. HomeScene moves it with the
+             chips. -->
+        <Label
+            id="busyNote"
+            translation="[1140, 136]"
+            width="700"
+            height="56"
+            text=""
+            horizAlign="right"
+            vertAlign="center"
+            wrap="true"
+            color="0xF0A428FF"
+            font="font:SmallSystemFont"
+            visible="false"
+        />
+
         <!-- A filter with no matching channels: the rail is hidden and this
-             shows in its place, with Show all (focusable) back to All. -->
+             shows in its place, with Show all (focusable) back to All. When
+             every channel's tuners are busy it says so instead, and the
+             button reads Try again (re-checks now). -->
         <Group id="filterEmptyGroup" translation="[0, 208]" visible="false">
             <Label
                 id="filterEmptyLabel"
@@ -242,6 +262,12 @@
         <Timer
             id="refreshTimer"
             duration="300"
+            repeat="true"
+        />
+        <!-- 30-second re-check of which channels can be joined (tuners free) -->
+        <Timer
+            id="watchableTimer"
+            duration="30"
             repeat="true"
         />
     </children>

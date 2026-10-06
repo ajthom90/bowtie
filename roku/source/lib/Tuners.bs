@@ -1,0 +1,159 @@
+' All tuners busy and the weak-signal note (no I/O, no nodes).
+'
+' The server marks a channel watchable: false when every tuner on its
+' HDHomeRun is busy with other channels and nobody in Bowtie is watching or
+' recording this one, so starting it would fail. Older servers omit the
+' field: only an explicit false hides a channel. Home's rail and Recent row
+' (and the player's zapping) keep the joinable channels, with a note above
+' the list while any are hidden; Home re-checks every 30 s.
+'
+' The heartbeat (?signal=1) reports the antenna's reception for the live
+' viewer; bowtie.client turns it into { known, weak, ... }. The server only
+' calls a signal weak after two bad readings, so the note follows it as is.
+' The player shows the reading's percentages, quality first: strength can
+' read 96% while the picture breaks up.
+
+namespace bowtie.tuners
+
+    ' "Weak signal (46%) — …" with the reading's quality when it has one.
+    ' Quality, not strength: strength can read 96% while the picture breaks up.
+    function weakSignalText(heartbeat as dynamic) as string
+        q = bowtie.tuners.percent(heartbeat, "quality")
+        if q = "" then return "Weak signal — the picture may break up."
+        return "Weak signal (" + q + ") — the picture may break up."
+    end function
+
+    ' The latest reading for the player's info bar: "Signal quality 46% ·
+    ' strength 96% · error-free 0%" (error-free is symbolQuality); missing
+    ' numbers are left out. "" when unknown or for a recording.
+    function signalStatsText(heartbeat as dynamic, isRecording as boolean) as string
+        if isRecording then return ""
+        if heartbeat = invalid or Type(heartbeat) <> "roAssociativeArray" then return ""
+        if not bowtie.tuners.isTrue(heartbeat.known) then return ""
+        parts = []
+        labels = [["quality", "quality"], ["strength", "strength"], ["symbolQuality", "error-free"]]
+        for each l in labels
+            p = bowtie.tuners.percent(heartbeat, l[0])
+            if p <> "" then parts.push(l[1] + " " + p)
+        end for
+        if parts.count() = 0 then return ""
+        out = "Signal " + parts[0]
+        for i = 1 to parts.count() - 1
+            out = out + " · " + parts[i]
+        end for
+        return out
+    end function
+
+    ' heartbeat[key] as "46%" (rounded, 0–100), or "" when not a known number.
+    function percent(heartbeat as dynamic, key as string) as string
+        if heartbeat = invalid or Type(heartbeat) <> "roAssociativeArray" then return ""
+        if not bowtie.tuners.isTrue(heartbeat.known) then return ""
+        v = heartbeat[key]
+        if v = invalid then return ""
+        t = Type(v)
+        if t <> "Integer" and t <> "roInt" and t <> "roInteger" and t <> "LongInteger" and t <> "roLongInteger" and t <> "Float" and t <> "roFloat" and t <> "Double" and t <> "roDouble" then return ""
+        n = Int(v + 0.5)
+        if n < 0 then n = 0
+        if n > 100 then n = 100
+        return n.toStr() + "%"
+    end function
+
+    function someBusyText() as string
+        return "All tuners are in use — showing channels you can join."
+    end function
+
+    function allBusyText() as string
+        return "All tuners are in use. Try again in a few minutes."
+    end function
+
+    ' False only for watchable: false (a missing or odd value is watchable).
+    function isWatchable(ch as dynamic) as boolean
+        if ch = invalid or Type(ch) <> "roAssociativeArray" then return false
+        return not bowtie.tuners.isFalse(ch.watchable)
+    end function
+
+    ' The joinable channels, in order.
+    function watchableOnly(channels as dynamic) as object
+        out = []
+        if channels = invalid or Type(channels) <> "roArray" then return out
+        for each ch in channels
+            if bowtie.tuners.isWatchable(ch) then out.push(ch)
+        end for
+        return out
+    end function
+
+    ' Channels to list, and none of them joinable.
+    function allBusy(channels as dynamic) as boolean
+        if channels = invalid or Type(channels) <> "roArray" or channels.count() = 0 then return false
+        return bowtie.tuners.watchableOnly(channels).count() = 0
+    end function
+
+    ' The note above the list: "" when every channel is joinable.
+    function busyNote(channels as dynamic) as string
+        if channels = invalid or Type(channels) <> "roArray" then return ""
+        joinable = bowtie.tuners.watchableOnly(channels).count()
+        if joinable = channels.count() then return ""
+        if joinable = 0 then return bowtie.tuners.allBusyText()
+        return bowtie.tuners.someBusyText()
+    end function
+
+    ' A re-check's /channels body (bare array or {channels: [...]}) → the
+    ' rail's watchable flags, updated in place by id. Channels the rail
+    ' doesn't have are left for the next full reload. True when any changed.
+    function applyWatchable(channels as dynamic, raw as dynamic) as boolean
+        if channels = invalid or Type(channels) <> "roArray" then return false
+        list = raw
+        if raw <> invalid and Type(raw) = "roAssociativeArray" then list = raw.channels
+        if list = invalid or Type(list) <> "roArray" then return false
+        byId = {}
+        for each c in list
+            if c <> invalid and Type(c) = "roAssociativeArray" and c.id <> invalid
+                byId[bowtie.tuners.idKey(c.id)] = bowtie.tuners.isWatchable(c)
+            end if
+        end for
+        changed = false
+        for each ch in channels
+            if ch <> invalid and ch.id <> invalid
+                key = bowtie.tuners.idKey(ch.id)
+                if byId.DoesExist(key)
+                    want = byId[key]
+                    if bowtie.tuners.isWatchable(ch) <> want then changed = true
+                    ch.watchable = want
+                end if
+            end if
+        end for
+        return changed
+    end function
+
+    ' The note shows for a live channel whose latest heartbeat said weak;
+    ' unknown (an older server, no reading) or a recording hides it.
+    function showWeakSignal(heartbeat as dynamic, isRecording as boolean) as boolean
+        if isRecording then return false
+        if heartbeat = invalid or Type(heartbeat) <> "roAssociativeArray" then return false
+        return bowtie.tuners.isTrue(heartbeat.known) and bowtie.tuners.isTrue(heartbeat.weak)
+    end function
+
+    ' ── helpers ──────────────────────────────────────────────────────────────
+
+    function isTrue(v as dynamic) as boolean
+        if v = invalid then return false
+        t = Type(v)
+        if t <> "Boolean" and t <> "roBoolean" then return false
+        return v = true
+    end function
+
+    function isFalse(v as dynamic) as boolean
+        if v = invalid then return false
+        t = Type(v)
+        if t <> "Boolean" and t <> "roBoolean" then return false
+        return v = false
+    end function
+
+    function idKey(v as dynamic) as string
+        if v = invalid then return ""
+        t = Type(v)
+        if t = "String" or t = "roString" then return v
+        return v.toStr()
+    end function
+
+end namespace

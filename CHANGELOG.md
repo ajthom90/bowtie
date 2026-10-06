@@ -5,6 +5,24 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Roku: weak signal, busy tuners and plain-words errors.** The Roku
+  player's top bar shows the antenna reading ("Signal quality 46% · strength
+  96% · error-free 0%"), and when the server says the signal is weak a small
+  note reads "Weak signal (46%) — the picture may break up." (Audio Guide
+  reads it out). When every tuner a channel needs is busy, the channel list,
+  Recent row and Up/Down zapping show only the channels you can join, with
+  "All tuners are in use — showing channels you can join." (or "All tuners
+  are in use. Try again in a few minutes." with Try again when none are
+  left); the list re-checks every 30 seconds so channels come back when a
+  tuner frees up. Error screens no longer show player error codes or raw
+  server pages: they say "Can't reach your Bowtie server…", "The stream
+  stopped. Try again." or the server's own message, and keep the detail in
+  the debug log.
+
 ## [0.20.1] — 2026-10-06
 
 ### Changed

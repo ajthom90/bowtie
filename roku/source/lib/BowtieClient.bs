@@ -8,7 +8,11 @@
 '   deleteRecordingRule, deviceStart, deviceToken
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
-' heartbeat: stream-token query only (no Bearer); 204 success.
+' heartbeat: stream-token query only (no Bearer), ?signal=1; any 2xx success →
+'   {known, weak, strength?, quality?, symbolQuality?} (204 from an older
+'   server, or "signal": null → known false).
+' Errors: message is only the server's JSON "error" (plain words); any other
+'   body stays out of it. viewerMessage(err, fallback) is what a viewer sees.
 ' setFavorite: params {channelId, on} → PUT (on) / DELETE (off); 204 success.
 ' recents: GET /me/recents?limit=n; 404 (older server) → notFound.
 ' DVR (tag dvr): recordings {state?}; createRecording {channelId, programStart,
@@ -207,11 +211,12 @@ namespace bowtie.client
 
         else if kind = "heartbeat"
             ' Spec C: stream token query only — never Bearer (avoids refresh races).
+            ' signal=1: the reply reports the antenna's reception (weak-signal note).
             viewerId = params.viewerId
             if viewerId = invalid then viewerId = ""
             token = params.token
             if token = invalid then token = ""
-            url = base + "/api/v1/sessions/" + viewerId + "/heartbeat?token=" + token
+            url = base + "/api/v1/sessions/" + viewerId + "/heartbeat?signal=1&token=" + token
             method = "POST"
             headers = { "Content-Type": "application/json" }
             body = ""
@@ -246,6 +251,10 @@ namespace bowtie.client
                 return { ok: true, data: true }
             end if
             return { ok: false, error: { code: httpCode, message: "healthz failed" } }
+        end if
+
+        if kind = "heartbeat" and httpCode >= 200 and httpCode < 300
+            return { ok: true, data: bowtie.client.parseSignal(body) }
         end if
 
         if kind = "logout" or kind = "changePassword" or kind = "deleteSession" or kind = "heartbeat" or kind = "setFavorite" or kind = "deleteRecording" or kind = "stopRecording" or kind = "setRecordingPosition" or kind = "deleteRecordingRule"
@@ -477,6 +486,35 @@ namespace bowtie.client
         }
     end function
 
+    ' Heartbeat 2xx body (?signal=1) → { known, weak, strength, quality,
+    ' symbolQuality } (each percent only when the server sent a number).
+    ' 204 / empty (older server), "signal": null, or a body we can't read
+    ' are known: false (no note).
+    function parseSignal(body as string) as object
+        out = { "known": false, "weak": false }
+        if body = invalid or body = "" then return out
+        parsed = ParseJson(body)
+        if parsed = invalid or Type(parsed) <> "roAssociativeArray" then return out
+        sig = parsed.signal
+        if sig = invalid or Type(sig) <> "roAssociativeArray" then return out
+        weak = sig.weak
+        if weak = invalid then return out
+        t = Type(weak)
+        if t <> "Boolean" and t <> "roBoolean" then return out
+        out["known"] = true
+        out["weak"] = weak
+        for each k in ["strength", "quality", "symbolQuality"]
+            v = sig[k]
+            if v <> invalid and bowtie.client.isNumber(v) then out[k] = v
+        end for
+        return out
+    end function
+
+    function isNumber(v as dynamic) as boolean
+        t = Type(v)
+        return t = "Integer" or t = "roInt" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble"
+    end function
+
     function recordingUrl(base as string, id as dynamic, suffix as string) as string
         return base + "/api/v1/recordings/" + bowtie.client.idString(id) + suffix
     end function
@@ -545,13 +583,51 @@ namespace bowtie.client
         return v = s
     end function
 
+    ' The server's JSON "error" (plain words), else "": a proxy's HTML page or
+    ' "404 page not found" is never shown to a viewer.
     function extractError(body as string) as string
         if body = invalid or body = "" then return ""
         parsed = ParseJson(body)
-        if parsed <> invalid and parsed.error <> invalid
-            return parsed.error
+        if parsed = invalid or Type(parsed) <> "roAssociativeArray" then return ""
+        msg = parsed.error
+        if msg = invalid then return ""
+        t = Type(msg)
+        if t <> "String" and t <> "roString" then return ""
+        return msg
+    end function
+
+    ' ── What a viewer sees ───────────────────────────────────────────────────
+
+    function cantReachText() as string
+        return "Can't reach your Bowtie server. Check your connection and try again."
+    end function
+
+    function somethingWrongText() as string
+        return "Something went wrong. Try again."
+    end function
+
+    function streamStoppedText() as string
+        return "The stream stopped. Try again."
+    end function
+
+    ' A failed request in plain words: no answer at all (offline, timed out)
+    ' → can't reach; the server's own message as-is; anything else (a reply
+    ' we couldn't read, an internal error) → fallback.
+    function viewerMessage(err as dynamic, fallback as string) as string
+        if err = invalid or Type(err) <> "roAssociativeArray" then return fallback
+        code = 0
+        if err.code <> invalid and bowtie.client.isNumber(err.code) then code = err.code
+        if code = 0
+            if bowtie.client.isString(err.kind, "build") then return fallback
+            return bowtie.client.cantReachText()
         end if
-        return body
+        if code >= 200 and code < 300 then return fallback
+        msg = err.message
+        if msg = invalid then return fallback
+        t = Type(msg)
+        if t <> "String" and t <> "roString" then return fallback
+        if msg.Trim() = "" then return fallback
+        return msg
     end function
 
     ' Integer/LongInteger/string id → path segment.

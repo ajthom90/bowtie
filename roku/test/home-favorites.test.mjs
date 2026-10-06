@@ -52,9 +52,10 @@ test('a toggle re-renders in place instead of reloading (no spinner, focus kept)
     assert.match(body, /sendFavorite\(/);
 });
 
-test('the player is handed the sorted rail for zapping', () => {
+test('the player is handed the sorted rail (joinable channels) for zapping', () => {
     assert.match(home, /m\.channels = m\.fav\.channels/);
-    assert.match(home, /channels: m\.channels/);
+    assert.match(home, /m\.joinable = bowtie\.tuners\.watchableOnly\(m\.channels\)/);
+    assert.match(home, /channels: m\.joinable/);
 });
 
 test('recentList sits above the rail and starts hidden', () => {

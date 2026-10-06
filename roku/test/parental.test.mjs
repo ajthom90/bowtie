@@ -107,7 +107,7 @@ test('PlayerScene: a parental 403 from session start shows its message, no retry
     const at = handle.indexOf('code = 403 and bowtie.client.isParental(err)');
     assert.ok(at >= 0, 'no parental case');
     // Before the generic fallback, and it shows the server's message.
-    assert.ok(at < handle.indexOf('msg = PLAYBACK_FAILED'));
+    assert.ok(at < handle.indexOf('msg = bowtie.client.viewerMessage(err, PLAYBACK_FAILED)'));
     assert.match(handle.slice(at), /showFailed\(parentalTitle\(err\), PARENTAL_DETAIL\)/);
     assert.match(body(player, 'function parentalTitle('), /err\.message/);
 });
@@ -127,5 +127,5 @@ test('RecordingsScene: a locked recording says why instead of playing', () => {
     const open = body(scene, 'sub openOptions(');
     assert.match(open, /r\.locked = true[\s\S]*?bowtie\.recordings\.lockedText\(\)/);
     // A play that is refused anyway (locked since the list loaded) shows the server's words.
-    assert.match(body(scene, 'sub handlePlayResponse('), /resp\.error\.message/);
+    assert.match(body(scene, 'sub handlePlayResponse('), /bowtie\.client\.viewerMessage\(resp\.error, /);
 });
