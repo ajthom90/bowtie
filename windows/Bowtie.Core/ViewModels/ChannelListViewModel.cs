@@ -18,6 +18,9 @@ public enum ChannelListStatus { Loading, Loaded, Empty, Failed }
 /// optimistic star toggles that revert with a message when refused, and the
 /// guide category chip (remembered per device).
 /// A server without favorites omits <c>favorite</c>: stars and Recent hide.
+/// Channels the server marks <c>watchable:false</c> (every tuner busy with
+/// other channels) are left out of the visible lists with
+/// <see cref="TunersNote"/>; <see cref="PollAsync"/> re-checks them.
 /// Mirrors the Android ChannelListViewModel.
 /// </summary>
 public sealed class ChannelListViewModel : ObservableObject
@@ -28,7 +31,13 @@ public sealed class ChannelListViewModel : ObservableObject
     /// <summary>Reload after this long (also the auto-refresh timer).</summary>
     public static readonly TimeSpan StaleInterval = TimeSpan.FromMinutes(5);
 
+    /// <summary>How often the visible list re-checks which channels can start.</summary>
+    public static readonly TimeSpan RecheckInterval = TimeSpan.FromSeconds(30);
+
     public const int RecentsLimit = 8;
+
+    public const string SomeTunersBusyNote = "All tuners are in use — showing channels you can join.";
+    public const string AllTunersBusyNote = "All tuners are in use. Try again in a few minutes.";
 
     private readonly BowtieClient _client;
     private readonly Func<DateTimeOffset> _now;
@@ -41,6 +50,7 @@ public sealed class ChannelListViewModel : ObservableObject
     private string? _error;
     private string? _message;
     private Dictionary<long, int> _serverOrder = new();
+    private Dictionary<long, IReadOnlyList<GuideProgram>> _programs = new();
     private DateTimeOffset? _lastLoadedAt;
     private DateTimeOffset? _windowEnd;
     private GuideFilter _filter;
@@ -71,16 +81,17 @@ public sealed class ChannelListViewModel : ObservableObject
     private DateTimeOffset WindowEnd(DateTimeOffset at) => _windowEnd ?? at + GuideWindow;
 
     /// <summary>
-    /// <paramref name="rows"/> with something matching <see cref="Filter"/>
+    /// The watchable <paramref name="rows"/> with something matching <see cref="Filter"/>
     /// between <paramref name="at"/> and the end of the loaded window, order
     /// kept. All returns every row.
     /// </summary>
     public IReadOnlyList<ChannelRow> VisibleRows(IReadOnlyList<ChannelRow> rows, DateTimeOffset at)
     {
         var filter = Filter;
-        if (filter == GuideFilter.All) return rows;
+        var watchable = rows.Where(r => r.Channel.IsWatchable);
+        if (filter == GuideFilter.All) return watchable.ToList();
         var to = WindowEnd(at);
-        return rows.Where(r => filter.Matches(r.GuidePrograms, at, to)).ToList();
+        return watchable.Where(r => filter.Matches(r.GuidePrograms, at, to)).ToList();
     }
 
     /// <summary>How <paramref name="row"/> reads under <see cref="Filter"/> (dimmed lines, a later match).</summary>
@@ -110,9 +121,22 @@ public sealed class ChannelListViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(Favorites));
                 OnPropertyChanged(nameof(Others));
+                OnPropertyChanged(nameof(TunersNote));
+                OnPropertyChanged(nameof(NoneWatchable));
+                OnPropertyChanged(nameof(VisibleRecents));
             }
         }
     }
+
+    /// <summary>Channels are listed but none can start now (every one is <c>watchable:false</c>).</summary>
+    public bool NoneWatchable => Rows.Count > 0 && Rows.All(r => !r.Channel.IsWatchable);
+
+    /// <summary>
+    /// Shown above the lists when some channels are hidden because every
+    /// tuner is busy; null when all can start.
+    /// </summary>
+    public string? TunersNote =>
+        Rows.All(r => r.Channel.IsWatchable) ? null : NoneWatchable ? AllTunersBusyNote : SomeTunersBusyNote;
 
     public IReadOnlyList<ChannelRow> Favorites => Rows.Where(r => r.IsFavorite).ToList();
 
@@ -122,8 +146,15 @@ public sealed class ChannelListViewModel : ObservableObject
     public IReadOnlyList<RecentChannel> Recents
     {
         get => _recents;
-        private set => SetProperty(ref _recents, value);
+        private set
+        {
+            if (SetProperty(ref _recents, value)) OnPropertyChanged(nameof(VisibleRecents));
+        }
     }
+
+    /// <summary><see cref="Recents"/> without the listed channels that can't start now.</summary>
+    public IReadOnlyList<RecentChannel> VisibleRecents =>
+        Recents.Where(r => Rows.FirstOrDefault(row => row.Id == r.ChannelId)?.Channel.IsWatchable ?? true).ToList();
 
     /// <summary>The server reports favorites; false on older servers (hide stars and Recent).</summary>
     public bool FavoritesSupported
@@ -178,20 +209,11 @@ public sealed class ChannelListViewModel : ObservableObject
                 return;
             }
 
-            var byId = new Dictionary<long, GuideChannel>();
-            foreach (var g in guide) byId[g.ChannelId] = g;
-            var rows = channels
-                .Select(c =>
-                {
-                    var programs = byId.TryGetValue(c.Id, out var g) ? g.Programs : Array.Empty<GuideProgram>();
-                    return new ChannelRow(c, GuideLogic.ComputeNowNext(programs, at), programs);
-                })
-                .ToList();
+            _programs = new Dictionary<long, IReadOnlyList<GuideProgram>>();
+            foreach (var g in guide) _programs[g.ChannelId] = g.Programs;
             _windowEnd = at + GuideWindow;
             supported = channels.Any(c => c.Favorite != null);
-            _serverOrder = channels.Select((c, i) => (c.Id, i)).ToDictionary(t => t.Id, t => t.i);
-            FavoritesSupported = supported;
-            Rows = FavoritesFirst(rows);
+            ApplyChannels(channels, at);
             Error = null;
             Status = ChannelListStatus.Loaded;
             _lastLoadedAt = at;
@@ -216,6 +238,60 @@ public sealed class ChannelListViewModel : ObservableObject
         {
             await RefreshAsync(ct);
         }
+    }
+
+    /// <summary>
+    /// Called every <see cref="RecheckInterval"/> while the list is visible
+    /// and when the app comes back to the foreground: a full reload when
+    /// stale (see <see cref="RefreshIfStaleAsync"/>), otherwise a channels-only
+    /// re-check so busy channels come back once a tuner frees up.
+    /// </summary>
+    public async Task PollAsync(CancellationToken ct = default)
+    {
+        if (_lastLoadedAt is not { } last || _now() - last >= StaleInterval)
+        {
+            await RefreshAsync(ct);
+        }
+        else if (Status == ChannelListStatus.Loaded)
+        {
+            await RecheckAsync(ct);
+        }
+    }
+
+    /// <summary>Re-fetch the channel list (watchable, reception, stars) and keep the loaded guide.</summary>
+    private async Task RecheckAsync(CancellationToken ct)
+    {
+        IReadOnlyList<Channel> channels;
+        try
+        {
+            channels = await _client.ChannelsAsync(ct);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // Best-effort: keep showing the list; the next check tries again.
+            return;
+        }
+        if (channels.Count == 0 || Status != ChannelListStatus.Loaded)
+        {
+            await RefreshAsync(ct);
+            return;
+        }
+        ApplyChannels(channels, _now());
+    }
+
+    /// <summary>Rows from <paramref name="channels"/> (server order) joined with the loaded guide.</summary>
+    private void ApplyChannels(IReadOnlyList<Channel> channels, DateTimeOffset at)
+    {
+        var rows = channels
+            .Select(c =>
+            {
+                var programs = _programs.TryGetValue(c.Id, out var p) ? p : Array.Empty<GuideProgram>();
+                return new ChannelRow(c, GuideLogic.ComputeNowNext(programs, at), programs);
+            })
+            .ToList();
+        _serverOrder = channels.Select((c, i) => (c.Id, i)).ToDictionary(t => t.Id, t => t.i);
+        FavoritesSupported = channels.Any(c => c.Favorite != null);
+        Rows = FavoritesFirst(rows);
     }
 
     /// <summary>Re-fetch just the Recent row (e.g. back from the player).</summary>

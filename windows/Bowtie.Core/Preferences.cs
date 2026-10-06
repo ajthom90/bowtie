@@ -94,6 +94,7 @@ public sealed class AppPreferences
 {
     public const string GuideFilterKey = "guide.filter";
     public const string AutoSkipAdsKey = "playback.autoSkipAds";
+    public const string WindowBoundsKey = "window.bounds";
 
     private readonly IPreferences _store;
 
@@ -114,5 +115,12 @@ public sealed class AppPreferences
     {
         get => _store.Get(AutoSkipAdsKey) == "1";
         set => _store.Set(AutoSkipAdsKey, value ? "1" : "0");
+    }
+
+    /// <summary>The main window's last size and position (physical pixels), if any.</summary>
+    public PixelRect? WindowBounds
+    {
+        get => PixelRect.Parse(_store.Get(WindowBoundsKey));
+        set => _store.Set(WindowBoundsKey, value?.Stored() ?? "");
     }
 }

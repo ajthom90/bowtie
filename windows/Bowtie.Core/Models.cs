@@ -94,12 +94,35 @@ public sealed record Channel
     public string? Reception { get; set; }
     /// <summary>The caller starred this channel; null from servers without favorites (hide the star).</summary>
     public bool? Favorite { get; set; }
+    /// <summary>
+    /// False when every tuner on its HDHomeRun is busy with other channels
+    /// and nobody in Bowtie is on this one (starting it would fail); null
+    /// from older servers.
+    /// </summary>
+    public bool? Watchable { get; set; }
 
     [JsonIgnore]
     public bool HasNoSignal => Reception == "noSignal";
 
     [JsonIgnore]
     public bool IsFavorite => Favorite == true;
+
+    /// <summary>A missing <see cref="Watchable"/> (older servers) counts as watchable.</summary>
+    [JsonIgnore]
+    public bool IsWatchable => Watchable != false;
+}
+
+/// <summary>
+/// Antenna reception of the tuner feeding a live session (heartbeat
+/// <c>?signal=1</c>). <see cref="Weak"/> needs two bad readings in a row on
+/// the server, so it doesn't flicker.
+/// </summary>
+public sealed record ReceptionSignal
+{
+    public int Strength { get; set; }
+    public int Quality { get; set; }
+    public int SymbolQuality { get; set; }
+    public bool Weak { get; set; }
 }
 
 /// <summary>A channel the caller watched recently, newest first.</summary>
@@ -272,6 +295,11 @@ internal sealed record ErrorBody
     public string? Error { get; set; }
 }
 
+internal sealed record HeartbeatBody
+{
+    public ReceptionSignal? Signal { get; set; }
+}
+
 internal sealed record TunersBusyBody
 {
     public string? Error { get; set; }
@@ -293,6 +321,7 @@ internal sealed record RecordingConflictBody
 [JsonSerializable(typeof(DeviceSignIn))]
 [JsonSerializable(typeof(Channel))]
 [JsonSerializable(typeof(List<Channel>))]
+[JsonSerializable(typeof(ReceptionSignal))]
 [JsonSerializable(typeof(RecentChannel))]
 [JsonSerializable(typeof(List<RecentChannel>))]
 [JsonSerializable(typeof(GuideProgram))]
@@ -311,6 +340,7 @@ internal sealed record RecordingConflictBody
 [JsonSerializable(typeof(PositionRequest))]
 [JsonSerializable(typeof(ProtectRequest))]
 [JsonSerializable(typeof(ErrorBody))]
+[JsonSerializable(typeof(HeartbeatBody))]
 [JsonSerializable(typeof(TunersBusyBody))]
 [JsonSerializable(typeof(RecordingConflictBody))]
 [JsonSerializable(typeof(Dictionary<string, string>))]

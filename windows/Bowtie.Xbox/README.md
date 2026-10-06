@@ -95,12 +95,16 @@ reachable `https://` address).
   Credential Locker; there's a **Change server** button on this screen.
 - **Channels:** favorites first, then everything else, with what's on now and
   next. D-pad to move, **A** to watch, **Y** to add or remove a favorite.
-  **Refresh** and **Sign out** are above the list.
+  **Refresh** and **Sign out** are above the list. When every tuner is busy,
+  only the channels you can join are listed, under a note; the list checks
+  again every 30 seconds and when you come back to the app.
 - **Watching:** live video full screen. **B** goes back to the channels and
   frees the tuner. If every tuner is busy, the channel has no signal or
   parental controls block it, the player says so and offers **Try again**.
   Suspending the app (Home button, or the console sleeping) also stops the
-  stream.
+  stream. Press any button to see the channel and its signal ("Signal
+  quality 46% · strength 96% · error-free 0%"); when reception is poor, a
+  "Weak signal (46%) — the picture may break up." note stays in the corner.
 
 ## Build it yourself
 

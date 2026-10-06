@@ -11,12 +11,25 @@
         <Grid Margin="{StaticResource SafeMargin}">
             <Border x:Name="TitleBar" VerticalAlignment="Top" HorizontalAlignment="Left"
                     Background="#B0101418" CornerRadius="6" Padding="20,10">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                    <Border Background="#E53935" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
-                        <TextBlock Text="LIVE" FontSize="18" FontWeight="Bold" />
-                    </Border>
-                    <TextBlock x:Name="TitleLabel" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Border Background="#E53935" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+                            <TextBlock Text="LIVE" FontSize="18" FontWeight="Bold" />
+                        </Border>
+                        <TextBlock x:Name="TitleLabel" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <!-- Antenna reception from the latest heartbeat; hidden when unknown. -->
+                    <TextBlock x:Name="SignalStatsText" FontSize="18" Foreground="{StaticResource BowtieMuted}"
+                               Visibility="Collapsed" />
                 </StackPanel>
+            </Border>
+
+            <!-- Weak antenna signal (latest heartbeat). Stays up while weak, unlike the
+                 title bar, and Narrator reads it when it appears. -->
+            <Border x:Name="WeakSignalNote" VerticalAlignment="Top" HorizontalAlignment="Right"
+                    Background="#B0101418" CornerRadius="6" Padding="16,8" MaxWidth="640" Visibility="Collapsed">
+                <TextBlock x:Name="WeakSignalText" FontSize="20" Foreground="#FFB74D" TextWrapping="WrapWholeWords"
+                           AutomationProperties.LiveSetting="Polite" />
             </Border>
 
             <Border x:Name="Overlay" VerticalAlignment="Center" HorizontalAlignment="Center"

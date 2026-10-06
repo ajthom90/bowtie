@@ -12,8 +12,10 @@ namespace BowtieApp.Pages;
 /// <summary>
 /// Channel list: Recent row, favorites first, star toggles, and the guide
 /// category filter (channels with nothing matching in the 4-hour window are
-/// hidden; non-matching now/next lines dim). Refreshes on show, every 5
-/// minutes while visible, and redraws progress every minute.
+/// hidden; non-matching now/next lines dim). Channels that can't start
+/// because every tuner is busy are hidden under a note. Refreshes on show,
+/// every 5 minutes while visible, and re-checks the channels (and redraws
+/// progress) every 30 seconds and when the window comes back to the front.
 /// </summary>
 public sealed partial class ChannelsPage : Page
 {
@@ -27,11 +29,11 @@ public sealed partial class ChannelsPage : Page
         _vm = AppServices.Channels;
         InitializeComponent();
         _timer = DispatcherQueue.CreateTimer();
-        _timer.Interval = TimeSpan.FromMinutes(1);
+        _timer.Interval = ChannelListViewModel.RecheckInterval;
         _timer.Tick += (_, _) =>
         {
             Render();
-            _ = _vm.RefreshIfStaleAsync();
+            _ = _vm.PollAsync();
         };
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -40,7 +42,7 @@ public sealed partial class ChannelsPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        _ = _vm.RefreshIfStaleAsync();
+        _ = _vm.PollAsync();
         ContinueStrip.Reload();
     }
 
@@ -48,12 +50,14 @@ public sealed partial class ChannelsPage : Page
     public void OnReturnedFromPlayer()
     {
         _ = _vm.RefreshRecentsAsync();
+        _ = _vm.PollAsync(); // leaving freed a tuner
         ContinueStrip.ReloadAfterPlayer();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _vm.PropertyChanged += OnVmChanged;
+        App.MainWindow.Activated += OnWindowActivated;
         _timer.Start();
         Render();
     }
@@ -61,7 +65,14 @@ public sealed partial class ChannelsPage : Page
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _vm.PropertyChanged -= OnVmChanged;
+        App.MainWindow.Activated -= OnWindowActivated;
         _timer.Stop();
+    }
+
+    /// <summary>Back in front: a tuner may have freed up while the window was away.</summary>
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
+    {
+        if (args.WindowActivationState != WindowActivationState.Deactivated) _ = _vm.PollAsync();
     }
 
     private void OnVmChanged(object? sender, PropertyChangedEventArgs e) =>
@@ -90,7 +101,7 @@ public sealed partial class ChannelsPage : Page
             new(r, _vm.LogoUri(r.Channel.LogoUrl), supported, now, _vm.Highlight(r, now));
         var favorites = visible.Where(r => r.IsFavorite).Select(Item).ToList();
         var others = visible.Where(r => !r.IsFavorite).Select(Item).ToList();
-        var recents = _vm.Recents.Select(r => new RecentItem(r, _vm.LogoUri(r.LogoUrl))).ToList();
+        var recents = _vm.VisibleRecents.Select(r => new RecentItem(r, _vm.LogoUri(r.LogoUrl))).ToList();
 
         FavoritesList.ItemsSource = favorites;
         OthersList.ItemsSource = others;
@@ -98,7 +109,9 @@ public sealed partial class ChannelsPage : Page
 
         var showLists = status == ChannelListStatus.Loaded;
         FilterBar.Visibility = showLists ? Visibility.Visible : Visibility.Collapsed;
-        var filterEmpty = showLists && filter != GuideFilter.All && visible.Count == 0;
+        TunersBar.Message = _vm.TunersNote ?? "";
+        TunersBar.IsOpen = showLists && _vm.TunersNote != null;
+        var filterEmpty = showLists && filter != GuideFilter.All && visible.Count == 0 && !_vm.NoneWatchable;
         FilterEmptyPanel.Visibility = filterEmpty ? Visibility.Visible : Visibility.Collapsed;
         FilterEmptyLabel.Text = filter.EmptyCopy();
         RecentPanel.Visibility = showLists && recents.Count > 0 ? Visibility.Visible : Visibility.Collapsed;

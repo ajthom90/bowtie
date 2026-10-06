@@ -144,12 +144,18 @@ namespace BowtieXbox
         });
 
         /// <summary>Appends an exception to LocalState\crash.log; never throws.</summary>
-        internal static void LogCrash(string where, Exception? ex)
+        internal static void LogCrash(string where, Exception? ex) => Log(where, ex?.ToString());
+
+        /// <summary>
+        /// Appends technical detail kept off screen (exceptions, player
+        /// errors) to LocalState\crash.log; never throws.
+        /// </summary>
+        internal static void Log(string where, string? detail)
         {
             try
             {
                 var path = Path.Combine(ApplicationData.Current.LocalFolder.Path, "crash.log");
-                File.AppendAllText(path, $"{DateTimeOffset.Now:O} [{where}] {ex}{Environment.NewLine}{Environment.NewLine}");
+                File.AppendAllText(path, $"{DateTimeOffset.Now:O} [{where}] {detail}{Environment.NewLine}{Environment.NewLine}");
             }
             catch
             {
