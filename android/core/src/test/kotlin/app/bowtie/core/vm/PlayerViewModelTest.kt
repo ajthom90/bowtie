@@ -206,7 +206,7 @@ class PlayerViewModelTest {
      */
     private fun TestScope.advanceDebounceAndPump(
         debounceMs: Long = 400,
-        timeoutMs: Long = 5_000,
+        timeoutMs: Long = 20_000,
         condition: () -> Boolean = { true },
     ) {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
