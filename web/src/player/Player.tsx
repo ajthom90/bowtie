@@ -7,7 +7,8 @@ import {
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { type CreateSessionResponse, type SessionMeta } from '../api/client'
+import { type CreateSessionResponse, type ReceptionSignal, type SessionMeta } from '../api/client'
+import { CANT_PLAY_HERE, STREAM_STOPPED } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
@@ -17,6 +18,7 @@ import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from 
 import { SeekBar } from './SeekBar'
 import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import { createSessionAttempt, type SessionAttempt, type SessionHandle } from './sessionLifecycle'
+import { signalStatsLine, weakSignalNote } from './signalModel'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -148,6 +150,10 @@ export function Player({ target, onBack }: Props) {
   const [overlayVisible, setOverlayVisible] = useState(true)
   const [liveWindow, setLiveWindow] = useState<LiveWindow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** Antenna reception from the latest heartbeat (null = unknown). */
+  const [signal, setSignal] = useState<ReceptionSignal | null>(null)
+  const signalNote = weakSignalNote(signal)
+  const signalLine = signalStatsLine(signal)
   const [hlsStats, setHlsStats] = useState<HlsStats>({
     bandwidth: null,
     droppedFrames: null,
@@ -293,10 +299,11 @@ export function Player({ target, onBack }: Props) {
       })
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          console.warn('Playback error:', data.type, data.details, data.error)
           setError({
             message: data.type === Hls.ErrorTypes.NETWORK_ERROR
-              ? 'Playback failed — network error. Try again.'
-              : 'Playback failed. Try again or pick a lower quality.',
+              ? STREAM_STOPPED
+              : 'The picture stopped playing. Try again or pick a lower quality.',
             tunerBusy: false,
             retry: true,
           })
@@ -309,7 +316,7 @@ export function Player({ target, onBack }: Props) {
       })
     } else {
       setError({
-        message: 'This browser cannot play HLS video.',
+        message: CANT_PLAY_HERE,
         tunerBusy: false,
         retry: true,
       })
@@ -347,6 +354,7 @@ export function Player({ target, onBack }: Props) {
     setLoading(true)
     setError(null)
     setSessionMeta(null)
+    setSignal(null)
 
     void (async () => {
       await prevStop
@@ -426,7 +434,12 @@ export function Player({ target, onBack }: Props) {
       if (!id || !playlist) return
       const token = streamTokenFromPlaylist(playlist)
       if (!token) return
-      void client.heartbeat(id, token).catch((err: unknown) => {
+      void client.heartbeat(id, token).then(
+        (reading) => {
+          // Ignore a beat that lands after this viewer was replaced or stopped.
+          if (viewerIdRef.current === id) setSignal(reading)
+        },
+        (err: unknown) => {
         // Parental controls stopped the stream (the program changed to a
         // blocked one): show why. Other failures are best-effort.
         if (isParentalBlock(err)) {
@@ -436,7 +449,8 @@ export function Player({ target, onBack }: Props) {
           destroyHls()
           setError(startErrorFrom(err))
         }
-      })
+        },
+      )
     }
 
     const ctrl = createHeartbeatController({ send })
@@ -636,6 +650,13 @@ export function Player({ target, onBack }: Props) {
 
         {loading && !error ? <div className={styles.loading}>Starting stream…</div> : null}
 
+        {/* Outside the auto-hiding overlay so it stays put while the signal is weak. */}
+        {signalNote && !loading && !error ? (
+          <div className={styles.signalNote} role="status" aria-live="polite">
+            {signalNote}
+          </div>
+        ) : null}
+
         {error ? (
           <div className={styles.errorBox}>
             <p className={styles.errorMsg}>{error.message}</p>
@@ -696,6 +717,7 @@ export function Player({ target, onBack }: Props) {
                 <span className={styles.statsKey}>buffer</span>
                 <span>{formatBuffer(hlsStats.bufferLength)}</span>
               </div>
+              {signalLine ? <div className={styles.statsLine}>{signalLine}</div> : null}
             </div>
           ) : null}
 

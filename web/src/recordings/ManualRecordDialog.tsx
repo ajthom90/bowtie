@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ApiError, type ViewerChannel } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { sortFavoritesFirst } from '../guide/guideModel'
 import { isConflict, type SheetConflict } from '../guide/ProgramSheet'
@@ -55,7 +56,7 @@ export function ManualRecordDialog({ onClose, onDone }: Props) {
         setChannelId((id) => id ?? sorted[0]?.id ?? null)
       })
       .catch((err: unknown) => {
-        if (live) setLoadError(err instanceof ApiError && err.message ? err.message : 'Could not load channels.')
+        if (live) setLoadError(viewerErrorText(err, 'Could not load channels.'))
       })
     return () => {
       live = false
@@ -123,7 +124,7 @@ export function ManualRecordDialog({ onClose, onDone }: Props) {
       if (err instanceof ApiError && err.status === 409 && isConflict(err.body)) {
         setConflict({ info: { tunerCount: err.body.tunerCount, conflicts: err.body.conflicts }, body })
       } else {
-        setError(err instanceof ApiError && err.message ? err.message : 'Could not schedule the recording. Try again.')
+        setError(viewerErrorText(err, 'Could not schedule the recording. Try again.'))
       }
     } finally {
       setBusy(false)

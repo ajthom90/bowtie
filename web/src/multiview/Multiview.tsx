@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { ApiError, type GuideChannel } from '../api/client'
+import { type GuideChannel } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { BowtieMark } from '../BowtieMark'
 import { currentProgramTitle } from '../guide/guideModel'
@@ -18,6 +19,7 @@ import {
   type MultiviewState,
   type TileChannel,
 } from './multiviewModel'
+import { createRecheckController, withWatchable } from '../guide/watchableModel'
 import { MultiviewPicker } from './MultiviewPicker'
 import { MultiviewTile } from './MultiviewTile'
 import styles from './Multiview.module.css'
@@ -59,6 +61,7 @@ export function Multiview({ onGuide }: Props) {
               logoUrl: c.logoUrl,
               reception: c.reception,
               favorite: c.favorite,
+              watchable: c.watchable,
               programs: [],
             }),
           ),
@@ -71,7 +74,7 @@ export function Multiview({ onGuide }: Props) {
         (err: unknown) => {
           if (cancelled) return
           setChannelsError(
-            err instanceof ApiError && err.message ? err.message : 'Could not load channels.',
+            viewerErrorText(err, 'Could not load channels.'),
           )
         },
       )
@@ -84,6 +87,32 @@ export function Multiview({ onGuide }: Props) {
     const id = window.setInterval(() => setNow(new Date()), 30_000)
     return () => window.clearInterval(id)
   }, [])
+
+  // While the picker is open, ask which channels a tuner can take now, then
+  // every 30 s (and on return to the tab), so busy channels come back.
+  const pickerOpen = picking !== null
+  useEffect(() => {
+    if (!pickerOpen) return
+    let cancelled = false
+    const check = () => {
+      client.getChannels().then(
+        (list) => {
+          if (!cancelled) setChannels((cs) => cs && withWatchable(cs, list))
+        },
+        () => {},
+      )
+    }
+    const ctrl = createRecheckController({ check })
+    check()
+    ctrl.start()
+    const onVis = () => ctrl.handleVisibilityChange(document.visibilityState)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVis)
+      ctrl.stop()
+    }
+  }, [client, pickerOpen])
 
   // Remember the set for "Restore last"; an emptied page keeps the previous set.
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GuideChannel } from '../api/client'
 import { currentProgramTitle, receptionNote, sortFavoritesFirst } from '../guide/guideModel'
+import { ALL_TUNERS_BUSY, busyNote, watchableOnly } from '../guide/watchableModel'
 import type { TileChannel } from './multiviewModel'
 import styles from './Multiview.module.css'
 
@@ -59,12 +60,15 @@ export function MultiviewPicker({ title, channels, error, now, onScreen, onPick,
   const listed = useMemo(() => {
     if (!channels) return []
     const q = filter.trim().toLowerCase()
-    const sorted = sortFavoritesFirst(channels)
+    // Only channels a tuner can take (all tuners busy hides the rest).
+    const sorted = sortFavoritesFirst(watchableOnly(channels))
     if (!q) return sorted
     return sorted.filter(
       (c) => c.guideNumber.toLowerCase().startsWith(q) || c.name.toLowerCase().includes(q),
     )
   }, [channels, filter])
+
+  const tunersNote = channels ? busyNote(channels) : null
 
   return (
     <div className={styles.backdrop} onClick={onClose}>
@@ -91,7 +95,12 @@ export function MultiviewPicker({ title, channels, error, now, onScreen, onPick,
 
         {error ? <p className={styles.sheetHint}>{error}</p> : null}
         {!channels && !error ? <p className={styles.sheetHint}>Loading channels…</p> : null}
-        {channels && listed.length === 0 ? (
+        {tunersNote ? (
+          <p className={styles.sheetHint} role="status">
+            {tunersNote}
+          </p>
+        ) : null}
+        {channels && listed.length === 0 && tunersNote !== ALL_TUNERS_BUSY ? (
           <p className={styles.sheetHint}>No matching channels.</p>
         ) : null}
 
