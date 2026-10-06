@@ -10,6 +10,7 @@ using Windows.Media.Streaming.Adaptive;
 using Windows.System.Display;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Navigation;
@@ -22,6 +23,9 @@ namespace BowtieXbox.Pages
     /// desktop app. HLS plays through <see cref="AdaptiveMediaSource"/>; its
     /// auth is the playlist's <c>?token=</c>, never a Bearer header.
     /// B / Back leaves (deleting the session); suspending the app does too.
+    /// The heartbeat's reception shows under the title, and a weak-signal
+    /// note stays up while it's weak. Failures show plain words; the
+    /// technical detail goes to the app log.
     /// </summary>
     public sealed partial class PlayerPage : Page
     {
@@ -46,10 +50,8 @@ namespace BowtieXbox.Pages
             _player.MediaOpened += (_, __) => OnUi(OnMediaOpened);
             _player.MediaFailed += (_, args) =>
             {
-                var message = string.IsNullOrWhiteSpace(args.ErrorMessage)
-                    ? $"Playback failed ({args.Error})."
-                    : args.ErrorMessage;
-                OnUi(() => Fail(message));
+                var detail = $"media failed: {args.Error} 0x{args.ExtendedErrorCode?.HResult:X8} {args.ErrorMessage}";
+                OnUi(() => Fail(detail));
             };
             _player.PlaybackSession.PlaybackStateChanged += (session, __) =>
             {
@@ -159,12 +161,29 @@ namespace BowtieXbox.Pages
 
         // ── Session state ───────────────────────────────────────────────────
 
-        private void OnLiveChanged(object? sender, PropertyChangedEventArgs e) => OnUi(Render);
+        private void OnLiveChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            // Each heartbeat updates the reading: redraw just that, so the
+            // title bar doesn't pop back up every 15 seconds.
+            switch (e.PropertyName)
+            {
+                case nameof(PlayerViewModel.Signal):
+                case nameof(PlayerViewModel.ShowWeakSignalNote):
+                case nameof(PlayerViewModel.WeakSignalMessage):
+                case nameof(PlayerViewModel.SignalStats):
+                    OnUi(RenderSignal);
+                    break;
+                default:
+                    OnUi(Render);
+                    break;
+            }
+        }
 
         private void Render()
         {
             if (_leaving || _live == null) return;
             if (_live.CurrentChannel is Channel channel) TitleLabel.Text = Describe(channel);
+            RenderSignal();
 
             switch (_live.State)
             {
@@ -198,6 +217,30 @@ namespace BowtieXbox.Pages
                 default:
                     HideOverlay();
                     break;
+            }
+        }
+
+        /// <summary>
+        /// The reception line under the title and the weak-signal note;
+        /// Narrator reads the note when it appears.
+        /// </summary>
+        private void RenderSignal()
+        {
+            if (_leaving || _live == null) return;
+            var stats = _live.SignalStats;
+            SignalStatsText.Text = stats ?? "";
+            SignalStatsText.Visibility = stats != null ? Visibility.Visible : Visibility.Collapsed;
+
+            var message = _live.WeakSignalMessage;
+            WeakSignalText.Text = message ?? "";
+            var visibility = message != null ? Visibility.Visible : Visibility.Collapsed;
+            if (WeakSignalNote.Visibility == visibility) return;
+            WeakSignalNote.Visibility = visibility;
+            if (message != null)
+            {
+                var peer = FrameworkElementAutomationPeer.FromElement(WeakSignalText)
+                           ?? FrameworkElementAutomationPeer.CreatePeerForElement(WeakSignalText);
+                peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
             }
         }
 
@@ -246,7 +289,7 @@ namespace BowtieXbox.Pages
             }
             catch (Exception ex)
             {
-                if (generation == _loadGeneration && !_leaving) Fail($"Couldn't open the stream: {ex.Message}");
+                if (generation == _loadGeneration && !_leaving) Fail($"couldn't open the stream: {ex}");
                 return;
             }
             if (generation != _loadGeneration || _leaving) return;
@@ -258,7 +301,7 @@ namespace BowtieXbox.Pages
                     AuthFailed();
                     return;
                 }
-                Fail($"Couldn't open the stream ({result.Status}).");
+                Fail($"couldn't open the stream: {result.Status} 0x{result.ExtendedError?.HResult:X8}");
                 return;
             }
 
@@ -288,11 +331,13 @@ namespace BowtieXbox.Pages
             _live.OnPlaybackAuthError();
         }
 
-        private void Fail(string message)
+        /// <summary>The player gave up: plain words on screen, <paramref name="detail"/> in the app log.</summary>
+        private void Fail(string detail)
         {
             if (_leaving || _live == null) return;
+            App.Log("player", detail);
             _loadedUri = null;
-            _live.OnPlaybackFailed(message);
+            _live.OnPlaybackFailed(ErrorText.StreamStopped);
         }
 
         private void OnMediaOpened()

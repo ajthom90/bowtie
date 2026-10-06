@@ -7,6 +7,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -29,7 +30,12 @@
                    Foreground="{StaticResource BowtieMuted}" Margin="0,0,0,8"
                    Text="A to watch · Y to add or remove a favorite · B to go back" />
 
-        <Grid Grid.Row="2">
+        <!-- Every tuner is busy: only channels that can start are listed. -->
+        <TextBlock Grid.Row="2" x:Name="TunersLabel" Style="{StaticResource BodyText}" FontSize="22"
+                   Foreground="#FFB74D" Margin="0,0,0,8" Visibility="Collapsed"
+                   AutomationProperties.LiveSetting="Polite" />
+
+        <Grid Grid.Row="3">
             <ListView x:Name="ChannelList"
                       SelectionMode="None"
                       IsItemClickEnabled="True"
@@ -72,7 +78,8 @@
 
             <StackPanel x:Name="StatusPanel" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
                 <ProgressRing x:Name="Spinner" Width="64" Height="64" />
-                <TextBlock x:Name="StatusText" Style="{StaticResource BodyText}" TextAlignment="Center" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource BodyText}" TextAlignment="Center"
+                           AutomationProperties.LiveSetting="Polite" />
                 <Button x:Name="RetryButton" Content="Try again" Style="{StaticResource TvButton}"
                         HorizontalAlignment="Center" Click="OnRefresh" Visibility="Collapsed" />
             </StackPanel>
