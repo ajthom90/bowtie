@@ -58,6 +58,15 @@ struct MacLivePlayerView: View {
             if showChrome || isBlockingError {
                 chromeLayer
                     .transition(.opacity)
+            } else if let note = playerModel.weakSignalNote {
+                // Stays on screen while the signal is weak; with the chrome up
+                // it sits under the Live pill instead.
+                WeakSignalNote(text: note)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
 
             if case .stalled = playerModel.state {

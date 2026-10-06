@@ -1,8 +1,9 @@
 import SwiftUI
 import BowtieKit
 
-/// "Weak signal (46%) — the picture may break up." Small and quiet beside the
-/// live controls (`announcesWeakSignal` tells VoiceOver).
+/// "Weak signal (46%) — the picture may break up." Small and quiet in the
+/// corner by the Live pill, on screen for as long as the signal is weak
+/// (`announcesWeakSignal` tells VoiceOver once).
 struct WeakSignalNote: View {
     let text: String
 
