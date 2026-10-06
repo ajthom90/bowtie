@@ -119,7 +119,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SignalStats));
     }
 
-    /// <summary>Heartbeats answered so far (tests wait on it).</summary>
+    /// <summary>Heartbeats sent so far, answered or not (tests wait on it).</summary>
     internal int HeartbeatCount => Volatile.Read(ref _heartbeatCount);
 
     public Channel? CurrentChannel
@@ -359,10 +359,11 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
                     await _delay(_heartbeatInterval, ct);
                     // Keep beating while this viewer is open (Playing or Stalled).
                     if (_activeViewerId != viewerId) return;
-                    var signal = await _client.HeartbeatAsync(viewerId, token, ct);
+                    var beat = await _client.BeatAsync(viewerId, token, ct);
                     // A late answer for a viewer that's gone must not show its reception.
                     if (ct.IsCancellationRequested || _activeViewerId != viewerId) return;
-                    Signal = signal;
+                    // No answer (flaky network): keep the last reading so the note doesn't blink.
+                    if (beat.Answered) Signal = beat.Signal;
                     Interlocked.Increment(ref _heartbeatCount);
                 }
             }
