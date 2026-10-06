@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using Bowtie.Core;
 using Bowtie.Core.ViewModels;
 using BowtieApp.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -25,6 +27,8 @@ namespace BowtieApp.Pages;
 /// math (Go Live, behind-live label, skips) is <see cref="LiveEdge"/>.
 /// The sleep timer (<see cref="SleepTimer"/>) leaves the player like Back;
 /// recordings offer Skip ad over detected breaks (<see cref="CommercialSkipper"/>).
+/// Live shows a weak-signal note from the heartbeat's reception. Player
+/// errors show plain words; the technical detail goes to the trace log.
 /// </summary>
 public sealed partial class PlayerPage : Page
 {
@@ -48,15 +52,14 @@ public sealed partial class PlayerPage : Page
     public PlayerPage()
     {
         InitializeComponent();
+        WeakSignalText.Text = PlayerViewModel.WeakSignalNote;
 
         _player = new MediaPlayer { AutoPlay = true };
         _player.MediaOpened += (_, _) => DispatcherQueue.TryEnqueue(OnMediaOpened);
         _player.MediaFailed += (_, args) =>
         {
-            var message = string.IsNullOrWhiteSpace(args.ErrorMessage)
-                ? $"Playback failed ({args.Error})."
-                : args.ErrorMessage;
-            DispatcherQueue.TryEnqueue(() => Fail(message));
+            var detail = $"media failed: {args.Error} 0x{args.ExtendedErrorCode?.HResult:X8} {args.ErrorMessage}";
+            DispatcherQueue.TryEnqueue(() => Fail(detail));
         };
         _player.PlaybackSession.PlaybackStateChanged += (session, _) =>
         {
@@ -175,6 +178,7 @@ public sealed partial class PlayerPage : Page
         var isLive = _request is PlayerRequest.Live;
         LiveBadge.Visibility = isLive ? LiveBadge.Visibility : Visibility.Collapsed;
         QualityBox.Visibility = isLive && _live != null ? Visibility.Visible : Visibility.Collapsed;
+        RenderWeakSignal(isLive && _live is { ShowWeakSignalNote: true });
         if (_live == null) return;
 
         if (_live.CurrentChannel is { } channel) TitleLabel.Text = Describe(channel);
@@ -211,6 +215,20 @@ public sealed partial class PlayerPage : Page
             default:
                 HideOverlay();
                 break;
+        }
+    }
+
+    /// <summary>Show or hide the weak-signal note; screen readers hear it when it appears.</summary>
+    private void RenderWeakSignal(bool show)
+    {
+        var visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (WeakSignalNote.Visibility == visibility) return;
+        WeakSignalNote.Visibility = visibility;
+        if (show)
+        {
+            var peer = FrameworkElementAutomationPeer.FromElement(WeakSignalText)
+                       ?? FrameworkElementAutomationPeer.CreatePeerForElement(WeakSignalText);
+            peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
     }
 
@@ -252,7 +270,7 @@ public sealed partial class PlayerPage : Page
         }
         catch (Exception ex)
         {
-            if (generation == _loadGeneration && !_leaving) Fail($"Couldn't open the stream: {ex.Message}");
+            if (generation == _loadGeneration && !_leaving) Fail($"couldn't open the stream: {ex}");
             return;
         }
         if (generation != _loadGeneration || _leaving) return;
@@ -264,7 +282,7 @@ public sealed partial class PlayerPage : Page
                 AuthFailed();
                 return;
             }
-            Fail($"Couldn't open the stream ({result.Status}).");
+            Fail($"couldn't open the stream: {result.Status} 0x{result.ExtendedError?.HResult:X8}");
             return;
         }
 
@@ -302,22 +320,24 @@ public sealed partial class PlayerPage : Page
         {
             StopMedia();
             ShowOverlay(busy: false, title: "Can't play this recording",
-                body: "Playback authorization failed. Go back and press Play again.", retry: false);
+                body: ErrorText.RecordingStopped, retry: false);
         }
     }
 
-    private void Fail(string message)
+    /// <summary>The player gave up: plain words on screen, <paramref name="detail"/> in the trace log.</summary>
+    private void Fail(string detail)
     {
         if (_leaving) return;
+        Trace.WriteLine($"Bowtie player: {detail}");
         if (_live != null)
         {
             _loadedUri = null;
-            _live.OnPlaybackFailed(message);
+            _live.OnPlaybackFailed(ErrorText.StreamStopped);
         }
         else
         {
             StopMedia();
-            ShowOverlay(busy: false, title: "Can't play this recording", body: message, retry: false);
+            ShowOverlay(busy: false, title: "Can't play this recording", body: ErrorText.RecordingStopped, retry: false);
         }
     }
 

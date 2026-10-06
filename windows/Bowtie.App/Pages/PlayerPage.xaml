@@ -37,6 +37,15 @@
                         Background="{StaticResource BowtieLiveBrush}" Visibility="Collapsed">
                     <TextBlock x:Name="LiveBadgeText" Text="LIVE" FontWeight="SemiBold" Foreground="White" />
                 </Border>
+                <!-- Weak antenna signal (latest heartbeat); live only. Announced when it appears. -->
+                <StackPanel x:Name="WeakSignalNote" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                    <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="{StaticResource BowtieAmberBrush}"
+                              AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock x:Name="WeakSignalText" Foreground="{StaticResource BowtieAmberBrush}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               AutomationProperties.LiveSetting="Polite" />
+                </StackPanel>
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">

@@ -56,12 +56,35 @@ public sealed record Channel
     public string? Reception { get; init; }
     /// <summary>The caller starred this channel; null from servers without favorites (hide the star).</summary>
     public bool? Favorite { get; init; }
+    /// <summary>
+    /// False when every tuner on its HDHomeRun is busy with other channels
+    /// and nobody in Bowtie is on this one (starting it would fail); null
+    /// from older servers.
+    /// </summary>
+    public bool? Watchable { get; init; }
 
     [JsonIgnore]
     public bool HasNoSignal => Reception == "noSignal";
 
     [JsonIgnore]
     public bool IsFavorite => Favorite == true;
+
+    /// <summary>A missing <see cref="Watchable"/> (older servers) counts as watchable.</summary>
+    [JsonIgnore]
+    public bool IsWatchable => Watchable != false;
+}
+
+/// <summary>
+/// Antenna reception of the tuner feeding a live session (heartbeat
+/// <c>?signal=1</c>). <see cref="Weak"/> needs two bad readings in a row on
+/// the server, so it doesn't flicker.
+/// </summary>
+public sealed record ReceptionSignal
+{
+    public int Strength { get; init; }
+    public int Quality { get; init; }
+    public int SymbolQuality { get; init; }
+    public bool Weak { get; init; }
 }
 
 /// <summary>A channel the caller watched recently, newest first.</summary>
@@ -228,6 +251,11 @@ internal sealed record ProtectRequest([property: JsonPropertyName("protected")] 
 internal sealed record ErrorBody
 {
     public string? Error { get; init; }
+}
+
+internal sealed record HeartbeatBody
+{
+    public ReceptionSignal? Signal { get; init; }
 }
 
 internal sealed record TunersBusyBody
