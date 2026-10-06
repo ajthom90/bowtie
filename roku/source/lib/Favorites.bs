@@ -37,7 +37,7 @@ namespace bowtie.favorites
     end function
 
     ' raw: /channels body (bare array or {channels: [...]}).
-    ' → { channels: [{id, guideNumber, name, favorite, order}], supported }
+    ' → { channels: [{id, guideNumber, name, favorite, watchable, order}], supported }
     function normalizeChannels(raw as object) as object
         list = bowtie.favorites.asArray(raw, "channels")
         channels = []
@@ -49,11 +49,18 @@ namespace bowtie.favorites
                     supported = true
                     fav = (c.favorite = true)
                 end if
+                ' All tuners busy (bowtie.tuners): only an explicit false.
+                watchable = true
+                w = c.watchable
+                if w <> invalid and (Type(w) = "Boolean" or Type(w) = "roBoolean")
+                    if w = false then watchable = false
+                end if
                 channels.push({
                     id: bowtie.favorites.orZero(c.id)
                     guideNumber: bowtie.favorites.asString(c.guideNumber)
                     name: bowtie.favorites.asString(c.name)
                     favorite: fav
+                    watchable: watchable
                     order: channels.count()
                 })
             end if

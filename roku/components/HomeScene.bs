@@ -17,16 +17,26 @@
 ' on right now" and Show all take its place. The chip is kept in the
 ' registry (bowtie.registry guideFilter). The player still zaps the full
 ' rail (m.channels).
+' All tuners busy (bowtie.tuners): channels the server marks watchable:
+' false (every tuner they need is busy) leave the rail, the Recent row and
+' the player's zapping (m.joinable), with "All tuners are in use — showing
+' channels you can join." right of the chips; with none left, "All tuners
+' are in use. Try again in a few minutes." and Try again take the rail's
+' place. While shown, GET /channels every 30 s updates the flags in place
+' (watchableTimer) so channels come back when a tuner frees up.
+' Request errors are plain words (bowtie.client.viewerMessage).
 ' Focus: [Recordings | Settings] <-> continueList <-> recentList <->
 ' filterList <-> rail | Show all (hidden rows are skipped). Row placement:
 ' bowtie.continueWatching.homeLayout.
 
+import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/GuideLogic.bs"
 import "pkg:/source/lib/GuideFilter.bs"
 import "pkg:/source/lib/Favorites.bs"
 import "pkg:/source/lib/Recordings.bs"
 import "pkg:/source/lib/ContinueWatching.bs"
 import "pkg:/source/lib/Registry.bs"
+import "pkg:/source/lib/Tuners.bs"
 
 const EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 const GUIDE_WINDOW_SECS = 4 * 3600
@@ -53,6 +63,8 @@ sub init()
     m.filterEmptyLabel = m.top.findNode("filterEmptyLabel")
     m.showAllButton = m.top.findNode("showAllButton")
     m.refreshTimer = m.top.findNode("refreshTimer")
+    m.busyNote = m.top.findNode("busyNote")
+    m.watchableTimer = m.top.findNode("watchableTimer")
 
     m.observing = false
     m.loadGen = 0
@@ -67,9 +79,15 @@ sub init()
     ' channel, favorites first: the player zaps through it).
     m.fav = invalid
     m.channels = []
-    ' What the rail shows: m.channels the guide filter keeps (channelList
+    ' m.channels a viewer can join now (bowtie.tuners.watchableOnly): what
+    ' the player zaps through.
+    m.joinable = []
+    ' What the rail shows: m.joinable the guide filter keeps (channelList
     ' indexes into this).
     m.railChannels = []
+    ' In-flight 30-second watchable re-check (GET /channels), or "".
+    m.pendingCheckId = ""
+    m.checkSeq = 0
     ' Guide filter chip ("all", "sports", …), remembered on this device.
     m.filter = bowtie.guideFilter.parse(bowtie.registry.loadGuideFilter())
     ' True while the channel list (chips + rail or the filter's empty
@@ -78,6 +96,8 @@ sub init()
     ' Focus the chips when the list next shows (a timed refresh while on them).
     m.focusFiltersOnShow = false
     m.guideById = {}
+    ' The server's Recent row, and the part of it on m.joinable (shown).
+    m.allRecents = []
     m.recents = []
     ' Continue watching items (normalized recordings, display order).
     m.continueItems = []
@@ -113,6 +133,7 @@ sub init()
     m.filterList.observeField("itemSelected", "onFilterSelected")
     m.showAllButton.observeField("buttonSelected", "onShowAll")
     m.refreshTimer.observeField("fire", "onRefreshTimer")
+    m.watchableTimer.observeField("fire", "onWatchableTimer")
     renderFilters()
     m.top.observeField("visible", "onVisible")
     m.top.observeField("apiTask", "onApiTaskSet")
@@ -150,10 +171,14 @@ sub onVisible()
         updateUserLabel()
         observeApi()
         startRefreshTimer()
+        m.watchableTimer.control = "stop"
+        m.watchableTimer.control = "start"
         ' Full refresh on every show (Task 4: refresh on show).
         loadChannels()
     else
         stopRefreshTimer()
+        m.watchableTimer.control = "stop"
+        m.pendingCheckId = ""
         closeDialog()
         m.pendingRecord = invalid
         m.pendingRemove = invalid
@@ -192,6 +217,38 @@ sub onRefreshTimer()
     end if
 end sub
 
+' Every 30 s while shown: which channels can be joined now. Skipped while
+' a full reload is under way (it brings the same flags).
+sub onWatchableTimer()
+    if m.top.visible <> true then return
+    if m.busy = true or m.listShown <> true then return
+    checkWatchable()
+end sub
+
+' GET /channels for its watchable flags only (no spinner, focus kept).
+sub checkWatchable()
+    task = m.top.apiTask
+    if task = invalid or m.pendingCheckId <> "" then return
+    m.checkSeq = m.checkSeq + 1
+    m.pendingCheckId = "home-watchable-" + m.checkSeq.toStr()
+    task.request = {
+        id: m.pendingCheckId
+        kind: "channels"
+        params: {}
+    }
+end sub
+
+sub handleWatchableResponse(resp as object)
+    m.pendingCheckId = ""
+    ' A failed check changes nothing; the next one (or the reload) catches up.
+    if resp.ok <> true or m.busy = true or m.fav = invalid then return
+    if not bowtie.tuners.applyWatchable(m.channels, resp.data) then return
+    focusedId = invalid
+    idx = m.channelList.itemFocused
+    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx].id
+    renderRail(focusedId)
+end sub
+
 sub onSettingsButton()
     m.top.openSettings = true
 end sub
@@ -207,15 +264,15 @@ end sub
 sub onItemSelected()
     idx = m.channelList.itemSelected
     if idx = invalid or idx < 0 or idx >= m.railChannels.count() then return
-    ' The rail may be filtered; play the channel from the full rail.
-    selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.railChannels[idx].id))
+    ' The rail may be filtered; play the channel from every joinable one.
+    selectChannelAt(bowtie.favorites.indexOfChannel(m.joinable, m.railChannels[idx].id))
 end sub
 
 sub onRecentSelected()
     idx = m.recentList.itemSelected
     if idx = invalid or idx < 0 or idx >= m.recents.count() then return
     ' Play from the rail so up/down zapping continues in rail order.
-    selectChannelAt(bowtie.favorites.indexOfChannel(m.channels, m.recents[idx].channelId))
+    selectChannelAt(bowtie.favorites.indexOfChannel(m.joinable, m.recents[idx].channelId))
 end sub
 
 ' OK on a filter chip: show that filter's channels and remember it.
@@ -227,7 +284,12 @@ sub onFilterSelected()
 end sub
 
 ' Show all (the filter matched nothing): back to All, focus on its chip.
+' With every channel's tuners busy it reads Try again: re-check now.
 sub onShowAll()
+    if bowtie.tuners.allBusy(m.channels)
+        checkWatchable()
+        return
+    end if
     setFilter("all")
     if m.filterList.visible = true then m.filterList.setFocus(true)
 end sub
@@ -279,16 +341,16 @@ end function
 
 sub selectChannelAt(idx as dynamic)
     if idx = invalid or idx < 0 then return
-    if m.channels = invalid or idx >= m.channels.count() then return
-    ch = m.channels[idx]
+    if m.joinable = invalid or idx >= m.joinable.count() then return
+    ch = m.joinable[idx]
     if ch = invalid then return
-    ' Player needs full rail for up/down zap + index for wrap.
+    ' Player needs every joinable channel for up/down zap + index for wrap.
     m.top.selectedChannel = {
         id: ch.id
         guideNumber: ch.guideNumber
         name: ch.name
         index: idx
-        channels: m.channels
+        channels: m.joinable
         ' The player's sleep timer offers End of this program from it.
         guide: m.guideById
     }
@@ -588,13 +650,11 @@ sub handleRecordResponse(resp as object)
         showDialog("conflict", "Not enough tuners", bowtie.recordings.conflictMessage(err, localUtcOffset()), ["Record anyway", "Cancel"])
         return
     end if
-    msg = "Couldn't schedule the recording."
+    msg = bowtie.client.viewerMessage(err, "Couldn't schedule the recording.")
     if code = 404
         msg = "That program isn't in the guide anymore."
     else if code = 503
         msg = "Recording isn't available on this server."
-    else if err <> invalid and err.message <> invalid and err.message <> ""
-        msg = err.message
     end if
     showDialog("info", "Can't record", [msg], ["OK"])
 end sub
@@ -619,8 +679,7 @@ sub handleRemoveResponse(resp as object)
     pending = m.pendingRemove
     m.pendingRemove = invalid
     if resp.ok <> true
-        msg = "Couldn't remove it from Continue watching. Try again."
-        if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> "" then msg = resp.error.message
+        msg = bowtie.client.viewerMessage(resp.error, "Couldn't remove it from Continue watching. Try again.")
         showDialog("info", "Can't remove", [msg], ["OK"])
         return
     end if
@@ -722,6 +781,8 @@ sub loadChannels()
     m.pendingGuideId = ""
     m.pendingRecentsId = ""
     m.pendingContinueId = ""
+    ' The reload brings the same flags; a check still in flight is dropped.
+    m.pendingCheckId = ""
     ' The reload is queued behind any PUT/DELETE, so it returns server truth.
     m.pendingFavs = {}
     ' A timed refresh while on the Continue row (or the chips) lands back on it.
@@ -788,6 +849,10 @@ sub onApiResponse()
         handleChannelsResponse(resp)
         return
     end if
+    if resp.id = m.pendingCheckId and m.pendingCheckId <> ""
+        handleWatchableResponse(resp)
+        return
+    end if
     if resp.id = m.pendingGuideId and m.pendingGuideId <> ""
         handleGuideResponse(resp)
         return
@@ -829,7 +894,9 @@ sub handleChannelsResponse(resp as object)
     ' API may return a bare array or {channels: [...]}; favorites first.
     m.fav = bowtie.favorites.newState(resp.data)
     m.channels = m.fav.channels
+    m.joinable = bowtie.tuners.watchableOnly(m.channels)
     m.railChannels = []
+    m.allRecents = []
     m.recents = []
     m.continueItems = []
     renderContinue(-1)
@@ -868,16 +935,28 @@ end sub
 sub handleRecentsResponse(resp as object)
     m.pendingRecentsId = ""
     ' Any error (404 from a server without recents included) hides the row.
+    m.allRecents = []
+    if resp.ok = true then m.allRecents = bowtie.favorites.parseRecents(resp.data)
+    updateRecents()
+    updateRows()
+end sub
+
+' The Recent row: the server's recents on m.joinable (selecting one plays
+' from it). Re-rendered only when that changes, so focus on it stays put.
+sub updateRecents()
     recents = []
-    if resp.ok = true
-        for each r in bowtie.favorites.parseRecents(resp.data)
-            ' Only channels on the rail: selecting one plays from the rail.
-            if bowtie.favorites.indexOfChannel(m.channels, r.channelId) >= 0 then recents.push(r)
+    for each r in m.allRecents
+        if bowtie.favorites.indexOfChannel(m.joinable, r.channelId) >= 0 then recents.push(r)
+    end for
+    same = (recents.count() = m.recents.count())
+    if same
+        for i = 0 to recents.count() - 1
+            if bowtie.favorites.idKey(recents[i].channelId) <> bowtie.favorites.idKey(m.recents[i].channelId) then same = false
         end for
     end if
+    if same then return
     m.recents = recents
     renderRecents()
-    updateRows()
 end sub
 
 sub handleContinueResponse(resp as object)
@@ -915,12 +994,14 @@ sub renderContinue(focusIdx as integer)
     end if
 end sub
 
-' Rebuild the rail from m.channels, the guide filter and the last guide;
-' keep focus on focusChannelId when given (its index changes when favorites
-' re-sort).
+' Rebuild the rail from m.channels (the joinable ones), the guide filter and
+' the last guide; keep focus on focusChannelId when given (its index changes
+' when favorites re-sort). The Recent row follows the joinable channels.
 sub renderRail(focusChannelId as dynamic)
     atIso = isoNow()
-    m.railChannels = bowtie.guideFilter.channelsMatching(m.channels, m.guideById, m.filter, atIso)
+    m.joinable = bowtie.tuners.watchableOnly(m.channels)
+    updateRecents()
+    m.railChannels = bowtie.guideFilter.channelsMatching(m.joinable, m.guideById, m.filter, atIso)
     m.channelList.content = buildListContent(m.railChannels, m.guideById, atIso)
     if focusChannelId <> invalid
         idx = bowtie.favorites.indexOfChannel(m.railChannels, focusChannelId)
@@ -940,9 +1021,24 @@ sub updateRows()
     showRecent = (listShown and m.recents.count() > 0)
     showRail = (listShown and m.railChannels.count() > 0)
     showFilterEmpty = (listShown and not showRail)
-    if showFilterEmpty then m.filterEmptyLabel.text = bowtie.guideFilter.emptyCopy(m.filter)
+    ' All tuners busy: the note while some channels are hidden; with none
+    ' left, the same words replace the rail and Show all reads Try again.
+    note = bowtie.tuners.busyNote(m.channels)
+    allBusy = bowtie.tuners.allBusy(m.channels)
+    if showFilterEmpty
+        if allBusy
+            m.filterEmptyLabel.text = note
+            m.showAllButton.text = "Try again"
+        else
+            m.filterEmptyLabel.text = bowtie.guideFilter.emptyCopy(m.filter)
+            m.showAllButton.text = "Show all"
+        end if
+    end if
 
     layout = bowtie.continueWatching.homeLayout(showContinue, showRecent)
+    m.busyNote.text = note
+    m.busyNote.translation = [1140, layout.filtersY]
+    m.busyNote.visible = (listShown and note <> "" and not allBusy)
     m.continueLabel.translation = [80, layout.continueLabelY]
     m.continueList.translation = [80, layout.continueY]
     m.recentLabel.translation = [80, layout.recentLabelY]
@@ -1096,13 +1192,10 @@ function nowAsSeconds() as integer
     return dt.AsSeconds()
 end function
 
+' The server's words, or plain ones (no answer → can't reach the server).
 function errorMessage(resp as object) as string
     if resp = invalid then return "Couldn't load channels."
-    if resp.error <> invalid
-        msg = resp.error.message
-        if msg <> invalid and msg <> "" then return msg
-    end if
-    return "Couldn't load channels."
+    return bowtie.client.viewerMessage(resp.error, "Couldn't load channels.")
 end function
 
 sub showLoading()

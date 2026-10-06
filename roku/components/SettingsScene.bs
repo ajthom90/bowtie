@@ -3,6 +3,7 @@
 ' and Skip ads automatically (device pref in the registry, default off).
 ' Up/Down move between the buttons; Back returns home.
 
+import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Registry.bs"
 
 const PASSWORD_CHANGED = "Password changed."
@@ -340,15 +341,10 @@ sub onApiResponse()
             m.passwordMessage.color = "0xF0A428FF"
             m.passwordMessage.text = PASSWORD_CHANGED
         else
-            msg = PASSWORD_FAILED
-            if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> ""
-                ' Wrong current password often surfaces as 401/unauthorized.
-                if resp.error.code = 401
-                    msg = "Wrong username or password."
-                else
-                    msg = resp.error.message
-                end if
-            end if
+            ' The server's words, or plain ones (no answer → can't reach).
+            msg = bowtie.client.viewerMessage(resp.error, PASSWORD_FAILED)
+            ' Wrong current password often surfaces as 401/unauthorized.
+            if resp.error <> invalid and resp.error.code <> invalid and resp.error.code = 401 then msg = "Wrong username or password."
             showPasswordError(msg)
         end if
         m.changePasswordButton.setFocus(true)

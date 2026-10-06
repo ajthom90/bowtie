@@ -16,7 +16,10 @@
 ' list, POST /play that recording and start at its saved position with no
 ' Resume / Start over question; when playback ends (Back, finished, sleep,
 ' error) the scene closes back to Home, which reloads Continue watching.
+' Errors are plain words (bowtie.client.viewerMessage); the Video node's
+' errorCode/errorMsg go to the log.
 
+import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Commercials.bs"
 import "pkg:/source/lib/ContinueWatching.bs"
 import "pkg:/source/lib/Recordings.bs"
@@ -231,8 +234,7 @@ function listErrorText(err as dynamic) as string
     if code = 404 and bowtie.recordings.isRulesTab(currentTab()) then return "This server doesn't support series recording yet."
     if code = 404 then return "This server doesn't support recordings yet."
     if code = 503 then return "Recording isn't available on this server."
-    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
-    return "Couldn't load recordings."
+    return bowtie.client.viewerMessage(err, "Couldn't load recordings.")
 end function
 
 sub renderList()
@@ -426,8 +428,7 @@ function actionErrorText(err as dynamic) as string
     if err <> invalid and err.code <> invalid then code = err.code
     if code = 403 then return "Only the person who scheduled it or an admin can do that."
     if code = 404 then return "That recording is gone."
-    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
-    return "Something went wrong. Try again."
+    return bowtie.client.viewerMessage(err, bowtie.client.somethingWrongText())
 end function
 
 ' ── Playback ─────────────────────────────────────────────────────────────────
@@ -447,15 +448,15 @@ sub handlePlayResponse(resp as object)
     setLoading(false)
     r = m.target
     if resp.ok <> true or r = invalid
-        msg = "Couldn't play this recording."
-        if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> "" then msg = resp.error.message
+        msg = bowtie.client.viewerMessage(resp.error, "Couldn't play this recording.")
         showDialog("error", "Can't play", [msg], ["OK"])
         return
     end if
     data = resp.data
     url = data.playlistUrl
     if url = invalid or url = ""
-        showDialog("error", "Can't play", ["The server sent no playlist."], ["OK"])
+        print "[recordings] play reply has no playlist URL"
+        showDialog("error", "Can't play", [bowtie.client.somethingWrongText()], ["OK"])
         return
     end if
     durationSec = data.durationSec
@@ -566,12 +567,11 @@ sub onVideoState()
         if r.durationSec <> invalid and r.durationSec > m.lastPosition then m.lastPosition = r.durationSec
         stopPlayback()
     else if st = "error"
-        msg = m.video.errorMsg
-        if msg = invalid then msg = ""
+        print "[recordings] playback error: errorCode="; m.video.errorCode; " errorMsg="; m.video.errorMsg
         ' In resume mode the scene closes once this dialog is dismissed.
         endPlayback()
         if m.resumeMode <> true then leavePlayback()
-        showDialog("error", "Playback failed", [msg], ["OK"])
+        showDialog("error", "Can't play", [bowtie.client.streamStoppedText()], ["OK"])
     end if
 end sub
 

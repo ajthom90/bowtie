@@ -222,6 +222,23 @@ freed) and the rail comes back. It survives zapping, resets when the player is
 left, and is never saved. Logic: `source/lib/SleepTimer.bs` (clock injected,
 tested under brs).
 
+### Signal and busy tuners
+
+The 15 s heartbeat asks for the antenna's reception (`?signal=1`). The top
+bar shows the latest reading — **Signal quality 46% · strength 96% ·
+error-free 0%** (quality first: strength can read high while the picture
+breaks up) — and so does the debug overlay. When the server says the signal
+is weak, **Weak signal (46%) — the picture may break up.** stays under the
+top bar (read out by Audio Guide when it appears). An older server (empty
+204) or no reading shows neither.
+
+Channels the server marks `watchable: false` (every tuner they need is busy)
+leave the rail, the Recent row and Up/Down zapping, with **All tuners are in
+use — showing channels you can join.** right of the filter chips; with none
+left, **All tuners are in use. Try again in a few minutes.** and **Try again**
+take the rail's place. The rail re-checks every 30 s while shown. Logic:
+`source/lib/Tuners.bs` (tested under brs).
+
 ### Session lifecycle (A3)
 
 On zap or quality change: bump generation → **DELETE** current viewer → debounce
@@ -237,6 +254,7 @@ Amber strip at the bottom (off by default; set `showDebug` to `true` in `compone
 ```text
 Video state=… errorCode=… errorMsg=…
 viewerId=… gen=… phase=…
+Signal quality …% · strength …% · error-free …%   (when the server reports one)
 ```
 
 Use step 7 of the validation gate to capture real `errorCode`/`errorMsg` after
@@ -250,7 +268,9 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 422 negotiation | Reset quality to Auto, retry once; second → device-can’t-play |
 | 404 | Channel not found; rail refreshes on return |
 | 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
-| Mid-play failure | Bounded retry, then error + Try again |
+| Mid-play failure | Bounded retry, then **The stream stopped. Try again.** + Try again |
+| No answer (offline, timed out) | **Can't reach your Bowtie server. Check your connection and try again.** |
+| Anything else | The server's own message, else plain words; `errorCode` / raw bodies go to the debug log only |
 
 ## Settings
 

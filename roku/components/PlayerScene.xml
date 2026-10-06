@@ -73,6 +73,45 @@
                 color="0x9BA5AEFF"
                 font="font:SmallSystemFont"
             />
+            <!-- The latest heartbeat's reception (bowtie.tuners.signalStatsText):
+                 "Signal quality 46% · strength 96% · error-free 0%"; hidden
+                 while unknown. -->
+            <Label
+                id="signalLabel"
+                translation="[300, 96]"
+                width="1000"
+                height="32"
+                text=""
+                horizAlign="left"
+                vertAlign="center"
+                color="0x9BA5AEFF"
+                font="font:SmallSystemFont"
+                visible="false"
+            />
+        </Group>
+
+        <!-- Weak signal (the heartbeat's ?signal=1 report says weak): a small
+             note under the top bar, outside it so it stays while the bar
+             hides. The error and tuners-busy screens draw over it. -->
+        <Group id="signalNote" visible="false">
+            <Rectangle
+                id="signalNoteBg"
+                translation="[1240, 156]"
+                width="600"
+                height="52"
+                color="0x101418CC"
+            />
+            <Label
+                id="signalNoteLabel"
+                translation="[1256, 156]"
+                width="568"
+                height="52"
+                text="Weak signal — the picture may break up."
+                horizAlign="center"
+                vertAlign="center"
+                color="0xF0A428FF"
+                font="font:SmallSystemFont"
+            />
         </Group>
 
         <!-- Starting / buffering spinner -->
@@ -206,7 +245,7 @@
                 id="debugLabel"
                 translation="[60, 920]"
                 width="1800"
-                height="100"
+                height="112"
                 text=""
                 horizAlign="left"
                 wrap="true"

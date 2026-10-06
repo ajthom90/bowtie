@@ -42,10 +42,10 @@ test('normalizeChannels keeps server fields and reports favorite support', () =>
         out.none = bowtie_favorites_normalizeChannels(invalid)
     `);
     assert.equal(out.arr.supported, true);
-    assert.deepEqual(out.arr.channels[1], { id: 7, guideNumber: '9.1', name: 'FOX9', favorite: true, order: 1 });
+    assert.deepEqual(out.arr.channels[1], { id: 7, guideNumber: '9.1', name: 'FOX9', favorite: true, watchable: true, order: 1 });
     // Older server: no "favorite" key → unsupported, every channel unstarred.
     assert.equal(out.wrapped.supported, false);
-    assert.deepEqual(out.wrapped.channels, [{ id: 9, guideNumber: '4.1', name: 'X', favorite: false, order: 0 }]);
+    assert.deepEqual(out.wrapped.channels, [{ id: 9, guideNumber: '4.1', name: 'X', favorite: false, watchable: true, order: 0 }]);
     assert.deepEqual(out.none, { channels: [], supported: false });
 });
 
