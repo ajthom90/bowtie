@@ -23,14 +23,16 @@ public abstract record PlayerState
 /// <item>Mid-play 403 (<see cref="OnPlaybackAuthError"/>): one silent replace, then fail.</item>
 /// <item>Zap / quality change: cancel in-flight → DELETE old → debounce → POST new.
 ///   A create that lands after a newer request is deleted so it can't leak a tuner.</item>
-/// <item>Heartbeat every 15 s while the session is open (Playing or Stalled), with the stream token.</item>
+/// <item>Heartbeat every 15 s while the session is open (Playing or Stalled), with the stream token;
+///   each answer carries the tuner's reception (<see cref="Signal"/>, <see cref="WeakSignalMessage"/>,
+///   <see cref="SignalStats"/>).</item>
 /// <item><see cref="Stop"/> is for really leaving the player only.</item>
 /// </list>
 /// </summary>
 public sealed class PlayerViewModel : ObservableObject, IDisposable
 {
     public const string DeviceCantPlayMessage = "This device can't play this channel at that quality";
-    public const string PlaybackAuthFailedMessage = "Playback authorization failed";
+    public const string PlaybackAuthFailedMessage = ErrorText.StreamStopped;
     public const string ChannelNotFoundMessage = "Channel not found";
 
     public static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -46,6 +48,8 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
     private Channel? _channel;
     private bool _channelsStale;
     private string _selectedProfile = "";
+    private ReceptionSignal? _signal;
+    private int _heartbeatCount;
 
     private CancellationTokenSource? _replaceCts;
     private CancellationTokenSource? _heartbeatCts;
@@ -75,9 +79,48 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         get => _state;
         private set
         {
-            if (SetProperty(ref _state, value)) OnPropertyChanged(nameof(PlaylistUri));
+            if (SetProperty(ref _state, value))
+            {
+                OnPropertyChanged(nameof(PlaylistUri));
+                OnSignalShownChanged();
+            }
         }
     }
+
+    /// <summary>Reception from the latest heartbeat; null when unknown or no session is open.</summary>
+    public ReceptionSignal? Signal
+    {
+        get => _signal;
+        private set
+        {
+            if (SetProperty(ref _signal, value)) OnSignalShownChanged();
+        }
+    }
+
+    /// <summary>
+    /// The latest heartbeat said weak and the session is open. The server
+    /// already needs two bad readings, so this follows each answer without
+    /// smoothing.
+    /// </summary>
+    public bool ShowWeakSignalNote => SessionOpen && Signal is { Weak: true };
+
+    /// <summary>"Weak signal (46%) — the picture may break up." while <see cref="ShowWeakSignalNote"/>; else null.</summary>
+    public string? WeakSignalMessage => ShowWeakSignalNote ? ReceptionText.WeakNote(Signal!) : null;
+
+    /// <summary>"Signal quality 46% · strength 96% · error-free 0%" while the session is open and the reading known; else null.</summary>
+    public string? SignalStats => SessionOpen && Signal is { } s ? ReceptionText.Stats(s) : null;
+
+    private bool SessionOpen => State is PlayerState.Playing or PlayerState.Stalled;
+
+    private void OnSignalShownChanged()
+    {
+        OnPropertyChanged(nameof(ShowWeakSignalNote));
+        OnPropertyChanged(nameof(WeakSignalMessage));
+        OnPropertyChanged(nameof(SignalStats));
+    }
+
+    /// <summary>Heartbeats answered so far (tests wait on it).</summary>
+    internal int HeartbeatCount => Volatile.Read(ref _heartbeatCount);
 
     public Channel? CurrentChannel
     {
@@ -154,6 +197,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         _lastSession = null;
         CurrentChannel = null;
         _authFailureRetried = false;
+        Signal = null;
 
         StopTask = viewerId != null ? _client.DeleteSessionAsync(viewerId) : Task.CompletedTask;
         State = new PlayerState.Idle();
@@ -217,6 +261,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
             var oldViewerId = _activeViewerId;
             _activeViewerId = null;
             StopHeartbeat();
+            Signal = null;
             State = new PlayerState.Starting();
 
             // Not cancellable: the old viewer must go even when the user zaps again.
@@ -285,7 +330,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
                 State = new PlayerState.Failed("Signed out");
                 break;
             case NetworkException:
-                State = new PlayerState.Failed("Couldn't reach the server.");
+                State = new PlayerState.Failed(ErrorText.CantReachServer);
                 break;
             default:
                 // 429 account limits, 502 no signal, 500… carry the server's words.
@@ -314,7 +359,11 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
                     await _delay(_heartbeatInterval, ct);
                     // Keep beating while this viewer is open (Playing or Stalled).
                     if (_activeViewerId != viewerId) return;
-                    await _client.HeartbeatAsync(viewerId, token, ct);
+                    var signal = await _client.HeartbeatAsync(viewerId, token, ct);
+                    // A late answer for a viewer that's gone must not show its reception.
+                    if (ct.IsCancellationRequested || _activeViewerId != viewerId) return;
+                    Signal = signal;
+                    Interlocked.Increment(ref _heartbeatCount);
                 }
             }
             catch (OperationCanceledException)

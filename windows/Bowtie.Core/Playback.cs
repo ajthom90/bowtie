@@ -197,3 +197,20 @@ public static class TunersBusyCopy
         return string.Join("\n", lines);
     }
 }
+
+/// <summary>
+/// Player copy for the tuner's reception (<see cref="ReceptionSignal"/>).
+/// Quality leads: strength can read 96% while the picture breaks up.
+/// </summary>
+public static class ReceptionText
+{
+    /// <summary>"Weak signal (46%) — the picture may break up."</summary>
+    public static string WeakNote(ReceptionSignal signal) =>
+        $"Weak signal ({Percent(signal.Quality)}) — the picture may break up.";
+
+    /// <summary>"Signal quality 46% · strength 96% · error-free 0%" (error-free is the symbol quality).</summary>
+    public static string Stats(ReceptionSignal signal) =>
+        $"Signal quality {Percent(signal.Quality)} · strength {Percent(signal.Strength)} · error-free {Percent(signal.SymbolQuality)}";
+
+    private static string Percent(int value) => value.ToString(CultureInfo.InvariantCulture) + "%";
+}

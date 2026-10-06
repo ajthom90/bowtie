@@ -110,6 +110,9 @@
                 <InfoBar x:Name="MessageBar" IsOpen="False" Severity="Warning" IsClosable="True"
                          Closed="OnMessageClosed" />
 
+                <!-- Every tuner is busy: only channels that can start are listed. -->
+                <InfoBar x:Name="TunersBar" IsOpen="False" Severity="Informational" IsClosable="False" />
+
                 <ProgressRing x:Name="LoadingRing" IsActive="False" HorizontalAlignment="Left" />
 
                 <StackPanel x:Name="FailedPanel" Spacing="8" Visibility="Collapsed">

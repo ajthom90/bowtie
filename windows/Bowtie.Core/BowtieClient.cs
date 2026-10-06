@@ -165,11 +165,13 @@ public sealed class BowtieClient
 
     /// <summary>
     /// Session liveness beat. Auth is the stream token query only (never
-    /// Bearer). Best-effort; never throws.
+    /// Bearer). Asks for the tuner's reception (<c>signal=1</c>) and returns
+    /// it; null when unknown (older servers answer an empty 204) or the beat
+    /// failed. Best-effort; never throws.
     /// </summary>
-    public async Task HeartbeatAsync(string viewerId, string streamToken, CancellationToken ct = default)
+    public async Task<ReceptionSignal?> HeartbeatAsync(string viewerId, string streamToken, CancellationToken ct = default)
     {
-        var path = $"/api/v1/sessions/{Uri.EscapeDataString(viewerId)}/heartbeat?token={Uri.EscapeDataString(streamToken)}";
+        var path = $"/api/v1/sessions/{Uri.EscapeDataString(viewerId)}/heartbeat?signal=1&token={Uri.EscapeDataString(streamToken)}";
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, ServerUrl.Resolve(path, Server))
@@ -177,10 +179,14 @@ public sealed class BowtieClient
                 Content = new ByteArrayContent(Array.Empty<byte>()),
             };
             using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return TryDeserialize<HeartbeatBody>(body)?.Signal;
         }
         catch (Exception)
         {
             // best-effort
+            return null;
         }
     }
 
@@ -388,6 +394,12 @@ public sealed class BowtieClient
 
     internal static BowtieException MapHttpError(int code, string body, string path)
     {
+        // The server's own `error` words are shown as-is; without them the
+        // status (or a proxy's raw body) is kept for logs only.
+        ServerException Other(int status) => ErrorMessage(body) is { } message
+            ? new ServerException(status, message)
+            : new ServerException(status, body.Length > 0 ? $"HTTP {status}: {body}" : $"HTTP {status}", hasServerMessage: false);
+
         switch (code)
         {
             case 401:
@@ -401,23 +413,23 @@ public sealed class BowtieClient
                 {
                     return new RecordingConflictException(conflict.Error ?? "Not enough tuners", conflict.TunerCount, conflict.Conflicts);
                 }
-                return new ServerException(409, ErrorMessage(body) ?? "HTTP 409");
+                return Other(409);
             case 422:
-                return new NegotiationFailedException(ErrorMessage(body) ?? "negotiation failed");
+                return new NegotiationFailedException(ErrorMessage(body) ?? "This device can't play this channel.");
             case 503:
                 // A recordings 503 means the DVR is off, not that tuners are busy.
                 if (path.StartsWith("/api/v1/recordings", StringComparison.Ordinal))
                 {
-                    return new ServerException(503, ErrorMessage(body) ?? "HTTP 503");
+                    return Other(503);
                 }
                 var busy = TryDeserialize<TunersBusyBody>(body);
                 if (busy?.Sessions != null)
                 {
                     return new TunersBusyException(busy.Sessions, busy.OtherInUse);
                 }
-                return new ServerException(503, ErrorMessage(body) ?? "HTTP 503");
+                return Other(503);
             default:
-                return new ServerException(code, ErrorMessage(body) ?? (body.Length > 0 ? body : $"HTTP {code}"));
+                return Other(code);
         }
     }
 

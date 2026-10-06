@@ -202,9 +202,9 @@ public static class RecordingLogic
         NotFoundException => "That recording is gone.",
         ServerException { Status: 403 } => "Only the person who scheduled it or an admin can change it.",
         ServerException { Status: 503 } => "Recording isn't available on this server.",
-        ServerException s => s.Message,
-        NetworkException => "Couldn't reach the server.",
-        _ => string.IsNullOrEmpty(e.Message) ? "Something went wrong" : e.Message,
+        ServerException { HasServerMessage: true } s => s.Message,
+        NetworkException => ErrorText.CantReachServer,
+        _ => ErrorText.SomethingWentWrong,
     };
 
     private static readonly string[] DayNames = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
