@@ -1480,15 +1480,29 @@ func TestCreateSessionStartErrors(t *testing.T) {
 			name:        "no signal",
 			err:         fmt.Errorf("ingest dial: %w", &stream.DeviceError{Status: 503, Reason: "807 No Video Data"}),
 			status:      http.StatusBadGateway,
-			viewerMsg:   "no signal on this channel",
-			adminSubstr: "807 No Video Data",
+			viewerMsg:   "This channel isn't coming in right now — your antenna isn't getting a picture from it. Try again later or pick another channel.",
+			adminSubstr: "(Details: ingest dial: device returned HTTP 503: 807 No Video Data)",
 		},
 		{
 			name:        "ffmpeg died",
 			err:         errors.New("ffmpeg exited before playlist ready: exit status 1"),
 			status:      http.StatusInternalServerError,
-			viewerMsg:   "failed to start session",
-			adminSubstr: "ffmpeg exited before playlist ready: exit status 1",
+			viewerMsg:   "Something went wrong starting this channel. Try again in a moment.",
+			adminSubstr: "(Details: ffmpeg exited before playlist ready: exit status 1)",
+		},
+		{
+			name:        "can't play on this device",
+			err:         errors.New("negotiate: no compatible video codec for client"),
+			status:      http.StatusUnprocessableEntity,
+			viewerMsg:   "This channel can't play on this device.",
+			adminSubstr: "(Details: negotiate: no compatible video codec for client)",
+		},
+		{
+			name:        "channel gone",
+			err:         errors.New("unknown channel 7"),
+			status:      http.StatusNotFound,
+			viewerMsg:   "This channel isn't available anymore.",
+			adminSubstr: "",
 		},
 	}
 	for _, tc := range cases {

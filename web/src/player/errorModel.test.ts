@@ -43,8 +43,10 @@ describe('startErrorFrom', () => {
   })
 
   it('uses the server message for other API errors', () => {
-    expect(startErrorFrom(new ApiError(502, 'no signal on this channel'))).toEqual({
-      message: 'no signal on this channel',
+    const noSignal =
+      "This channel isn't coming in right now — your antenna isn't getting a picture from it. Try again later or pick another channel."
+    expect(startErrorFrom(new ApiError(502, noSignal))).toEqual({
+      message: noSignal,
       tunerBusy: false,
       retry: true,
     })
