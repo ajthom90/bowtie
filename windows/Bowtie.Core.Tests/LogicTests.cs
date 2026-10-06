@@ -276,6 +276,16 @@ public class PlaybackLogicTests
         Assert.Equal(expected, StreamToken.FromPlaylist(url));
 
     [Fact]
+    public void Reception_copy_leads_with_quality()
+    {
+        var weak = new ReceptionSignal { Strength = 96, Quality = 46, SymbolQuality = 0, Weak = true };
+        Assert.Equal("Weak signal (46%) — the picture may break up.", ReceptionText.WeakNote(weak));
+        Assert.Equal("Signal quality 46% · strength 96% · error-free 0%", ReceptionText.Stats(weak));
+        Assert.Equal("Signal quality 100% · strength 100% · error-free 100%",
+            ReceptionText.Stats(new ReceptionSignal { Strength = 100, Quality = 100, SymbolQuality = 100 }));
+    }
+
+    [Fact]
     public void Tuners_busy_copy()
     {
         Assert.Null(TunersBusyCopy.OtherAppsLine(0));

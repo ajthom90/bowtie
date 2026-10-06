@@ -428,7 +428,7 @@ public class PlayerViewModelTests
 
         var hb = server.For("POST", "/api/v1/sessions/v1/heartbeat").First();
         Assert.Null(hb.Authorization);
-        Assert.EndsWith("?token=tk", hb.PathAndQuery);
+        Assert.EndsWith("?signal=1&token=tk", hb.PathAndQuery);
 
         vm.Stop();
         await vm.StopTask;
@@ -477,12 +477,17 @@ public class PlayerViewModelTests
         await vm.ReplaceTask;
         Assert.False(vm.ShowWeakSignalNote);
 
+        Assert.Null(vm.SignalStats);
+
         var expected = new[] { true, false, true, false, true, false };
+        var known = new[] { true, true, true, false, true, false };
         for (var i = 0; i < expected.Length; i++)
         {
             clock.Tick();
             await WaitFor(() => vm.HeartbeatCount == i + 1);
             Assert.Equal(expected[i], vm.ShowWeakSignalNote);
+            Assert.Equal(expected[i], vm.WeakSignalMessage != null);
+            Assert.Equal(known[i], vm.SignalStats != null);
         }
         vm.Dispose();
     }
@@ -502,7 +507,10 @@ public class PlayerViewModelTests
         await WaitFor(() => vm.ShowWeakSignalNote);
 
         Assert.Contains(nameof(PlayerViewModel.ShowWeakSignalNote), changed);
-        Assert.Equal("Weak signal — the picture may break up.", PlayerViewModel.WeakSignalNote);
+        Assert.Contains(nameof(PlayerViewModel.WeakSignalMessage), changed);
+        Assert.Contains(nameof(PlayerViewModel.SignalStats), changed);
+        Assert.Equal("Weak signal (46%) — the picture may break up.", vm.WeakSignalMessage);
+        Assert.Equal("Signal quality 46% · strength 96% · error-free 0%", vm.SignalStats);
         vm.Dispose();
     }
 
@@ -523,11 +531,14 @@ public class PlayerViewModelTests
         vm.Play(News with { Id = 8, Name = "Sports" });
         await vm.ReplaceTask;
         Assert.False(vm.ShowWeakSignalNote);
+        Assert.Null(vm.SignalStats);
 
         clock.Tick();
         await WaitFor(() => vm.ShowWeakSignalNote);
         vm.OnPlaybackFailed(ErrorText.StreamStopped);
         Assert.False(vm.ShowWeakSignalNote);
+        Assert.Null(vm.WeakSignalMessage);
+        Assert.Null(vm.SignalStats);
 
         vm.Stop();
         Assert.False(vm.ShowWeakSignalNote);
