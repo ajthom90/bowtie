@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
@@ -59,6 +62,7 @@ import app.bowtie.core.Channel
 import app.bowtie.core.CreatedSession
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.SessionInfoMeta
+import app.bowtie.core.SignalCopy
 import app.bowtie.core.player.PlayerEngine
 import app.bowtie.core.player.TrackPrefsStore
 import app.bowtie.core.player.nextAudio
@@ -91,6 +95,11 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = context as? Activity
     val state by playerViewModel.state.collectAsStateWithLifecycle()
+    val signal by playerViewModel.signal.collectAsStateWithLifecycle()
+    // Only while this session is open: a failed or busy panel says enough.
+    val sessionOpen = state is PlayerViewModel.State.Playing || state is PlayerViewModel.State.Stalled
+    val weakNote = if (sessionOpen) SignalCopy.weakNote(signal) else null
+    val signalLine = if (sessionOpen) SignalCopy.statsLine(signal) else null
     val scope = rememberCoroutineScope()
 
     var overlayVisible by remember { mutableStateOf(true) }
@@ -371,13 +380,25 @@ fun PlayerScreen(
             else -> Unit
         }
 
-        if (overlayVisible &&
+        val overlayShown = overlayVisible &&
             state !is PlayerViewModel.State.Failed &&
             state !is PlayerViewModel.State.TunersBusy
-        ) {
+        // Chrome hidden: the weak-signal note stays up in the corner on its own.
+        if (weakNote != null && !overlayShown) {
+            WeakSignalNote(
+                text = weakNote,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp),
+            )
+        }
+
+        if (overlayShown) {
             PlayerOverlay(
                 channel = channel,
                 nowTitle = nowTitle,
+                weakNote = weakNote,
+                signalLine = signalLine,
                 showStats = showStats,
                 sessionMeta = sessionMeta,
                 bitrateBps = bitrateBps,
@@ -503,6 +524,8 @@ private fun loadSession(
 private fun PlayerOverlay(
     channel: Channel,
     nowTitle: String?,
+    weakNote: String?,
+    signalLine: String?,
     showStats: Boolean,
     sessionMeta: SessionInfoMeta?,
     bitrateBps: Int?,
@@ -546,6 +569,11 @@ private fun PlayerOverlay(
                     color = BowtieColors.dim,
                 )
             }
+            weakNote?.let {
+                Spacer(Modifier.height(6.dp))
+                // Read with the chrome, not re-announced on every show.
+                WeakSignalNote(text = it, announce = false)
+            }
         }
 
         if (showStats) {
@@ -553,6 +581,7 @@ private fun PlayerOverlay(
                 sessionMeta = sessionMeta,
                 bitrateBps = bitrateBps,
                 droppedFrames = droppedFrames,
+                signalLine = signalLine,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(16.dp)
@@ -595,6 +624,20 @@ private fun PlayerOverlay(
             )
         }
     }
+}
+
+/** Small "Weak signal (46%) — …" pill; [announce]d (politely) when it appears. */
+@Composable
+private fun WeakSignalNote(text: String, modifier: Modifier = Modifier, announce: Boolean = true) {
+    Text(
+        text = text,
+        style = BowtieType.label,
+        color = BowtieColors.amber,
+        modifier = modifier
+            .then(if (announce) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier)
+            .background(BowtieColors.bg.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

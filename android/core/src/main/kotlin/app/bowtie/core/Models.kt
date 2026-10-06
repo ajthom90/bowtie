@@ -89,6 +89,12 @@ data class Channel(
     val reception: String? = null,
     /** The caller starred this channel; null from servers without favorites (hide the star). */
     val favorite: Boolean? = null,
+    /**
+     * False when every tuner on this channel's HDHomeRun is busy with other
+     * channels and nobody in Bowtie is on this one, so starting it would fail.
+     * Missing (older servers) means true.
+     */
+    val watchable: Boolean = true,
 ) {
     /** The antenna got no signal the last time this channel was tuned. */
     val hasNoSignal: Boolean get() = reception == "noSignal"
@@ -168,6 +174,8 @@ data class GuideChannel(
     val programs: List<GuideProgram>,
     /** The caller starred this channel; null from servers without favorites. */
     val favorite: Boolean? = null,
+    /** See [Channel.watchable]; missing (older servers) means true. */
+    val watchable: Boolean = true,
 )
 
 @Serializable
@@ -185,6 +193,22 @@ data class SessionInfoMeta(
     val backend: String,
     val channelName: String,
 )
+
+/**
+ * Antenna reception from `POST /sessions/{id}/heartbeat?signal=1`. [weak] is
+ * the server's verdict (it already needs two bad readings in a row).
+ */
+@Serializable
+data class SignalReading(
+    val strength: Int = 0,
+    val quality: Int = 0,
+    val symbolQuality: Int = 0,
+    val weak: Boolean = false,
+)
+
+/** Heartbeat 200 body; `signal` null means unknown. */
+@Serializable
+internal data class HeartbeatResponse(val signal: SignalReading? = null)
 
 @Serializable
 data class CreatedSession(

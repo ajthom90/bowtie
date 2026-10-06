@@ -657,6 +657,42 @@
   color: var(--alert);
 }
 
+/* All tuners busy: one line above Recent and the grid. */
+.tunersNote {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+/* Every tuner is busy elsewhere: dim the row; Watch is off, Record still works. */
+.rowBusy .channelWatch,
+.rowBusy .cells,
+.rowBusy .cellEmpty {
+  /* On the contents, not the sticky cell: its background must stay opaque. */
+  opacity: 0.5;
+}
+
+.rowBusy .channelWatch[aria-disabled='true'],
+.rowBusy span.cellEmpty,
+.rowBusy .cellGap:disabled {
+  cursor: default;
+}
+
+.rowBusy span.cellEmpty:hover {
+  background: none;
+}
+
+.busyBadge {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 /* DVR: red dot on scheduled/recorded programs; "● REC" while recording. */
 .recMark {
   color: var(--alert);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiClient, ApiError } from './client'
+import { ApiClient, ApiError, parseHeartbeatSignal } from './client'
 
 describe('ApiClient request 401 retry', () => {
   let accessToken: string | null
@@ -145,13 +145,33 @@ describe('ApiClient.heartbeat', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/v1/sessions/viewer-abc/heartbeat?token=stream-tok-xyz')
+    expect(url).toBe('/api/v1/sessions/viewer-abc/heartbeat?token=stream-tok-xyz&signal=1')
     expect(init?.method).toBe('POST')
     const headers = init?.headers as Record<string, string> | undefined
     expect(headers?.Authorization).toBeUndefined()
   })
 
-  it('throws ApiError on non-204', async () => {
+  it('returns the reception from a 200 body', async () => {
+    const signal = { strength: 96, quality: 46, symbolQuality: 0, weak: true }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ signal }), { status: 200 })))
+    const client = new ApiClient(() => null, () => {})
+    await expect(client.heartbeat('v', 'tok')).resolves.toEqual(signal)
+  })
+
+  it('treats 204 (older servers), null and unreadable bodies as unknown', async () => {
+    const client = new ApiClient(() => null, () => {})
+    for (const res of [
+      new Response(null, { status: 204 }),
+      new Response(JSON.stringify({ signal: null }), { status: 200 }),
+      new Response('not json', { status: 200 }),
+      new Response('', { status: 200 }),
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(res))
+      await expect(client.heartbeat('v', 'tok')).resolves.toBeNull()
+    }
+  })
+
+  it('throws ApiError on non-2xx', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }))
@@ -173,6 +193,46 @@ describe('ApiClient.heartbeat', () => {
     expect((err as ApiError).status).toBe(403)
     expect((err as ApiError).message).toBe(body.error)
     expect((err as ApiError).body).toEqual(body)
+  })
+})
+
+describe('parseHeartbeatSignal', () => {
+  it('reads a full signal', () => {
+    expect(
+      parseHeartbeatSignal({ signal: { strength: 80, quality: 90, symbolQuality: 100, weak: false } }),
+    ).toEqual({ strength: 80, quality: 90, symbolQuality: 100, weak: false })
+  })
+
+  it('is null when unknown or malformed', () => {
+    expect(parseHeartbeatSignal(undefined)).toBeNull()
+    expect(parseHeartbeatSignal(null)).toBeNull()
+    expect(parseHeartbeatSignal({})).toBeNull()
+    expect(parseHeartbeatSignal({ signal: null })).toBeNull()
+    expect(parseHeartbeatSignal({ signal: 'weak' })).toBeNull()
+    expect(parseHeartbeatSignal({ signal: { strength: 80 } })).toBeNull()
+  })
+})
+
+describe('ApiError.technical', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('is false when the server sent its own message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: 'no such channel' }), { status: 404 })))
+    const err = await new ApiClient(() => 't', () => {}).getChannels().catch((e: unknown) => e)
+    expect(err).toMatchObject({ message: 'no such channel', technical: false })
+  })
+
+  it('is true for a proxy page or a bare status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('<html>502 Bad Gateway</html>', { status: 502 })))
+    const err = await new ApiClient(() => 't', () => {}).getChannels().catch((e: unknown) => e)
+    expect(err).toMatchObject({ status: 502, technical: true })
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 500, statusText: 'Internal Server Error' })))
+    const err2 = await new ApiClient(() => 't', () => {}).getChannels().catch((e: unknown) => e)
+    expect(err2).toMatchObject({ status: 500, technical: true })
   })
 })
 

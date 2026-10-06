@@ -19,6 +19,63 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   again every 30 seconds and when the app comes back. Errors read in plain
   words ("Can't reach your Bowtie server. Check your connection and try
   again.") instead of network or decoder text; the detail goes to the log.
+- **Android phone and TV apps: weak signal, busy tuners and plain-words
+  errors.** While a channel's reception is poor, the player shows a small
+  "Weak signal (46%) — the picture may break up." note by the channel name,
+  and the stats overlay shows "Signal quality 46% · strength 96% ·
+  error-free 0%". When every tuner is busy, the channel list (with
+  Favorites and Recent) shows only the channels you can join, with a note
+  that says so, and checks again every 30 seconds so channels come back
+  as soon as a tuner frees up. Error messages are now plain words ("Can't
+  reach your Bowtie server. Check your connection and try again.") instead
+  of exception text, HTTP codes or player error codes; a failed sign-in
+  because the server can't be reached no longer says "Wrong username or
+  password."
+
+## [0.21.0] — 2026-10-06
+
+### Added
+
+- **Server: antenna reception for the players.** While someone watches live
+  TV, the player's heartbeat can ask for the tuner's reception (signal
+  quality, strength and error-free percentage, read from the HDHomeRun and
+  cached for 10 seconds). The server calls it weak only after two bad
+  readings in a row, so a single blip never shows a warning. Older apps are
+  unaffected.
+- **Roku: weak signal, busy tuners and plain-words errors.** The Roku
+  player's top bar shows the antenna reading ("Signal quality 46% · strength
+  96% · error-free 0%"), and when the server says the signal is weak a small
+  note reads "Weak signal (46%) — the picture may break up." (Audio Guide
+  reads it out). When every tuner a channel needs is busy, the channel list,
+  Recent row and Up/Down zapping show only the channels you can join, with
+  "All tuners are in use — showing channels you can join." (or "All tuners
+  are in use. Try again in a few minutes." with Try again when none are
+  left); the list re-checks every 30 seconds so channels come back when a
+  tuner frees up. Error screens no longer show player error codes or raw
+  server pages: they say "Can't reach your Bowtie server…", "The stream
+  stopped. Try again." or the server's own message, and keep the detail in
+  the debug log.
+- **Web: weak-signal note and reception in Stats.** While a live channel's
+  antenna signal is weak, the player shows a small, steady note — "Weak
+  signal (46%) — the picture may break up." — and Stats shows the latest
+  reading ("Signal quality 46% · strength 96% · error-free 0%"). Nothing
+  shows against older servers or for recordings.
+- **Web: all tuners busy.** When every tuner is busy with other channels,
+  the Recent row, channel search and the Multiview picker show only the
+  channels you can join, under "All tuners are in use — showing channels
+  you can join." (or "All tuners are in use. Try again in a few minutes."
+  when none can start). The guide keeps every row for browsing and
+  recording, but dims busy channels and turns off their Watch actions. The
+  guide and an open Multiview picker check again every 30 seconds and when
+  you come back to the tab.
+
+### Changed
+
+- **Web: plain-words errors.** HTTP status text, proxy pages and browser
+  network errors no longer reach viewers: they see "Can't reach your Bowtie
+  server. Check your connection and try again.", "The stream stopped. Try
+  again." or a plain fallback, with the detail in the browser console. The
+  server's own messages are shown as before.
 
 ## [0.20.1] — 2026-10-06
 

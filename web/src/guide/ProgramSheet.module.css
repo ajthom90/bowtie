@@ -92,6 +92,13 @@
   color: var(--alert);
 }
 
+/* All tuners busy: why there's no Watch button. */
+.busy {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

@@ -24,6 +24,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import app.bowtie.core.User
+import app.bowtie.core.ViewerErrors
 import app.bowtie.core.player.AutoSkipAdsStore
 import app.bowtie.core.vm.AppViewModel
 import app.bowtie.tv.BowtieColors
@@ -229,8 +230,8 @@ fun SettingsScreen(
                             newPassword = ""
                             confirmPassword = ""
                         } catch (e: Exception) {
-                            passwordError = e.message?.takeIf { it.isNotBlank() }
-                                ?: "Couldn't change password."
+                            // The server's reason as-is; anything technical becomes plain words.
+                            passwordError = ViewerErrors.message(e)
                         } finally {
                             busy = false
                         }

@@ -215,6 +215,8 @@ export const GUIDE_COPY = {
   noGuideData: 'No guide data — press to watch',
   /** Channel badge when the last tune got no signal (still tappable). */
   noSignal: 'No signal',
+  /** Channel badge when every tuner is busy with other channels (Watch is off). */
+  tunersBusy: 'Tuners busy',
 } as const
 
 /**

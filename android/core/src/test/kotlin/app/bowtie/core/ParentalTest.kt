@@ -103,9 +103,9 @@ class ParentalTest {
     fun heartbeatOther403_isStillSwallowed() = runBlocking {
         val c = loggedIn()
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"bad token"}"""))
-        c.heartbeat("v1", "tok") // must not throw
+        assertNull(c.heartbeat("v1", "tok")) // must not throw; signal unknown
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"viewer not found"}"""))
-        c.heartbeat("v1", "tok") // must not throw
+        assertNull(c.heartbeat("v1", "tok")) // must not throw; signal unknown
     }
 
     @Test

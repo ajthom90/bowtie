@@ -8,6 +8,7 @@ import app.bowtie.core.Channel
 import app.bowtie.core.GuideRecordingMark
 import app.bowtie.core.GuideSearchResult
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -135,11 +136,10 @@ class SearchViewModel(
     }
 
     private fun messageFor(e: Throwable): String = when (e) {
-        is BowtieError.Server -> if (e.status == 503) "Search isn't available on this server." else e.message
-        is BowtieError.Network -> "Couldn't reach the server."
-        is BowtieError.Unauthorized -> "Your session ended. Sign in again."
+        is BowtieError.Server ->
+            if (e.status == 503) "Search isn't available on this server." else ViewerErrors.message(e)
         is BowtieError.NotFound -> "Search isn't available on this server."
-        else -> ChannelListViewModel.messageFor(e)
+        else -> ViewerErrors.message(e)
     }
 
     companion object {

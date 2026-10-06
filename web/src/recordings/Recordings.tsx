@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, type Recording, type RecordingRule } from '../api/client'
+import { type Recording, type RecordingRule } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { lockText } from '../guide/searchModel'
 import {
@@ -38,10 +39,6 @@ type Props = {
   onPlay: (rec: Recording) => void
   /** Plays from the saved position without asking (Continue watching). */
   onResume?: (rec: Recording) => void
-}
-
-function errorText(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.message ? err.message : fallback
 }
 
 export function Recordings({
@@ -152,7 +149,7 @@ function RecordingList({
       } catch (err) {
         if (!opts?.quiet) {
           setRows(null)
-          setError(errorText(err, 'Failed to load recordings'))
+          setError(viewerErrorText(err, 'Failed to load recordings'))
         }
       } finally {
         if (!opts?.quiet) setLoading(false)
@@ -180,7 +177,7 @@ function RecordingList({
     try {
       await fn()
     } catch (err) {
-      setActionError(errorText(err, fallback))
+      setActionError(viewerErrorText(err, fallback))
     } finally {
       setBusyId(null)
     }
@@ -328,7 +325,7 @@ function ShowsList() {
       setRules(await client.listRecordingRules())
     } catch (err) {
       setRules(null)
-      setError(errorText(err, 'Failed to load shows'))
+      setError(viewerErrorText(err, 'Failed to load shows'))
     } finally {
       setLoading(false)
     }
@@ -346,7 +343,7 @@ function ShowsList() {
       await client.deleteRecordingRule(rule.id)
       setRules((rs) => rs?.filter((r) => r.id !== rule.id) ?? rs)
     } catch (err) {
-      setActionError(errorText(err, 'Could not stop recording this show.'))
+      setActionError(viewerErrorText(err, 'Could not stop recording this show.'))
     } finally {
       setBusyId(null)
     }
