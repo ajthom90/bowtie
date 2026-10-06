@@ -156,6 +156,8 @@ data class GuideSearchResult(
     val locked: Boolean = false,
     /** Present when this airing is scheduled or recorded. */
     val recording: GuideRecordingMark? = null,
+    /** The channel can start now; false when all its tuners are busy. Absent on older servers. */
+    val watchable: Boolean = true,
 )
 
 /** A guide program's DVR mark: which recording covers it, and its state. */

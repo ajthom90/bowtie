@@ -27,6 +27,11 @@ import (
 // watchableFixture: one HDHomeRun with a single tuner and two enabled
 // channels; returns the handler, a viewer auth header and the fake.
 func watchableFixture(t *testing.T) (http.Handler, map[string]string, *hdhrfake.Fake) {
+	h, viewerH, fake, _ := watchableFixtureStore(t)
+	return h, viewerH, fake
+}
+
+func watchableFixtureStore(t *testing.T) (http.Handler, map[string]string, *hdhrfake.Fake, *store.Store) {
 	t.Helper()
 	fake := hdhrfake.New(t, hdhrfake.Options{
 		DeviceID:   "ONE001",
@@ -88,7 +93,7 @@ func watchableFixture(t *testing.T) (http.Handler, map[string]string, *hdhrfake.
 	}
 	viewerH := map[string]string{"Authorization": "Bearer " + decodeLogin(t, doJSON(t, h, "POST", "/api/v1/auth/login",
 		map[string]string{"username": "alice", "password": "pass"}, nil)).AccessToken}
-	return h, viewerH, fake
+	return h, viewerH, fake, st
 }
 
 func watchableByGuide(t *testing.T, h http.Handler, path string, authH map[string]string) map[string]bool {
@@ -143,5 +148,46 @@ func TestChannelsNotWatchableWhenTunersHeldElsewhere(t *testing.T) {
 		if got["5.1"] || got["7.1"] {
 			t.Fatalf("%s: watchable = %v, want all false", path, got)
 		}
+	}
+}
+
+// Search results carry watchable too, so the apps can hide Watch on a busy
+// channel found through search.
+func TestSearchHitsWatchable(t *testing.T) {
+	h, viewerH, fake, st := watchableFixtureStore(t)
+	chans, _ := st.ListChannels(false)
+	var ch71 store.Channel
+	for _, c := range chans {
+		if c.GuideNumber == "7.1" {
+			ch71 = c
+		}
+	}
+	if err := st.ReplaceEPG("xmltv", []store.EPGChannel{{ID: "other.us", DisplayName: "OTHER", Source: "xmltv"}},
+		[]store.Program{{EPGChannelID: "other.us", Start: time.Now().Add(-10 * time.Minute), Stop: time.Now().Add(50 * time.Minute), Title: "Evening Movie"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateChannel(ch71.ID, true, "other.us"); err != nil {
+		t.Fatal(err)
+	}
+	search := func() bool {
+		rr := doJSON(t, h, "GET", "/api/v1/guide/search?q=evening", nil, viewerH)
+		var hits []struct {
+			Watchable *bool `json:"watchable"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&hits); err != nil || len(hits) != 1 || hits[0].Watchable == nil {
+			t.Fatalf("search: %d %v hits=%v", rr.Code, err, hits)
+		}
+		return *hits[0].Watchable
+	}
+	if !search() {
+		t.Fatal("free tuner: want watchable")
+	}
+	resp, err := http.Get(fake.URL + "/auto/v5.1") // another app takes the only tuner
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if search() {
+		t.Fatal("only tuner held elsewhere: want not watchable")
 	}
 }

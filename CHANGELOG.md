@@ -5,6 +5,15 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Search hides Watch on busy channels.** Guide search results now say
+  whether their channel can start, so the iPhone, iPad, Apple TV, Mac and
+  Android apps only offer Watch on a program that's on now when a tuner
+  can play it. Record and Record series stay available.
+
 ## [0.22.0] — 2026-10-06
 
 ### Added

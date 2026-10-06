@@ -24,6 +24,8 @@ type searchHitJSON struct {
 	Rating      string              `json:"rating"`
 	Locked      bool                `json:"locked"`
 	Recording   *epg.GuideRecording `json:"recording,omitempty"`
+	// Watchable: the channel can start right now (as on GET /channels).
+	Watchable bool `json:"watchable"`
 }
 
 // handleGuideSearch serves GET /api/v1/guide/search?q=…&limit=N (default 50,
@@ -58,6 +60,12 @@ func (s *Server) handleGuideSearch(w http.ResponseWriter, r *http.Request) {
 		icons = map[string]string{}
 	}
 	recs := s.recordingsByProgram()
+	var watch map[int64]bool
+	if len(hits) > 0 {
+		if chans, err := s.deps.Store.ListChannels(true); err == nil {
+			watch = s.channelWatchability(chans)
+		}
+	}
 	lq := strings.ToLower(q)
 	out := make([]searchHitJSON, 0, min(len(hits), limit))
 	for _, h := range hits {
@@ -80,6 +88,7 @@ func (s *Server) handleGuideSearch(w http.ResponseWriter, r *http.Request) {
 			LogoURL: icons[h.EPGChannelID], Start: h.Start.UTC(), Stop: h.Stop.UTC(),
 			Title: h.Title, Subtitle: h.Subtitle, Description: h.Description, Category: h.Category,
 			Recording: recs[programKey{h.ChannelID, h.Start.Unix()}],
+			Watchable: watch == nil || watch[h.ChannelID],
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

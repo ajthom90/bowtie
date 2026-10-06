@@ -110,7 +110,7 @@ struct MacSearchResultDetail: View {
 
     private var actionButtons: some View {
         HStack(spacing: 10) {
-            if result.isOnNow(at: now) {
+            if result.canWatch(at: now) {
                 Button {
                     onWatch(result.channel)
                 } label: {
