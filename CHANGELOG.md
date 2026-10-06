@@ -5,10 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.21.0] — 2026-10-06
 
 ### Added
 
+- **Server: antenna reception for the players.** While someone watches live
+  TV, the player's heartbeat can ask for the tuner's reception (signal
+  quality, strength and error-free percentage, read from the HDHomeRun and
+  cached for 10 seconds). The server calls it weak only after two bad
+  readings in a row, so a single blip never shows a warning. Older apps are
+  unaffected.
 - **Roku: weak signal, busy tuners and plain-words errors.** The Roku
   player's top bar shows the antenna reading ("Signal quality 46% · strength
   96% · error-free 0%"), and when the server says the signal is weak a small
