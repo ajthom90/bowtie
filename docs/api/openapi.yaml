@@ -1881,9 +1881,51 @@ paths:
           description: Signed stream token (preferred alternative to Bearer auth)
           schema:
             type: string
+        - name: signal
+          in: query
+          required: false
+          description: |
+            `1` asks for the channel's antenna reception (200 with a body)
+            for the player's "Weak signal" note. Without it the reply is an
+            empty 204, as older players expect.
+          schema:
+            type: string
+            enum: ['1']
       responses:
+        '200':
+          description: Viewer touched; reception (with `signal=1`)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [signal]
+                properties:
+                  signal:
+                    nullable: true
+                    description: |
+                      Null when unknown (no tuner on the channel right now, or
+                      the HDHomeRun can't be reached). Read from the
+                      HDHomeRun's status.json, cached about 10 s per device.
+                    type: object
+                    required: [strength, quality, symbolQuality, weak]
+                    properties:
+                      strength:
+                        type: integer
+                        description: Signal strength percent
+                      quality:
+                        type: integer
+                        description: Signal quality percent (SNR-based)
+                      symbolQuality:
+                        type: integer
+                        description: Symbol quality percent; below 100 means uncorrected errors
+                      weak:
+                        type: boolean
+                        description: |
+                          Show "Weak signal": the last two fresh readings both
+                          had symbol quality under 85% or signal quality under
+                          50%.
         '204':
-          description: Viewer touched
+          description: Viewer touched (no `signal=1`)
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

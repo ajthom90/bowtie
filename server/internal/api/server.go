@@ -9,6 +9,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/hdhr"
 	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -47,6 +48,9 @@ type Deps struct {
 	// Notifications sends the admin's test notification (nil: a default
 	// client with notify.SendTimeout).
 	Notifications NotificationSender
+	// SignalFetch reads an HDHomeRun's status.json for the weak-signal note
+	// (tests); nil uses hdhr.FetchStatus.
+	SignalFetch func(ctx context.Context, baseURL string) ([]hdhr.TunerStatus, error)
 }
 
 // NotificationSender delivers one notification now (*notify.Service).
@@ -57,13 +61,14 @@ type NotificationSender interface {
 // Server is the HTTP API surface.
 type Server struct {
 	deps    Deps
-	devices *deviceAuths // quick sign-in (device_auth.go)
-	iptv    *iptvViewers // IPTV feed viewers per account (iptv_handlers.go)
+	devices *deviceAuths   // quick sign-in (device_auth.go)
+	iptv    *iptvViewers   // IPTV feed viewers per account (iptv_handlers.go)
+	signal  *signalMonitor // tuner reception for the players' weak-signal note (signal.go)
 }
 
 // New builds the API handler (stdlib ServeMux with Go 1.22 method patterns).
 func New(deps Deps) http.Handler {
-	s := &Server{deps: deps, devices: newDeviceAuths(), iptv: &iptvViewers{}}
+	s := &Server{deps: deps, devices: newDeviceAuths(), iptv: &iptvViewers{}, signal: newSignalMonitor(deps.SignalFetch, nil)}
 	mux := http.NewServeMux()
 	s.mountAPI(mux)
 	// Short APK download links for sideloading (docs/install/android.md).
