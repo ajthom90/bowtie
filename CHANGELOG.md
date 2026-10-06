@@ -5,6 +5,21 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Apple apps (iPhone, iPad, Apple TV, Mac): weak signal, busy tuners and
+  plain-words errors.** Live TV shows "Weak signal (46%) — the picture may
+  break up." when the antenna reading is poor, and the stats panel shows
+  "Signal quality 46% · strength 96% · error-free 0%". When every tuner is
+  busy, the channel lists show only channels you can join, under "All
+  tuners are in use — showing channels you can join." (or "All tuners are
+  in use. Try again in a few minutes." when none can start), and check
+  again every 30 seconds and when the app comes back. Errors read in plain
+  words ("Can't reach your Bowtie server. Check your connection and try
+  again.") instead of network or decoder text; the detail goes to the log.
+
 ## [0.20.1] — 2026-10-06
 
 ### Changed

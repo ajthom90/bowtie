@@ -44,6 +44,7 @@ struct TVPlayerView: View {
                 sessionMeta: sessionMetaOptional,
                 indicatedBitrate: indicatedBitrate,
                 droppedFrames: droppedFrames,
+                signalLine: playerModel.signalStatsLine,
                 onSelectProfile: { profile in
                     Task { await playerModel.setProfile(profile) }
                 },
@@ -58,6 +59,14 @@ struct TVPlayerView: View {
                 SleepWarningBanner(remaining: remaining)
                     .padding(.top, 60)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+
+            if let note = playerModel.weakSignalNote {
+                WeakSignalNote(text: note)
+                    .padding(.top, sleepTimer.isWarning ? 150 : 60)
+                    .padding(.trailing, 80)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
             }
 
             if case .stalled = playerModel.state {
@@ -101,6 +110,7 @@ struct TVPlayerView: View {
         .onChange(of: playerModel.state) { _, newState in
             handleStateChange(newState)
         }
+        .announcesWeakSignal(playerModel)
         .onChange(of: bridge.playerErrorIsForbidden) { _, isForbidden in
             if isForbidden {
                 bridge.playerErrorIsForbidden = false
@@ -671,6 +681,7 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
     var sessionMeta: SessionInfoMeta?
     var indicatedBitrate: Double?
     var droppedFrames: Int?
+    var signalLine: String?
     var onSelectProfile: (String) -> Void
     var sleepTimer: SleepTimer
     var sleepProgramEnd: Date?
@@ -697,7 +708,8 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
         context.coordinator.refreshStatsPanel(
             meta: sessionMeta,
             indicatedBitrate: indicatedBitrate,
-            droppedFrames: droppedFrames
+            droppedFrames: droppedFrames,
+            signalLine: signalLine
         )
         context.coordinator.sleep.update(
             vc,
@@ -751,7 +763,8 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
                 rootView: TVStatsPanel(
                     meta: nil,
                     indicatedBitrate: nil,
-                    droppedFrames: nil
+                    droppedFrames: nil,
+                    signalLine: nil
                 )
             )
             stats.title = "Stats"
@@ -778,12 +791,14 @@ private struct TVPlayerContainer: UIViewControllerRepresentable {
         func refreshStatsPanel(
             meta: SessionInfoMeta?,
             indicatedBitrate: Double?,
-            droppedFrames: Int?
+            droppedFrames: Int?,
+            signalLine: String?
         ) {
             statsHost?.rootView = TVStatsPanel(
                 meta: meta,
                 indicatedBitrate: indicatedBitrate,
-                droppedFrames: droppedFrames
+                droppedFrames: droppedFrames,
+                signalLine: signalLine
             )
         }
     }
@@ -843,6 +858,7 @@ private struct TVStatsPanel: View {
     let meta: SessionInfoMeta?
     let indicatedBitrate: Double?
     let droppedFrames: Int?
+    let signalLine: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -853,7 +869,8 @@ private struct TVStatsPanel: View {
             StatsOverlay(
                 meta: meta,
                 indicatedBitrate: indicatedBitrate,
-                droppedFrames: droppedFrames
+                droppedFrames: droppedFrames,
+                signalLine: signalLine
             )
             .scaleEffect(1.35, anchor: .topLeading)
 

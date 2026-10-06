@@ -21,10 +21,13 @@ struct ChannelRailView: View {
     @State private var recordingsModel: RecordingsModel?
     @State private var activePlayback: ContinuePlayback?
 
+    @Environment(\.scenePhase) private var scenePhase
+
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
 
-    private let refreshInterval: Duration = .seconds(5 * 60)
+    /// Busy tuners re-check; a full reload once the list is 5 minutes old.
+    private let recheckInterval: Duration = .seconds(30)
     private let clockTick: Duration = .seconds(30)
 
     var body: some View {
@@ -139,11 +142,13 @@ struct ChannelRailView: View {
             guard listModel != nil else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: refreshInterval)
+                    try await Task.sleep(for: recheckInterval)
                 } catch {
                     return
                 }
-                await listModel?.refreshIfStale()
+                // Behind the player the list isn't visible.
+                guard playingChannel == nil else { continue }
+                await listModel?.recheckTuners()
             }
         }
         .task {
@@ -154,6 +159,12 @@ struct ChannelRailView: View {
                 } catch {
                     return
                 }
+            }
+        }
+        // Back from the background: tuners may have freed up (or filled).
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await listModel?.recheckTuners() }
             }
         }
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
@@ -295,7 +306,16 @@ struct ChannelRailView: View {
             GuideFilterBar(selection: Bindable(model).filter)
                 .focusSection()
 
-            if visible.isEmpty, model.filter != .all {
+            // Busy channels are left out of the rail (and Recent).
+            if let note = model.tunersBusyNote {
+                TunersBusyNote(text: note)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+            }
+
+            if model.allTunersBusy {
+                Spacer(minLength: 0)
+            } else if visible.isEmpty, model.filter != .all {
                 GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     .frame(maxHeight: .infinity)
                     .focusSection()

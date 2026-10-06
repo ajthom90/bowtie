@@ -15,7 +15,11 @@ public enum BowtieError: Error, Equatable {
     /// 403 `code: "parental"`: parental controls block this channel, program
     /// or recording. The message is the server's, ready to show.
     case parental(String)
+    /// The server's `error` text; "" when the reply had none (e.g. a proxy page).
     case server(status: Int, message: String)
+    /// The server couldn't be reached (transport failure).
     case network(String)
+    /// The server answered something this app can't read.
+    case badResponse(String)
     case invalidServerURL
 }

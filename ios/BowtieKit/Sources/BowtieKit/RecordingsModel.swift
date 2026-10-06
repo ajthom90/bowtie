@@ -311,33 +311,9 @@ extension RecordingScheduler {
 
 enum RecordingErrorCopy {
     static func message(for error: Error) -> String {
-        guard let error = error as? BowtieError else {
-            return error.localizedDescription
-        }
-        switch error {
-        case .unauthorized:
-            return "Signed out"
-        case .tunersBusy:
-            return "All tuners are in use"
-        case .negotiationFailed(let message):
-            return sentence(message)
-        case .recordingConflict(_, _, let message):
-            return sentence(message)
-        case .notFound:
+        if case .notFound? = error as? BowtieError {
             return "That recording is gone."
-        case .parental(let message):
-            return message
-        case .server(_, let message):
-            return sentence(message)
-        case .network(let message):
-            return message
-        case .invalidServerURL:
-            return "Invalid server URL"
         }
-    }
-
-    /// Server errors are lowercase phrases; show them as sentences.
-    private static func sentence(_ message: String) -> String {
-        message.prefix(1).uppercased() + message.dropFirst()
+        return ViewerErrorCopy.message(for: error)
     }
 }

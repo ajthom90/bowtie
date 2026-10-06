@@ -347,7 +347,7 @@ final class PlayerModelTests: XCTestCase {
         guard case .failed(let message) = model.state else {
             return XCTFail("expected failed, got \(model.state)")
         }
-        XCTAssertEqual(message, "Channel not found")
+        XCTAssertEqual(message, "This channel isn't available anymore.")
         XCTAssertEqual(model.channelsStaleGeneration, 1)
 
         // Second 404 increments again.

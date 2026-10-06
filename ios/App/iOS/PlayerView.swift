@@ -121,6 +121,7 @@ struct PlayerView: View {
         .onChange(of: playerModel.state) { _, newState in
             handleStateChange(newState)
         }
+        .announcesWeakSignal(playerModel)
         .onChange(of: bridge.playerErrorIsForbidden) { _, isForbidden in
             if isForbidden {
                 bridge.playerErrorIsForbidden = false
@@ -217,7 +218,8 @@ struct PlayerView: View {
                     StatsOverlay(
                         meta: metaOrNil,
                         indicatedBitrate: indicatedBitrate,
-                        droppedFrames: droppedFrames
+                        droppedFrames: droppedFrames,
+                        signalLine: playerModel.signalStatsLine
                     )
                     Spacer(minLength: 0)
                 }
@@ -246,6 +248,9 @@ struct PlayerView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         controlsRow
                     }
+                }
+                if let note = playerModel.weakSignalNote {
+                    WeakSignalNote(text: note)
                 }
             }
         }

@@ -10,6 +10,8 @@ struct StatsOverlay: View {
     let indicatedBitrate: Double?
     /// Cumulative dropped video frames from the last access-log event.
     let droppedFrames: Int?
+    /// Antenna reading (`PlayerModel.signalStatsLine`); nil hides the line.
+    var signalLine: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -18,6 +20,10 @@ struct StatsOverlay: View {
             row(label: "Backend", value: display(meta?.backend))
             row(label: "Bitrate", value: formatBitrate(indicatedBitrate))
             row(label: "Dropped", value: droppedFrames.map(String.init) ?? "—")
+            if let signalLine {
+                Text(signalLine)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .font(Theme.mono(12))
         .foregroundStyle(Theme.amber)
@@ -67,7 +73,8 @@ struct StatsOverlay: View {
             "Backend \(display(meta?.backend))",
             "Bitrate \(formatBitrate(indicatedBitrate))",
             "Dropped frames \(droppedFrames.map(String.init) ?? "none")",
-        ].joined(separator: ", ")
+            signalLine,
+        ].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -82,7 +89,8 @@ struct StatsOverlay: View {
                 channelName: "WABC"
             ),
             indicatedBitrate: 4_200_000,
-            droppedFrames: 3
+            droppedFrames: 3,
+            signalLine: SessionSignal(strength: 96, quality: 46, symbolQuality: 0, weak: true).statsLine
         )
         .padding()
     }

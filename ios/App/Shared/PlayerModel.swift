@@ -15,7 +15,10 @@ import BowtieKit
 /// - Stall UX: player UI calls `markStalled` → spinner; retries AVPlayer with
 ///   backoff (1s, 2s, 4s ×3); `resumePlaying` on recovery or `stallFailed` after.
 /// - Heartbeats (spec C / A6): 15s while session is open (playing OR stalled);
-///   stream-token auth; stop only on real leave.
+///   stream-token auth; stop only on real leave. Each beat brings the antenna
+///   reading (`signal`) for the weak-signal note and the stats panel.
+/// - Viewer-facing failure text is plain words (`ViewerErrorCopy`); the
+///   technical cause goes to the log.
 @Observable
 @MainActor
 public final class PlayerModel {
@@ -45,17 +48,19 @@ public final class PlayerModel {
         }
     }
 
-    /// Spec-mandated copy for double-422 negotiation failure.
+    /// Double-422 negotiation failure (Auto was tried too).
     public static let deviceCantPlayMessage =
-        "This device can't play this channel at that quality"
+        "This channel can't play on this device."
 
     /// Surface after a second mid-play 403 without a successful silent replace.
-    public static let playbackAuthFailedMessage =
-        "Playback authorization failed"
+    public static let playbackAuthFailedMessage = ViewerErrorCopy.streamStopped
 
     /// Surface after stall retries (1s, 2s, 4s) are exhausted.
-    public static let stallFailedMessage =
-        "Playback stalled"
+    public static let stallFailedMessage = ViewerErrorCopy.streamStopped
+
+    /// Create-session 404: the channel was disabled or removed.
+    public static let channelGoneMessage =
+        "This channel isn't available anymore."
 
     /// Out-of-window clamp notice (spec B) — exact copy.
     public static let outOfWindowNotice =
@@ -74,6 +79,37 @@ public final class PlayerModel {
 
     /// Monotonic token bumped on create-session 404 so ChannelList reloads.
     public private(set) var channelsStaleGeneration: UInt64 = 0
+
+    /// Latest antenna reading from the heartbeat; nil while unknown. A beat
+    /// that gets no answer keeps the last reading, so the note doesn't flash.
+    public private(set) var signal: SessionSignal?
+
+    /// The live session is open (playing, or reconnecting after a stall).
+    private var isSessionOpen: Bool {
+        switch state {
+        case .playing, .stalled:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Show "Weak signal (46%) — …" over live TV. The server already needs two
+    /// bad readings in a row before it says weak.
+    public var showsWeakSignalNote: Bool { weakSignalNote != nil }
+
+    /// The weak-signal note's text, or nil when it should be hidden.
+    public var weakSignalNote: String? {
+        guard isSessionOpen, let signal, signal.weak else { return nil }
+        return signal.weakNote
+    }
+
+    /// "Signal quality 46% · strength 96% · error-free 0%" for the stats
+    /// panel; nil while the reading is unknown.
+    public var signalStatsLine: String? {
+        guard isSessionOpen else { return nil }
+        return signal?.statsLine
+    }
 
     private let client: BowtieClient
     private let caps: ClientCaps
@@ -407,7 +443,7 @@ public final class PlayerModel {
             )
         } catch {
             guard isCurrent(gen) else { return }
-            state = .failed(error.localizedDescription)
+            state = .failed(ViewerErrorCopy.message(for: error))
         }
     }
 
@@ -431,10 +467,17 @@ public final class PlayerModel {
                 // A6: keyed on session open — continue while this viewer is still active
                 // (playing or stalled). Stop only when replaced or stop() clears it.
                 guard self.activeViewerId == viewerId else { return }
-                let refusal = await self.client.heartbeat(viewerId: viewerId, token: token)
-                if case .parental(let message)? = refusal {
+                let reply = await self.client.heartbeat(viewerId: viewerId, token: token)
+                guard self.activeViewerId == viewerId, !Task.isCancelled else { return }
+                switch reply {
+                case .success(let signal):
+                    self.signal = signal
+                case .failure(.parental(let message)):
                     self.parentalStop(viewerId: viewerId, message: message)
                     return
+                case .failure:
+                    // No new reading: keep the last one.
+                    break
                 }
             }
         }
@@ -446,12 +489,15 @@ public final class PlayerModel {
         guard activeViewerId == viewerId else { return }
         activeViewerId = nil
         heartbeatTask = nil
+        signal = nil
         state = .failed(message)
     }
 
+    /// Also forgets the reading: it belonged to the session that's ending.
     private func stopHeartbeat() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
+        signal = nil
     }
 
     /// Extract `token` query from a playlist path/URL (relative or absolute).
@@ -488,23 +534,12 @@ public final class PlayerModel {
         case .notFound:
             // 404: channel unknown/disabled — signal list reload.
             channelsStaleGeneration &+= 1
-            state = .failed("Channel not found")
+            state = .failed(Self.channelGoneMessage)
 
-        case .unauthorized:
-            state = .failed("Signed out")
-
-        case .parental(let message):
-            // 403 code "parental": the server's message says what's blocked.
-            state = .failed(message)
-
-        case .server(_, let message), .recordingConflict(_, _, let message):
-            state = .failed(message)
-
-        case .network(let message):
-            state = .failed(message)
-
-        case .invalidServerURL:
-            state = .failed("Invalid server")
+        case .unauthorized, .parental, .server, .recordingConflict, .network, .badResponse, .invalidServerURL:
+            // Server messages (e.g. parental: what's blocked) pass through;
+            // transport and decoding detail never reaches the viewer.
+            state = .failed(ViewerErrorCopy.message(for: error))
         }
     }
 
