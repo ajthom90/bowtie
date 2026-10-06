@@ -1,11 +1,15 @@
 package app.bowtie.core.vm
 
 import app.bowtie.core.BowtieClient
+import app.bowtie.core.GuideFilter
 import app.bowtie.core.InMemoryTokenStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -602,5 +606,180 @@ class ChannelListViewModelTest {
         )
         assertEquals(listOf(1L), loaded(vm).favorites.map { it.id })
         assertEquals(listOf(2L), loaded(vm).others.map { it.id })
+    }
+
+    // ── All tuners busy (`watchable: false`) ─────────────────────────────────
+
+    /** A /channels item with an explicit `watchable` (null omits it like an older server). */
+    private fun chw(id: Int, number: String, watchable: Boolean?, favorite: Boolean? = false): String {
+        val fav = if (favorite == null) "" else ",\"favorite\":$favorite"
+        val w = if (watchable == null) "" else ",\"watchable\":$watchable"
+        return "{\"id\":$id,\"guideNumber\":\"$number\",\"name\":\"C$id\",\"logoUrl\":\"\"$fav$w}"
+    }
+
+    private fun newsGuide(vararg ids: Int) = ids.joinToString(",", "[", "]") { id ->
+        """{"channelId":$id,"guideNumber":"$id","name":"C$id","logoUrl":"","programs":[
+            {"start":"2024-06-15T20:00:00Z","stop":"2024-06-15T21:00:00Z","title":"Evening News",
+             "subtitle":"","description":"","category":"News"}]}"""
+    }
+
+    @Test
+    fun missingWatchableMeansWatchable() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", null), chw(2, "4.1", null))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        val f = vm.filtered(loaded(vm).rows, GuideFilter.ALL, clock)
+        assertEquals(listOf(1L, 2L), f.rows.map { it.id })
+        assertFalse(f.tunersBusy)
+        assertFalse(f.noneWatchable)
+    }
+
+    @Test
+    fun busyChannelsAreHiddenWithANote() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", false), chw(2, "4.1", true), chw(3, "9.1", null))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        val l = loaded(vm)
+        assertEquals("the loaded rows keep every channel", listOf(1L, 2L, 3L), l.rows.map { it.id })
+        val f = vm.filtered(l.rows, GuideFilter.ALL, clock)
+        assertEquals(listOf(2L, 3L), f.rows.map { it.id })
+        assertTrue(f.tunersBusy)
+        assertFalse(f.noneWatchable)
+        assertEquals(
+            "All tuners are in use — showing channels you can join.",
+            app.bowtie.core.TunersBusyCopy.LIST_NOTE,
+        )
+    }
+
+    @Test
+    fun noWatchableChannelSaysTryAgainLater() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", false), chw(2, "4.1", false))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        val f = vm.filtered(loaded(vm).rows, GuideFilter.ALL, clock)
+        assertTrue(f.rows.isEmpty())
+        assertTrue(f.tunersBusy)
+        assertTrue(f.noneWatchable)
+        assertEquals(
+            "All tuners are in use. Try again in a few minutes.",
+            app.bowtie.core.TunersBusyCopy.NONE_WATCHABLE,
+        )
+    }
+
+    @Test
+    fun busyFilterAppliesOnTopOfCategoryAndFavorites() = runTest {
+        channelsBody = channelsJson(
+            chw(1, "2.1", false, favorite = true),
+            chw(2, "4.1", true, favorite = true),
+            chw(3, "9.1", false),
+            chw(4, "11.1", true),
+        )
+        guideBody = newsGuide(1, 2, 3)
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        val all = vm.filtered(loaded(vm).rows, GuideFilter.ALL, clock)
+        assertEquals(listOf(2L), all.favorites.map { it.id })
+        assertEquals(listOf(4L), all.others.map { it.id })
+
+        val news = vm.filtered(loaded(vm).rows, GuideFilter.NEWS, clock)
+        assertEquals("news on a watchable channel only", listOf(2L), news.rows.map { it.id })
+        assertTrue(news.tunersBusy)
+        assertFalse("other channels are still watchable", news.noneWatchable)
+    }
+
+    @Test
+    fun recentsHideBusyChannels() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", false, favorite = true), chw(2, "4.1", true, favorite = false))
+        recentsBody = "[" + recent(1, "2.1", "C1", "2026-10-03T19:42:10Z") + "," +
+            recent(2, "4.1", "C2", "2026-10-03T19:00:00Z") + "," +
+            recent(9, "9.9", "Unlisted", "2026-10-03T18:00:00Z") + "]"
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        assertEquals(listOf(2L, 9L), vm.visibleRecents(vm.recents.value).map { it.channelId })
+    }
+
+    @Test
+    fun recheckReloadsOnlyChannelsWhenFresh() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", false), chw(2, "4.1", true))
+        guideBody = newsGuide(1, 2)
+        val vm = makeVm(authedClient())
+        vm.refresh()
+        val guideLoads = guideHits.get()
+        val channelLoads = channelsHits.get()
+
+        val seen = CopyOnWriteArrayList<ChannelListViewModel.LoadState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.toList(seen) }
+
+        // A tuner frees up; 30 s later the list re-checks.
+        channelsBody = channelsJson(chw(1, "2.1", true), chw(2, "4.1", true))
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+
+        assertEquals(channelLoads + 1, channelsHits.get())
+        assertEquals("guide not re-fetched", guideLoads, guideHits.get())
+        val l = loaded(vm)
+        assertTrue(l.rows.all { it.channel.watchable })
+        assertEquals("programs kept", "Evening News", l.rows.first { it.id == 1L }.nowNext.now?.title)
+        assertFalse(vm.filtered(l.rows, GuideFilter.ALL, clock).tunersBusy)
+        assertTrue("no spinner flash: $seen", seen.none { it is ChannelListViewModel.LoadState.Loading })
+    }
+
+    @Test
+    fun recheckNoticesChannelsBecomingBusy() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", true), chw(2, "4.1", true))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        channelsBody = channelsJson(chw(1, "2.1", false), chw(2, "4.1", true))
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+
+        val f = vm.filtered(loaded(vm).rows, GuideFilter.ALL, clock)
+        assertEquals(listOf(2L), f.rows.map { it.id })
+        assertTrue(f.tunersBusy)
+    }
+
+    @Test
+    fun recheckDoesAFullReloadWhenStale() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", true))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+        val guideLoads = guideHits.get()
+
+        clock = clock.plusSeconds(5 * 60)
+        vm.recheck()
+        assertEquals(guideLoads + 1, guideHits.get())
+    }
+
+    @Test
+    fun recheckReloadsFullyWhenTheChannelSetChanges() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", true))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+        val guideLoads = guideHits.get()
+
+        channelsBody = channelsJson(chw(1, "2.1", true), chw(5, "5.1", true))
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+
+        assertEquals(guideLoads + 1, guideHits.get())
+        assertEquals(listOf(1L, 5L), loaded(vm).rows.map { it.id })
+    }
+
+    @Test
+    fun recheckFailureKeepsTheList() = runTest {
+        channelsBody = channelsJson(chw(1, "2.1", true))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+
+        channelsCode = 500
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+        assertEquals(listOf(1L), loaded(vm).rows.map { it.id })
     }
 }

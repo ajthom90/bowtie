@@ -7,6 +7,7 @@ import app.bowtie.core.BowtieError
 import app.bowtie.core.DevicePoll
 import app.bowtie.core.DeviceSignIn
 import app.bowtie.core.User
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -160,10 +161,13 @@ class DeviceSignInViewModel(
         }
 
         private fun startErrorMessage(e: Throwable): String = when (e) {
-            is BowtieError.Network -> "Couldn't reach the server."
+            is BowtieError.Network -> ViewerErrors.CANT_REACH_SERVER
             is BowtieError.NotFound -> "This server doesn't support signing in with a phone. Use your password."
             is BowtieError.Server -> e.message.ifBlank { "Couldn't get a code. Try again." }
-            else -> e.message ?: "Couldn't get a code. Try again."
+            else -> {
+                ViewerErrors.log(e)
+                "Couldn't get a code. Try again."
+            }
         }
     }
 }

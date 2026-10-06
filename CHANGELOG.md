@@ -5,6 +5,23 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Android phone and TV apps: weak signal, busy tuners and plain-words
+  errors.** While a channel's reception is poor, the player shows a small
+  "Weak signal (46%) — the picture may break up." note by the channel name,
+  and the stats overlay shows "Signal quality 46% · strength 96% ·
+  error-free 0%". When every tuner is busy, the channel list (with
+  Favorites and Recent) shows only the channels you can join, with a note
+  that says so, and checks again every 30 seconds so channels come back
+  as soon as a tuner frees up. Error messages are now plain words ("Can't
+  reach your Bowtie server. Check your connection and try again.") instead
+  of exception text, HTTP codes or player error codes; a failed sign-in
+  because the server can't be reached no longer says "Wrong username or
+  password."
+
 ## [0.20.1] — 2026-10-06
 
 ### Changed

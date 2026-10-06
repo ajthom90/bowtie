@@ -34,6 +34,7 @@ import app.bowtie.core.vm.AppViewModel
 import app.bowtie.BowtieDimens
 import app.bowtie.BowtieType
 import app.bowtie.core.BowtieError
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.launch
 
 private const val LOGIN_ERROR = "Wrong username or password."
@@ -63,7 +64,7 @@ fun LoginScreen(
             } catch (e: Exception) {
                 error = when (e) {
                     is BowtieError.Unauthorized -> LOGIN_ERROR
-                    is BowtieError.Network -> LOGIN_ERROR
+                    is BowtieError.Network -> ViewerErrors.CANT_REACH_SERVER
                     is BowtieError.Server -> if (e.status == 401) LOGIN_ERROR else (e.message.ifBlank { LOGIN_ERROR })
                     else -> LOGIN_ERROR
                 }

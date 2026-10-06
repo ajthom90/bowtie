@@ -48,7 +48,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,12 +73,12 @@ import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.TunersBusyCopy
 import app.bowtie.core.User
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
-import kotlin.time.Duration.Companion.minutes
 
 private const val EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 
@@ -122,13 +124,14 @@ fun ChannelListScreen(
         }
     }
 
-    // Foreground + 5-minute refresh while STARTED.
+    // Foreground + every 30 s while STARTED: which channels can be started
+    // (tuners taken / freed), and the full 5-minute reload when it's due.
     LaunchedEffect(channelListViewModel, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            channelListViewModel.refreshIfStale()
+            channelListViewModel.recheck()
             while (isActive) {
-                delay(5.minutes)
-                channelListViewModel.refreshIfStale()
+                delay(ChannelListViewModel.RECHECK_INTERVAL.toMillis())
+                channelListViewModel.recheck()
             }
         }
     }
@@ -313,6 +316,10 @@ fun ChannelListScreen(
                         val visible = filtered.rows
                         val favorites = remember(filtered) { filtered.favorites }
                         val others = remember(filtered) { filtered.others }
+                        // Recent leaves out channels nobody can start right now, too.
+                        val shownRecents = remember(recents, s.rows) {
+                            channelListViewModel.visibleRecents(recents)
+                        }
                         val showStars = s.favoritesSupported
                         val channelRow: @Composable (ChannelListViewModel.Row) -> Unit = { row ->
                             ChannelRow(
@@ -327,6 +334,12 @@ fun ChannelListScreen(
                             HorizontalDivider(color = BowtieColors.line)
                         }
                         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                            if (filtered.tunersBusy && !filtered.noneWatchable) {
+                                item(key = "tuners-busy-note") {
+                                    TunersBusyNote(TunersBusyCopy.LIST_NOTE)
+                                    HorizontalDivider(color = BowtieColors.line)
+                                }
+                            }
                             if (continueItems.isNotEmpty()) {
                                 item(key = "continue-row") {
                                     ContinueWatchingRow(
@@ -337,10 +350,10 @@ fun ChannelListScreen(
                                     HorizontalDivider(color = BowtieColors.line)
                                 }
                             }
-                            if (showStars && recents.isNotEmpty()) {
+                            if (showStars && shownRecents.isNotEmpty()) {
                                 item(key = "recent-row") {
                                     RecentRow(
-                                        recents = recents,
+                                        recents = shownRecents,
                                         onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
                                     )
                                     HorizontalDivider(color = BowtieColors.line)
@@ -358,7 +371,11 @@ fun ChannelListScreen(
                                 }
                             }
                             items(others, key = { it.id }) { channelRow(it) }
-                            if (visible.isEmpty() && filter != GuideFilter.ALL) {
+                            if (filtered.noneWatchable) {
+                                item(key = "none-watchable") {
+                                    NoneWatchable()
+                                }
+                            } else if (visible.isEmpty() && filter != GuideFilter.ALL) {
                                 item(key = "filter-empty") {
                                     FilterEmpty(filter = filter, onShowAll = {
                                         selectFilter(GuideFilter.ALL)
@@ -566,6 +583,39 @@ private fun FilterEmpty(filter: GuideFilter, onShowAll: () -> Unit) {
         TextButton(onClick = onShowAll) {
             Text("Show all channels", color = BowtieColors.amber)
         }
+    }
+}
+
+/** Above the list while busy channels are hidden; announced when it appears. */
+@Composable
+private fun TunersBusyNote(text: String) {
+    Text(
+        text = text,
+        style = BowtieType.label,
+        color = BowtieColors.amber,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 10.dp),
+    )
+}
+
+/** No channel can be started right now; the 30 s re-check brings them back. */
+@Composable
+private fun NoneWatchable() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(BowtieDimens.screenPadding),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(32.dp))
+        Text(
+            text = TunersBusyCopy.NONE_WATCHABLE,
+            style = BowtieType.body,
+            color = BowtieColors.dim,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
     }
 }
 

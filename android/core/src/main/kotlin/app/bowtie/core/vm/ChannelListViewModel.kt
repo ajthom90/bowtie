@@ -14,6 +14,7 @@ import app.bowtie.core.GuideRecordingMark
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -131,6 +132,13 @@ class ChannelListViewModel(
     data class Filtered(
         val rows: List<Row>,
         val highlights: Map<Long, GuideFilter.RowHighlight>,
+        /**
+         * Some channel can't be started right now (all its tuners are busy), so
+         * [rows] leaves it out; show [app.bowtie.core.TunersBusyCopy.LIST_NOTE].
+         */
+        val tunersBusy: Boolean = false,
+        /** No channel at all can be started; show [app.bowtie.core.TunersBusyCopy.NONE_WATCHABLE]. */
+        val noneWatchable: Boolean = false,
     ) {
         val favorites: List<Row> get() = rows.filter { it.isFavorite }
         val others: List<Row> get() = rows.filterNot { it.isFavorite }
@@ -143,10 +151,28 @@ class ChannelListViewModel(
      * [visibleRows] plus every shown row's [highlight], worked out together.
      * Screens keep the answer in `remember(rows, filter)` so a recomposition
      * doesn't redo it.
+     *
+     * On top of the chip, channels that can't be started right now
+     * (`watchable` false: every tuner busy) are left out and flagged.
      */
     fun filtered(rows: List<Row>, filter: GuideFilter, at: Instant = now()): Filtered {
-        val visible = visibleRows(rows, filter, at)
-        return Filtered(visible, visible.associate { it.id to highlight(it, filter, at) })
+        val busy = rows.any { !it.channel.watchable }
+        val visible = visibleRows(rows, filter, at).let { r ->
+            if (busy) r.filter { it.channel.watchable } else r
+        }
+        return Filtered(
+            rows = visible,
+            highlights = visible.associate { it.id to highlight(it, filter, at) },
+            tunersBusy = busy,
+            noneWatchable = busy && rows.none { it.channel.watchable },
+        )
+    }
+
+    /** [recents] without channels that can't be started right now (unlisted ones stay). */
+    fun visibleRecents(recents: List<RecentChannel>): List<RecentChannel> {
+        val rows = (_state.value as? LoadState.Loaded)?.rows ?: return recents
+        val busy = rows.filterNot { it.channel.watchable }.map { it.id }.toSet()
+        return if (busy.isEmpty()) recents else recents.filterNot { it.channelId in busy }
     }
 
     /** Channel id → position in the last server response; "the rest" keeps this order. */
@@ -224,6 +250,48 @@ class ChannelListViewModel(
         }
         if (Duration.between(last, now()) >= STALE_INTERVAL) {
             refresh()
+        }
+    }
+
+    /**
+     * Called on foreground (ON_START) and every [RECHECK_INTERVAL] while the list
+     * is visible: a full [refreshIfStale] reload when due, otherwise a quiet
+     * channels-only reload so channels leave and come back as tuners are taken
+     * and freed (`watchable`). Never shows the spinner; a failure keeps the list.
+     */
+    suspend fun recheck() {
+        val last = lastLoadedAt
+        if (last == null || Duration.between(last, now()) >= STALE_INTERVAL) {
+            refreshIfStale()
+            return
+        }
+        val loaded = _state.value as? LoadState.Loaded ?: return
+        val channels = try {
+            client.channels()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        }
+        // A channel added or removed: rebuild the rows (with guide) quietly.
+        if (channels.map { it.id }.toSet() != loaded.rows.map { it.id }.toSet()) {
+            refresh(showLoading = false)
+            return
+        }
+        val fresh = channels.associateBy { it.id }
+        _state.update { s ->
+            if (s !is LoadState.Loaded) return@update s
+            // Only availability and reception: favorites stay as toggled here.
+            s.copy(
+                rows = s.rows.map { row ->
+                    val c = fresh[row.id] ?: return@map row
+                    if (c.watchable == row.channel.watchable && c.reception == row.channel.reception) {
+                        row
+                    } else {
+                        row.copy(channel = row.channel.copy(watchable = c.watchable, reception = c.reception))
+                    }
+                },
+            )
         }
     }
 
@@ -392,6 +460,9 @@ class ChannelListViewModel(
         /** Freshness window matching the 5-minute auto-refresh timer. */
         val STALE_INTERVAL: Duration = Duration.ofMinutes(5)
 
+        /** How often a visible list [recheck]s which channels can be started. */
+        val RECHECK_INTERVAL: Duration = Duration.ofSeconds(30)
+
         /** Items in the Recent row. */
         const val RECENTS_LIMIT = 8
 
@@ -434,18 +505,7 @@ class ChannelListViewModel(
             return (elapsedMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
         }
 
-        fun messageFor(error: Throwable): String {
-            return when (error) {
-                is BowtieError.Parental -> error.message
-                is BowtieError.Unauthorized -> "Unauthorized"
-                is BowtieError.TunersBusy -> "All tuners are in use"
-                is BowtieError.RecordingConflict -> "Not enough tuners then"
-                is BowtieError.NegotiationFailed -> error.message ?: "Negotiation failed"
-                is BowtieError.NotFound -> "Not found"
-                is BowtieError.Server -> error.message
-                is BowtieError.Network -> error.cause2.message ?: error.cause2.toString()
-                else -> error.message ?: error.toString()
-            }
-        }
+        /** Plain words for a failed load or favorite toggle (see [ViewerErrors]). */
+        fun messageFor(error: Throwable): String = ViewerErrors.message(error)
     }
 }
