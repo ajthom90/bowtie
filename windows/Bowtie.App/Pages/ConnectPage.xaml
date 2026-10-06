@@ -7,7 +7,8 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid>
+    <!-- Scrolls when the window is too short to show the whole form. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="420" Margin="24" Spacing="16"
                     HorizontalAlignment="Center" VerticalAlignment="Center">
             <Image Source="ms-appx:///Assets/Square150x150Logo.scale-200.png"
@@ -27,5 +28,5 @@
                 <ProgressRing x:Name="Busy" IsActive="False" Width="24" Height="24" />
             </StackPanel>
         </StackPanel>
-    </Grid>
+    </ScrollViewer>
 </Page>

@@ -31,7 +31,8 @@
                         </Grid>
                         <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="{x:Bind Number}" Opacity="0.7" />
+                                <!-- The big number is on the left unless a logo replaced it. -->
+                                <TextBlock Text="{x:Bind Number}" Opacity="0.7" Visibility="{x:Bind LogoVisibility}" />
                                 <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
                                 <TextBlock Text="No signal" Visibility="{x:Bind NoSignalVisibility}"
                                            Foreground="{ThemeResource SystemFillColorCautionBrush}" />
@@ -60,10 +61,11 @@
         </DataTemplate>
 
         <DataTemplate x:Key="RecentTemplate" x:DataType="local:RecentItem">
-            <Button Width="140" Height="96" Click="OnRecentClick" Padding="8"
+            <!-- MinHeight, not Height: the tile grows to fit both lines at any text size. -->
+            <Button Width="140" MinHeight="96" VerticalAlignment="Stretch" Click="OnRecentClick" Padding="8"
                     AutomationProperties.Name="{x:Bind Name}">
-                <StackPanel Spacing="4" HorizontalAlignment="Center">
-                    <Grid Height="40">
+                <StackPanel Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Grid Height="40" Visibility="{x:Bind LogoVisibility}">
                         <Image Source="{x:Bind Logo}" Visibility="{x:Bind LogoVisibility}" Stretch="Uniform" />
                     </Grid>
                     <TextBlock Text="{x:Bind Number}" HorizontalAlignment="Center" Opacity="0.7"
@@ -107,6 +109,9 @@
             <StackPanel Padding="24,0,24,24" Spacing="8">
                 <InfoBar x:Name="MessageBar" IsOpen="False" Severity="Warning" IsClosable="True"
                          Closed="OnMessageClosed" />
+
+                <!-- Every tuner is busy: only channels that can start are listed. -->
+                <InfoBar x:Name="TunersBar" IsOpen="False" Severity="Informational" IsClosable="False" />
 
                 <ProgressRing x:Name="LoadingRing" IsActive="False" HorizontalAlignment="Left" />
 

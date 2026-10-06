@@ -120,7 +120,8 @@ public class ChannelListViewModelTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 4, 20, 10, 0, TimeSpan.Zero);
 
-    private static (ChannelListViewModel Vm, FakeServer Server) Make(string channels, bool recents = true)
+    private static (ChannelListViewModel Vm, FakeServer Server) Make(
+        string channels, bool recents = true, Func<DateTimeOffset>? now = null)
     {
         var server = new FakeServer();
         var (client, _) = TestClients.SignedIn(server);
@@ -130,7 +131,7 @@ public class ChannelListViewModelTests
         {
             server.Json("GET", "/api/v1/me/recents", """[{"channelId":2,"guideNumber":"4.1","name":"B","logoUrl":"","watchedAt":"2026-10-04T19:00:00Z"}]""");
         }
-        return (new ChannelListViewModel(client, () => Now), server);
+        return (new ChannelListViewModel(client, now ?? (() => Now)), server);
     }
 
     private const string ThreeChannels =
@@ -240,6 +241,118 @@ public class ChannelListViewModelTests
         Assert.Equal(2, server.For("GET", "/api/v1/channels").Count());
     }
 
+    private const string OneBusy =
+        """[{"id":1,"guideNumber":"11.1","name":"A","logoUrl":"","favorite":true,"watchable":false},{"id":2,"guideNumber":"4.1","name":"B","logoUrl":"","favorite":false,"watchable":true},{"id":3,"guideNumber":"9.1","name":"C","logoUrl":"","favorite":true}]""";
+
+    private const string AllBusy =
+        """[{"id":1,"guideNumber":"11.1","name":"A","logoUrl":"","favorite":true,"watchable":false},{"id":2,"guideNumber":"4.1","name":"B","logoUrl":"","favorite":false,"watchable":false}]""";
+
+    [Fact]
+    public async Task Every_channel_watchable_shows_everything_and_no_note()
+    {
+        var (vm, _) = Make(ThreeChannels);
+        await vm.RefreshAsync();
+
+        Assert.Equal(new long[] { 3, 1, 2 }, vm.VisibleRows(vm.Rows, Now).Select(r => r.Id));
+        Assert.Null(vm.TunersNote);
+        Assert.False(vm.NoneWatchable);
+        Assert.Single(vm.VisibleRecents);
+    }
+
+    [Fact]
+    public async Task Busy_channels_are_hidden_with_a_note()
+    {
+        var (vm, _) = Make(OneBusy);
+        await vm.RefreshAsync();
+
+        Assert.Equal(new long[] { 3, 2 }, vm.VisibleRows(vm.Rows, Now).Select(r => r.Id));
+        Assert.Equal("All tuners are in use — showing channels you can join.", vm.TunersNote);
+        Assert.False(vm.NoneWatchable);
+        // All rows stay in Rows (for zapping and lookups); only the visible list shrinks.
+        Assert.Equal(3, vm.Rows.Count);
+    }
+
+    [Fact]
+    public async Task No_watchable_channel_says_try_again_later()
+    {
+        var (vm, _) = Make(AllBusy);
+        await vm.RefreshAsync();
+
+        Assert.Empty(vm.VisibleRows(vm.Rows, Now));
+        Assert.Equal("All tuners are in use. Try again in a few minutes.", vm.TunersNote);
+        Assert.True(vm.NoneWatchable);
+        Assert.Empty(vm.VisibleRecents);
+    }
+
+    [Fact]
+    public async Task Recent_hides_busy_channels()
+    {
+        var (vm, server) = Make(OneBusy);
+        server.Json("GET", "/api/v1/me/recents",
+            """[{"channelId":1,"guideNumber":"11.1","name":"A","logoUrl":"","watchedAt":"2026-10-04T19:00:00Z"},{"channelId":2,"guideNumber":"4.1","name":"B","logoUrl":"","watchedAt":"2026-10-04T18:00:00Z"},{"channelId":99,"guideNumber":"1.1","name":"Gone","logoUrl":"","watchedAt":"2026-10-04T17:00:00Z"}]""");
+        await vm.RefreshAsync();
+
+        Assert.Equal(new long[] { 2, 99 }, vm.VisibleRecents.Select(r => r.ChannelId));
+    }
+
+    [Fact]
+    public async Task Busy_filter_applies_on_top_of_the_category_filter()
+    {
+        // A and B both have sports on now, but A's tuners are busy; C has no guide data.
+        var (vm, server) = Make(OneBusy);
+        server.Json("GET", "/api/v1/guide", """[{"channelId":1,"guideNumber":"11.1","name":"A","logoUrl":"","programs":[{"start":"2026-10-04T20:00:00Z","stop":"2026-10-04T21:00:00Z","title":"Game","category":"Sports"}]},{"channelId":2,"guideNumber":"4.1","name":"B","logoUrl":"","programs":[{"start":"2026-10-04T20:00:00Z","stop":"2026-10-04T21:00:00Z","title":"Match","category":"Sports"}]}]""");
+        await vm.RefreshAsync();
+
+        vm.SetFilter(GuideFilter.Sports);
+
+        Assert.Equal(new long[] { 2 }, vm.VisibleRows(vm.Rows, Now).Select(r => r.Id));
+    }
+
+    [Fact]
+    public async Task Poll_rechecks_channels_without_reloading_the_guide()
+    {
+        var now = Now;
+        var (vm, server) = Make(AllBusy, now: () => now);
+        await vm.PollAsync();
+        Assert.True(vm.NoneWatchable);
+        Assert.Single(server.For("GET", "/api/v1/guide"));
+
+        // A tuner frees up: the next 30-second check brings the channel back.
+        server.Json("GET", "/api/v1/channels", AllBusy.Replace("\"favorite\":false,\"watchable\":false", "\"favorite\":false,\"watchable\":true"));
+        now = now.AddSeconds(30);
+        await vm.PollAsync();
+
+        Assert.Equal(new long[] { 2 }, vm.VisibleRows(vm.Rows, now).Select(r => r.Id));
+        Assert.Equal("Now", vm.Rows.Single(r => r.Id == 2).NowNext.Now?.Title);
+        Assert.Equal("All tuners are in use — showing channels you can join.", vm.TunersNote);
+        Assert.Equal(2, server.For("GET", "/api/v1/channels").Count());
+        Assert.Single(server.For("GET", "/api/v1/guide"));
+
+        // Five minutes after the full load, a poll is a full reload again.
+        now = Now.AddMinutes(5);
+        await vm.PollAsync();
+        Assert.Equal(2, server.For("GET", "/api/v1/guide").Count());
+    }
+
+    [Fact]
+    public async Task A_failed_recheck_keeps_the_list()
+    {
+        var now = Now;
+        var server = new FakeServer();
+        var (client, _) = TestClients.SignedIn(server);
+        server.Json("GET", "/api/v1/channels", OneBusy).Json("GET", "/api/v1/guide", "[]");
+        var vm = new ChannelListViewModel(client, () => now);
+        await vm.PollAsync();
+
+        server.Json("GET", "/api/v1/channels", """{"error":"db down"}""", 500);
+        now = now.AddSeconds(30);
+        await vm.PollAsync();
+
+        Assert.Equal(ChannelListStatus.Loaded, vm.Status);
+        Assert.Equal(3, vm.Rows.Count);
+        Assert.Equal("All tuners are in use — showing channels you can join.", vm.TunersNote);
+    }
+
     [Fact]
     public async Task Channel_for_recent_prefers_the_listed_channel()
     {
@@ -315,7 +428,7 @@ public class PlayerViewModelTests
 
         var hb = server.For("POST", "/api/v1/sessions/v1/heartbeat").First();
         Assert.Null(hb.Authorization);
-        Assert.EndsWith("?token=tk", hb.PathAndQuery);
+        Assert.EndsWith("?signal=1&token=tk", hb.PathAndQuery);
 
         vm.Stop();
         await vm.StopTask;
@@ -340,6 +453,108 @@ public class PlayerViewModelTests
         vm.OnPlaybackRecovered();
         Assert.IsType<PlayerState.Playing>(vm.State);
         vm.Dispose();
+    }
+
+    private const string Weak = """{"signal":{"strength":96,"quality":46,"symbolQuality":0,"weak":true}}""";
+    private const string Fine = """{"signal":{"strength":100,"quality":100,"symbolQuality":100,"weak":false}}""";
+
+    [Fact]
+    public async Task Weak_signal_note_follows_the_latest_heartbeat()
+    {
+        var (vm, server, clock) = Make();
+        server.Json("POST", "/api/v1/sessions", FakeServer.SessionJson("v1"));
+        var answers = new Queue<HttpResponseMessage>(new[]
+        {
+            FakeServer.Response(200, Weak),
+            FakeServer.Response(200, Fine),
+            FakeServer.Response(200, Weak),
+            FakeServer.Response(200, """{"signal":null}"""),
+            FakeServer.Response(200, Weak),
+            FakeServer.Response(204),
+        });
+        server.On("POST", "/api/v1/sessions/v1/heartbeat", _ => answers.Dequeue());
+        vm.Play(News);
+        await vm.ReplaceTask;
+        Assert.False(vm.ShowWeakSignalNote);
+
+        Assert.Null(vm.SignalStats);
+
+        var expected = new[] { true, false, true, false, true, false };
+        var known = new[] { true, true, true, false, true, false };
+        for (var i = 0; i < expected.Length; i++)
+        {
+            clock.Tick();
+            await WaitFor(() => vm.HeartbeatCount == i + 1);
+            Assert.Equal(expected[i], vm.ShowWeakSignalNote);
+            Assert.Equal(expected[i], vm.WeakSignalMessage != null);
+            Assert.Equal(known[i], vm.SignalStats != null);
+        }
+        vm.Dispose();
+    }
+
+    [Fact]
+    public async Task Weak_signal_note_raises_property_changed()
+    {
+        var (vm, server, clock) = Make();
+        server.Json("POST", "/api/v1/sessions", FakeServer.SessionJson("v1"));
+        server.Json("POST", "/api/v1/sessions/v1/heartbeat", Weak);
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        vm.Play(News);
+        await vm.ReplaceTask;
+
+        clock.Tick();
+        await WaitFor(() => vm.ShowWeakSignalNote);
+
+        Assert.Contains(nameof(PlayerViewModel.ShowWeakSignalNote), changed);
+        Assert.Contains(nameof(PlayerViewModel.WeakSignalMessage), changed);
+        Assert.Contains(nameof(PlayerViewModel.SignalStats), changed);
+        Assert.Equal("Weak signal (46%) — the picture may break up.", vm.WeakSignalMessage);
+        Assert.Equal("Signal quality 46% · strength 96% · error-free 0%", vm.SignalStats);
+        vm.Dispose();
+    }
+
+    [Fact]
+    public async Task Weak_signal_note_clears_on_zap_failure_and_stop()
+    {
+        var (vm, server, clock) = Make();
+        var n = 0;
+        server.On("POST", "/api/v1/sessions", _ => FakeServer.Response(200, FakeServer.SessionJson($"v{++n}")));
+        server.Json("POST", "/api/v1/sessions/v1/heartbeat", Weak);
+        server.Json("POST", "/api/v1/sessions/v2/heartbeat", Weak);
+        vm.Play(News);
+        await vm.ReplaceTask;
+        clock.Tick();
+        await WaitFor(() => vm.ShowWeakSignalNote);
+
+        // A new channel starts without a reading.
+        vm.Play(News with { Id = 8, Name = "Sports" });
+        await vm.ReplaceTask;
+        Assert.False(vm.ShowWeakSignalNote);
+        Assert.Null(vm.SignalStats);
+
+        clock.Tick();
+        await WaitFor(() => vm.ShowWeakSignalNote);
+        vm.OnPlaybackFailed(ErrorText.StreamStopped);
+        Assert.False(vm.ShowWeakSignalNote);
+        Assert.Null(vm.WeakSignalMessage);
+        Assert.Null(vm.SignalStats);
+
+        vm.Stop();
+        Assert.False(vm.ShowWeakSignalNote);
+        Assert.Null(vm.Signal);
+    }
+
+    [Fact]
+    public async Task Unreachable_server_is_plain_words()
+    {
+        var (vm, server, _) = Make();
+        server.On("POST", "/api/v1/sessions", _ => throw new HttpRequestException("No such host is known."));
+        vm.Play(News);
+        await vm.ReplaceTask;
+
+        Assert.Equal("Can't reach your Bowtie server. Check your connection and try again.",
+            Assert.IsType<PlayerState.Failed>(vm.State).Message);
     }
 
     [Fact]

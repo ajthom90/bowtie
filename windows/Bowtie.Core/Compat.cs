@@ -14,6 +14,9 @@ namespace Bowtie.Core
         public static double Clamp(double value, double min, double max) =>
             value < min ? min : value > max ? max : value;
 
+        public static int Clamp(int value, int min, int max) =>
+            value < min ? min : value > max ? max : value;
+
         public static T[] EnumValues<T>() where T : struct, Enum => (T[])Enum.GetValues(typeof(T));
 
         public static void MoveOverwrite(string from, string to)
@@ -25,6 +28,8 @@ namespace Bowtie.Core
         public static bool IsFinite(double d) => double.IsFinite(d);
 
         public static double Clamp(double value, double min, double max) => Math.Clamp(value, min, max);
+
+        public static int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
 
         public static T[] EnumValues<T>() where T : struct, Enum => Enum.GetValues<T>();
 
