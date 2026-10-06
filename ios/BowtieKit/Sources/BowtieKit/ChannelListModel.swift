@@ -87,17 +87,44 @@ public final class ChannelListModel {
     /// End of the loaded guide window (start is "now").
     public private(set) var windowEnd: Date?
 
-    /// Loaded rows with something matching `filter` between `date` and the
-    /// end of the loaded window. `.all` returns every row.
+    /// Loaded rows that can start now with something matching `filter`
+    /// between `date` and the end of the loaded window. `.all` returns every
+    /// watchable row.
     public func filteredRows(at date: Date) -> [Row] {
-        filter.visibleRows(rows, from: date, to: windowEnd(from: date))
+        filter.visibleRows(watchableRows, from: date, to: windowEnd(from: date))
     }
 
     /// `filteredRows(at:)` for a list with a selection: the row for
     /// `channelId` (the selected / playing channel) stays in its usual place
-    /// even when it doesn't match, flagged so the view can dim it.
+    /// even when it doesn't match or can't start, flagged so the view can dim it.
     public func filteredRows(at date: Date, keeping channelId: Int64?) -> GuideFilter.KeptRows {
-        filter.visibleRows(rows, from: date, to: windowEnd(from: date), keeping: channelId)
+        let candidates = rows.filter { $0.channel.isWatchable || $0.id == channelId }
+        let shown = filter.visibleRows(candidates, from: date, to: windowEnd(from: date), keeping: channelId)
+        if let channelId, shown.keptId == nil,
+           shown.rows.contains(where: { $0.id == channelId && !$0.channel.isWatchable }) {
+            return GuideFilter.KeptRows(rows: shown.rows, keptId: channelId)
+        }
+        return shown
+    }
+
+    // MARK: - Busy tuners
+
+    public static let someTunersBusyNote = "All tuners are in use — showing channels you can join."
+    public static let allTunersBusyNote = "All tuners are in use. Try again in a few minutes."
+
+    /// Loaded rows that can start right now (the server's `watchable`).
+    public var watchableRows: [Row] { rows.filter { $0.channel.isWatchable } }
+
+    /// Some channel can't start because every tuner is busy.
+    public var someTunersBusy: Bool { rows.contains { !$0.channel.isWatchable } }
+
+    /// No channel can start.
+    public var allTunersBusy: Bool { !rows.isEmpty && !rows.contains { $0.channel.isWatchable } }
+
+    /// The note above the list while tuners are busy; nil when every channel can start.
+    public var tunersBusyNote: String? {
+        guard someTunersBusy else { return nil }
+        return allTunersBusy ? Self.allTunersBusyNote : Self.someTunersBusyNote
     }
 
     /// How `row` reads under `filter` at `date` (dimmed lines, a later match).
@@ -149,7 +176,7 @@ public final class ChannelListModel {
             state = .loaded(sorted(rows))
             lastLoadedAt = at
         } catch {
-            state = .failed(Self.message(for: error))
+            state = .failed(ViewerErrorCopy.message(for: error))
         }
     }
 
@@ -250,11 +277,12 @@ public final class ChannelListModel {
     public private(set) var recentsSupported = true
 
     /// Recents as playable channels, resolved through the loaded rows when
-    /// present (so they carry `favorite` / `reception`). Empty on older servers.
+    /// present (so they carry `favorite` / `reception` / `watchable`). Ones
+    /// that can't start now are left out. Empty on older servers.
     public var recentChannels: [Channel] {
         guard supportsFavorites, recentsSupported else { return [] }
         let byId = Dictionary(rows.map { ($0.channel.id, $0.channel) }, uniquingKeysWith: { first, _ in first })
-        return recents.map { byId[$0.channelId] ?? $0.channel }
+        return recents.map { byId[$0.channelId] ?? $0.channel }.filter(\.isWatchable)
     }
 
     /// Show the Recent row: supported and non-empty.
@@ -308,8 +336,43 @@ public final class ChannelListModel {
         }
     }
 
+    /// Every 30 s while the list is visible, and on foreground: reloads
+    /// everything when stale, otherwise asks only for the channels (no guide)
+    /// so the list follows tuners getting busy or freeing up. A new or removed
+    /// channel reloads everything; a failed check keeps the list as it is.
+    public func recheckTuners() async {
+        guard let lastLoadedAt, now().timeIntervalSince(lastLoadedAt) < staleInterval else {
+            await refreshIfStale()
+            return
+        }
+        guard case .loaded = state, let channels = try? await client.channels() else { return }
+        // Rows may have changed while the request was out (a star, a reload).
+        guard case .loaded(let current) = state else { return }
+        let byId = Dictionary(channels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard Set(byId.keys) == Set(current.map(\.id)) else {
+            await load()
+            return
+        }
+        let updated = current.map { row -> Row in
+            guard let fresh = byId[row.id] else { return row }
+            // Stars stay as this device left them (an optimistic toggle may be in flight).
+            let channel = Channel(
+                id: fresh.id,
+                guideNumber: fresh.guideNumber,
+                name: fresh.name,
+                logoUrl: fresh.logoUrl,
+                reception: fresh.reception,
+                favorite: row.channel.favorite,
+                watchable: fresh.watchable
+            )
+            return Row(channel: channel, nowNext: row.nowNext, programs: row.programs, programBuckets: row.programBuckets)
+        }
+        if updated != current {
+            state = .loaded(updated)
+        }
+    }
+
     /// Reloads when never loaded, or when the last successful load is ≥ 5 minutes old.
-    /// Called on foreground and by a 5-minute timer while the list is visible.
     public func refreshIfStale() async {
         guard let lastLoadedAt else {
             await load()
@@ -317,32 +380,6 @@ public final class ChannelListModel {
         }
         if now().timeIntervalSince(lastLoadedAt) >= staleInterval {
             await load()
-        }
-    }
-
-    private static func message(for error: Error) -> String {
-        guard let error = error as? BowtieError else {
-            return error.localizedDescription
-        }
-        switch error {
-        case .unauthorized:
-            return "Unauthorized"
-        case .tunersBusy:
-            return "All tuners are in use"
-        case .negotiationFailed(let message):
-            return message
-        case .recordingConflict(_, _, let message):
-            return message
-        case .notFound:
-            return "Not found"
-        case .parental(let message):
-            return message
-        case .server(_, let message):
-            return message
-        case .network(let message):
-            return message
-        case .invalidServerURL:
-            return "Invalid server URL"
         }
     }
 }

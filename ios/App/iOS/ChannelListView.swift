@@ -25,7 +25,8 @@ struct ChannelListView: View {
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
 
-    private let refreshInterval: Duration = .seconds(5 * 60)
+    /// Busy tuners re-check; a full reload once the list is 5 minutes old.
+    private let recheckInterval: Duration = .seconds(30)
     private let clockTick: Duration = .seconds(30)
 
     var body: some View {
@@ -128,16 +129,19 @@ struct ChannelListView: View {
         .task(id: continueModel != nil) {
             await continueModel?.load()
         }
-        // Auto-refresh every 5 minutes while the list is visible.
+        // Every 30 s while the list is visible: which channels can start now
+        // (and a full reload every 5 minutes).
         .task(id: listModel != nil) {
             guard listModel != nil else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: refreshInterval)
+                    try await Task.sleep(for: recheckInterval)
                 } catch {
                     return
                 }
-                await listModel?.refreshIfStale()
+                // Behind the player the list isn't visible.
+                guard playingChannel == nil else { continue }
+                await listModel?.recheckTuners()
             }
         }
         // Advance "now" so progress capsules keep moving while on screen.
@@ -153,7 +157,7 @@ struct ChannelListView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                Task { await listModel?.refreshIfStale() }
+                Task { await listModel?.recheckTuners() }
                 if activePlayback == nil {
                     Task { await continueModel?.load() }
                 }
@@ -302,6 +306,14 @@ struct ChannelListView: View {
                 .listRowBackground(Theme.bg)
                 .listRowSeparator(.hidden)
 
+            // Busy channels are left out of the list (and Recent) below.
+            if let note = model.tunersBusyNote {
+                TunersBusyNote(text: note)
+                    .padding(.vertical, 4)
+                    .listRowBackground(Theme.bg)
+                    .listRowSeparator(.hidden)
+            }
+
             if model.showsRecents {
                 Section {
                     RecentChipRow(
@@ -320,7 +332,10 @@ struct ChannelListView: View {
 
             let favorites = visible.filter { $0.channel.isFavorite }
             let others = visible.filter { !$0.channel.isFavorite }
-            if visible.isEmpty, model.filter != .all {
+            if model.allTunersBusy {
+                // The note above says it all.
+                EmptyView()
+            } else if visible.isEmpty, model.filter != .all {
                 GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     .listRowBackground(Theme.bg)
                     .listRowSeparator(.hidden)

@@ -38,7 +38,8 @@ struct MacMainView: View {
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
 
-    private let refreshInterval: Duration = .seconds(5 * 60)
+    /// Busy tuners re-check; a full reload once the list is 5 minutes old.
+    private let recheckInterval: Duration = .seconds(30)
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -53,16 +54,17 @@ struct MacMainView: View {
             await ensureListModel()
             await listModel?.load()
         }
-        // Auto-refresh every 5 minutes while signed in.
+        // Every 30 s while signed in: which channels can start now (and a
+        // full reload every 5 minutes).
         .task(id: listModel != nil) {
             guard listModel != nil else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: refreshInterval)
+                    try await Task.sleep(for: recheckInterval)
                 } catch {
                     return
                 }
-                await listModel?.refreshIfStale()
+                await listModel?.recheckTuners()
             }
         }
         .onAppear {
@@ -78,7 +80,7 @@ struct MacMainView: View {
             activeRecording = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await listModel?.refreshIfStale() }
+            Task { await listModel?.recheckTuners() }
         }
         // Player create-session 404 → reload channel list (disabled/unknown channel).
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
@@ -211,6 +213,10 @@ struct MacMainView: View {
                 Section {
                     GuideFilterBar(selection: Bindable(model).filter)
                         .listRowInsets(EdgeInsets())
+                    // Busy channels are left out of the sidebar (and Recent).
+                    if let note = model.tunersBusyNote {
+                        TunersBusyNote(text: note)
+                    }
                 }
             }
 
@@ -235,7 +241,7 @@ struct MacMainView: View {
                     ForEach(shown.rows.filter { !$0.channel.isFavorite }) { row in
                         rowWithMenu(row, section: .all, model: model, dimmed: row.id == shown.keptId)
                     }
-                    if shown.hasNoMatches, model.filter != .all, case .loaded = model.state {
+                    if shown.hasNoMatches, model.filter != .all, !model.allTunersBusy, case .loaded = model.state {
                         GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     }
                 }

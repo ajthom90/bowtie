@@ -9,6 +9,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Apple apps (iPhone, iPad, Apple TV, Mac): weak signal, busy tuners and
+  plain-words errors.** Live TV shows "Weak signal (46%) — the picture may
+  break up." when the antenna reading is poor, and the stats panel shows
+  "Signal quality 46% · strength 96% · error-free 0%". When every tuner is
+  busy, the channel lists show only channels you can join, under "All
+  tuners are in use — showing channels you can join." (or "All tuners are
+  in use. Try again in a few minutes." when none can start), and check
+  again every 30 seconds and when the app comes back. Errors read in plain
+  words ("Can't reach your Bowtie server. Check your connection and try
+  again.") instead of network or decoder text; the detail goes to the log.
 - **Android phone and TV apps: weak signal, busy tuners and plain-words
   errors.** While a channel's reception is poor, the player shows a small
   "Weak signal (46%) — the picture may break up." note by the channel name,

@@ -66,6 +66,15 @@ struct PlayerView: View {
             if showChrome || isBlockingError {
                 chromeLayer
                     .transition(.opacity)
+            } else if let note = playerModel.weakSignalNote {
+                // Stays on screen while the signal is weak; with the chrome up
+                // it sits under the Live pill instead.
+                WeakSignalNote(text: note)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
 
             if case .stalled = playerModel.state {
@@ -121,6 +130,7 @@ struct PlayerView: View {
         .onChange(of: playerModel.state) { _, newState in
             handleStateChange(newState)
         }
+        .announcesWeakSignal(playerModel)
         .onChange(of: bridge.playerErrorIsForbidden) { _, isForbidden in
             if isForbidden {
                 bridge.playerErrorIsForbidden = false
@@ -217,7 +227,8 @@ struct PlayerView: View {
                     StatsOverlay(
                         meta: metaOrNil,
                         indicatedBitrate: indicatedBitrate,
-                        droppedFrames: droppedFrames
+                        droppedFrames: droppedFrames,
+                        signalLine: playerModel.signalStatsLine
                     )
                     Spacer(minLength: 0)
                 }
@@ -246,6 +257,9 @@ struct PlayerView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         controlsRow
                     }
+                }
+                if let note = playerModel.weakSignalNote {
+                    WeakSignalNote(text: note)
                 }
             }
         }

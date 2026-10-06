@@ -58,6 +58,15 @@ struct MacLivePlayerView: View {
             if showChrome || isBlockingError {
                 chromeLayer
                     .transition(.opacity)
+            } else if let note = playerModel.weakSignalNote {
+                // Stays on screen while the signal is weak; with the chrome up
+                // it sits under the Live pill instead.
+                WeakSignalNote(text: note)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
 
             if case .stalled = playerModel.state {
@@ -146,6 +155,7 @@ struct MacLivePlayerView: View {
         .task(id: sessionIdentity) {
             loadPlayerIfNeeded()
         }
+        .announcesWeakSignal(playerModel)
         #if SHAREPLAY
         .task(id: coordinationKey) {
             coordinatePlayback()
@@ -184,13 +194,23 @@ struct MacLivePlayerView: View {
     private var chromeLayer: some View {
         VStack(spacing: 0) {
             topBar
+            if !isBlockingError, let note = playerModel.weakSignalNote {
+                // Under the Live pill and controls.
+                HStack {
+                    Spacer(minLength: 0)
+                    WeakSignalNote(text: note)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, -12)
+            }
             Spacer()
             if showStats, let meta = sessionMeta {
                 HStack {
                     StatsOverlay(
                         meta: meta,
                         indicatedBitrate: indicatedBitrate,
-                        droppedFrames: droppedFrames
+                        droppedFrames: droppedFrames,
+                        signalLine: playerModel.signalStatsLine
                     )
                     Spacer(minLength: 0)
                 }
