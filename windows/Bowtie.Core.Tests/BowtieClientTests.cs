@@ -216,7 +216,49 @@ public class BowtieClientTests
 
         var hb = server.For("POST", "/api/v1/sessions/v1/heartbeat").Single();
         Assert.Null(hb.Authorization);
-        Assert.Equal("/api/v1/sessions/v1/heartbeat?token=a%20b%2Bc", hb.PathAndQuery);
+        Assert.Equal("/api/v1/sessions/v1/heartbeat?signal=1&token=a%20b%2Bc", hb.PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Heartbeat_returns_the_reception_signal()
+    {
+        var server = new FakeServer();
+        var (client, _) = TestClients.SignedIn(server);
+        server.Json("POST", "/api/v1/sessions/v1/heartbeat",
+            """{"signal":{"strength":96,"quality":46,"symbolQuality":0,"weak":true}}""");
+
+        var signal = await client.HeartbeatAsync("v1", "t");
+
+        Assert.Equal(new ReceptionSignal { Strength = 96, Quality = 46, SymbolQuality = 0, Weak = true }, signal);
+    }
+
+    [Theory]
+    [InlineData(204, "")] // older servers
+    [InlineData(200, "")]
+    [InlineData(200, """{"signal":null}""")] // unknown
+    [InlineData(200, "not json")]
+    [InlineData(500, """{"error":"boom"}""")]
+    public async Task Heartbeat_without_a_reading_is_unknown(int status, string body)
+    {
+        var server = new FakeServer();
+        var (client, _) = TestClients.SignedIn(server);
+        server.Json("POST", "/api/v1/sessions/v1/heartbeat", body, status);
+
+        Assert.Null(await client.HeartbeatAsync("v1", "t"));
+    }
+
+    [Fact]
+    public async Task Channels_report_watchable_and_default_to_true()
+    {
+        var server = new FakeServer();
+        var (client, _) = TestClients.SignedIn(server);
+        server.Json("GET", "/api/v1/channels",
+            """[{"id":1,"guideNumber":"2.1","name":"A","logoUrl":"","watchable":false},{"id":2,"guideNumber":"4.1","name":"B","logoUrl":""}]""");
+
+        var channels = await client.ChannelsAsync();
+
+        Assert.False(channels[0].IsWatchable);
+        Assert.True(channels[1].IsWatchable);
     }
 
     [Fact]

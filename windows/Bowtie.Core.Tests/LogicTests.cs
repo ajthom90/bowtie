@@ -194,7 +194,11 @@ public class RecordingLogicTests
         Assert.Equal("Only the person who scheduled it or an admin can change it.",
             RecordingLogic.ErrorMessage(new ServerException(403, "forbidden")));
         Assert.Equal("That recording is gone.", RecordingLogic.ErrorMessage(new NotFoundException()));
-        Assert.Equal("Couldn't reach the server.", RecordingLogic.ErrorMessage(new NetworkException(new IOException("x"))));
+        Assert.Equal("Can't reach your Bowtie server. Check your connection and try again.",
+            RecordingLogic.ErrorMessage(new NetworkException(new IOException("x"))));
+        Assert.Equal("Something went wrong. Try again.", RecordingLogic.ErrorMessage(new IOException("decode failed: x")));
+        Assert.Equal("Something went wrong. Try again.",
+            RecordingLogic.ErrorMessage(BowtieClient.MapHttpError(500, "<html>500</html>", "/api/v1/recordings/3")));
     }
 }
 
@@ -289,5 +293,24 @@ public class PlaybackLogicTests
     {
         Assert.Equal("Your session ended. Sign in again.", ErrorText.For(new UnauthorizedException()));
         Assert.Equal("boom", ErrorText.For(new ServerException(500, "boom")));
+        Assert.Equal("Can't reach your Bowtie server. Check your connection and try again.",
+            ErrorText.For(new NetworkException(new HttpRequestException("No such host is known. (bowtie.test:8400)"))));
+        Assert.Equal("Something went wrong. Try again.",
+            ErrorText.For(new System.Text.Json.JsonException("decode failed: 'x' is an invalid start of a value")));
+        Assert.Equal("Something went wrong. Try again.", ErrorText.For(new InvalidOperationException("")));
     }
+
+    [Theory]
+    [InlineData(500, """{"error":"db down"}""", "db down")] // the server's own words
+    [InlineData(500, "<html>Internal Server Error</html>", "Something went wrong. Try again.")]
+    [InlineData(502, "", "Something went wrong. Try again.")]
+    [InlineData(409, "", "Something went wrong. Try again.")]
+    [InlineData(503, "Service Unavailable", "Something went wrong. Try again.")]
+    [InlineData(422, "", "This device can't play this channel.")]
+    public void Error_text_hides_http_details(int status, string body, string expected) =>
+        Assert.Equal(expected, ErrorText.For(BowtieClient.MapHttpError(status, body, "/api/v1/sessions")));
+
+    [Fact]
+    public void Http_details_stay_in_the_exception_for_logs() =>
+        Assert.Equal("HTTP 500", BowtieClient.MapHttpError(500, "", "/api/v1/channels").Message);
 }
