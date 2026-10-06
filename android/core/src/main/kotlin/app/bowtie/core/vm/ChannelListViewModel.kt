@@ -261,8 +261,14 @@ class ChannelListViewModel(
      */
     suspend fun recheck() {
         val last = lastLoadedAt
-        if (last == null || Duration.between(last, now()) >= STALE_INTERVAL) {
-            refreshIfStale()
+        if (last == null) {
+            // First load shows the spinner; retrying after a failed one is quiet
+            // (the error and its Try again stay up until the list arrives).
+            refresh(showLoading = _state.value !is LoadState.Failed)
+            return
+        }
+        if (Duration.between(last, now()) >= STALE_INTERVAL) {
+            refresh()
             return
         }
         val loaded = _state.value as? LoadState.Loaded ?: return

@@ -772,6 +772,30 @@ class ChannelListViewModelTest {
     }
 
     @Test
+    fun recheckAfterAFailedLoadRetriesWithoutASpinner() = runTest {
+        channelsCode = 500
+        val vm = makeVm(authedClient())
+        vm.refresh()
+        assertTrue(vm.state.value is ChannelListViewModel.LoadState.Failed)
+
+        val seen = CopyOnWriteArrayList<ChannelListViewModel.LoadState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.toList(seen) }
+
+        // Still down: Try again stays on screen.
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+        assertTrue(vm.state.value is ChannelListViewModel.LoadState.Failed)
+
+        // Back up: the list appears.
+        channelsCode = 200
+        channelsBody = channelsJson(chw(1, "2.1", true))
+        clock = clock.plusSeconds(30)
+        vm.recheck()
+        assertEquals(listOf(1L), loaded(vm).rows.map { it.id })
+        assertTrue("no spinner flash: $seen", seen.none { it is ChannelListViewModel.LoadState.Loading })
+    }
+
+    @Test
     fun recheckFailureKeepsTheList() = runTest {
         channelsBody = channelsJson(chw(1, "2.1", true))
         val vm = makeVm(authedClient())

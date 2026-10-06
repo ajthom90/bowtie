@@ -103,7 +103,7 @@ fun LoginScreen(
                     is BowtieError.Server -> if (e.status == 401) {
                         LOGIN_ERROR
                     } else {
-                        e.message.ifBlank { LOGIN_ERROR }
+                        ViewerErrors.message(e)
                     }
                     else -> LOGIN_ERROR
                 }

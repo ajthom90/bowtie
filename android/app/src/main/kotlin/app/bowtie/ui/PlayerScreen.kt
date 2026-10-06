@@ -571,7 +571,8 @@ private fun PlayerOverlay(
             }
             weakNote?.let {
                 Spacer(Modifier.height(6.dp))
-                WeakSignalNote(text = it)
+                // Read with the chrome, not re-announced on every show.
+                WeakSignalNote(text = it, announce = false)
             }
         }
 
@@ -625,15 +626,15 @@ private fun PlayerOverlay(
     }
 }
 
-/** Small "Weak signal (46%) — …" pill; announced (politely) when it appears. */
+/** Small "Weak signal (46%) — …" pill; [announce]d (politely) when it appears. */
 @Composable
-private fun WeakSignalNote(text: String, modifier: Modifier = Modifier) {
+private fun WeakSignalNote(text: String, modifier: Modifier = Modifier, announce: Boolean = true) {
     Text(
         text = text,
         style = BowtieType.label,
         color = BowtieColors.amber,
         modifier = modifier
-            .semantics { liveRegion = LiveRegionMode.Polite }
+            .then(if (announce) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier)
             .background(BowtieColors.bg.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     )

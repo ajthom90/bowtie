@@ -65,7 +65,7 @@ fun LoginScreen(
                 error = when (e) {
                     is BowtieError.Unauthorized -> LOGIN_ERROR
                     is BowtieError.Network -> ViewerErrors.CANT_REACH_SERVER
-                    is BowtieError.Server -> if (e.status == 401) LOGIN_ERROR else (e.message.ifBlank { LOGIN_ERROR })
+                    is BowtieError.Server -> if (e.status == 401) LOGIN_ERROR else ViewerErrors.message(e)
                     else -> LOGIN_ERROR
                 }
             } finally {
