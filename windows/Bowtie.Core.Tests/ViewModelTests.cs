@@ -335,6 +335,52 @@ public class ChannelListViewModelTests
     }
 
     [Fact]
+    public async Task Overlapping_polls_share_one_check()
+    {
+        // At startup the page and the window activation both poll: one load.
+        var now = Now;
+        var server = new FakeServer();
+        var (client, _) = TestClients.SignedIn(server);
+        var release = new TaskCompletionSource();
+        server.OnAsync("GET", "/api/v1/channels", async _ =>
+        {
+            await release.Task;
+            return FakeServer.Response(200, OneBusy);
+        });
+        server.Json("GET", "/api/v1/guide", "[]");
+        var vm = new ChannelListViewModel(client, () => now);
+
+        var first = vm.PollAsync();
+        var second = vm.PollAsync();
+        release.SetResult();
+        await Task.WhenAll(first, second);
+
+        Assert.Single(server.For("GET", "/api/v1/channels"));
+        Assert.Single(server.For("GET", "/api/v1/guide"));
+    }
+
+    [Fact]
+    public async Task Polls_right_after_a_check_are_skipped()
+    {
+        // Window activation fires on every click back into the app.
+        var now = Now;
+        var (vm, server) = Make(OneBusy, now: () => now);
+        await vm.PollAsync();
+
+        now = now.AddSeconds(2);
+        await vm.PollAsync();
+        Assert.Single(server.For("GET", "/api/v1/channels"));
+
+        now = now.AddSeconds(4);
+        await vm.PollAsync();
+        Assert.Equal(2, server.For("GET", "/api/v1/channels").Count());
+
+        // The Refresh button always reloads.
+        await vm.RefreshAsync();
+        Assert.Equal(3, server.For("GET", "/api/v1/channels").Count());
+    }
+
+    [Fact]
     public async Task A_failed_recheck_keeps_the_list()
     {
         var now = Now;
@@ -488,6 +534,34 @@ public class PlayerViewModelTests
             Assert.Equal(expected[i], vm.ShowWeakSignalNote);
             Assert.Equal(expected[i], vm.WeakSignalMessage != null);
             Assert.Equal(known[i], vm.SignalStats != null);
+        }
+        vm.Dispose();
+    }
+
+    [Fact]
+    public async Task A_heartbeat_without_an_answer_keeps_the_last_reading()
+    {
+        // Flaky Wi-Fi: a beat that gets no answer must not hide the note
+        // until the next beat; an answer (even "unknown") replaces it.
+        var (vm, server, clock) = Make();
+        server.Json("POST", "/api/v1/sessions", FakeServer.SessionJson("v1"));
+        var answers = new Queue<Func<HttpResponseMessage>>(new Func<HttpResponseMessage>[]
+        {
+            () => FakeServer.Response(200, Weak),
+            () => FakeServer.Response(502),
+            () => throw new HttpRequestException("network down"),
+            () => FakeServer.Response(200, Fine),
+        });
+        server.On("POST", "/api/v1/sessions/v1/heartbeat", _ => answers.Dequeue()());
+        vm.Play(News);
+        await vm.ReplaceTask;
+
+        var expected = new[] { true, true, true, false };
+        for (var i = 0; i < expected.Length; i++)
+        {
+            clock.Tick();
+            await WaitFor(() => vm.HeartbeatCount == i + 1);
+            Assert.Equal(expected[i], vm.ShowWeakSignalNote);
         }
         vm.Dispose();
     }

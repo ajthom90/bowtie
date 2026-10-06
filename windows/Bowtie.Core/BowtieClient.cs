@@ -221,7 +221,15 @@ public sealed class BowtieClient
     /// it; null when unknown (older servers answer an empty 204) or the beat
     /// failed. Best-effort; never throws.
     /// </summary>
-    public async Task<ReceptionSignal?> HeartbeatAsync(string viewerId, string streamToken, CancellationToken ct = default)
+    public async Task<ReceptionSignal?> HeartbeatAsync(string viewerId, string streamToken, CancellationToken ct = default) =>
+        (await BeatAsync(viewerId, streamToken, ct).ConfigureAwait(false)).Signal;
+
+    /// <summary>
+    /// As <see cref="HeartbeatAsync"/>, but says whether the server answered:
+    /// a beat lost to flaky Wi-Fi (no answer, or an error status) is not the
+    /// same as "reception unknown", so the player can keep its last reading.
+    /// </summary>
+    public async Task<HeartbeatResult> BeatAsync(string viewerId, string streamToken, CancellationToken ct = default)
     {
         var path = $"/api/v1/sessions/{Uri.EscapeDataString(viewerId)}/heartbeat?signal=1&token={Uri.EscapeDataString(streamToken)}";
         try
@@ -231,14 +239,14 @@ public sealed class BowtieClient
                 Content = new ByteArrayContent(Array.Empty<byte>()),
             };
             using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) return null;
+            if (!response.IsSuccessStatusCode) return HeartbeatResult.NoAnswer;
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            return TryDeserialize<HeartbeatBody>(body)?.Signal;
+            return new HeartbeatResult(true, TryDeserialize<HeartbeatBody>(body)?.Signal);
         }
-        catch (Exception)
+        catch (Exception) when (!ct.IsCancellationRequested)
         {
             // best-effort
-            return null;
+            return HeartbeatResult.NoAnswer;
         }
     }
 
@@ -517,4 +525,10 @@ public sealed class BowtieClient
 
     internal static string Rfc3339(DateTimeOffset t) =>
         t.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+}
+
+/// <summary>One heartbeat: whether the server answered, and its reception reading (null = unknown).</summary>
+public sealed record HeartbeatResult(bool Answered, ReceptionSignal? Signal)
+{
+    public static HeartbeatResult NoAnswer { get; } = new(false, null);
 }

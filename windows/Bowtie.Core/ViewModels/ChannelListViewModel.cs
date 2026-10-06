@@ -34,6 +34,12 @@ public sealed class ChannelListViewModel : ObservableObject
     /// <summary>How often the visible list re-checks which channels can start.</summary>
     public static readonly TimeSpan RecheckInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// Background polls this soon after the last check are skipped: window
+    /// activation fires on every click back into the app.
+    /// </summary>
+    public static readonly TimeSpan MinPollGap = TimeSpan.FromSeconds(5);
+
     public const int RecentsLimit = 8;
 
     public const string SomeTunersBusyNote = "All tuners are in use — showing channels you can join.";
@@ -52,6 +58,8 @@ public sealed class ChannelListViewModel : ObservableObject
     private Dictionary<long, int> _serverOrder = new();
     private Dictionary<long, IReadOnlyList<GuideProgram>> _programs = new();
     private DateTimeOffset? _lastLoadedAt;
+    private DateTimeOffset? _lastPolledAt;
+    private Task? _poll;
     private DateTimeOffset? _windowEnd;
     private GuideFilter _filter;
 
@@ -245,16 +253,34 @@ public sealed class ChannelListViewModel : ObservableObject
     /// and when the app comes back to the foreground: a full reload when
     /// stale (see <see cref="RefreshIfStaleAsync"/>), otherwise a channels-only
     /// re-check so busy channels come back once a tuner frees up.
+    /// Overlapping polls (the page and the window activating at startup)
+    /// share one check, and polls within <see cref="MinPollGap"/> of the last
+    /// one are skipped. The Refresh button calls <see cref="RefreshAsync"/>,
+    /// which always reloads.
     /// </summary>
-    public async Task PollAsync(CancellationToken ct = default)
+    public Task PollAsync(CancellationToken ct = default)
     {
-        if (_lastLoadedAt is not { } last || _now() - last >= StaleInterval)
+        if (_poll is { IsCompleted: false } running) return running;
+        if (_lastPolledAt is { } polled && _now() - polled < MinPollGap) return Task.CompletedTask;
+        return _poll = PollOnceAsync(ct);
+    }
+
+    private async Task PollOnceAsync(CancellationToken ct)
+    {
+        try
         {
-            await RefreshAsync(ct);
+            if (_lastLoadedAt is not { } last || _now() - last >= StaleInterval)
+            {
+                await RefreshAsync(ct);
+            }
+            else if (Status == ChannelListStatus.Loaded)
+            {
+                await RecheckAsync(ct);
+            }
         }
-        else if (Status == ChannelListStatus.Loaded)
+        finally
         {
-            await RecheckAsync(ct);
+            _lastPolledAt = _now();
         }
     }
 
