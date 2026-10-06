@@ -24,7 +24,8 @@ public abstract record PlayerState
 /// <item>Zap / quality change: cancel in-flight → DELETE old → debounce → POST new.
 ///   A create that lands after a newer request is deleted so it can't leak a tuner.</item>
 /// <item>Heartbeat every 15 s while the session is open (Playing or Stalled), with the stream token;
-///   each answer carries the tuner's reception (<see cref="Signal"/>, <see cref="ShowWeakSignalNote"/>).</item>
+///   each answer carries the tuner's reception (<see cref="Signal"/>, <see cref="WeakSignalMessage"/>,
+///   <see cref="SignalStats"/>).</item>
 /// <item><see cref="Stop"/> is for really leaving the player only.</item>
 /// </list>
 /// </summary>
@@ -32,7 +33,6 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
 {
     public const string DeviceCantPlayMessage = "This device can't play this channel at that quality";
     public const string PlaybackAuthFailedMessage = ErrorText.StreamStopped;
-    public const string WeakSignalNote = "Weak signal — the picture may break up.";
     public const string ChannelNotFoundMessage = "Channel not found";
 
     public static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -82,7 +82,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _state, value))
             {
                 OnPropertyChanged(nameof(PlaylistUri));
-                OnPropertyChanged(nameof(ShowWeakSignalNote));
+                OnSignalShownChanged();
             }
         }
     }
@@ -93,17 +93,31 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         get => _signal;
         private set
         {
-            if (SetProperty(ref _signal, value)) OnPropertyChanged(nameof(ShowWeakSignalNote));
+            if (SetProperty(ref _signal, value)) OnSignalShownChanged();
         }
     }
 
     /// <summary>
-    /// Show <see cref="WeakSignalNote"/>: the latest heartbeat said weak and
-    /// the session is open. The server already needs two bad readings, so
-    /// this follows each answer without smoothing.
+    /// The latest heartbeat said weak and the session is open. The server
+    /// already needs two bad readings, so this follows each answer without
+    /// smoothing.
     /// </summary>
-    public bool ShowWeakSignalNote =>
-        Signal is { Weak: true } && State is PlayerState.Playing or PlayerState.Stalled;
+    public bool ShowWeakSignalNote => SessionOpen && Signal is { Weak: true };
+
+    /// <summary>"Weak signal (46%) — the picture may break up." while <see cref="ShowWeakSignalNote"/>; else null.</summary>
+    public string? WeakSignalMessage => ShowWeakSignalNote ? ReceptionText.WeakNote(Signal!) : null;
+
+    /// <summary>"Signal quality 46% · strength 96% · error-free 0%" while the session is open and the reading known; else null.</summary>
+    public string? SignalStats => SessionOpen && Signal is { } s ? ReceptionText.Stats(s) : null;
+
+    private bool SessionOpen => State is PlayerState.Playing or PlayerState.Stalled;
+
+    private void OnSignalShownChanged()
+    {
+        OnPropertyChanged(nameof(ShowWeakSignalNote));
+        OnPropertyChanged(nameof(WeakSignalMessage));
+        OnPropertyChanged(nameof(SignalStats));
+    }
 
     /// <summary>Heartbeats answered so far (tests wait on it).</summary>
     internal int HeartbeatCount => Volatile.Read(ref _heartbeatCount);

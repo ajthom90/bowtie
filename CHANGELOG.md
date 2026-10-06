@@ -10,8 +10,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Windows: weak signal, busy tuners and plain-words errors.** The player
-  shows "Weak signal — the picture may break up." next to LIVE when the
-  antenna reception is poor (read on the 15-second heartbeat). When every
+  shows "Weak signal (46%) — the picture may break up." next to LIVE when
+  the antenna reception is poor (read on the 15-second heartbeat), and a
+  Signal button shows the latest reading ("Signal quality 46% · strength
+  96% · error-free 0%"). When every
   tuner is busy, Live TV, Favorites and Recent list only the channels you
   can join, under a note, and check again every 30 seconds and when the
   window comes back to the front. Error messages are plain words ("Can't

@@ -59,6 +59,15 @@
                 </Button>
                 <Button x:Name="GoLiveButton" Content="Go Live" Click="OnGoLiveClick" Visibility="Collapsed"
                         Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="Jump to live (End)" />
+                <!-- Antenna reception from the latest heartbeat; live only, hidden when unknown. -->
+                <Button x:Name="SignalButton" Visibility="Collapsed" AutomationProperties.Name="Signal">
+                    <FontIcon Glyph="&#xEC05;" />
+                    <Button.Flyout>
+                        <Flyout Placement="Bottom">
+                            <TextBlock x:Name="SignalStatsText" TextWrapping="Wrap" MaxWidth="360" />
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
                 <ComboBox x:Name="QualityBox" PlaceholderText="Quality" MinWidth="120"
                           SelectionChanged="OnQualityChanged" Visibility="Collapsed"
                           ToolTipService.ToolTip="The most this player will use; it adapts below that to your connection."

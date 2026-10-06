@@ -27,7 +27,7 @@ namespace BowtieApp.Pages;
 /// math (Go Live, behind-live label, skips) is <see cref="LiveEdge"/>.
 /// The sleep timer (<see cref="SleepTimer"/>) leaves the player like Back;
 /// recordings offer Skip ad over detected breaks (<see cref="CommercialSkipper"/>).
-/// Live shows a weak-signal note from the heartbeat's reception. Player
+/// Live shows the heartbeat's reception (a Signal button and a weak-signal note). Player
 /// errors show plain words; the technical detail goes to the trace log.
 /// </summary>
 public sealed partial class PlayerPage : Page
@@ -52,7 +52,6 @@ public sealed partial class PlayerPage : Page
     public PlayerPage()
     {
         InitializeComponent();
-        WeakSignalText.Text = PlayerViewModel.WeakSignalNote;
 
         _player = new MediaPlayer { AutoPlay = true };
         _player.MediaOpened += (_, _) => DispatcherQueue.TryEnqueue(OnMediaOpened);
@@ -178,7 +177,7 @@ public sealed partial class PlayerPage : Page
         var isLive = _request is PlayerRequest.Live;
         LiveBadge.Visibility = isLive ? LiveBadge.Visibility : Visibility.Collapsed;
         QualityBox.Visibility = isLive && _live != null ? Visibility.Visible : Visibility.Collapsed;
-        RenderWeakSignal(isLive && _live is { ShowWeakSignalNote: true });
+        RenderSignal(isLive ? _live : null);
         if (_live == null) return;
 
         if (_live.CurrentChannel is { } channel) TitleLabel.Text = Describe(channel);
@@ -218,13 +217,23 @@ public sealed partial class PlayerPage : Page
         }
     }
 
-    /// <summary>Show or hide the weak-signal note; screen readers hear it when it appears.</summary>
-    private void RenderWeakSignal(bool show)
+    /// <summary>
+    /// The reception button (its tooltip and flyout carry the percentages)
+    /// and the weak-signal note; screen readers hear the note when it appears.
+    /// </summary>
+    private void RenderSignal(PlayerViewModel? live)
     {
-        var visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        var stats = live?.SignalStats;
+        SignalButton.Visibility = stats != null ? Visibility.Visible : Visibility.Collapsed;
+        SignalStatsText.Text = stats ?? "";
+        ToolTipService.SetToolTip(SignalButton, stats);
+
+        var message = live?.WeakSignalMessage;
+        WeakSignalText.Text = message ?? "";
+        var visibility = message != null ? Visibility.Visible : Visibility.Collapsed;
         if (WeakSignalNote.Visibility == visibility) return;
         WeakSignalNote.Visibility = visibility;
-        if (show)
+        if (message != null)
         {
             var peer = FrameworkElementAutomationPeer.FromElement(WeakSignalText)
                        ?? FrameworkElementAutomationPeer.CreatePeerForElement(WeakSignalText);
