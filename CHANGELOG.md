@@ -22,6 +22,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   server pages: they say "Can't reach your Bowtie server…", "The stream
   stopped. Try again." or the server's own message, and keep the detail in
   the debug log.
+- **Web: weak-signal note and reception in Stats.** While a live channel's
+  antenna signal is weak, the player shows a small, steady note — "Weak
+  signal (46%) — the picture may break up." — and Stats shows the latest
+  reading ("Signal quality 46% · strength 96% · error-free 0%"). Nothing
+  shows against older servers or for recordings.
+- **Web: all tuners busy.** When every tuner is busy with other channels,
+  the Recent row, channel search and the Multiview picker show only the
+  channels you can join, under "All tuners are in use — showing channels
+  you can join." (or "All tuners are in use. Try again in a few minutes."
+  when none can start). The guide keeps every row for browsing and
+  recording, but dims busy channels and turns off their Watch actions. The
+  guide and an open Multiview picker check again every 30 seconds and when
+  you come back to the tab.
+
+### Changed
+
+- **Web: plain-words errors.** HTTP status text, proxy pages and browser
+  network errors no longer reach viewers: they see "Can't reach your Bowtie
+  server. Check your connection and try again.", "The stream stopped. Try
+  again." or a plain fallback, with the detail in the browser console. The
+  server's own messages are shown as before.
 
 ## [0.20.1] — 2026-10-06
 
