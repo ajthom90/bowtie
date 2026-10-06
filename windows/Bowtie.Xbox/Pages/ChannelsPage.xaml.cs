@@ -61,10 +61,15 @@ namespace BowtieXbox.Pages
             Application.Current.Resuming += OnResuming;
             Window.Current.VisibilityChanged += OnVisibilityChanged;
             Render();
+            // Where the channel just watched sits now, in case the re-check drops it.
+            var shownIndex = _focusChannelId is long id && ChannelList.ItemsSource is List<ChannelItem> shown
+                ? Math.Max(0, shown.FindIndex(i => i.Channel.Id == id))
+                : 0;
             // Back from the player a tuner just freed up: re-check now.
             await PollAsync();
+            if (!ReferenceEquals(Frame?.Content, this)) return; // already left (A pressed meanwhile)
             Render();
-            FocusList();
+            FocusList(shownIndex);
         }
 
         protected override void OnNavigatedFrom(NavigationEventArgs e)
