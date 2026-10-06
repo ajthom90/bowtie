@@ -181,25 +181,35 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.Us
 	case strings.Contains(msg, "unknown channel"),
 		strings.Contains(msg, "is disabled"),
 		errors.Is(err, sql.ErrNoRows):
-		writeError(w, http.StatusNotFound, "channel not found")
+		writeError(w, http.StatusNotFound, msgChannelGone)
 	case strings.Contains(msg, "negotiate:"):
-		writeError(w, http.StatusUnprocessableEntity, msg)
+		writeError(w, http.StatusUnprocessableEntity, startErrorMessage(msgCantPlayHere, err, user))
 	case errors.Is(err, stream.ErrNoSignal):
 		log.Printf("session start: user=%s: %v", user.Username, err)
-		writeError(w, http.StatusBadGateway, startErrorMessage("no signal on this channel", err, user))
+		writeError(w, http.StatusBadGateway, startErrorMessage(msgNoSignal, err, user))
 	default:
 		log.Printf("session start failed: user=%s: %v", user.Username, err)
-		writeError(w, http.StatusInternalServerError, startErrorMessage("failed to start session", err, user))
+		writeError(w, http.StatusInternalServerError, startErrorMessage(msgStartFailed, err, user))
 	}
 }
 
-// startErrorMessage appends the underlying cause for admins, who can act on
-// it; viewers get the plain message.
+// What the apps show when a channel won't start: plain words for everyone
+// (the apps display the server's text as-is).
+const (
+	msgNoSignal     = "This channel isn't coming in right now — your antenna isn't getting a picture from it. Try again later or pick another channel."
+	msgStartFailed  = "Something went wrong starting this channel. Try again in a moment."
+	msgCantPlayHere = "This channel can't play on this device."
+	msgChannelGone  = "This channel isn't available anymore."
+)
+
+// startErrorMessage adds the technical cause for admins, who can act on it
+// ("… (Details: device returned HTTP 503: 807 No Video Data)"); viewers get
+// only the plain message.
 func startErrorMessage(msg string, err error, user store.User) string {
 	if user.Role != "admin" {
 		return msg
 	}
-	return msg + ": " + err.Error()
+	return msg + " (Details: " + err.Error() + ")"
 }
 
 // otherTunersInUse counts tuners busy for something other than Bowtie (e.g.

@@ -5,6 +5,18 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Plain-words errors when a channel won't start.** Instead of messages
+  like "no signal on this channel: ingest dial: device returned HTTP 503:
+  807 No Video Data", everyone now sees what happened and what to do —
+  "This channel isn't coming in right now — your antenna isn't getting a
+  picture from it. Try again later or pick another channel." — in every app.
+  Admins also get the technical cause in parentheses. A device that can't
+  play a channel's format no longer shows the raw codec error to viewers.
+
 ## [0.20.0] — 2026-10-05
 
 ### Added
