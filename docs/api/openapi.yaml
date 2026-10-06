@@ -430,6 +430,13 @@ paths:
                       type: string
                     locked:
                       type: boolean
+                    watchable:
+                      type: boolean
+                      description: |
+                        The channel can start right now, as `watchable` on
+                        GET /api/v1/channels (false only when every tuner on
+                        its HDHomeRun is busy with other channels). Apps hide
+                        Watch for a busy channel; Record stays available.
                     recording:
                       type: object
                       required: [id, state]

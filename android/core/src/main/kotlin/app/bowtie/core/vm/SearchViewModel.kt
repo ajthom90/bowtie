@@ -95,6 +95,9 @@ class SearchViewModel(
         return !r.start.isAfter(at) && r.stop.isAfter(at)
     }
 
+    /** Offer Watch: the program is on now and its channel can start (tuners not all busy). */
+    fun canWatch(r: GuideSearchResult): Boolean = isOnNow(r) && r.watchable
+
     /** The channel to play for Watch. */
     fun channelFor(r: GuideSearchResult): Channel = Channel(
         id = r.channelId,

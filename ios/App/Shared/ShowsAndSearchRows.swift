@@ -154,7 +154,7 @@ struct SearchResultActions: View {
     let openRecordings: () -> Void
 
     var body: some View {
-        if result.isOnNow(at: now) {
+        if result.canWatch(at: now) {
             Button {
                 onWatch(result.channel)
             } label: {
