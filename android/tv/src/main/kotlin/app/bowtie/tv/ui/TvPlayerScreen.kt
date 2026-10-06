@@ -41,6 +41,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
@@ -50,6 +53,7 @@ import androidx.tv.material3.Text
 import app.bowtie.core.Channel
 import app.bowtie.core.GuideLogic
 import app.bowtie.core.SessionInfoMeta
+import app.bowtie.core.SignalCopy
 import app.bowtie.core.SleepTimer
 import app.bowtie.core.player.PlayerEngine
 import app.bowtie.core.player.TrackPrefsStore
@@ -96,6 +100,11 @@ fun TvPlayerScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity
     val state by playerViewModel.state.collectAsStateWithLifecycle()
+    val signal by playerViewModel.signal.collectAsStateWithLifecycle()
+    // Only while this session is open: a failed or busy panel says enough.
+    val sessionOpen = state is PlayerViewModel.State.Playing || state is PlayerViewModel.State.Stalled
+    val weakNote = if (sessionOpen) SignalCopy.weakNote(signal) else null
+    val signalLine = if (sessionOpen) SignalCopy.statsLine(signal) else null
     val scope = rememberCoroutineScope()
 
     var showDrawer by remember { mutableStateOf(false) }
@@ -396,6 +405,19 @@ fun TvPlayerScreen(
                         color = BowtieColors.dim,
                     )
                 }
+                weakNote?.let {
+                    Spacer(Modifier.height(8.dp))
+                    // Small and quiet; announced (politely) when it appears.
+                    Text(
+                        text = it,
+                        style = BowtieType.label,
+                        color = BowtieColors.amber,
+                        modifier = Modifier
+                            .semantics { liveRegion = LiveRegionMode.Polite }
+                            .background(BowtieColors.bg.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
             }
         }
 
@@ -407,6 +429,7 @@ fun TvPlayerScreen(
                 sessionMeta = sessionMeta,
                 bitrateBps = bitrateBps,
                 droppedFrames = droppedFrames,
+                signalLine = signalLine,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(BowtieDimens.screenPadding)

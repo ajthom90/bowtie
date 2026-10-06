@@ -34,9 +34,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -55,6 +59,7 @@ import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.TunersBusyCopy
 import app.bowtie.core.User
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.ContinueWatchingViewModel
@@ -67,7 +72,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
-import kotlin.time.Duration.Companion.minutes
 
 private const val EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 
@@ -133,13 +137,14 @@ fun ChannelRailScreen(
         channelListViewModel.consumeMessage()
     }
 
-    // Foreground + 5-minute refresh while STARTED (identical to phone).
+    // Foreground + every 30 s while STARTED (identical to phone): which channels
+    // can be started (tuners taken / freed), and the 5-minute reload when due.
     LaunchedEffect(channelListViewModel, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            channelListViewModel.refreshIfStale()
+            channelListViewModel.recheck()
             while (isActive) {
-                delay(5.minutes)
-                channelListViewModel.refreshIfStale()
+                delay(ChannelListViewModel.RECHECK_INTERVAL.toMillis())
+                channelListViewModel.recheck()
             }
         }
     }
@@ -453,9 +458,13 @@ fun ChannelRailScreen(
                             onOptions = ::openContinueMenu,
                         )
                     }
-                    if (supported && recents.isNotEmpty()) {
+                    // Recent leaves out channels nobody can start right now, too.
+                    val shownRecents = remember(recents, s.rows) {
+                        channelListViewModel.visibleRecents(recents)
+                    }
+                    if (supported && shownRecents.isNotEmpty()) {
                         RecentRail(
-                            recents = recents,
+                            recents = shownRecents,
                             onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
                         )
                     }
@@ -465,7 +474,20 @@ fun ChannelRailScreen(
                         onSelect = channelListViewModel::setFilter,
                         allFocusRequester = allChipFocus,
                     )
-                    if (visible.isEmpty() && filter != GuideFilter.ALL) {
+                    if (filtered.noneWatchable) {
+                        BusyText(
+                            text = TunersBusyCopy.NONE_WATCHABLE,
+                            style = BowtieType.body,
+                            color = BowtieColors.dim,
+                        )
+                    } else if (filtered.tunersBusy) {
+                        BusyText(
+                            text = TunersBusyCopy.LIST_NOTE,
+                            style = BowtieType.label,
+                            color = BowtieColors.amber,
+                        )
+                    }
+                    if (visible.isEmpty() && filter != GuideFilter.ALL && !filtered.noneWatchable) {
                         FilterEmpty(filter = filter, onShowAll = {
                             // Move focus while the button still exists, then drop it.
                             runCatching { allChipFocus.requestFocus() }
@@ -561,6 +583,23 @@ private fun GuideFilterChips(
             }
         }
     }
+}
+
+/**
+ * All-tuners-busy copy above the rail (not focusable; the 30 s re-check
+ * brings channels back). Announced when it appears.
+ */
+@Composable
+private fun BusyText(text: String, style: TextStyle, color: Color) {
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 8.dp),
+    )
 }
 
 /** "No sports on in this time window" with a focusable way back. */
