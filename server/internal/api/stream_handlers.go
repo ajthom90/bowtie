@@ -479,7 +479,37 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.viewerGone(w, viewerID)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// ?signal=1: the player wants the channel's reception for its "Weak
+	// signal" note. Without it the reply stays an empty 204 (older players).
+	if r.URL.Query().Get("signal") != "1" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	var sig *signalSample
+	if reading, ok := s.viewerSignal(r.Context(), viewerID); ok {
+		sig = &reading
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"signal": sig})
+}
+
+// viewerSignal is the reception of the tuner feeding viewerID's channel.
+func (s *Server) viewerSignal(ctx context.Context, viewerID string) (signalSample, bool) {
+	if s.deps.Store == nil || s.signal == nil {
+		return signalSample{}, false
+	}
+	info, ok := s.deps.Streams.SessionInfoOf(viewerID)
+	if !ok || info.ChannelID == 0 {
+		return signalSample{}, false
+	}
+	ch, err := s.deps.Store.ChannelByID(info.ChannelID)
+	if err != nil {
+		return signalSample{}, false
+	}
+	dev, err := s.deps.Store.DeviceByID(ch.DeviceID)
+	if err != nil {
+		return signalSample{}, false
+	}
+	return s.signal.read(ctx, dev, ch)
 }
 
 // authorizeViewerRequest accepts a valid Bearer JWT or a stream token matching viewerID.
