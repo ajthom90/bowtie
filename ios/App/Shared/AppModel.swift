@@ -161,8 +161,9 @@ public final class AppModel {
     }
 
     /// Returns to Connect. The current server stays saved, signed in, for
-    /// switching back.
+    /// switching back. Pairing starts over there with a new code.
     public func changeServer() {
+        stopPairing()
         store.save(server: nil, refreshToken: nil)
         client = nil
         user = nil
@@ -187,6 +188,7 @@ public final class AppModel {
         store.removeServer(url)
         savedServers = store.savedServers()
         if store.loadServer() == nil, phase != .connect {
+            stopPairing()
             client = nil
             user = nil
             phase = .connect

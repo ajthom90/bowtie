@@ -300,6 +300,35 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.serverURL, SharedFixtures.baseURL)
     }
 
+    func testChangeServerStartsAFreshPairingSession() async throws {
+        StubURLProtocol.handler = { _ in (200, Data(), [:]) }
+        let model = makePairingModel()
+        let first = try await startPairing(model)
+        try await submitFromPhone(first, server: "http://test.bowtie.local:8400")
+        for _ in 0..<100 where model.phase != .login { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.phase, .login)
+
+        model.changeServer()
+        XCTAssertNil(model.pairing.pairURL)
+        let second = try await startPairing(model)
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testRemovingTheLastServerStartsAFreshPairingSession() async throws {
+        StubURLProtocol.handler = { _ in (200, Data(), [:]) }
+        let model = makePairingModel()
+        let first = try await startPairing(model)
+        try await submitFromPhone(first, server: "http://test.bowtie.local:8400")
+        for _ in 0..<100 where model.phase != .login { try await Task.sleep(nanoseconds: 20_000_000) }
+        let server = try XCTUnwrap(model.serverURL)
+
+        model.removeServer(server)
+        XCTAssertEqual(model.phase, .connect)
+        XCTAssertNil(model.pairing.pairURL)
+        let second = try await startPairing(model)
+        XCTAssertNotEqual(first, second)
+    }
+
     func testSignInStopsPairing() async throws {
         StubURLProtocol.handler = { _ in (200, SharedFixtures.tokenPairJSON(), [:]) }
         store.save(server: SharedFixtures.baseURL, refreshToken: nil)

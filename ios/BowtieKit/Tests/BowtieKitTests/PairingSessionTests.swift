@@ -47,11 +47,20 @@ final class PairingSessionTests: XCTestCase {
         let waiting = s.handle(get("/p/status?t=\(t)")).0
         XCTAssertTrue(text(waiting).contains("Connecting to your TV…"))
         XCTAssertTrue(text(waiting).contains("content=\"1;url=/p/status?t=\(t)\""))
-        s.codeIssued(PairingSession.linkURL(server: server, userCode: "BCDF-2345"))
+        s.codeIssued(PairingSession.linkURL(server: server, userCode: "BCDF-2345")!)
         XCTAssertEqual(header(s.handle(get("/p/status?t=\(t)")).0, "Location"), "http://bowtie.lan:8400/link?code=BCDF2345")
-        s.codeIssued(PairingSession.linkURL(server: server, userCode: "GHJK-6789"))
+        s.codeIssued(PairingSession.linkURL(server: server, userCode: "GHJK-6789")!)
         XCTAssertEqual(header(s.handle(get("/p/status?t=\(t)")).0, "Location"), "http://bowtie.lan:8400/link?code=GHJK6789")
         XCTAssertEqual(header(s.handle(get("/p?t=\(t)")).0, "Location"), "/p/status?t=\(t)")
+    }
+
+    func testLinkURLRejectsCodesThatCouldReachTheHeader() {
+        let server = URL(string: "http://bowtie.lan:8400")!
+        for bad in ["BCDF\r\nSet-Cookie: x=1", "BCDF 2345", "BCDF%0D", "", "BCDF/../x", "BCDÉ-2345"] {
+            XCTAssertNil(PairingSession.linkURL(server: server, userCode: bad), bad)
+        }
+        XCTAssertEqual(PairingSession.linkURL(server: server, userCode: "bcdf-2345")?.absoluteString,
+                       "http://bowtie.lan:8400/link?code=bcdf2345")
     }
 
     func testConnectFailureAllowsRetry() {

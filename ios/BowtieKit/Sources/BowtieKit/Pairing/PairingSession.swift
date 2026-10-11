@@ -31,10 +31,14 @@ public final class PairingSession: @unchecked Sendable {
         return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// `server` + `/link?code=` + the user code without dashes.
-    public static func linkURL(server: URL, userCode: String) -> URL {
+    /// `server` + `/link?code=` + the user code without dashes. Nil unless the server's code is
+    /// letters, digits and dashes, so nothing it sends can reach the `Location` header.
+    public static func linkURL(server: URL, userCode: String) -> URL? {
+        guard !userCode.isEmpty, userCode.unicodeScalars.allSatisfy({ ($0.isASCII && CharacterSet.alphanumerics.contains($0)) || $0 == "-" }) else {
+            return nil
+        }
         let code = userCode.replacingOccurrences(of: "-", with: "")
-        return URL(string: server.absoluteString + "/link?code=" + code) ?? server
+        return URL(string: server.absoluteString + "/link?code=" + code)
     }
 
     public func handle(_ parse: PairingParse) -> (PairingResponse, submitted: URL?) {

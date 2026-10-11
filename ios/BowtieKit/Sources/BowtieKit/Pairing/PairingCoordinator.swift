@@ -71,8 +71,9 @@ public final class PairingCoordinator {
     /// The TV got a sign-in code for `server`. Only the address the phone submitted gets the link;
     /// a TV that was switched to another server by hand must not send the phone elsewhere.
     public func codeIssued(server: URL, userCode: String) {
-        guard let session, let lastServer, ServerURL.normalize(server.absoluteString) == lastServer else { return }
-        session.codeIssued(PairingSession.linkURL(server: lastServer, userCode: userCode))
+        guard let session, let lastServer, ServerURL.normalize(server.absoluteString) == lastServer,
+              let link = PairingSession.linkURL(server: lastServer, userCode: userCode) else { return }
+        session.codeIssued(link)
     }
 
     public func stop() {

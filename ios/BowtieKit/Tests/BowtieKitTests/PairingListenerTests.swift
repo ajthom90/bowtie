@@ -59,6 +59,10 @@ final class PairingListenerTests: XCTestCase {
         c.codeIssued(server: URL(string: "http://elsewhere:1")!, userCode: "AAAA-BBBB")
         let waiting = try await exchange(port: port, parts: ["GET /p/status?t=\(token) HTTP/1.1\r\n\r\n"])
         XCTAssertTrue(waiting.contains("Connecting to your TV"))
+        c.codeIssued(server: URL(string: "http://bowtie.lan:8400")!, userCode: "BCDF\r\nSet-Cookie: x=1")
+        let stillWaiting = try await exchange(port: port, parts: ["GET /p/status?t=\(token) HTTP/1.1\r\n\r\n"])
+        XCTAssertTrue(stillWaiting.contains("Connecting to your TV"))
+        XCTAssertFalse(stillWaiting.contains("Set-Cookie"))
         c.codeIssued(server: URL(string: "http://bowtie.lan:8400")!, userCode: "BCDF-2345")
         let ready = try await exchange(port: port, parts: ["GET /p/status?t=\(token) HTTP/1.1\r\n\r\n"])
         XCTAssertTrue(ready.contains("Location: http://bowtie.lan:8400/link?code=BCDF2345\r\n"))
@@ -235,10 +239,9 @@ final class PairingListenerTests: XCTestCase {
         c.stop()
     }
 
-    func testLanAddressLooksLikeIPv4() {
-        if let ip = LocalAddress.lanIPv4() {
-            XCTAssertEqual(ip.split(separator: ".").count, 4)
-            XCTAssertNotEqual(ip, "127.0.0.1")
-        }
+    func testLanAddressLooksLikeIPv4() throws {
+        guard let ip = LocalAddress.lanIPv4() else { throw XCTSkip("No LAN IPv4 address on this machine") }
+        XCTAssertEqual(ip.split(separator: ".").count, 4)
+        XCTAssertNotEqual(ip, "127.0.0.1")
     }
 }
