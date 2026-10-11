@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **TV setup from your phone.** Apple TV, Android TV / Fire TV and Roku
+  show a QR code on the Connect screen. Scan it, type your server address
+  on the phone, and sign in on your server's own page — no typing on the
+  TV. The phone and TV need to be on the same Wi-Fi; typing the address on
+  the TV still works.
+
 ## [0.22.1] — 2026-10-06
 
 ### Fixed

@@ -47,6 +47,13 @@ curl -F "mysubmit=Install" -F "archive=@out/bowtie-roku.zip" \
   "http://rokudev:<password>@<roku-ip>/plugin_install"
 ```
 
+5. Or use the deploy script, which posts `out/bowtie-roku.zip` for you:
+
+```bash
+cd roku
+ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy
+```
+
 Full adversarial checklist: [`docs/deploy/roku-testing.md`](../docs/deploy/roku-testing.md).
 
 ## Self-test (on-device pure-logic suite)
