@@ -90,6 +90,80 @@ final class PairingListenerTests: XCTestCase {
         c.stop()
     }
 
+    private func startListener(token: String, host: String? = "127.0.0.1") async throws -> (PairingListener, UInt16) {
+        let listener = PairingListener(session: PairingSession(token: token), host: host, queue: .main) { _ in }
+        let port: UInt16 = try await withCheckedThrowingContinuation { c in
+            listener.start { p in p.map { c.resume(returning: $0) } ?? c.resume(throwing: URLError(.cannotConnectToHost)) }
+        }
+        return (listener, port)
+    }
+
+    func testSlowDripIsDroppedAfterFiveSecondsAndNextClientIsServed() async throws {
+        let t = "0123456789abcdef01234567"
+        let (listener, port) = try await startListener(token: t)
+        defer { listener.stop() }
+        let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        conn.start(queue: .global())
+        let start = Date()
+        let closed = expectation(description: "closed")
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, done, err in
+            if done || err != nil { closed.fulfill() }
+        }
+        let dripper = Task {
+            for _ in 0..<12 {
+                conn.send(content: Data("x".utf8), completion: .contentProcessed { _ in })
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+        await fulfillment(of: [closed], timeout: 8)
+        dripper.cancel()
+        conn.cancel()
+        XCTAssertLessThan(Date().timeIntervalSince(start), 7.5)
+        let reply = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK\r\n"))
+    }
+
+    func testSilentClientIsDroppedAndNextClientIsServed() async throws {
+        let t = "0123456789abcdef01234567"
+        let (listener, port) = try await startListener(token: t)
+        defer { listener.stop() }
+        let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        conn.start(queue: .global())
+        let closed = expectation(description: "closed")
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, done, err in
+            if done || err != nil { closed.fulfill() }
+        }
+        await fulfillment(of: [closed], timeout: 7)
+        conn.cancel()
+        let reply = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK\r\n"))
+    }
+
+    func testOversizeAndGarbageRequestsGetErrorsAndListenerSurvives() async throws {
+        let t = "0123456789abcdef01234567"
+        let (listener, port) = try await startListener(token: t)
+        defer { listener.stop() }
+        let big = "POST /p HTTP/1.1\r\nContent-Length: 9000\r\n\r\n" + String(repeating: "a", count: 9000)
+        let tooLarge = try await exchange(port: port, parts: [big])
+        XCTAssertTrue(tooLarge.hasPrefix("HTTP/1.1 413 "))
+        let bad = try await exchange(port: port, parts: ["\u{1}\u{2}garbage\r\n\r\n"])
+        XCTAssertTrue(bad.hasPrefix("HTTP/1.1 400 "))
+        let ok = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
+        XCTAssertTrue(ok.hasPrefix("HTTP/1.1 200 OK\r\n"))
+    }
+
+    func testBoundToTheGivenAddressOnly() async throws {
+        guard let lan = LocalAddress.lanIPv4() else { return }
+        let (listener, port) = try await startListener(token: "0123456789abcdef01234567", host: lan)
+        defer { listener.stop() }
+        let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        let failed = expectation(description: "loopback refused")
+        conn.stateUpdateHandler = { if case .ready = $0 { conn.cancel() } else if case .failed = $0 { failed.fulfill() } else if case .waiting = $0 { failed.fulfill() } }
+        conn.start(queue: .global())
+        await fulfillment(of: [failed], timeout: 3)
+        conn.cancel()
+    }
+
     func testLanAddressLooksLikeIPv4() {
         if let ip = LocalAddress.lanIPv4() {
             XCTAssertEqual(ip.split(separator: ".").count, 4)

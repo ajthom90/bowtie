@@ -34,11 +34,17 @@ public final class PairingCoordinator {
         generation += 1
         let mine = generation
         let session = PairingSession()
-        let listener = PairingListener(session: session, queue: .main) { [weak self] address in
+        let listener = PairingListener(session: session, host: ip, queue: .main) { [weak self] address in
             MainActor.assumeIsolated { self?.submitted(address, from: session) }
         }
         self.session = session
         self.listener = listener
+        listener.onFailure = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.generation == mine else { return }
+                self.pairURL = nil
+            }
+        }
         listener.start { [weak self] port in
             MainActor.assumeIsolated {
                 guard let self, self.generation == mine else { return }

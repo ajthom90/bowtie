@@ -10,11 +10,17 @@ public final class PairingListener {
     private let session: PairingSession
     private let queue: DispatchQueue
     private let onSubmit: (URL) -> Void
+    private let host: String?
     private var listener: NWListener?
     private var busy = false
 
-    public init(session: PairingSession, queue: DispatchQueue = .main, onSubmit: @escaping (URL) -> Void) {
+    /// Called on `queue` if the listener dies after it was ready, for any reason other than `stop()`.
+    public var onFailure: (() -> Void)?
+
+    /// With a `host`, binds only that IPv4 address (not every interface); otherwise all of them.
+    public init(session: PairingSession, host: String? = nil, queue: DispatchQueue = .main, onSubmit: @escaping (URL) -> Void) {
         self.session = session
+        self.host = host
         self.queue = queue
         self.onSubmit = onSubmit
     }
@@ -22,22 +28,32 @@ public final class PairingListener {
     /// Calls `completion` once, on `queue`, with the bound port, or nil if it couldn't bind.
     public func start(completion: @escaping (UInt16?) -> Void) {
         guard listener == nil else { return }
-        guard let listener = try? NWListener(using: .tcp, on: .any) else {
+        let parameters = NWParameters.tcp
+        if let host, let address = IPv4Address(host) {
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(address), port: .any)
+        } else if host != nil {
+            queue.async { completion(nil) }
+            return
+        }
+        guard let listener = try? NWListener(using: parameters) else {
             queue.async { completion(nil) }
             return
         }
         self.listener = listener
         var reported = false
         listener.stateUpdateHandler = { [weak self] state in
-            guard !reported else { return }
             switch state {
-            case .ready:
+            case .ready where !reported:
                 reported = true
                 completion(listener.port?.rawValue)
             case .failed, .cancelled:
-                reported = true
                 self?.listener = nil
-                completion(nil)
+                if !reported {
+                    reported = true
+                    completion(nil)
+                } else {
+                    self?.onFailure?()
+                }
             default:
                 break
             }
