@@ -12,7 +12,7 @@ public final class PairingCoordinator {
     @ObservationIgnored private let host: () -> String?
     @ObservationIgnored private let lifetime: Duration
     @ObservationIgnored private var session: PairingSession?
-    @ObservationIgnored private var listener: PairingListener?
+    @ObservationIgnored private(set) var listener: PairingListener?
     @ObservationIgnored private var lastServer: URL?
     @ObservationIgnored private var expiry: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
@@ -42,7 +42,13 @@ public final class PairingCoordinator {
         listener.onFailure = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.generation == mine else { return }
-                self.pairURL = nil
+                self.stop()
+            }
+        }
+        listener.onClosed = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.generation == mine else { return }
+                self.pairURL = nil   // locked out: the QR is dead; start() will issue a new one
             }
         }
         listener.start { [weak self] port in

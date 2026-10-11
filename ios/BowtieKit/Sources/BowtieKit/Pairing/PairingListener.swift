@@ -6,16 +6,20 @@ import Network
 public final class PairingListener {
     private static let readLimit = 8192
     private static let readTimeout: TimeInterval = 5
+    private static let maxPending = 4
 
     private let session: PairingSession
     private let queue: DispatchQueue
     private let onSubmit: (URL) -> Void
     private let host: String?
     private var listener: NWListener?
-    private var busy = false
+    private var active: Slot?
+    private var pending: [Slot] = []
 
     /// Called on `queue` if the listener dies after it was ready, for any reason other than `stop()`.
     public var onFailure: (() -> Void)?
+    /// Called on `queue` when a request locks the session out; the listener keeps answering 403 until stopped.
+    public var onClosed: (() -> Void)?
 
     /// With a `host`, binds only that IPv4 address (not every interface); otherwise all of them.
     public init(session: PairingSession, host: String? = nil, queue: DispatchQueue = .main, onSubmit: @escaping (URL) -> Void) {
@@ -47,6 +51,9 @@ public final class PairingListener {
                 reported = true
                 completion(listener.port?.rawValue)
             case .failed, .cancelled:
+                listener.stateUpdateHandler = nil
+                listener.newConnectionHandler = nil
+                listener.cancel()
                 self?.listener = nil
                 if !reported {
                     reported = true
@@ -64,56 +71,83 @@ public final class PairingListener {
         listener.start(queue: queue)
     }
 
+    /// Test seam: cancels the underlying listener the way a network failure would, leaving handlers in place.
+    func simulateFailure() {
+        listener?.cancel()
+    }
+
     public func stop() {
         listener?.stateUpdateHandler = nil
         listener?.cancel()
         listener = nil
     }
 
+    private final class Slot {
+        let connection: NWConnection
+        var deadline: DispatchWorkItem?
+        var started = false
+        var finished = false
+        init(_ connection: NWConnection) { self.connection = connection }
+    }
+
+    /// One connection is served at a time; up to `maxPending` more wait their turn, each on its own
+    /// deadline from accept (browsers open parallel and speculative sockets alongside the real request).
     private func accept(_ connection: NWConnection) {
-        guard !busy else {
+        let slot = Slot(connection)
+        if active != nil && pending.count >= Self.maxPending {
             connection.cancel()
             return
         }
-        busy = true
+        let deadline = DispatchWorkItem { [weak self] in self?.finish(slot) }
+        slot.deadline = deadline
+        queue.asyncAfter(deadline: .now() + Self.readTimeout, execute: deadline)
+        if active == nil { serve(slot) } else { pending.append(slot) }
+    }
 
-        var finished = false
-        let finish = { [weak self] in
-            guard !finished else { return }
-            finished = true
-            connection.cancel()
-            self?.busy = false
-        }
-        let timeout = DispatchWorkItem { finish() }
-        queue.asyncAfter(deadline: .now() + Self.readTimeout, execute: timeout)
-
-        connection.stateUpdateHandler = { state in
+    private func serve(_ slot: Slot) {
+        active = slot
+        slot.started = true
+        slot.connection.stateUpdateHandler = { [weak self] state in
             switch state {
-            case .failed, .cancelled: finish()
+            case .failed, .cancelled: self?.finish(slot)
             default: break
             }
         }
-        connection.start(queue: queue)
-        read(connection, buffer: Data(), timeout: timeout, finish: finish)
+        slot.connection.start(queue: queue)
+        read(slot, buffer: Data())
     }
 
-    private func read(_ connection: NWConnection, buffer: Data, timeout: DispatchWorkItem, finish: @escaping () -> Void) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: Self.readLimit) { [weak self] data, _, isComplete, error in
-            guard let self, !timeout.isCancelled else { return }
+    private func finish(_ slot: Slot) {
+        guard !slot.finished else { return }
+        slot.finished = true
+        slot.deadline?.cancel()
+        slot.connection.stateUpdateHandler = nil
+        slot.connection.cancel()
+        pending.removeAll { $0 === slot }
+        if active === slot {
+            active = nil
+            if !pending.isEmpty { serve(pending.removeFirst()) }
+        }
+    }
+
+    private func read(_ slot: Slot, buffer: Data) {
+        slot.connection.receive(minimumIncompleteLength: 1, maximumLength: Self.readLimit) { [weak self] data, _, isComplete, error in
+            guard let self, !slot.finished else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
 
             let parsed = HTTPRequest.parse(buffer, limit: Self.readLimit)
             if parsed == .incomplete {
-                if error != nil || isComplete { finish() } else { self.read(connection, buffer: buffer, timeout: timeout, finish: finish) }
+                if error != nil || isComplete { self.finish(slot) } else { self.read(slot, buffer: buffer) }
                 return
             }
 
-            timeout.cancel()
+            let wasClosed = self.session.state == .closed
             let (response, submitted) = self.session.handle(parsed)
             if let submitted { self.onSubmit(submitted) }
-            connection.send(content: response.serialized(), contentContext: .finalMessage, isComplete: true,
-                            completion: .contentProcessed { _ in finish() })
+            if !wasClosed, self.session.state == .closed { self.onClosed?() }
+            slot.connection.send(content: response.serialized(), contentContext: .finalMessage, isComplete: true,
+                                 completion: .contentProcessed { [weak self] _ in self?.finish(slot) })
         }
     }
 }

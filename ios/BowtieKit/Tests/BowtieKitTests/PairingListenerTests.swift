@@ -153,15 +153,58 @@ final class PairingListenerTests: XCTestCase {
     }
 
     func testBoundToTheGivenAddressOnly() async throws {
-        guard let lan = LocalAddress.lanIPv4() else { return }
+        guard let lan = LocalAddress.lanIPv4() else { throw XCTSkip("no LAN IPv4 address") }
         let (listener, port) = try await startListener(token: "0123456789abcdef01234567", host: lan)
         defer { listener.stop() }
         let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
         let failed = expectation(description: "loopback refused")
+        failed.assertForOverFulfill = false
         conn.stateUpdateHandler = { if case .ready = $0 { conn.cancel() } else if case .failed = $0 { failed.fulfill() } else if case .waiting = $0 { failed.fulfill() } }
         conn.start(queue: .global())
         await fulfillment(of: [failed], timeout: 3)
         conn.cancel()
+    }
+
+    func testSecondConnectionWaitsItsTurnInsteadOfBeingReset() async throws {
+        let t = "0123456789abcdef01234567"
+        let (listener, port) = try await startListener(token: t)
+        defer { listener.stop() }
+        let silent = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        silent.start(queue: .global())
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let reply = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
+        silent.cancel()
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK\r\n"))
+    }
+
+    @MainActor
+    func testListenerFailureClearsPairURLAndStartIssuesAFreshOne() async throws {
+        let c = PairingCoordinator(connect: { _ in true }, host: { "127.0.0.1" })
+        c.start()
+        for _ in 0..<50 where c.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        let first = try XCTUnwrap(c.pairURL)
+        c.listener?.simulateFailure()
+        for _ in 0..<50 where c.pairURL != nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertNil(c.pairURL)
+        c.start()
+        for _ in 0..<50 where c.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        let second = try XCTUnwrap(c.pairURL)
+        XCTAssertNotEqual(second, first)
+        c.stop()
+    }
+
+    @MainActor
+    func testLockoutClearsPairURL() async throws {
+        let c = PairingCoordinator(connect: { _ in true }, host: { "127.0.0.1" })
+        c.start()
+        for _ in 0..<50 where c.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        let port = UInt16(try XCTUnwrap(c.pairURL).port!)
+        for _ in 0..<20 {
+            _ = try await exchange(port: port, parts: ["GET /p?t=ffffffffffffffffffffffff HTTP/1.1\r\n\r\n"])
+        }
+        for _ in 0..<50 where c.pairURL != nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertNil(c.pairURL)
+        c.stop()
     }
 
     func testLanAddressLooksLikeIPv4() {

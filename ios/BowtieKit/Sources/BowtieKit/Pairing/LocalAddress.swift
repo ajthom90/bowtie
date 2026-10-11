@@ -23,6 +23,7 @@ public enum LocalAddress {
             guard getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count),
                               nil, 0, NI_NUMERICHOST) == 0 else { continue }
             let ip = String(cString: host)
+            if ip.hasPrefix("169.254.") { continue }
             let name = String(cString: entry.pointee.ifa_name)
             if name.hasPrefix("en") || name.hasPrefix("eth") {
                 if preferred == nil { preferred = ip }
