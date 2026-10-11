@@ -111,4 +111,25 @@ class PairingServerTest {
             assertServes(port, token) // queued behind the silent client until it times out
         }
     }
+
+    @Test fun silentConnectionDoesNotStallAnotherRequest() = withServer { port, token ->
+        Socket("127.0.0.1", port).use {
+            val start = System.nanoTime()
+            assertServes(port, token)
+            assertTrue((System.nanoTime() - start) / 1_000_000 < 1000)
+        }
+    }
+
+    @Test fun fifthConcurrentConnectionIsClosedImmediately() = withServer { port, token ->
+        val silent = List(4) { Socket("127.0.0.1", port) }
+        try {
+            Thread.sleep(200) // let the server accept all four
+            Socket("127.0.0.1", port).use { fifth ->
+                fifth.soTimeout = 2000
+                assertEquals(-1, fifth.getInputStream().read())
+            }
+        } finally { silent.forEach { it.close() } }
+        Thread.sleep(200)
+        assertServes(port, token)
+    }
 }

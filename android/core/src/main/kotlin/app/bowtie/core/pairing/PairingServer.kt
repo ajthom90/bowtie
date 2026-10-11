@@ -9,8 +9,10 @@ import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** Serves [session] over plain HTTP, one connection at a time. [onClosed] runs once the session locks out. */
+/** Serves [session] over plain HTTP, up to four connections at once. [onClosed] runs once the session locks out. */
 class PairingServer(
     private val session: PairingSession,
     private val onClosed: () -> Unit = {},
@@ -18,6 +20,8 @@ class PairingServer(
 ) {
     @Volatile private var socket: ServerSocket? = null
     @Volatile private var stopped = false
+    private val slots = Semaphore(MAX_CONNECTIONS)
+    private val closedNotified = AtomicBoolean(false)
 
     /** Binds an ephemeral port on [bindAddress] only (the address shown in the QR) and starts accepting; returns the port, or null if binding failed. */
     fun start(scope: CoroutineScope, bindAddress: String): Int? {
@@ -36,16 +40,33 @@ class PairingServer(
                         continue
                     }
                     failures = 0
-                    runCatching { client.use { serve(it) } }
-                    if (session.state == PairingSession.State.Closed) break
+                    if (!slots.tryAcquire()) {
+                        runCatching { client.close() }
+                        continue
+                    }
+                    launch {
+                        try {
+                            runCatching { client.use { serve(it) } }
+                        } finally {
+                            slots.release()
+                        }
+                        if (session.state == PairingSession.State.Closed) notifyClosed()
+                    }
                 }
             } finally {
                 val byUs = stopped
                 stop()
-                if (!byUs) onClosed()
+                if (!byUs) notifyClosed()
             }
         }
         return server.localPort
+    }
+
+    /** Lockout or listener failure: stop listening and tell the owner, once. */
+    private fun notifyClosed() {
+        if (!closedNotified.compareAndSet(false, true)) return
+        stop()
+        onClosed()
     }
 
     fun stop() {
@@ -76,6 +97,7 @@ class PairingServer(
     private companion object {
         /** Whole-request deadline, not per read, so a slow drip can't hold the listener. */
         const val READ_TIMEOUT_MS = 5000
+        const val MAX_CONNECTIONS = 4
         const val MAX_ACCEPT_FAILURES = 3
         const val ACCEPT_RETRY_MS = 200L
     }
