@@ -1,8 +1,8 @@
 import Foundation
 import Network
 
-/// Serves the pairing page: one TCP connection at a time, each parsed by `HTTPRequest`
-/// and answered by the `PairingSession`. Everything runs on `queue`.
+/// Serves the pairing page: up to 4 TCP connections at once (more are closed), each parsed
+/// by `HTTPRequest` and answered by the `PairingSession`. Everything runs on `queue`.
 public final class PairingListener {
     private static let readLimit = 8192
     private static let readTimeout: TimeInterval = 5

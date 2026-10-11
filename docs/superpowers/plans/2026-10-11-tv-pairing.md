@@ -16,7 +16,7 @@
 - Routes (exact): `GET /p?t=<token>`, `POST /p` (form `t`, `server`), `GET /p/status?t=<token>`. Everything else → 404.
 - Token: 24 lowercase hex chars (96 bits) from a secure random source (Roku: `roDeviceInfo.GetRandomUUID()` with dashes removed, first 24 chars).
 - Lockout: after **20** requests to `/p` or `/p/status` carrying a present-but-wrong `t`, the session closes (every later request → 403). Missing `t`, favicon and other 404s never count.
-- Request limits: 8192 bytes total per request, 5 s read timeout, one connection at a time, every response has `Connection: close` and `Cache-Control: no-store`.
+- Request limits: 8192 bytes total per request, 5 s read timeout, up to 4 connections served at once (more are closed; session state changes are serialized), every response has `Connection: close` and `Cache-Control: no-store`.
 - Listener lifetime: starts when Connect is shown; stops when the TV is signed in, after 15 minutes, or when the user connects by typing on the TV.
 - Link redirect target: `<normalized address the phone typed>/link?code=<userCode without dashes>`.
 - Copy (verbatim, all platforms):

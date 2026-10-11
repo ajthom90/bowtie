@@ -40,15 +40,10 @@ GitHub Releases attach `bowtie-roku-<version>.zip` (release workflow job `roku`,
 1. Enable developer mode (Home ×3, Up ×2, Right, Left, Right, Left, Right).
 2. Note the device IP and set a password when prompted.
 3. Open `http://<roku-ip>` in a browser, sign in, upload `out/bowtie-roku.zip`.
-4. Or build and upload in one step (`scripts/deploy.sh`, digest auth as the
-   Roku's web installer expects; prints `Install Success`, `Identical to
+4. Or build and upload in one step: `npm run deploy` builds
+   `out/bowtie-roku.zip` and posts it with `scripts/deploy.sh` (digest auth as
+   the Roku's web installer expects; prints `Install Success`, `Identical to
    previous version` or the failure):
-
-```bash
-ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy
-```
-
-5. Or use the deploy script, which posts `out/bowtie-roku.zip` for you:
 
 ```bash
 cd roku
@@ -80,7 +75,7 @@ has a sign-in code the phone is sent to `<that server>/link?code=…` to approve
 it. No cloud and no fixed host: the phone only ever goes to the address it
 typed.
 
-The listener binds the Roku's LAN IPv4 on a random port 49152–65151 with a
+The listener binds the Roku's LAN IPv4 on a random port 49153–65152 with a
 24-hex-character token in the URL, serves up to 4 connections at once (5 s per
 request), and stops when the TV is signed in, after 15 minutes, when an
 address typed on the TV connects, or after 20 wrong tokens; the QR hides then,

@@ -22,7 +22,7 @@ curl -F "mysubmit=Install" -F "archive=@bowtie-roku-<version>.zip" \
   "http://rokudev:<password>@<roku-ip>/plugin_install"
 ```
 
-   - Or the deploy script (builds nothing; posts `roku/out/bowtie-roku.zip` to the Roku's dev installer):
+   - Or the deploy script (builds the zip with `npm run package`, then posts `roku/out/bowtie-roku.zip` to the Roku's dev installer):
 
 ```bash
 cd roku && ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy

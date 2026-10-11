@@ -70,8 +70,9 @@ Bowtie server at <address>." with the form again; the TV stays on Connect.
   404s never count) (the TV
   shows a fresh code on next visit to Connect).
 - Requests are parsed minimally: request line, headers up to a blank line,
-  `Content-Length` body. Limits: 8 KB per request, 5 s read timeout, one
-  connection handled at a time. Responses always send `Connection: close`.
+  `Content-Length` body. Limits: 8 KB per request, 5 s read timeout, up to
+  4 connections served at once (more are closed). Responses always send
+  `Connection: close`.
 - Pages are tiny static HTML (inline CSS, no JS beyond meta refresh), all
   user-supplied text HTML-escaped. `server` must be http/https after the
   platform's existing `normalize`; anything else is a form error.
