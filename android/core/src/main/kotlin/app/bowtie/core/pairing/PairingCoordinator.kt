@@ -33,7 +33,7 @@ class PairingCoordinator(
             synchronized(this) { if (session === fresh) submitted = address }
             scope.launch { if (!connect(address)) fresh.connectFailed(address) }
         }
-        val port = srv.start(scope) ?: return
+        val port = srv.start(scope, ip) ?: return
         session = fresh
         server = srv
         _pairUrl.value = "http://$ip:$port/p?t=${fresh.token}"

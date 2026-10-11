@@ -15,14 +15,14 @@ class PairingServerTest {
     @Test fun bodyInASecondWriteStillSubmits() {
         val t = "0123456789abcdef01234567"
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        var got: String? = null
-        val server = PairingServer(PairingSession(t)) { got = it }
-        val port = server.start(scope)!!
+        val got = java.util.concurrent.atomic.AtomicReference<String?>()
+        val server = PairingServer(PairingSession(t)) { got.set(it) }
+        val port = server.start(scope, "127.0.0.1")!!
         try {
             val body = "t=$t&server=bowtie.lan%3A8400"
             val reply = exchange(port, "POST /p HTTP/1.1\r\nContent-Length: ${body.length}\r\n\r\n", body)
             assertTrue(reply.startsWith("HTTP/1.1 303 See Other\r\n"))
-            assertEquals("http://bowtie.lan:8400", got)
+            assertEquals("http://bowtie.lan:8400", got.get())
         } finally { server.stop(); scope.cancel() }
     }
 
@@ -64,5 +64,51 @@ class PairingServerTest {
             c.start()
             assertEquals(second, c.pairUrl.value)
         } finally { c.stop(); scope.cancel() }
+    }
+
+    private fun withServer(block: (port: Int, token: String) -> Unit) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val session = PairingSession()
+        val server = PairingServer(session) { }
+        val port = server.start(scope, "127.0.0.1")!!
+        try { block(port, session.token) } finally { server.stop(); scope.cancel() }
+    }
+
+    private fun assertServes(port: Int, token: String) =
+        assertTrue(exchange(port, "GET /p?t=$token HTTP/1.1\r\n\r\n").startsWith("HTTP/1.1 200 OK"))
+
+    @Test fun slowDripIsDroppedByTheWholeRequestDeadline() = withServer { port, token ->
+        val start = System.nanoTime()
+        Socket("127.0.0.1", port).use { sock ->
+            sock.soTimeout = 15000
+            val out = sock.getOutputStream()
+            var closed = false
+            try {
+                for (c in "GET /p?t=$token HTTP/1.1\r\n") { out.write(c.code); out.flush(); Thread.sleep(1000) }
+            } catch (_: java.io.IOException) { closed = true }
+            if (!closed) closed = runCatching { sock.getInputStream().read() }.getOrDefault(-1) == -1
+            assertTrue(closed)
+        }
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 7000)
+        assertServes(port, token)
+    }
+
+    @Test fun oversizeRequestGets413AndServerSurvives() = withServer { port, token ->
+        assertTrue(exchange(port, "POST /p HTTP/1.1\r\nContent-Length: 9000\r\n\r\n").startsWith("HTTP/1.1 413"))
+        assertServes(port, token)
+        val big = "GET /p?t=" + "a".repeat(9000) + " HTTP/1.1\r\n\r\n"
+        assertTrue(exchange(port, big).startsWith("HTTP/1.1 413"))
+        assertServes(port, token)
+    }
+
+    @Test fun garbageGets400AndServerSurvives() = withServer { port, token ->
+        assertTrue(exchange(port, "\u0001\u0002garbage\r\n\r\n").startsWith("HTTP/1.1 400"))
+        assertServes(port, token)
+    }
+
+    @Test fun silentClientDoesNotBlockTheNextRequestForever() = withServer { port, token ->
+        Socket("127.0.0.1", port).use {
+            assertServes(port, token) // queued behind the silent client until it times out
+        }
     }
 }
