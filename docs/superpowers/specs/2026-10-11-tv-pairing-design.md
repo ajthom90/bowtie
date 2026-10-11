@@ -60,12 +60,14 @@ Bowtie server at <address>." with the form again; the TV stays on Connect.
 | `GET /p?t=<ok>` | 200 form page |
 | `POST /p` (form `t`, `server`) with ok token | action submit(server); 303 → `/p/status?t=…` |
 | `GET /p/status?t=<ok>` | connecting → 200 waiting page (`<meta refresh=1>`); failed → 200 form with the error; ready → 303 `linkURL` |
-| wrong/missing token | 403 "This pairing code has expired. Scan the code on your TV again." |
-| anything else | 404 |
+| `/p` or `/p/status` with a missing or wrong `t` | 403 "This pairing code has expired. Scan the code on your TV again." |
+| anything else (e.g. `/favicon.ico`) | 404 |
 
 - Token: 24 lowercase hex chars (96 bits) from the platform's secure random
   (Roku: `roDeviceInfo.GetRandomUUID()`). Compared in constant time where the
-  platform allows. After 20 wrong-token requests the session closes (the TV
+  platform allows. After 20 requests to `/p` or `/p/status` carrying a
+  present-but-wrong `t` the session closes (missing tokens, favicon and other
+  404s never count) (the TV
   shows a fresh code on next visit to Connect).
 - Requests are parsed minimally: request line, headers up to a blank line,
   `Content-Length` body. Limits: 8 KB per request, 5 s read timeout, one
@@ -91,16 +93,17 @@ Bowtie server at <address>." with the form again; the TV stays on Connect.
   the tvOS app starts it (iOS/macOS unchanged).
 - **Android TV / Fire TV:** pure `PairingSession` in `:core` (JUnit), a
   `ServerSocket` listener on `Dispatchers.IO` in `:core` with a socket test,
-  LAN IP via `NetworkInterface` (site-local `Inet4Address`), QR via
-  `com.google.zxing:core` (new dependency, Apache-2.0, pure Java) drawn as an
-  `ImageBitmap`. Wired in `AppViewModel`/`ConnectScreen`; the sign-in code
+  LAN IP via `NetworkInterface` (site-local `Inet4Address`). The QR is drawn
+  in `:tv` only, with `com.google.zxing:core` (new `:tv` dependency,
+  Apache-2.0, pure Java) as an `ImageBitmap`; the phone APK doesn't grow. Wired in `AppViewModel`/`ConnectScreen`; the sign-in code
   comes from `DeviceSignInViewModel`'s `Waiting` state. Phone app unchanged.
 - **Roku:** a new `PairTask` node runs the `roStreamSocket` listener in its
   own thread (the `ApiTask` loop must not block). It exposes `submitted`
   (address) and takes `linkUrl`/`error`/`stop` from the scene. Pure pieces in
   `source/lib`: `PairHttp.bs` (parse/respond, tested under brs) and a
-  BrightScript QR encoder `Qr.bs` (byte mode, ECC M, versions 1–6, a fixed
-  mask chosen by the standard penalty rules) drawn as one `Rectangle` per run
+  BrightScript QR encoder `Qr.bs` (byte mode, ECC M, versions 1–7 — the
+  pairing URL is ~50–57 bytes, so v5 (62) or v6 (76) in practice; the mask is
+  chosen by the standard penalty rules) drawn as one `Rectangle` per run
   of dark modules. Tests decode the encoder's matrix with `jsqr` (dev
   dependency) to prove it scans. LAN IP from `roDeviceInfo.GetIPAddrs()`.
   `ConnectScene` stops auto-opening the keyboard: it shows the QR with
@@ -118,8 +121,9 @@ Bowtie server at <address>." with the form again; the TV stays on Connect.
 ## Testing
 
 - Unit: `PairingSession` request/response table on all three platforms;
-  token rejection and lockout; HTML escaping; request parsing limits; Roku QR
-  encoder decodes back to the input for several URL lengths.
+  token rejection and lockout (favicon/404s don't count); HTML escaping; request parsing limits; Roku QR
+  encoder decodes back (jsqr) to the input for several URL lengths up to the
+  longest, `http://255.255.255.255:65535/p?t=` + 24 hex.
 - Socket: real listener on localhost in `swift test` and JVM tests (not
   available on Roku's brs; covered on device).
 - Device: bedroom Roku (IP confirmed with the user first) end to end with a
