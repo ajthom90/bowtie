@@ -8,6 +8,7 @@
 
 import "pkg:/source/lib/Registry.bs"
 import "pkg:/source/lib/DeviceAuth.bs"
+import "pkg:/source/lib/PairHttp.bs"
 
 ' Spec-mandated auth failure copy (verbatim, Phase 2).
 const LOGIN_ERROR = "Wrong username or password."
@@ -191,6 +192,8 @@ sub handleStartResponse(resp as object)
     m.linkLabel.text = m.session.linkText
     m.codeLabel.text = m.session.userCode
     m.statusLabel.text = bowtie.deviceauth.waitingText()
+    ' A phone that set this TV up goes on to approve this code.
+    if m.top.pairTask <> invalid then m.top.pairTask.linkUrl = bowtie.pair.linkUrl(serverAddress(), m.session.userCode)
     schedulePoll()
 end sub
 

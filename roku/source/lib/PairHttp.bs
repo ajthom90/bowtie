@@ -1,0 +1,385 @@
+' Pure request -> response logic for the TV pairing page (no sockets, no nodes).
+'
+' The TV shows a QR for /p?t=<token>; the phone types a Bowtie server address,
+' the TV probes it, and the phone is then redirected to that server's /link
+' page. PairTask owns the socket and feeds raw request text to handle().
+'
+' session: { token, state, address, message, linkUrl, bad }
+' state: "waiting" | "connecting" | "failed" | "ready" | "closed"
+'
+' handle() returns { response, submitted, incomplete }. incomplete = true means
+' the request may still be arriving (no blank line yet, or the body is shorter
+' than Content-Length): `response` is then a 400 the caller sends only if the
+' read deadline passes. submitted is "" unless a new address was accepted.
+'
+' The token is compared with plain string equality: at LAN scale with a
+' 20-strikes lockout there is no usable timing oracle.
+
+namespace bowtie.pair
+
+    const MAX_REQUEST = 8192
+    const MAX_BAD = 20
+    const MAX_PARAM = 2048
+
+    function newSession(token as string) as object
+        return { token: token, state: "waiting", address: "", message: "", linkUrl: "", bad: 0 }
+    end function
+
+    function handle(session as object, raw as string) as object
+        if session.state = "closed" then return bowtie.pair.done(bowtie.pair.forbidden(), "", false)
+
+        req = bowtie.pair.parse(raw)
+        if req.kind = "large"
+            return bowtie.pair.done(bowtie.pair.html(413, bowtie.pair.page("", "<h1>Too large</h1>")), "", false)
+        else if req.kind <> "ok"
+            return bowtie.pair.done(bowtie.pair.html(400, bowtie.pair.page("", "<h1>Bad request</h1>")), "", req.kind = "incomplete")
+        end if
+
+        isPost = req.method = "POST" and req.path = "/p"
+        isGet = req.method = "GET" and (req.path = "/p" or req.path = "/p/status")
+        if not isPost and not isGet
+            return bowtie.pair.done(bowtie.pair.html(404, bowtie.pair.page("", "<h1>Not found</h1>")), "", false)
+        end if
+
+        if isPost
+            supplied = req.form.t
+        else
+            supplied = req.query.t
+        end if
+        if supplied = invalid then return bowtie.pair.done(bowtie.pair.forbidden(), "", false)
+        if supplied <> session.token
+            session.bad = session.bad + 1
+            if session.bad >= bowtie.pair.MAX_BAD then session.state = "closed"
+            return bowtie.pair.done(bowtie.pair.forbidden(), "", false)
+        end if
+
+        token = session.token
+        statusPath = "/p/status?t=" + token
+        state = session.state
+        if isPost
+            if state = "waiting" or state = "failed"
+                server = req.form.server
+                if server = invalid then server = ""
+                address = bowtie.pair.normalizeServer(server)
+                if address = ""
+                    return bowtie.pair.done(bowtie.pair.html(200, bowtie.pair.form(token, "Enter an address like http://192.168.1.50:8400.", server)), "", false)
+                end if
+                session.state = "connecting"
+                session.address = address
+                session.message = ""
+                return bowtie.pair.done(bowtie.pair.redirect(statusPath), address, false)
+            end if
+            return bowtie.pair.done(bowtie.pair.redirect(statusPath), "", false)
+        end if
+
+        if req.path = "/p"
+            if state = "waiting"
+                return bowtie.pair.done(bowtie.pair.html(200, bowtie.pair.form(token, "", "")), "", false)
+            else if state = "failed"
+                return bowtie.pair.done(bowtie.pair.html(200, bowtie.pair.form(token, session.message, session.address)), "", false)
+            end if
+            return bowtie.pair.done(bowtie.pair.redirect(statusPath), "", false)
+        end if
+
+        if state = "connecting"
+            waiting = bowtie.pair.page("<meta http-equiv=""refresh"" content=""1;url=" + statusPath + """>", "<h1>Connecting to your TV…</h1>")
+            return bowtie.pair.done(bowtie.pair.html(200, waiting), "", false)
+        else if state = "failed"
+            return bowtie.pair.done(bowtie.pair.html(200, bowtie.pair.form(token, session.message, session.address)), "", false)
+        else if state = "ready"
+            return bowtie.pair.done(bowtie.pair.redirect(session.linkUrl), "", false)
+        end if
+        return bowtie.pair.done(bowtie.pair.redirect("/p?t=" + token), "", false)
+    end function
+
+    ' The TV could not reach `address`; let the phone try again. Ignored unless
+    ' the session is connecting to that same address.
+    sub connectFailed(session as object, address as string)
+        if session.state = "connecting"
+            if session.address = address
+                session.state = "failed"
+                session.message = "Couldn't reach a Bowtie server at " + address + ". Check the address and try again."
+            end if
+        end if
+    end sub
+
+    ' A sign-in code exists; the phone's next status poll goes to url.
+    ' A later code replaces it. Ignored unless connecting or ready.
+    sub codeIssued(session as object, url as string)
+        if session.state = "connecting" or session.state = "ready"
+            session.state = "ready"
+            session.linkUrl = url
+        end if
+    end sub
+
+    sub close(session as object)
+        session.state = "closed"
+    end sub
+
+    ' Where the phone goes once the TV has a sign-in code: the typed server's /link page.
+    function linkUrl(server as string, userCode as string) as string
+        base = bowtie.pair.stripSlashes(server)
+        return base + "/link?code=" + userCode.Replace("-", "")
+    end function
+
+    ' "192.168.1.50:8400/" -> "http://192.168.1.50:8400". "" when invalid: only
+    ' http/https, host of letters/digits/./- with an optional :port (1-65535) and
+    ' an optional path of [A-Za-z0-9._~/-] (reverse-proxy sub-paths), so nothing
+    ' typed can reach a header or a page unescaped. Trailing slashes are dropped.
+    function normalizeServer(raw as string) as string
+        trimmed = bowtie.pair.stripSlashes(raw.Trim())
+        if trimmed = "" then return ""
+        if Instr(1, trimmed, "://") = 0 then trimmed = "http://" + trimmed
+
+        lower = LCase(trimmed)
+        if Left(lower, 7) = "http://"
+            scheme = "http://"
+        else if Left(lower, 8) = "https://"
+            scheme = "https://"
+        else
+            return ""
+        end if
+        rest = Mid(trimmed, Len(scheme) + 1)
+
+        authority = rest
+        path = ""
+        slash = Instr(1, rest, "/")
+        if slash > 0
+            authority = Left(rest, slash - 1)
+            path = Mid(rest, slash)
+            if not bowtie.pair.allIn(path, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~/-") then return ""
+        end if
+
+        host = authority
+        port = ""
+        colon = Instr(1, authority, ":")
+        if colon > 0
+            host = Left(authority, colon - 1)
+            port = Mid(authority, colon + 1)
+            if port = "" or Len(port) > 5 then return ""
+            if not bowtie.pair.allIn(port, "0123456789") then return ""
+            portNumber = Val(port)
+            if portNumber < 1 or portNumber > 65535 then return ""
+        end if
+        if host = "" then return ""
+        if not bowtie.pair.allIn(LCase(host), "abcdefghijklmnopqrstuvwxyz0123456789.-") then return ""
+
+        if port = "" then return scheme + host + path
+        return scheme + host + ":" + port + path
+    end function
+
+    ' "a+b%2Fc" -> "a b/c". A malformed %XX (or one above 0x7F) is kept
+    ' literally, so decoded text stays ASCII. Plain runs are copied with Mid.
+    function urlDecode(s as string) as string
+        hex = "0123456789abcdef"
+        pieces = []
+        n = Len(s)
+        start = 1
+        i = 1
+        while i <= n
+            c = Mid(s, i, 1)
+            if c = "+" or c = "%"
+                piece = ""
+                consumed = 1
+                if c = "+"
+                    piece = " "
+                else if i + 2 <= n
+                    hi = Instr(1, hex, LCase(Mid(s, i + 1, 1)))
+                    lo = Instr(1, hex, LCase(Mid(s, i + 2, 1)))
+                    code = (hi - 1) * 16 + (lo - 1)
+                    if hi > 0 and lo > 0 and code > 0 and code < 128
+                        piece = Chr(code)
+                        consumed = 3
+                    end if
+                end if
+                if piece <> ""
+                    if i > start then pieces.push(Mid(s, start, i - start))
+                    pieces.push(piece)
+                    i = i + consumed
+                    start = i
+                else
+                    i = i + 1
+                end if
+            else
+                i = i + 1
+            end if
+        end while
+        if n >= start then pieces.push(Mid(s, start, n - start + 1))
+        return pieces.Join("")
+    end function
+
+    function htmlEscape(s as string) as string
+        return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("""", "&quot;").Replace("'", "&#39;")
+    end function
+
+    ' ---- internals ----
+
+    function done(response as string, submitted as string, incomplete as boolean) as object
+        return { response: response, submitted: submitted, incomplete: incomplete }
+    end function
+
+    ' s without its trailing slashes (one downward scan, one Left).
+    function stripSlashes(s as string) as string
+        n = Len(s)
+        while n > 0
+            if Mid(s, n, 1) <> "/" then exit while
+            n = n - 1
+        end while
+        return Left(s, n)
+    end function
+
+    ' True when every character of s is in `allowed` (and s is not empty).
+    function allIn(s as string, allowed as string) as boolean
+        n = Len(s)
+        if n = 0 then return false
+        for i = 1 to n
+            if Instr(1, allowed, Mid(s, i, 1)) = 0 then return false
+        end for
+        return true
+    end function
+
+    ' -> { kind: "ok" | "bad" | "incomplete" | "large", method, path, query, form }
+    function parse(raw as string) as object
+        result = { kind: "bad", method: "", path: "", query: {}, form: {} }
+        if Len(raw) > bowtie.pair.MAX_REQUEST
+            result.kind = "large"
+            return result
+        end if
+
+        crlf = Chr(13) + Chr(10)
+        split = Instr(1, raw, crlf + crlf)
+        if split = 0
+            result.kind = "incomplete"
+            return result
+        end if
+
+        lines = Left(raw, split - 1).Split(crlf)
+        if lines.count() = 0 then return result
+        parts = lines[0].Split(" ")
+        if parts.count() <> 3 then return result
+        if Left(parts[2], 5) <> "HTTP/" then return result
+        target = parts[1]
+
+        ' Content-Length: plain ASCII digits only, checked before any arithmetic.
+        lengths = []
+        for i = 1 to lines.count() - 1
+            colon = Instr(1, lines[i], ":")
+            if colon < 2 then return result
+            if LCase(Left(lines[i], colon - 1).Trim()) = "content-length"
+                lengths.push(Mid(lines[i], colon + 1).Trim())
+            end if
+        end for
+        contentLength = 0
+        if lengths.count() > 0
+            value = lengths[0]
+            for each other in lengths
+                if other <> value then return result
+            end for
+            if not bowtie.pair.allIn(value, "0123456789") then return result
+            if Len(value) > 5
+                result.kind = "large"
+                return result
+            end if
+            contentLength = Val(value)
+            if contentLength > bowtie.pair.MAX_REQUEST
+                result.kind = "large"
+                return result
+            end if
+        end if
+
+        body = Mid(raw, split + 4)
+        if Len(body) < contentLength
+            result.kind = "incomplete"
+            return result
+        end if
+        body = Left(body, contentLength)
+
+        query = ""
+        path = target
+        mark = Instr(1, target, "?")
+        if mark > 0
+            path = Left(target, mark - 1)
+            query = Mid(target, mark + 1)
+        end if
+
+        result.kind = "ok"
+        result.method = parts[0]
+        result.path = path
+        result.query = bowtie.pair.parseParams(query)
+        result.form = bowtie.pair.parseParams(body)
+        return result
+    end function
+
+    ' "t=1&server=x%20y" -> { t: "1", server: "x y" }. Only the exact lowercase
+    ' names t and server are read (checked before any decoding; AA keys ignore
+    ' case, so "T" would otherwise alias "t"). First value wins; a value over
+    ' MAX_PARAM characters counts as missing.
+    function parseParams(s as string) as object
+        params = {}
+        if s = "" then return params
+        for each pair in s.Split("&")
+            eq = Instr(1, pair, "=")
+            if eq > 1
+                key = Left(pair, eq - 1)
+                if key = "t" or key = "server"
+                    value = Mid(pair, eq + 1)
+                    if Len(value) <= bowtie.pair.MAX_PARAM * 3 and not params.doesExist(key)
+                        value = bowtie.pair.urlDecode(value)
+                        if Len(value) <= bowtie.pair.MAX_PARAM then params[key] = value
+                    end if
+                end if
+            end if
+        end for
+        return params
+    end function
+
+    ' Size of s as UTF-8 (Content-Length counts bytes, Len counts characters).
+    ' Everything we emit is ASCII except the ellipsis (3 bytes); echoed input is
+    ' ASCII because urlDecode keeps anything above 0x7F as literal %XX.
+    function utf8Length(s as string) as integer
+        total = Len(s)
+        ellipsis = Chr(8230)
+        at = Instr(1, s, ellipsis)
+        while at > 0
+            total = total + 2
+            at = Instr(at + 1, s, ellipsis)
+        end while
+        return total
+    end function
+
+    function reason(code as integer) as string
+        if code = 200 then return "OK"
+        if code = 303 then return "See Other"
+        if code = 400 then return "Bad Request"
+        if code = 403 then return "Forbidden"
+        if code = 404 then return "Not Found"
+        if code = 413 then return "Payload Too Large"
+        return "OK"
+    end function
+
+    function html(code as integer, body as string) as string
+        crlf = Chr(13) + Chr(10)
+        return "HTTP/1.1 " + Str(code).Trim() + " " + bowtie.pair.reason(code) + crlf + "Content-Type: text/html; charset=utf-8" + crlf + "Content-Length: " + Str(bowtie.pair.utf8Length(body)).Trim() + crlf + "Cache-Control: no-store" + crlf + "Connection: close" + crlf + crlf + body
+    end function
+
+    function redirect(location as string) as string
+        crlf = Chr(13) + Chr(10)
+        return "HTTP/1.1 303 See Other" + crlf + "Content-Length: 0" + crlf + "Cache-Control: no-store" + crlf + "Connection: close" + crlf + "Location: " + location + crlf + crlf
+    end function
+
+    function forbidden() as string
+        return bowtie.pair.html(403, bowtie.pair.page("", "<h1>Set up Bowtie on your TV</h1><p class=""err"">This pairing code has expired. Scan the code on your TV again.</p>"))
+    end function
+
+    function page(refresh as string, body as string) as string
+        return "<!doctype html><html><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1"">" + refresh + "<title>Bowtie</title><style>body{font-family:-apple-system,system-ui,sans-serif;background:#101418;color:#f2efe8;margin:0;padding:32px 20px}main{max-width:420px;margin:0 auto}h1{color:#f0a428;font-size:24px}label{display:block;margin:16px 0 8px}input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border-radius:8px;border:1px solid #9ba5ae;background:#1b2128;color:#f2efe8}button{margin-top:16px;width:100%;font-size:18px;padding:12px;border:0;border-radius:8px;background:#f0a428;color:#101418;font-weight:600}.err{color:#e05050}.hint{color:#9ba5ae;font-size:14px}</style></head><body><main>" + body + "</main></body></html>"
+    end function
+
+    function form(token as string, error as string, value as string) as string
+        err = ""
+        if error <> "" then err = "<p class=""err"">" + bowtie.pair.htmlEscape(error) + "</p>"
+        body = "<h1>Set up Bowtie on your TV</h1>" + err + "<form method=""post"" action=""/p""><input type=""hidden"" name=""t"" value=""" + token + """><label for=""s"">Your Bowtie server address</label><input id=""s"" name=""server"" type=""text"" inputmode=""url"" autocapitalize=""off"" autocorrect=""off"" spellcheck=""false"" placeholder=""http://192.168.1.50:8400"" value=""" + bowtie.pair.htmlEscape(value) + """ required><button type=""submit"">Continue</button></form><p class=""hint"">Use the address you open Bowtie with in your browser.</p>"
+        return bowtie.pair.page("", body)
+    end function
+
+end namespace

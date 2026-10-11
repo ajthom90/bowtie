@@ -40,11 +40,12 @@ GitHub Releases attach `bowtie-roku-<version>.zip` (release workflow job `roku`,
 1. Enable developer mode (Home ×3, Up ×2, Right, Left, Right, Left, Right).
 2. Note the device IP and set a password when prompted.
 3. Open `http://<roku-ip>` in a browser, sign in, upload `out/bowtie-roku.zip`.
-4. Or use `curl`:
+4. Or build and upload in one step (`scripts/deploy.sh`, digest auth as the
+   Roku's web installer expects; prints `Install Success`, `Identical to
+   previous version` or the failure):
 
 ```bash
-curl -F "mysubmit=Install" -F "archive=@out/bowtie-roku.zip" \
-  "http://rokudev:<password>@<roku-ip>/plugin_install"
+ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy
 ```
 
 5. Or use the deploy script, which posts `out/bowtie-roku.zip` for you:
@@ -66,6 +67,25 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 ```
 
 (`supports_input_launch=1` is set in the channel manifest.)
+
+## Set up from a phone
+
+Connect opens on a QR (left) with **Scan with your phone to set up this TV**
+and **Or open `http://<roku-ip>:<port>/p?t=…` on your phone**; **Type the
+address instead** (focused) opens the keyboard as before. The QR leads to a
+page the Roku serves itself (`components/tasks/PairTask`, request logic in
+`source/lib/PairHttp.bs`, the QR drawn by `QrCode` from `source/lib/Qr.bs`):
+the phone types the server address, the Roku probes `/healthz`, and once it
+has a sign-in code the phone is sent to `<that server>/link?code=…` to approve
+it. No cloud and no fixed host: the phone only ever goes to the address it
+typed.
+
+The listener binds the Roku's LAN IPv4 on a random port 49152–65151 with a
+24-hex-character token in the URL, serves up to 4 connections at once (5 s per
+request), and stops when the TV is signed in, after 15 minutes, when an
+address typed on the TV connects, or after 20 wrong tokens; the QR hides then,
+and the next visit to Connect starts over with a new token. An address the
+Roku can't reach shows the error on both screens, and the phone can try again.
 
 ## Sign in
 
@@ -309,16 +329,19 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideFilter, GuideLogic, Recordings, Registry, SleepTimer
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideFilter, GuideLogic, PairHttp, Qr, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
-    ├── ConnectScene
+    ├── ConnectScene        # set up from a phone (QrCode + PairTask) or type the address
+    ├── QrCode              # QR drawn as Rectangles
     ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
     ├── HomeScene           # Continue watching (RowList of ContinueItem) + Recent + filter chips (FilterChip) + MarkupList rail + guide join, * dialogs
     ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows); resume mode for Continue watching
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene
-    └── tasks/ApiTask       # sole HTTP + token holder
+    └── tasks/
+        ├── ApiTask         # sole HTTP + token holder
+        └── PairTask        # the phone set-up page (LAN listener)
 ```
