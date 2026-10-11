@@ -1,0 +1,159 @@
+' The pairing listener. Binds the LAN IPv4 shown in the QR on a random high
+' port and serves /p for 15 minutes (or until stopped or locked out). Up to
+' MAX_CONNECTIONS requests are read at once without blocking: each socket
+' reports readable on the port, its bytes go to a per-connection buffer, and
+' bowtie.pair.handle answers once the request is complete. A request has
+' REQUEST_MS from accept; a slow or silent client is then answered 400 (or
+' just closed) so it can't hold a slot. Every way out sets pairUrl = "" so
+' Connect hides the QR.
+
+import "pkg:/source/lib/PairHttp.bs"
+
+const MAX_CONNECTIONS = 4
+const REQUEST_MS = 5000
+const LIFETIME_MS = 900000
+const READ_CHUNK = 4096
+
+sub init()
+    m.top.functionName = "pairRun"
+end sub
+
+sub pairRun()
+    port = CreateObject("roMessagePort")
+    m.top.observeField("connectFailed", port)
+    m.top.observeField("linkUrl", port)
+    m.top.observeField("stop", port)
+
+    ip = lanIp()
+    if ip = ""
+        m.top.pairUrl = ""
+        return
+    end if
+    listener = invalid
+    listenPort = 0
+    for attempt = 1 to 10
+        candidate = 49152 + Rnd(16000)
+        addr = CreateObject("roSocketAddress")
+        addr.setHostName(ip)
+        addr.setPort(candidate)
+        sock = CreateObject("roStreamSocket")
+        sock.setMessagePort(port)
+        sock.setAddress(addr)
+        sock.notifyReadable(true)
+        if sock.listen(MAX_CONNECTIONS) and sock.eOK()
+            listener = sock
+            listenPort = candidate
+            exit for
+        end if
+        sock.close()
+    end for
+    if listener = invalid
+        m.top.pairUrl = ""
+        return
+    end if
+
+    token = Left(LCase(CreateObject("roDeviceInfo").GetRandomUUID().Replace("-", "")), 24)
+    session = bowtie.pair.newSession(token)
+    m.top.pairUrl = "http://" + ip + ":" + listenPort.toStr() + "/p?t=" + token
+    print "[pair] listening on "; m.top.pairUrl
+
+    clock = CreateObject("roTimespan")
+    clock.Mark()
+    listenerId = listener.getID()
+    conns = {} ' socket id -> { id, sock, buf, acceptMs, pending }
+    running = true
+    while running
+        msg = wait(250, port)
+        if type(msg) = "roSGNodeEvent"
+            field = msg.getField()
+            if field = "stop"
+                if msg.getData() = true then running = false
+            else if field = "connectFailed"
+                bowtie.pair.connectFailed(session, msg.getData())
+            else if field = "linkUrl"
+                bowtie.pair.codeIssued(session, msg.getData())
+            end if
+        else if type(msg) = "roSocketEvent"
+            id = msg.getSocketID()
+            if id = listenerId
+                if not acceptConnection(listener, conns, port, clock) then running = false
+            else
+                conn = conns[id.toStr()]
+                if conn <> invalid then readConnection(conn, conns, session)
+            end if
+        end if
+
+        now = clock.TotalMilliseconds()
+        for each key in conns.Keys()
+            conn = conns[key]
+            if now - conn.acceptMs >= REQUEST_MS
+                ' Unfinished in time: answer with its 400 if anything arrived.
+                if conn.pending <> "" then conn.sock.sendStr(conn.pending)
+                dropConnection(conn, conns)
+            end if
+        end for
+        if now >= LIFETIME_MS or session.state = "closed" or m.top.stop = true then running = false
+    end while
+
+    for each key in conns.Keys()
+        dropConnection(conns[key], conns)
+    end for
+    listener.close()
+    bowtie.pair.close(session)
+    m.top.pairUrl = ""
+    print "[pair] stopped"
+end sub
+
+' One pending connection off the listener. False when the listener failed.
+function acceptConnection(listener as object, conns as object, port as object, clock as object) as boolean
+    if not listener.isReadable() then return true
+    sock = listener.accept()
+    if sock = invalid then return listener.eOK() or listener.eWouldBlock()
+    if conns.Count() >= MAX_CONNECTIONS
+        sock.close()
+        return true
+    end if
+    sock.setMessagePort(port)
+    sock.notifyReadable(true)
+    id = sock.getID().toStr()
+    conns[id] = { id: id, sock: sock, buf: "", acceptMs: clock.TotalMilliseconds(), pending: "" }
+    return true
+end function
+
+' Whatever has arrived on conn; answers and closes once the request is whole.
+sub readConnection(conn as object, conns as object, session as object)
+    sock = conn.sock
+    if not sock.isReadable() then return
+    chunk = sock.receiveStr(READ_CHUNK)
+    if chunk = invalid or chunk = "" or not sock.eOK()
+        ' The client hung up (or the socket failed) before finishing.
+        dropConnection(conn, conns)
+        return
+    end if
+    conn.buf = conn.buf + chunk
+    result = bowtie.pair.handle(session, conn.buf)
+    if result.incomplete
+        conn.pending = result.response
+        return
+    end if
+    sock.sendStr(result.response)
+    dropConnection(conn, conns)
+    if result.submitted <> "" then m.top.submitted = result.submitted
+end sub
+
+sub dropConnection(conn as object, conns as object)
+    conn.sock.notifyReadable(false)
+    conn.sock.close()
+    conns.Delete(conn.id)
+end sub
+
+' The first IPv4 address of a network interface ("" when offline).
+function lanIp() as string
+    addrs = CreateObject("roDeviceInfo").GetIPAddrs()
+    pattern = CreateObject("roRegex", "^\d+\.\d+\.\d+\.\d+$", "")
+    for each name in addrs
+        value = addrs[name]
+        if value <> invalid and pattern.IsMatch(value) then return value
+    end for
+    return ""
+end function
