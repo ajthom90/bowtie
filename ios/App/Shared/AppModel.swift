@@ -22,13 +22,17 @@ public final class AppModel {
 
     private let store: SessionStore
     private let urlSession: URLSession
+    private let pairingHost: () -> String?
 
     /// - Parameters:
     ///   - store: persisted server + refresh token.
     ///   - urlSession: injectable for tests (healthz + client traffic).
-    public init(store: SessionStore, urlSession: URLSession = .shared) {
+    ///   - pairingHost: the LAN address the TV pairing page listens on (injectable for tests).
+    public init(store: SessionStore, urlSession: URLSession = .shared,
+                pairingHost: @escaping () -> String? = LocalAddress.lanIPv4) {
         self.store = store
         self.urlSession = urlSession
+        self.pairingHost = pairingHost
 
         if let server = store.loadServer() {
             self.client = BowtieClient(server: server, store: store, urlSession: urlSession)
@@ -40,19 +44,62 @@ public final class AppModel {
         self.savedServers = store.savedServers()
     }
 
+    // MARK: - TV pairing
+
+    @ObservationIgnored private var _pairing: PairingCoordinator?
+    /// Bumped whenever pairing stops, so a phone-submitted connect that was in flight can tell.
+    @ObservationIgnored private var pairingEpoch = 0
+
+    /// Lets a phone enter the server address for this TV. Only the tvOS app starts it.
+    public var pairing: PairingCoordinator {
+        if let _pairing { return _pairing }
+        let coordinator = PairingCoordinator(
+            connect: { [weak self] raw in await self?.connectFromPairing(rawURL: raw) ?? false },
+            host: pairingHost
+        )
+        _pairing = coordinator
+        return coordinator
+    }
+
+    private func stopPairing() {
+        pairingEpoch += 1
+        _pairing?.stop()
+    }
+
+    /// The address typed on the TV. A typo leaves the pairing QR working; success ends pairing.
+    @discardableResult
+    public func connectTyped(rawURL: String) async -> Bool {
+        let ok = await connect(rawURL: rawURL)
+        if ok { stopPairing() }
+        return ok
+    }
+
+    /// The address a phone submitted. It must not overwrite a typed connect or a sign-in that
+    /// happened while the health check was running.
+    private func connectFromPairing(rawURL: String) async -> Bool {
+        guard phase == .connect, let url = ServerURL.normalize(rawURL) else { return false }
+        let epoch = pairingEpoch
+        guard await validateServer(url), phase == .connect, pairingEpoch == epoch else { return false }
+        adopt(server: url)
+        return true
+    }
+
     /// Normalize + healthz-validate `rawURL`, persist server, advance to `.login`.
     @discardableResult
     public func connect(rawURL: String) async -> Bool {
         guard let url = ServerURL.normalize(rawURL) else { return false }
         let ok = await validateServer(url)
         guard ok else { return false }
+        adopt(server: url)
+        return true
+    }
 
+    private func adopt(server url: URL) {
         store.save(server: url, refreshToken: nil)
         savedServers = store.savedServers()
         client = BowtieClient(server: url, store: store, urlSession: urlSession)
         user = nil
         phase = .login
-        return true
     }
 
     /// Bootstrap from a stored refresh token while in `.checking`.
@@ -71,6 +118,7 @@ public final class AppModel {
                 guard self.client === client else { return }
                 self.user = user
                 self.phase = .ready
+                self.stopPairing()
             } catch {
                 guard self.client === client else { return }
                 self.user = nil
@@ -93,6 +141,7 @@ public final class AppModel {
         let user = try await client.login(username: username, password: password)
         self.user = user
         self.phase = .ready
+        stopPairing()
     }
 
     /// Quick sign-in (TV): a phone approved the code and `client` already holds
@@ -101,6 +150,7 @@ public final class AppModel {
         guard phase == .login, client != nil else { return }
         self.user = user
         self.phase = .ready
+        stopPairing()
     }
 
     /// Sign out → `.login`, keeping the server URL for reconnect.
