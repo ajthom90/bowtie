@@ -165,15 +165,43 @@ final class PairingListenerTests: XCTestCase {
         conn.cancel()
     }
 
-    func testSecondConnectionWaitsItsTurnInsteadOfBeingReset() async throws {
+    func testSilentConnectionDoesNotDelayARealRequest() async throws {
         let t = "0123456789abcdef01234567"
         let (listener, port) = try await startListener(token: t)
         defer { listener.stop() }
         let silent = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
         silent.start(queue: .global())
         try await Task.sleep(nanoseconds: 200_000_000)
+        let began = Date()
         let reply = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
         silent.cancel()
+        XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        XCTAssertLessThan(Date().timeIntervalSince(began), 1)
+    }
+
+    func testFifthConcurrentConnectionIsClosedPromptly() async throws {
+        let t = "0123456789abcdef01234567"
+        let (listener, port) = try await startListener(token: t)
+        defer { listener.stop() }
+        var silent: [NWConnection] = []
+        for _ in 0..<4 {
+            let c = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+            c.start(queue: .global())
+            silent.append(c)
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let fifth = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        fifth.start(queue: .global())
+        let closed = expectation(description: "fifth closed")
+        closed.assertForOverFulfill = false
+        fifth.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, done, err in
+            if done || err != nil { closed.fulfill() }
+        }
+        await fulfillment(of: [closed], timeout: 2)
+        fifth.cancel()
+        try await Task.sleep(nanoseconds: 5_500_000_000)   // the four silent ones time out
+        silent.forEach { $0.cancel() }
+        let reply = try await exchange(port: port, parts: ["GET /p?t=\(t) HTTP/1.1\r\n\r\n"])
         XCTAssertTrue(reply.hasPrefix("HTTP/1.1 200 OK\r\n"))
     }
 

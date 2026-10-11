@@ -6,15 +6,14 @@ import Network
 public final class PairingListener {
     private static let readLimit = 8192
     private static let readTimeout: TimeInterval = 5
-    private static let maxPending = 4
+    private static let maxOpen = 4
 
     private let session: PairingSession
     private let queue: DispatchQueue
     private let onSubmit: (URL) -> Void
     private let host: String?
     private var listener: NWListener?
-    private var active: Slot?
-    private var pending: [Slot] = []
+    private var open: [Slot] = []
 
     /// Called on `queue` if the listener dies after it was ready, for any reason other than `stop()`.
     public var onFailure: (() -> Void)?
@@ -85,35 +84,30 @@ public final class PairingListener {
     private final class Slot {
         let connection: NWConnection
         var deadline: DispatchWorkItem?
-        var started = false
         var finished = false
         init(_ connection: NWConnection) { self.connection = connection }
     }
 
-    /// One connection is served at a time; up to `maxPending` more wait their turn, each on its own
-    /// deadline from accept (browsers open parallel and speculative sockets alongside the real request).
+    /// Connections are served independently (browsers open idle speculative sockets next to the real
+    /// request), each on its own deadline from accept; at most `maxOpen` at once. All session access
+    /// stays on `queue`, so state changes are serialized.
     private func accept(_ connection: NWConnection) {
-        let slot = Slot(connection)
-        if active != nil && pending.count >= Self.maxPending {
+        guard open.count < Self.maxOpen else {
             connection.cancel()
             return
         }
+        let slot = Slot(connection)
+        open.append(slot)
         let deadline = DispatchWorkItem { [weak self] in self?.finish(slot) }
         slot.deadline = deadline
         queue.asyncAfter(deadline: .now() + Self.readTimeout, execute: deadline)
-        if active == nil { serve(slot) } else { pending.append(slot) }
-    }
-
-    private func serve(_ slot: Slot) {
-        active = slot
-        slot.started = true
-        slot.connection.stateUpdateHandler = { [weak self] state in
+        connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed, .cancelled: self?.finish(slot)
             default: break
             }
         }
-        slot.connection.start(queue: queue)
+        connection.start(queue: queue)
         read(slot, buffer: Data())
     }
 
@@ -123,11 +117,7 @@ public final class PairingListener {
         slot.deadline?.cancel()
         slot.connection.stateUpdateHandler = nil
         slot.connection.cancel()
-        pending.removeAll { $0 === slot }
-        if active === slot {
-            active = nil
-            if !pending.isEmpty { serve(pending.removeFirst()) }
-        }
+        open.removeAll { $0 === slot }
     }
 
     private func read(_ slot: Slot, buffer: Data) {
