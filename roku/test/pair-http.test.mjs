@@ -233,6 +233,34 @@ test('non-ASCII percent escapes stay literal so bodies are ASCII', () => {
     assert.equal(got.d, '%C3%A9A%zz%4');
 });
 
+test('normalizeTyped keeps what typing on the TV always accepted', () => {
+    const cases = ['192.168.1.50:8400/', ' Bowtie.lan ', 'HTTPS://tv.local:443', 'http://my_nas:8400', 'http://[fd00::5]:8400', 'http://user@host', 'my_nas:8400//',
+        'ftp://x', 'http://', 'https:///', '   ', ''];
+    const got = runBrs(LIB, `
+        out.n = []
+        for each c in [${cases.map(lit).join(', ')}]
+            out.n.push(bowtie_pair_normalizeTyped(c))
+        end for
+    `);
+    assert.deepEqual(got.n, ['http://192.168.1.50:8400', 'http://Bowtie.lan', 'HTTPS://tv.local:443', 'http://my_nas:8400', 'http://[fd00::5]:8400', 'http://user@host', 'http://my_nas:8400',
+        '', '', '', '', '']);
+});
+
+test('a server code that is not letters, digits and dashes never reaches the Location header', () => {
+    const got = runBrs(LIB, `
+        out.l = []
+        for each c in ["BCDF" + chr(13) + chr(10) + "Set-Cookie: x=1", "BCDF 2345", "BCDF%0D", "", "BCDF/../x"]
+            out.l.push(bowtie_pair_linkUrl("http://a.lan:8400", c))
+        end for
+    `);
+    assert.deepEqual(got.l, ['', '', '', '', '']);
+    // An empty link leaves the phone waiting rather than redirecting nowhere.
+    const out = run([req(post(`t=${T}&server=a.lan`)), 'bowtie_pair_codeIssued(s, "")', req(get(`/p/status?t=${T}`))]);
+    assert.equal(out.state, 'connecting');
+    assert.equal(status(out.r[1]), 'HTTP/1.1 200 OK');
+    assert.match(body(out.r[1]), /Connecting to your TV/);
+});
+
 test('linkUrl strips dashes and a trailing slash; duplicate form keys keep the first', () => {
     const got = runBrs(LIB, `out.l = bowtie_pair_linkUrl("http://a.lan:8400/", "BCDF-2345")`);
     assert.equal(got.l, 'http://a.lan:8400/link?code=BCDF2345');

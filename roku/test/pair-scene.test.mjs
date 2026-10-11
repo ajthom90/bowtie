@@ -16,7 +16,9 @@ function body(src, signature) {
 test('PairTask exposes the fields the scenes use', () => {
     const xml = read('components/tasks/PairTask.xml');
     for (const f of ['pairUrl', 'submitted', 'connectFailed', 'linkUrl', 'stop']) assert.match(xml, new RegExp(`id="${f}"`));
-    assert.match(xml, /functionName="pairRun"|<script/);
+    assert.match(xml, /extends="Task"/);
+    assert.match(xml, /<script type="text\/brightscript" uri="PairTask\.bs" \/>/);
+    assert.match(body(read('components/tasks/PairTask.bs'), 'sub init()'), /m\.top\.functionName = "pairRun"/);
 });
 
 test('PairTask listens on the LAN address only, serves at most 4 connections, 5 s each', () => {
@@ -33,7 +35,11 @@ test('Connect no longer opens the keyboard by itself and offers typing as a butt
     const bs = read('components/ConnectScene.bs');
     assert.doesNotMatch(bs, /onOpenKeyboardTimer/);
     assert.match(read('components/ConnectScene.xml'), /text="Type the address instead"/);
-    assert.match(bs, /bowtie\.pair\.normalizeServer/);
+    // A phone's address gets the strict rules; one typed on the TV the ones it always had.
+    const normalize = body(bs, 'function normalizeServerUrl(');
+    assert.match(normalize, /if fromPair then return bowtie\.pair\.normalizeServer\(raw\)/);
+    assert.match(normalize, /return bowtie\.pair\.normalizeTyped\(raw\)/);
+    assert.match(body(bs, 'sub submitUrl('), /normalizeServerUrl\(raw, fromPair\)/);
 });
 
 test('Connect shows the pairing copy', () => {
@@ -58,7 +64,9 @@ test('Connect reports phone addresses it will not probe, and stops pairing only 
 });
 
 test('Login hands the link URL to the pairing task', () => {
-    assert.match(read('components/LoginScene.bs'), /pairTask\.linkUrl = bowtie\.pair\.linkUrl\(/);
+    const login = read('components/LoginScene.bs');
+    assert.match(login, /link = bowtie\.pair\.linkUrl\(/);
+    assert.match(login, /if m\.top\.pairTask <> invalid and link <> "" then m\.top\.pairTask\.linkUrl = link/);
 });
 
 test('AppScene stops pairing once signed in', () => {

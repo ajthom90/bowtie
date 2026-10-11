@@ -210,7 +210,7 @@ end sub
 ' back only when the probe fails.
 sub submitUrl(raw as string, fromPair as boolean)
     if m.busy = true then return
-    normalized = normalizeServerUrl(raw)
+    normalized = normalizeServerUrl(raw, fromPair)
     task = m.top.apiTask
     if normalized = "" or task = invalid
         m.errorLabel.text = CONNECT_ERROR
@@ -258,8 +258,9 @@ sub onApiResponse()
     end if
 end sub
 
-' Same rules as the phone page: trim, default http://, host[:port][/path],
-' no trailing slash. "" when it isn't a server address.
-function normalizeServerUrl(raw as string) as string
-    return bowtie.pair.normalizeServer(raw)
+' A phone's address keeps the phone page's strict rules; one typed here keeps
+' the permissive rules Connect always had. "" when it isn't a server address.
+function normalizeServerUrl(raw as string, fromPair as boolean) as string
+    if fromPair then return bowtie.pair.normalizeServer(raw)
+    return bowtie.pair.normalizeTyped(raw)
 end function

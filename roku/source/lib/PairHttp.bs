@@ -106,6 +106,7 @@ namespace bowtie.pair
     ' A sign-in code exists; the phone's next status poll goes to url.
     ' A later code replaces it. Ignored unless connecting or ready.
     sub codeIssued(session as object, url as string)
+        if url = "" then return
         if session.state = "connecting" or session.state = "ready"
             session.state = "ready"
             session.linkUrl = url
@@ -117,9 +118,34 @@ namespace bowtie.pair
     end sub
 
     ' Where the phone goes once the TV has a sign-in code: the typed server's /link page.
+    ' "" unless the server's code is letters, digits and dashes, so nothing it
+    ' sends can reach the Location header.
     function linkUrl(server as string, userCode as string) as string
+        if not bowtie.pair.allIn(userCode, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-") then return ""
         base = bowtie.pair.stripSlashes(server)
         return base + "/link?code=" + userCode.Replace("-", "")
+    end function
+
+    ' An address typed on the TV itself, with the rules Connect always had:
+    ' trim, default http://, no trailing slash, http/https with something after
+    ' it (underscore hosts, IPv6 literals and user@host still work). "" when it
+    ' isn't one. Phone-submitted addresses use the stricter normalizeServer.
+    function normalizeTyped(raw as string) as string
+        trimmed = raw.Trim()
+        if trimmed = "" then return ""
+        if Instr(1, trimmed, "://") = 0 then trimmed = "http://" + trimmed
+        trimmed = bowtie.pair.stripSlashes(trimmed)
+
+        lower = LCase(trimmed)
+        if Left(lower, 7) = "http://"
+            rest = Mid(trimmed, 8)
+        else if Left(lower, 8) = "https://"
+            rest = Mid(trimmed, 9)
+        else
+            return ""
+        end if
+        if rest = "" then return ""
+        return trimmed
     end function
 
     ' "192.168.1.50:8400/" -> "http://192.168.1.50:8400". "" when invalid: only

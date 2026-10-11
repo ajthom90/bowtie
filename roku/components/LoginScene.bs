@@ -193,7 +193,8 @@ sub handleStartResponse(resp as object)
     m.codeLabel.text = m.session.userCode
     m.statusLabel.text = bowtie.deviceauth.waitingText()
     ' A phone that set this TV up goes on to approve this code.
-    if m.top.pairTask <> invalid then m.top.pairTask.linkUrl = bowtie.pair.linkUrl(serverAddress(), m.session.userCode)
+    link = bowtie.pair.linkUrl(serverAddress(), m.session.userCode)
+    if m.top.pairTask <> invalid and link <> "" then m.top.pairTask.linkUrl = link
     schedulePoll()
 end sub
 
