@@ -152,9 +152,14 @@ class PairingSession(val token: String = newToken()) {
             return bytes.joinToString("") { "%02x".format(it) }
         }
 
-        /** Where the phone goes once the TV has a sign-in code: the typed server's `/link` page. */
-        fun linkUrl(server: String, userCode: String): String =
-            "${server.removeSuffix("/")}/link?code=${userCode.replace("-", "")}"
+        /**
+         * Where the phone goes once the TV has a sign-in code: the typed server's `/link` page.
+         * Null unless the server's code is letters, digits and dashes, so it can't reach the header.
+         */
+        fun linkUrl(server: String, userCode: String): String? {
+            if (userCode.isEmpty() || !userCode.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '-' }) return null
+            return "${server.removeSuffix("/")}/link?code=${userCode.replace("-", "")}"
+        }
 
         fun htmlEscape(s: String): String = buildString {
             for (c in s) when (c) {

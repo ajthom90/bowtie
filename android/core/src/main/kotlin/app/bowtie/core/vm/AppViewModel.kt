@@ -144,8 +144,9 @@ class AppViewModel(
         _phase.value = Phase.Login
     }
 
-    /** Clears server + tokens and returns to [Phase.Connect]. */
+    /** Clears server + tokens and returns to [Phase.Connect], where pairing starts over with a new code. */
     fun changeServer() {
+        stopPairing()
         store.save(null, null)
         client = null
         _phase.value = Phase.Connect

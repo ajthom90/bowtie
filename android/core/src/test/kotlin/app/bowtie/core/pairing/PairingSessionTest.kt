@@ -45,11 +45,18 @@ class PairingSessionTest {
         val waiting = s.handle(get("/p/status?t=$t")).first
         assertTrue(text(waiting).contains("Connecting to your TV…"))
         assertTrue(text(waiting).contains("content=\"1;url=/p/status?t=$t\""))
-        s.codeIssued(PairingSession.linkUrl("http://bowtie.lan:8400", "BCDF-2345"))
+        s.codeIssued(PairingSession.linkUrl("http://bowtie.lan:8400", "BCDF-2345")!!)
         assertEquals("http://bowtie.lan:8400/link?code=BCDF2345", header(s.handle(get("/p/status?t=$t")).first, "Location"))
-        s.codeIssued(PairingSession.linkUrl("http://bowtie.lan:8400", "GHJK-6789"))
+        s.codeIssued(PairingSession.linkUrl("http://bowtie.lan:8400", "GHJK-6789")!!)
         assertEquals("http://bowtie.lan:8400/link?code=GHJK6789", header(s.handle(get("/p/status?t=$t")).first, "Location"))
         assertEquals("/p/status?t=$t", header(s.handle(get("/p?t=$t")).first, "Location"))
+    }
+
+    @Test fun linkUrlRejectsCodesThatCouldReachTheHeader() {
+        for (bad in listOf("BCDF\r\nSet-Cookie: x=1", "BCDF 2345", "BCDF%0D", "", "BCDF/../x")) {
+            assertNull(bad, PairingSession.linkUrl("http://bowtie.lan:8400", bad))
+        }
+        assertEquals("http://bowtie.lan:8400/link?code=bcdf2345", PairingSession.linkUrl("http://bowtie.lan:8400/", "bcdf-2345"))
     }
 
     @Test fun connectFailureAllowsRetry() {

@@ -47,7 +47,8 @@ class PairingCoordinator(
     @Synchronized
     fun codeIssued(server: String, userCode: String) {
         if (server != submitted) return
-        session?.codeIssued(PairingSession.linkUrl(server, userCode))
+        val link = PairingSession.linkUrl(server, userCode) ?: return
+        session?.codeIssued(link)
     }
 
     @Synchronized

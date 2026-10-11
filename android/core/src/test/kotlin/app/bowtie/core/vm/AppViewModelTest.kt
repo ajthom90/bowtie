@@ -20,6 +20,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -126,6 +127,26 @@ class AppViewModelTest {
         assertTrue(vm.connectTyped("${server.hostName}:${server.port}"))
 
         assertNull(vm.pairing.pairUrl.value)
+    }
+
+    @Test
+    fun changeServerStartsAFreshPairingSession() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("ok"))
+        val vm = makePairingVm()
+        vm.pairing.start()
+        val first = vm.pairing.pairUrl.value
+        assertNotNull(first)
+        assertTrue(vm.connectFromPairing("${server.hostName}:${server.port}"))
+        assertEquals(AppViewModel.Phase.Login, vm.phase.value)
+
+        vm.changeServer()
+        assertNull(vm.pairing.pairUrl.value)
+        vm.pairing.start()
+
+        val second = vm.pairing.pairUrl.value
+        assertNotNull(second)
+        assertNotEquals(first, second)
+        vm.pairing.stop()
     }
 
     @Test
