@@ -6,6 +6,7 @@ import app.bowtie.core.BowtieClient
 import app.bowtie.core.ServerUrl
 import app.bowtie.core.TokenStore
 import app.bowtie.core.User
+import app.bowtie.core.pairing.LanAddress
 import app.bowtie.core.pairing.PairingCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ class AppViewModel(
     private val clientFactory: (HttpUrl) -> BowtieClient,
     private val scope: CoroutineScope? = null,
     private val healthClient: OkHttpClient = OkHttpClient(),
+    private val pairingHost: () -> String? = LanAddress::ipv4,
 ) : ViewModel() {
 
     sealed class Phase {
@@ -46,7 +48,7 @@ class AppViewModel(
         private set
 
     /** TV "set up from your phone" listener; lazy so the phone app never builds one. */
-    private val pairingLazy = lazy { PairingCoordinator(workScope, connect = ::connect) }
+    private val pairingLazy = lazy { PairingCoordinator(workScope, connect = ::connectFromPairing, host = pairingHost) }
     val pairing: PairingCoordinator by pairingLazy
 
     init {
@@ -72,10 +74,17 @@ class AppViewModel(
      * Normalize + healthz-validate [raw], persist server, advance to [Phase.Login].
      * @return false when the URL is invalid or the server is unreachable.
      */
-    suspend fun connect(raw: String): Boolean {
+    suspend fun connect(raw: String): Boolean = connect(raw, onlyFromConnect = false)
+
+    /** A phone submitted [raw]; a slow check must not overwrite a server typed or signed in meanwhile. */
+    internal suspend fun connectFromPairing(raw: String): Boolean = connect(raw, onlyFromConnect = true)
+
+    private suspend fun connect(raw: String, onlyFromConnect: Boolean): Boolean {
+        if (onlyFromConnect && _phase.value !is Phase.Connect) return false
         val url = ServerUrl.normalize(raw) ?: return false
         val ok = ServerUrl.validate(url, healthClient)
         if (!ok) return false
+        if (onlyFromConnect && _phase.value !is Phase.Connect) return false
 
         store.save(url.toString(), null)
         client = clientFactory(url)
@@ -83,10 +92,11 @@ class AppViewModel(
         return true
     }
 
-    /** The user typed an address on the TV: that supersedes any phone pairing in progress. */
+    /** The user typed an address on the TV: once it connects, that supersedes any phone pairing (a typo keeps the QR). */
     suspend fun connectTyped(raw: String): Boolean {
-        stopPairing()
-        return connect(raw)
+        val ok = connect(raw)
+        if (ok) stopPairing()
+        return ok
     }
 
     private fun stopPairing() {

@@ -5,6 +5,8 @@ import app.bowtie.core.InMemoryTokenStore
 import app.bowtie.core.TokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -100,14 +102,65 @@ class AppViewModelTest {
 
     // ── Phase transitions ───────────────────────────────────────────────────
 
+    // Real-time scope: pairing's 15-minute expiry must not be skipped by runTest's virtual time.
+    private val pairingScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Unconfined)
+
+    @After
+    fun cancelPairingScope() = pairingScope.cancel()
+
+    private fun makePairingVm() = AppViewModel(
+        store = store,
+        clientFactory = clientFactory(),
+        scope = pairingScope,
+        healthClient = OkHttpClient(),
+        pairingHost = { "127.0.0.1" },
+    )
+
     @Test
-    fun connectTypedStopsPairing() = runTest {
-        installMain()
-        val vm = makeVmWithScope(this)
+    fun connectTypedSuccessStopsPairing() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("ok"))
+        val vm = makePairingVm()
         vm.pairing.start()
-        vm.connectTyped("http://127.0.0.1:1")
-        advanceUntilIdle()
+        assertNotNull(vm.pairing.pairUrl.value)
+
+        assertTrue(vm.connectTyped("${server.hostName}:${server.port}"))
+
         assertNull(vm.pairing.pairUrl.value)
+    }
+
+    @Test
+    fun connectTypedFailureKeepsPairing() = runTest {
+        val vm = makePairingVm()
+        vm.pairing.start()
+        assertNotNull(vm.pairing.pairUrl.value)
+
+        assertFalse(vm.connectTyped("http://127.0.0.1:1"))
+
+        assertNotNull(vm.pairing.pairUrl.value)
+        vm.pairing.stop()
+    }
+
+    @Test
+    fun slowPairingConnectCannotOverwriteTypedServer() = runTest {
+        val slow = MockWebServer().apply {
+            enqueue(MockResponse().setResponseCode(200).setBody("ok").setHeadersDelay(600, java.util.concurrent.TimeUnit.MILLISECONDS))
+            start()
+        }
+        try {
+            server.enqueue(MockResponse().setResponseCode(200).setBody("ok"))
+            val vm = makePairingVm()
+            vm.pairing.start()
+            val slowDone = pairingScope.async(Dispatchers.IO) { vm.connectFromPairing("${slow.hostName}:${slow.port}") }
+            Thread.sleep(150)
+            assertTrue(vm.connectTyped("${server.hostName}:${server.port}"))
+            assertFalse(slowDone.await())
+
+            assertEquals(server.url("/").toString(), store.loadServer())
+            assertEquals(server.url("/"), vm.client?.server)
+            assertEquals(AppViewModel.Phase.Login, vm.phase.value)
+        } finally {
+            slow.shutdown()
+        }
     }
 
     @Test

@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -52,7 +53,8 @@ internal fun qrBitmap(text: String, sizePx: Int): ImageBitmap {
 @Composable
 fun PairingQrPanel(url: String?, modifier: Modifier = Modifier) {
     if (url == null) return
-    val bitmap = remember(url) { qrBitmap(url, 320) }
+    val sizePx = with(LocalDensity.current) { 320.dp.roundToPx() }
+    val bitmap = remember(url, sizePx) { qrBitmap(url, sizePx) }
     Column(
         modifier = modifier.widthIn(max = 352.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
