@@ -91,6 +91,15 @@ final class PairingSessionTests: XCTestCase {
         XCTAssertEqual(PairingSession(token: t).handle(HTTPRequest.parse(Data("PUT /p?t=\(t) HTTP/1.1\r\n\r\n".utf8))).0.status, 404)
     }
 
+    func testContentLengthHardening() {
+        func parse(_ cl: String) -> PairingParse { HTTPRequest.parse(Data("POST /p HTTP/1.1\r\n\(cl)\r\n\r\nt=1".utf8)) }
+        XCTAssertEqual(parse("Content-Length: 9223372036854775807"), .tooLarge)
+        XCTAssertEqual(parse("Content-Length: 99999999999999999999999"), .tooLarge)
+        XCTAssertEqual(parse("Content-Length: +5"), .bad)
+        XCTAssertEqual(parse("Content-Length: 3\r\nContent-Length: 4"), .bad)
+        XCTAssertEqual(parse("Content-Length: 5\r\nContent-Length: 5"), .incomplete)
+    }
+
     func testFormDecodingAndToken() {
         guard case .complete(let r) = HTTPRequest.parse(Data("GET /p?a=x+y%2Fz%3a HTTP/1.1\r\n\r\n".utf8)) else { return XCTFail() }
         XCTAssertEqual(r.query["a"], "x y/z:")

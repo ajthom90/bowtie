@@ -26,19 +26,25 @@ public struct HTTPRequest: Equatable, Sendable {
         let requestLine = lines.removeFirst().split(separator: " ", omittingEmptySubsequences: true)
         guard requestLine.count == 3, requestLine[2].hasPrefix("HTTP/") else { return .bad }
 
-        var contentLength = 0
+        var contentLength: Int?
         for line in lines {
             guard let colon = line.firstIndex(of: ":") else { continue }
             let name = line[..<colon].trimmingCharacters(in: .whitespaces)
             guard name.caseInsensitiveCompare("Content-Length") == .orderedSame else { continue }
-            guard let n = Int(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)), n >= 0 else { return .bad }
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            // Plain digits only (no sign); an absurdly long run overflows Int and is too large.
+            guard !value.isEmpty, value.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else { return .bad }
+            let n = Int(value) ?? Int.max
+            if let existing = contentLength, existing != n { return .bad }
             contentLength = n
         }
+        let length = contentLength ?? 0
+        if length > limit { return .tooLarge }
 
         let bodyStart = end.upperBound
-        if bodyStart - data.startIndex + contentLength > limit { return .tooLarge }
-        if data.endIndex - bodyStart < contentLength { return .incomplete }
-        let body = String(decoding: data[bodyStart..<(bodyStart + contentLength)], as: UTF8.self)
+        if bodyStart - data.startIndex + length > limit { return .tooLarge }
+        if data.endIndex - bodyStart < length { return .incomplete }
+        let body = String(decoding: data[bodyStart..<(bodyStart + length)], as: UTF8.self)
 
         let target = String(requestLine[1])
         let parts = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
