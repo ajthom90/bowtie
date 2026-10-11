@@ -67,6 +67,11 @@ fun LoginScreen(
             appViewModel.completeSignIn(deviceState.user)
         }
     }
+    LaunchedEffect(deviceState) {
+        if (client != null && deviceState is DeviceSignInViewModel.State.Waiting) {
+            appViewModel.pairing.codeIssued(client.server.toString().trimEnd('/'), deviceState.userCode)
+        }
+    }
     DisposableEffect(deviceVm) { onDispose { deviceVm?.stop() } }
     LaunchedEffect(phoneMode) {
         if (!phoneMode && deviceVm != null) runCatching { phoneButtonFocus.requestFocus() }

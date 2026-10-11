@@ -3,15 +3,19 @@ package app.bowtie.tv.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +49,9 @@ fun ConnectScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val pairUrl by appViewModel.pairing.pairUrl.collectAsState()
+
+    LaunchedEffect(Unit) { appViewModel.pairing.start() }
 
     fun submit() {
         if (busy) return
@@ -56,7 +63,7 @@ fun ConnectScreen(
         busy = true
         error = null
         scope.launch {
-            val ok = appViewModel.connect(raw)
+            val ok = appViewModel.connectTyped(raw)
             busy = false
             if (!ok) {
                 error = CONNECT_ERROR
@@ -64,18 +71,20 @@ fun ConnectScreen(
         }
     }
 
-    Column(
+    Row(
         modifier = modifier
             .fillMaxSize()
             .background(BowtieColors.bg)
             .padding(BowtieDimens.screenPadding),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(
-            modifier = Modifier
-                .widthIn(max = 720.dp)
-                .fillMaxWidth(),
+            modifier = if (pairUrl == null) {
+                Modifier.widthIn(max = 720.dp).fillMaxWidth()
+            } else {
+                Modifier.widthIn(max = 720.dp).weight(1f)
+            },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -138,6 +147,10 @@ fun ConnectScreen(
                     style = BowtieType.body,
                 )
             }
+        }
+        if (pairUrl != null) {
+            Spacer(Modifier.width(64.dp))
+            PairingQrPanel(url = pairUrl)
         }
     }
 }

@@ -6,6 +6,7 @@ import app.bowtie.core.BowtieClient
 import app.bowtie.core.ServerUrl
 import app.bowtie.core.TokenStore
 import app.bowtie.core.User
+import app.bowtie.core.pairing.PairingCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +45,10 @@ class AppViewModel(
     var client: BowtieClient? = null
         private set
 
+    /** TV "set up from your phone" listener; lazy so the phone app never builds one. */
+    private val pairingLazy = lazy { PairingCoordinator(workScope, connect = ::connect) }
+    val pairing: PairingCoordinator by pairingLazy
+
     init {
         val serverStr = store.loadServer()
         if (serverStr != null) {
@@ -78,6 +83,16 @@ class AppViewModel(
         return true
     }
 
+    /** The user typed an address on the TV: that supersedes any phone pairing in progress. */
+    suspend fun connectTyped(raw: String): Boolean {
+        stopPairing()
+        return connect(raw)
+    }
+
+    private fun stopPairing() {
+        if (pairingLazy.isInitialized()) pairing.stop()
+    }
+
     /**
      * Bootstrap from a stored refresh token while in [Phase.Checking].
      * Success → [Phase.Ready]; failure → [Phase.Login] (server kept).
@@ -88,6 +103,7 @@ class AppViewModel(
         workScope.launch {
             try {
                 val user = c.bootstrapFromStoredToken()
+                stopPairing()
                 _phase.value = Phase.Ready(user)
             } catch (_: Exception) {
                 _phase.value = Phase.Login
@@ -98,6 +114,7 @@ class AppViewModel(
     suspend fun signIn(username: String, password: String) {
         val c = client ?: error("No client — connect to a server first")
         val user = c.login(username, password)
+        stopPairing()
         _phase.value = Phase.Ready(user)
     }
 
@@ -107,6 +124,7 @@ class AppViewModel(
      */
     fun completeSignIn(user: User) {
         if (client == null) return
+        stopPairing()
         _phase.value = Phase.Ready(user)
     }
 
@@ -121,5 +139,10 @@ class AppViewModel(
         store.save(null, null)
         client = null
         _phase.value = Phase.Connect
+    }
+
+    override fun onCleared() {
+        // Cancelling viewModelScope can't unblock the listener's accept(); close it explicitly.
+        stopPairing()
     }
 }

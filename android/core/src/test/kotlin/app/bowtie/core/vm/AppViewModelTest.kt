@@ -101,6 +101,16 @@ class AppViewModelTest {
     // ── Phase transitions ───────────────────────────────────────────────────
 
     @Test
+    fun connectTypedStopsPairing() = runTest {
+        installMain()
+        val vm = makeVmWithScope(this)
+        vm.pairing.start()
+        vm.connectTyped("http://127.0.0.1:1")
+        advanceUntilIdle()
+        assertNull(vm.pairing.pairUrl.value)
+    }
+
+    @Test
     fun freshStoreStartsAtConnect() = runTest {
         installMain()
         val vm = makeVmWithScope(this)
