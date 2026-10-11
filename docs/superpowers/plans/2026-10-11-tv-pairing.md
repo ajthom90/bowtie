@@ -40,7 +40,7 @@
 
 - `{REFRESH}` is empty, or on the waiting page `<meta http-equiv="refresh" content="1;url=/p/status?t={TOKEN}">`.
 - Form body (`{ERROR}` empty or `<p class="err">{escaped message}</p>`; `{VALUE}` the escaped previously-entered address or empty):
-  `<h1>Set up Bowtie on your TV</h1>{ERROR}<form method="post" action="/p"><input type="hidden" name="t" value="{TOKEN}"><label for="s">Your Bowtie server address</label><input id="s" name="server" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="http://192.168.1.50:8400" value="{VALUE}" required><button type="submit">Continue</button></form><p class="hint">Use the address you open Bowtie with in your browser.</p>`
+  `<h1>Set up Bowtie on your TV</h1>{ERROR}<form method="post" action="/p"><input type="hidden" name="t" value="{TOKEN}"><label for="s">Your Bowtie server address</label><input id="s" name="server" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="http://192.168.1.50:8400" value="{VALUE}" required><button type="submit">Continue</button></form><p class="hint">Use the address you open Bowtie with in your browser.</p>`
 - Waiting body: `<h1>Connecting to your TV…</h1>`
 - 403 body: `<h1>Set up Bowtie on your TV</h1><p class="err">This pairing code has expired. Scan the code on your TV again.</p>`
 - 404 body: `<h1>Not found</h1>`
