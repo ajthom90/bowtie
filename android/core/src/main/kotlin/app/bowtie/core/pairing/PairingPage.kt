@@ -24,7 +24,7 @@ internal object PairingPage {
             "<h1>$TITLE</h1>$err<form method=\"post\" action=\"/p\">" +
                 "<input type=\"hidden\" name=\"t\" value=\"$token\">" +
                 "<label for=\"s\">Your Bowtie server address</label>" +
-                "<input id=\"s\" name=\"server\" type=\"url\" inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" " +
+                "<input id=\"s\" name=\"server\" type=\"text\" inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" " +
                 "spellcheck=\"false\" placeholder=\"http://192.168.1.50:8400\" value=\"${htmlEscape(value)}\" required>" +
                 "<button type=\"submit\">Continue</button></form>" +
                 "<p class=\"hint\">Use the address you open Bowtie with in your browser.</p>",

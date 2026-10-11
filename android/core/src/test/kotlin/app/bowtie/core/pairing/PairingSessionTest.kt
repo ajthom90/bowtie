@@ -15,6 +15,7 @@ class PairingSessionTest {
         val (r, sub) = PairingSession(t).handle(get("/p?t=$t"))
         assertEquals(200, r.status); assertNull(sub)
         assertTrue(text(r).contains("<h1>Set up Bowtie on your TV</h1>"))
+        assertTrue(text(r).contains("type=\"text\" inputmode=\"url\""))
         assertTrue(text(r).contains("name=\"t\" value=\"$t\""))
         assertEquals("close", header(r, "Connection"))
         assertEquals(r.body.size.toString(), header(r, "Content-Length"))
