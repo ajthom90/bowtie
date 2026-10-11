@@ -101,8 +101,9 @@ Bowtie server at <address>." with the form again; the TV stays on Connect.
   own thread (the `ApiTask` loop must not block). It exposes `submitted`
   (address) and takes `linkUrl`/`error`/`stop` from the scene. Pure pieces in
   `source/lib`: `PairHttp.bs` (parse/respond, tested under brs) and a
-  BrightScript QR encoder `Qr.bs` (byte mode, ECC M, versions 1–7 — the
-  pairing URL is ~50–57 bytes, so v5 (62) or v6 (76) in practice; the mask is
+  BrightScript QR encoder `Qr.bs` (byte mode, ECC M, versions 1–6, no
+  version-info block needed; byte capacity at M is 14/26/42/62/84/106, and the
+  pairing URL is at most 57 bytes, so v4 in practice; the mask is
   chosen by the standard penalty rules) drawn as one `Rectangle` per run
   of dark modules. Tests decode the encoder's matrix with `jsqr` (dev
   dependency) to prove it scans. LAN IP from `roDeviceInfo.GetIPAddrs()`.
