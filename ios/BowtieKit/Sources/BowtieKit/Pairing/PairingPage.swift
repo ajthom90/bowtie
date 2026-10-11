@@ -36,7 +36,7 @@ enum PairingPage {
 
     static func form(token: String, error: String? = nil, value: String = "") -> PairingResponse {
         let err = error.map { "<p class=\"err\">\(escape($0))</p>" } ?? ""
-        return status(200, "<h1>Set up Bowtie on your TV</h1>\(err)<form method=\"post\" action=\"/p\"><input type=\"hidden\" name=\"t\" value=\"\(escape(token))\"><label for=\"s\">Your Bowtie server address</label><input id=\"s\" name=\"server\" type=\"url\" inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\" placeholder=\"http://192.168.1.50:8400\" value=\"\(escape(value))\" required><button type=\"submit\">Continue</button></form><p class=\"hint\">Use the address you open Bowtie with in your browser.</p>")
+        return status(200, "<h1>Set up Bowtie on your TV</h1>\(err)<form method=\"post\" action=\"/p\"><input type=\"hidden\" name=\"t\" value=\"\(escape(token))\"><label for=\"s\">Your Bowtie server address</label><input id=\"s\" name=\"server\" type=\"text\" inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\" placeholder=\"http://192.168.1.50:8400\" value=\"\(escape(value))\" required><button type=\"submit\">Continue</button></form><p class=\"hint\">Use the address you open Bowtie with in your browser.</p>")
     }
 
     static func waiting(token: String) -> PairingResponse {

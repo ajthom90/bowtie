@@ -16,6 +16,7 @@ final class PairingSessionTests: XCTestCase {
         let (r, sub) = s.handle(get("/p?t=\(t)"))
         XCTAssertEqual(r.status, 200); XCTAssertNil(sub)
         XCTAssertTrue(text(r).contains("<h1>Set up Bowtie on your TV</h1>"))
+        XCTAssertTrue(text(r).contains("type=\"text\" inputmode=\"url\""))
         XCTAssertTrue(text(r).contains("name=\"t\" value=\"\(t)\""))
         XCTAssertEqual(header(r, "Connection"), "close")
         XCTAssertEqual(header(r, "Content-Length"), String(r.body.count))
