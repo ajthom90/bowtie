@@ -12,7 +12,8 @@
   "devDependencies": {
     "@rokucommunity/brs": "0.47.6",
     "@rokucommunity/bslint": "0.8.44",
-    "brighterscript": "0.73.0"
+    "brighterscript": "0.73.0",
+    "jsqr": "1.4.0"
   },
   "engines": {
     "node": ">=22"
