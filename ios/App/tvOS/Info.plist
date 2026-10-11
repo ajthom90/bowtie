@@ -7,6 +7,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Bowtie shows a setup page on your network so you can enter your server address from your phone.</string>
 	<key>NSSupportsGroupActivities</key>
 	<true/>
 </dict>
