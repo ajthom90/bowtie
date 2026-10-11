@@ -6,6 +6,8 @@ import app.bowtie.core.BowtieClient
 import app.bowtie.core.ServerUrl
 import app.bowtie.core.TokenStore
 import app.bowtie.core.User
+import app.bowtie.core.pairing.LanAddress
+import app.bowtie.core.pairing.PairingCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +29,7 @@ class AppViewModel(
     private val clientFactory: (HttpUrl) -> BowtieClient,
     private val scope: CoroutineScope? = null,
     private val healthClient: OkHttpClient = OkHttpClient(),
+    private val pairingHost: () -> String? = LanAddress::ipv4,
 ) : ViewModel() {
 
     sealed class Phase {
@@ -43,6 +46,10 @@ class AppViewModel(
 
     var client: BowtieClient? = null
         private set
+
+    /** TV "set up from your phone" listener; lazy so the phone app never builds one. */
+    private val pairingLazy = lazy { PairingCoordinator(workScope, connect = ::connectFromPairing, host = pairingHost) }
+    val pairing: PairingCoordinator by pairingLazy
 
     init {
         val serverStr = store.loadServer()
@@ -67,15 +74,33 @@ class AppViewModel(
      * Normalize + healthz-validate [raw], persist server, advance to [Phase.Login].
      * @return false when the URL is invalid or the server is unreachable.
      */
-    suspend fun connect(raw: String): Boolean {
+    suspend fun connect(raw: String): Boolean = connect(raw, onlyFromConnect = false)
+
+    /** A phone submitted [raw]; a slow check must not overwrite a server typed or signed in meanwhile. */
+    internal suspend fun connectFromPairing(raw: String): Boolean = connect(raw, onlyFromConnect = true)
+
+    private suspend fun connect(raw: String, onlyFromConnect: Boolean): Boolean {
+        if (onlyFromConnect && _phase.value !is Phase.Connect) return false
         val url = ServerUrl.normalize(raw) ?: return false
         val ok = ServerUrl.validate(url, healthClient)
         if (!ok) return false
+        if (onlyFromConnect && _phase.value !is Phase.Connect) return false
 
         store.save(url.toString(), null)
         client = clientFactory(url)
         _phase.value = Phase.Login
         return true
+    }
+
+    /** The user typed an address on the TV: once it connects, that supersedes any phone pairing (a typo keeps the QR). */
+    suspend fun connectTyped(raw: String): Boolean {
+        val ok = connect(raw)
+        if (ok) stopPairing()
+        return ok
+    }
+
+    private fun stopPairing() {
+        if (pairingLazy.isInitialized()) pairing.stop()
     }
 
     /**
@@ -88,6 +113,7 @@ class AppViewModel(
         workScope.launch {
             try {
                 val user = c.bootstrapFromStoredToken()
+                stopPairing()
                 _phase.value = Phase.Ready(user)
             } catch (_: Exception) {
                 _phase.value = Phase.Login
@@ -98,6 +124,7 @@ class AppViewModel(
     suspend fun signIn(username: String, password: String) {
         val c = client ?: error("No client — connect to a server first")
         val user = c.login(username, password)
+        stopPairing()
         _phase.value = Phase.Ready(user)
     }
 
@@ -107,6 +134,7 @@ class AppViewModel(
      */
     fun completeSignIn(user: User) {
         if (client == null) return
+        stopPairing()
         _phase.value = Phase.Ready(user)
     }
 
@@ -121,5 +149,10 @@ class AppViewModel(
         store.save(null, null)
         client = null
         _phase.value = Phase.Connect
+    }
+
+    override fun onCleared() {
+        // Cancelling viewModelScope can't unblock the listener's accept(); close it explicitly.
+        stopPairing()
     }
 }
