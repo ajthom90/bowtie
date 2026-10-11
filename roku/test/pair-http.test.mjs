@@ -185,20 +185,59 @@ test('once closed every request is 403, even garbage or oversize', () => {
     for (const x of r) assert.equal(status(x), 'HTTP/1.1 403 Forbidden');
 });
 
-test('normalizeServer accepts host[:port] and rejects markup, paths and other schemes', () => {
-    const cases = ['192.168.1.50:8400/', ' Bowtie.lan ', 'HTTPS://tv.local:443', '"><script>', 'http://a b', 'ftp://x', 'http://', 'http://x:', 'http://x:80a', 'http://x:123456', 'http://x/path', 'http://[::1]:8400', ''];
+test('normalizeServer accepts host[:port][/path] and rejects markup, bad paths, ports and schemes', () => {
+    const cases = ['192.168.1.50:8400/', ' Bowtie.lan ', 'HTTPS://tv.local:443', '"><script>', 'http://a b', 'ftp://x', 'http://', 'http://x:', 'http://x:80a', 'http://x:123456',
+        'http://x/path', 'http://x/a/b/', 'http://x//', 'http://x/a b', 'http://x/a%20b', 'http://x/a?b', 'http://x/a#b', 'http://x/<b>', 'http://x:0', 'http://x:65536', 'http://x:65535', 'http://[::1]:8400', ''];
     const got = runBrs(LIB, `
         out.n = []
         for each c in [${cases.map(lit).join(', ')}]
             out.n.push(bowtie_pair_normalizeServer(c))
         end for
+        out.ctl = bowtie_pair_normalizeServer("http://x/a" + chr(13) + chr(10) + "b")
     `);
-    assert.deepEqual(got.n, ['http://192.168.1.50:8400', 'http://Bowtie.lan', 'https://tv.local:443', '', '', '', '', '', '', '', '', '', '']);
+    assert.deepEqual(got.n, ['http://192.168.1.50:8400', 'http://Bowtie.lan', 'https://tv.local:443', '', '', '', '', '', '', '',
+        'http://x/path', 'http://x/a/b', 'http://x', '', '', '', '', '', '', '', 'http://x:65535', '', '']);
+    assert.equal(got.ctl, '');
+});
+
+test('degenerate and oversized input stays fast and correct', () => {
+    const started = Date.now();
+    const { r } = run([
+        req(post(`t=${T}&server=http%3A%2F%2F` + '%2F'.repeat(2000))),
+        req(post(`t=${T}&server=http://` + '/'.repeat(8000))),
+        req(post(`t=${T}&junk=` + 'x'.repeat(8000))),
+        req(post(`t=${T}&server=` + 'a'.repeat(3000))),
+        req('\r\n\r\n'),
+    ]);
+    assert.ok(Date.now() - started < 2000, 'took too long');
+    assert.equal(status(r[0]), 'HTTP/1.1 200 OK');
+    assert.match(body(r[1]), /Enter an address/);
+    assert.equal(r[2].submitted, '');
+    assert.match(body(r[3]), /Enter an address/);
+    assert.equal(status(r[4]), 'HTTP/1.1 400 Bad Request');
+});
+
+test('a wrong-token POST counts toward the lockout; POST /p/status is 404', () => {
+    const steps = [req(post('t=nope&server=x'))];
+    steps.push(req(post(`t=${T}`).replace('POST /p ', 'POST /p/status ')));
+    const { r } = run(steps);
+    assert.equal(status(r[0]), 'HTTP/1.1 403 Forbidden');
+    assert.equal(status(r[1]), 'HTTP/1.1 404 Not Found');
+    const locked = run([...Array(20).keys()].map(() => req(post('t=nope&server=x'))).concat(req(get(`/p?t=${T}`))));
+    assert.equal(status(locked.r[20]), 'HTTP/1.1 403 Forbidden');
+    assert.equal(locked.state, 'closed');
+});
+
+test('non-ASCII percent escapes stay literal so bodies are ASCII', () => {
+    const got = runBrs(LIB, `out.d = bowtie_pair_urlDecode("%C3%A9%41%zz%4")`);
+    assert.equal(got.d, '%C3%A9A%zz%4');
 });
 
 test('linkUrl strips dashes and a trailing slash; duplicate form keys keep the first', () => {
     const got = runBrs(LIB, `out.l = bowtie_pair_linkUrl("http://a.lan:8400/", "BCDF-2345")`);
     assert.equal(got.l, 'http://a.lan:8400/link?code=BCDF2345');
+    const sub = runBrs(LIB, `out.l = bowtie_pair_linkUrl("http://a.lan/bowtie", "BCDF-2345")`);
+    assert.equal(sub.l, 'http://a.lan/bowtie/link?code=BCDF2345');
     const out = run([req(post(`t=${T}&server=first.lan&server=second.lan`))]);
     assert.equal(out.r[0].submitted, 'http://first.lan');
 });
