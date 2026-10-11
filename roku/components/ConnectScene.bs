@@ -28,6 +28,7 @@ sub init()
     m.urlText = ""
     m.dialog = invalid
     m.observedPair = invalid
+    m.queuedPair = ""
 
     m.enterButton.observeField("buttonSelected", "onEnterButton")
     m.top.observeField("visible", "onVisible")
@@ -45,6 +46,8 @@ sub onVisible()
         unobserveApi()
         ' The probe's answer won't come now: let a waiting phone try again.
         if m.busy = true and m.fromPair = true then reportPairFailed(m.pendingBase)
+        if m.queuedPair <> "" then reportPairFailed(m.queuedPair)
+        m.queuedPair = ""
         m.busy = false
         m.pendingId = ""
     end if
@@ -93,7 +96,7 @@ end sub
 sub onPairUrl()
     url = ""
     pair = m.top.pairTask
-    if pair <> invalid and pair.pairUrl <> invalid then url = pair.pairUrl
+    if pair <> invalid then url = pair.pairUrl
     if url = m.pairQr.text then return
 
     m.pairQr.text = url
@@ -114,9 +117,15 @@ sub onPairSubmitted()
     if pair = invalid then return
     address = pair.submitted
     if address = invalid or address = "" then return
-    ' Only Connect may change the server, and only one probe at a time.
-    if m.top.visible <> true or m.busy = true
+    ' Only Connect may change the server.
+    if m.top.visible <> true
         reportPairFailed(address)
+        return
+    end if
+    ' One probe at a time: the phone waits on "Connecting…" until the typed
+    ' one answers (a typed success stops pairing altogether).
+    if m.busy = true
+        m.queuedPair = address
         return
     end if
     m.urlLabel.text = address
@@ -242,6 +251,10 @@ sub onApiResponse()
         m.errorLabel.text = CONNECT_ERROR
         m.enterButton.setFocus(true)
         if m.fromPair = true then reportPairFailed(m.pendingBase)
+        ' A phone address that arrived during a typed check goes next.
+        queued = m.queuedPair
+        m.queuedPair = ""
+        if queued <> "" then submitUrl(queued, true)
     end if
 end sub
 

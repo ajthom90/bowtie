@@ -49,7 +49,11 @@ test('Connect reports phone addresses it will not probe, and stops pairing only 
     assert.match(body(bs, 'sub stopPairing()'), /\.stop = true/);
     assert.match(response, /reportPairFailed/);
     assert.match(body(bs, 'sub reportPairFailed('), /\.connectFailed = address/);
-    assert.match(body(bs, 'sub onPairSubmitted()'), /m\.top\.visible <> true or m\.busy = true\s+reportPairFailed/);
+    const submitted = body(bs, 'sub onPairSubmitted()');
+    assert.match(submitted, /if m\.top\.visible <> true\s+reportPairFailed/);
+    // A phone address during a typed check waits for it instead of failing.
+    assert.match(submitted, /if m\.busy = true\s+m\.queuedPair = address/);
+    assert.match(response, /if queued <> "" then submitUrl\(queued, true\)/);
     assert.doesNotMatch(body(bs, 'sub submitUrl('), /stop = true/);
 });
 

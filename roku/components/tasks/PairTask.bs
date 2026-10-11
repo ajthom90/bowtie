@@ -55,7 +55,7 @@ sub pairRun()
     token = Left(LCase(CreateObject("roDeviceInfo").GetRandomUUID().Replace("-", "")), 24)
     session = bowtie.pair.newSession(token)
     m.top.pairUrl = "http://" + ip + ":" + listenPort.toStr() + "/p?t=" + token
-    print "[pair] listening on "; m.top.pairUrl
+    print "[pair] listening on port "; listenPort
 
     clock = CreateObject("roTimespan")
     clock.Mark()
@@ -131,6 +131,13 @@ sub readConnection(conn as object, conns as object, session as object)
         return
     end if
     conn.buf = conn.buf + chunk
+    ' Take everything already buffered (up to just past the size limit, so an
+    ' oversized request gets its 413 now rather than at the deadline).
+    while sock.getCountRcvBuf() > 0 and Len(conn.buf) <= bowtie.pair.MAX_REQUEST
+        more = sock.receiveStr(READ_CHUNK)
+        if more = invalid or more = "" then exit while
+        conn.buf = conn.buf + more
+    end while
     result = bowtie.pair.handle(session, conn.buf)
     if result.incomplete
         conn.pending = result.response
