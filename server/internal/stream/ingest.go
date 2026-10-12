@@ -444,6 +444,7 @@ type channelIngest struct {
 	pesHdr          []byte // PES header bytes until pesHdrDone
 	pesHdrDone      bool   // pesScan holds elementary stream, not header bytes
 	pesDone         bool   // the current PES was classified
+	pesPromoted     bool   // that classification moved the join to this PES
 	videoCC         int    // last video payload continuity counter, -1 if none
 	videoPay        []byte // that packet's payload, for one legal duplicate
 	paramOff        int    // offset of the last PES with an H.264 SPS since the join (-1: none)
@@ -1016,7 +1017,7 @@ func (c *channelIngest) restartJoinLocked() {
 	c.sinceJoin = c.sinceJoin[:0]
 	c.pesOff, c.paramOff, c.ppsSeen = -1, -1, false
 	c.pesScan, c.pesHdr = nil, nil
-	c.pesHdrDone, c.pesDone = false, false
+	c.pesHdrDone, c.pesDone, c.pesPromoted = false, false, false
 	c.videoCC, c.videoPay = -1, nil
 	c.joinValid = false
 }
@@ -1100,7 +1101,7 @@ func (c *channelIngest) videoPacketLocked(pkt []byte) {
 
 // startPESLocked begins a candidate PES at the packet about to be appended.
 func (c *channelIngest) startPESLocked(payload []byte) {
-	c.pesOff, c.pesDone = len(c.sinceJoin), false
+	c.pesOff, c.pesDone, c.pesPromoted = len(c.sinceJoin), false, false
 	c.pesHdrDone = false
 	c.pesHdr = append(c.pesHdr[:0], payload...)
 	c.pesScan = c.pesScan[:0]
@@ -1120,11 +1121,11 @@ func (c *channelIngest) scanPESLocked(payload []byte) {
 	c.finishPESHeaderLocked()
 }
 
-// damagePESLocked drops loss inside the current video PES. An unclassified
-// candidate is abandoned. A key already promoted from this same PES is
-// invalidated, because the PES was damaged before it ended.
+// damagePESLocked drops loss inside the current video PES. Only the PES that
+// established the join is invalidated. Damage to any other PES, including one
+// classified early at the scan cap, leaves the previous key in place.
 func (c *channelIngest) damagePESLocked() {
-	if c.joinValid && c.pesDone && c.pesOff >= 0 {
+	if c.pesPromoted {
 		cc := c.videoCC
 		pay := append([]byte(nil), c.videoPay...)
 		c.restartJoinLocked()
@@ -1143,6 +1144,7 @@ func (c *channelIngest) abandonCandidateLocked() {
 	}
 	c.pesDone = true
 	c.pesOff = -1
+	c.pesPromoted = false
 	c.pesScan = c.pesScan[:0]
 	c.pesHdr = c.pesHdr[:0]
 	c.pesHdrDone = false
@@ -1201,6 +1203,7 @@ func (c *channelIngest) joinAtLocked(off int) {
 		c.paramOff, c.ppsSeen = -1, false
 	}
 	c.joinValid = true
+	c.pesPromoted = true
 }
 
 func (c *channelIngest) isPMTPID(pid uint16) bool {
@@ -1221,6 +1224,7 @@ func (c *channelIngest) capJoinLocked() {
 	c.sinceJoin = c.sinceJoin[trimmed:]
 	// The key at the head is gone: not a decodable join any more.
 	c.joinValid = false
+	c.pesPromoted = false
 	c.pesOff -= trimmed
 	if c.pesOff < 0 {
 		c.pesOff, c.pesDone = -1, true

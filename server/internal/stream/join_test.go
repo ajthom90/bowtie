@@ -407,6 +407,55 @@ func TestKeyJoinDamageAfterPromotionInvalidates(t *testing.T) {
 	}
 }
 
+// feedLongNonKeyAfterGoodKey establishes a short key, then a non-key PES that
+// has already been classified at the scan cap. Damage belongs to that PES,
+// not to the key.
+func feedLongNonKeyAfterGoodKey(t *testing.T, c *channelIngest, pid uint16, cc *ccSeq) []byte {
+	t.Helper()
+	good := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68), nal(0x65)))
+	first := make([]byte, 184)
+	copy(first, nal(0x41)) // non-IDR; 4-byte start code, so the whole packet is ES
+	c.handleTSPacketLocked(good)
+	c.handleTSPacketLocked(cc.ts(pid, true, first))
+	if !c.joinValid {
+		t.Fatal("setup: short key was not classified")
+	}
+	for n := 2; n <= 20; n++ {
+		c.handleTSPacketLocked(cc.ts(pid, false, make([]byte, 184)))
+	}
+	if !c.joinValid || !c.pesDone {
+		t.Fatalf("setup: non-key PES was not classified past the scan cap (valid=%v done=%v)", c.joinValid, c.pesDone)
+	}
+	return good
+}
+
+// A large P/B-frame PES is classified at the scan cap without becoming the
+// join. Loss in its tail must not discard the earlier key.
+func TestKeyJoinNonKeyTailCCGapKeepsPreviousKey(t *testing.T) {
+	c, b, tables := h264Ingest(t)
+	var cc ccSeq
+	good := feedLongNonKeyAfterGoodKey(t, c, b.mediaPID, &cc)
+	cc.skip()
+	c.handleTSPacketLocked(cc.ts(b.mediaPID, false, make([]byte, 184)))
+	got := c.joinSnapshotLocked()
+	if !c.joinValid || !bytes.HasPrefix(got, cat(tables, good)) {
+		t.Fatalf("CC gap in a non-key PES discarded the previous key (valid=%v len=%d)", c.joinValid, len(got))
+	}
+}
+
+func TestKeyJoinNonKeyTailTEIKeepsPreviousKey(t *testing.T) {
+	c, b, tables := h264Ingest(t)
+	var cc ccSeq
+	good := feedLongNonKeyAfterGoodKey(t, c, b.mediaPID, &cc)
+	tei := cc.ts(b.mediaPID, false, []byte{1, 2, 3, 4})
+	tei[1] |= 0x80
+	c.handleTSPacketLocked(tei)
+	got := c.joinSnapshotLocked()
+	if !c.joinValid || !bytes.HasPrefix(got, cat(tables, good)) {
+		t.Fatalf("TEI in a non-key PES discarded the previous key (valid=%v len=%d)", c.joinValid, len(got))
+	}
+}
+
 // A discontinuity on the next PES start is a splice, not a reason to classify
 // the previous PES. Its missing tail must not replace the last good key.
 func TestKeyJoinDiscontinuityPUSIKeepsPreviousKey(t *testing.T) {
