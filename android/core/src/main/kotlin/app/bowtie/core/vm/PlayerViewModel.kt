@@ -33,6 +33,9 @@ import kotlinx.coroutines.launch
  * - Zap / quality: cancel in-flight → DELETE old → debounce → POST new.
  * - Heartbeats (spec C / A6): 15s while session is open (Playing OR Stalled);
  *   stream-token auth; stop only on real leave.
+ * - Slow start: after [SLOW_START_MS] still [State.Starting], [slowStart] turns
+ *   true and the player shows [SLOW_START_NOTE] instead of "Starting…". Every
+ *   zap / new start resets it.
  */
 class PlayerViewModel(
     private val client: BowtieClient,
@@ -71,6 +74,15 @@ class PlayerViewModel(
         /** Out-of-window clamp notice (spec B) — exact copy. */
         const val OUT_OF_WINDOW_NOTICE =
             "Jumped to live — paused longer than the buffer"
+
+        /** Shown instead of "Starting…" once a start has taken [SLOW_START_MS]. */
+        const val SLOW_START_NOTE =
+            "Still starting — the stream is buffering. This can take a little while."
+
+        const val SLOW_START_MS = 5_000L
+
+        /** The spinner's text while [State.Starting]. */
+        fun startingText(slow: Boolean): String = if (slow) SLOW_START_NOTE else "Starting…"
 
         /** Client heartbeat interval (spec C). */
         const val HEARTBEAT_INTERVAL_MS = 15_000L
@@ -131,10 +143,19 @@ class PlayerViewModel(
      */
     val weakSignal: StateFlow<Boolean> = _weakSignal.asStateFlow()
 
+    private val _slowStart = MutableStateFlow(false)
+
+    /**
+     * The current start has been [State.Starting] for [SLOW_START_MS]: show
+     * [SLOW_START_NOTE]. Only meaningful while the state is Starting.
+     */
+    val slowStart: StateFlow<Boolean> = _slowStart.asStateFlow()
+
     /** `""` = Auto. */
     var selectedProfile: String = ""
 
     private var replaceJob: Job? = null
+    private var slowStartJob: Job? = null
     private var heartbeatJob: Job? = null
     private var activeViewerId: String? = null
     /** Last successfully created session — used to recover from [State.Stalled]. */
@@ -169,6 +190,7 @@ class PlayerViewModel(
     fun stop() {
         replaceJob?.cancel()
         replaceJob = null
+        resetSlowStart()
         stopHeartbeat()
         generation++
 
@@ -240,9 +262,20 @@ class PlayerViewModel(
         stopHeartbeat()
         generation++
         val gen = generation
+        resetSlowStart()
+        slowStartJob = workScope.launch {
+            delay(SLOW_START_MS)
+            if (isCurrent(gen) && _state.value is State.Starting) _slowStart.value = true
+        }
         replaceJob = workScope.launch {
             performReplace(gen)
         }
+    }
+
+    private fun resetSlowStart() {
+        slowStartJob?.cancel()
+        slowStartJob = null
+        _slowStart.value = false
     }
 
     private suspend fun performReplace(gen: Long) {
@@ -285,6 +318,7 @@ class PlayerViewModel(
             lastSession = session
             _channelsStale.value = false
             _state.value = State.Playing(session)
+            resetSlowStart()
             startHeartbeat(viewerId = session.viewerId, playlistUrl = session.playlistUrl)
         } catch (e: CancellationException) {
             throw e
@@ -346,6 +380,7 @@ class PlayerViewModel(
     }
 
     override fun onCleared() {
+        resetSlowStart()
         stopHeartbeat()
         replaceJob?.cancel()
         super.onCleared()

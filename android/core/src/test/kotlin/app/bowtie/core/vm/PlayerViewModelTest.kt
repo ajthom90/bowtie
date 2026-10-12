@@ -21,6 +21,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,6 +64,10 @@ class PlayerViewModelTest {
     private var createStatusCodes: List<Int> = emptyList()
     private var createBodies: List<String> = emptyList()
 
+    /** Session POSTs get no answer (a slow start still in progress). */
+    @Volatile
+    private var createHangs = false
+
     /** Heartbeat answer (status, body). */
     @Volatile
     private var heartbeatResponse: Pair<Int, String> = 204 to ""
@@ -77,6 +82,7 @@ class PlayerViewModelTest {
         createStatusCodes = emptyList()
         createBodies = emptyList()
         heartbeatResponse = 204 to ""
+        createHangs = false
 
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -94,6 +100,9 @@ class PlayerViewModelTest {
                     return MockResponse().setBody(tokenPairJson())
                 }
                 if (method == "POST" && path == "/api/v1/sessions") {
+                    if (createHangs) {
+                        return MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
+                    }
                     val n = createSeq.incrementAndGet()
                     val code = createStatusCodes.getOrElse(n - 1) { 200 }
                     if (code != 200) {
@@ -266,6 +275,59 @@ class PlayerViewModelTest {
 
         val body = sessionCreates().single().body
         assertTrue("body=$body", body.contains("\"channelId\":3"))
+    }
+
+    // ── Slow start note ─────────────────────────────────────────────────────
+
+    @Test
+    fun slowStartNoteAfterFiveSecondsResetOnZap() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        createHangs = true
+
+        vm.play(ch1)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertFalse("not before 5 s", vm.slowStart.value)
+        assertEquals("Starting…", PlayerViewModel.startingText(vm.slowStart.value))
+
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("after 5 s still starting", vm.slowStart.value)
+        assertEquals(
+            "Still starting — the stream is buffering. This can take a little while.",
+            PlayerViewModel.startingText(vm.slowStart.value),
+        )
+
+        // A zap is a new start: back to "Starting…" and a fresh 5 s.
+        vm.play(ch2)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.slowStart.value)
+
+        vm.stop()
+        assertFalse("leaving clears it", vm.slowStart.value)
+    }
+
+    @Test
+    fun quickStartNeverShowsTheSlowStartNote() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+
+        playThroughDebounce(vm, ch1)
+        assertTrue(vm.state.value is PlayerViewModel.State.Playing)
+        advanceTimeBy(6_000)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
     }
 
     // ── Zap: delete old then create new ─────────────────────────────────────

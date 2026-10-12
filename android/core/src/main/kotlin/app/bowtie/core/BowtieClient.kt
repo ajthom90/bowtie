@@ -20,6 +20,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.time.Instant
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -38,6 +39,17 @@ class BowtieClient(
     private val store: TokenStore,
     private val okHttp: OkHttpClient = OkHttpClient(),
 ) {
+    /**
+     * The same client with a longer read timeout, for [createSession]: the
+     * server answers once the stream is ready, which can take ~45 s
+     * (OkHttp's default 10 s gave up and said "can't reach").
+     */
+    private val sessionStartHttp: OkHttpClient by lazy {
+        okHttp.newBuilder()
+            .readTimeout(SESSION_START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
@@ -212,6 +224,7 @@ class BowtieClient(
                 bodyJson = BowtieJson.encodeToString(
                     CreateSessionRequest(channelId = channelId, caps = caps),
                 ),
+                http = sessionStartHttp,
             )
             BowtieJson.decodeFromString(body)
         }
@@ -491,6 +504,7 @@ class BowtieClient(
         path: String,
         bodyJson: String? = null,
         retryOn401: Boolean = true,
+        http: OkHttpClient = okHttp,
     ): String {
         val attachAuth = !isStreamPath(path)
 
@@ -516,12 +530,12 @@ class BowtieClient(
             // Snapshot the token actually sent — concurrent refresh may rotate
             // accessToken before we process a late 401 for the old token.
             val tokenUsed = accessToken
-            val first = okHttp.newCall(build(tokenUsed)).await()
+            val first = http.newCall(build(tokenUsed)).await()
             try {
                 if (first.code == 401 && retryOn401 && attachAuth) {
                     first.close()
                     singleFlightRefresh(failedAccessToken = tokenUsed)
-                    okHttp.newCall(build(accessToken)).await().use { retry ->
+                    http.newCall(build(accessToken)).await().use { retry ->
                         if (retry.code == 401) {
                             clearSessionKeepServer()
                             throw BowtieError.Unauthorized
@@ -651,6 +665,13 @@ class BowtieClient(
     private fun jsonBody(json: String) = json.toRequestBody(JSON_MEDIA_TYPE)
 
     companion object {
+        /**
+         * How long [createSession] waits for the server. Above the server's
+         * own bound on a start (device answer 12 s + first playlist 15 s +
+         * one simpler layout 15 s), so a slow start isn't "can't reach".
+         */
+        const val SESSION_START_TIMEOUT_SECONDS = 60L
+
         private const val JSON_MEDIA = "application/json"
         private val JSON_MEDIA_TYPE = JSON_MEDIA.toMediaType()
 
