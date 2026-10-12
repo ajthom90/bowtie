@@ -193,6 +193,38 @@ test('pollOutcome: 200 signs in, 428 waits, 410 expires, network trouble keeps p
     assert.equal(out.none.action, 'wait');
 });
 
+// A response read back from ApiTask's `response` field (a node assocarray)
+// carries boxed numbers: Type() is "roInt", not "Integer". errorCode used to
+// accept only "Integer"/"roInteger" (which doesn't exist), so every 428 read 0
+// and the Login screen said "Can't reach the server. Still trying…".
+test('pollOutcome and startOutcome read boxed (roInt) codes from the response field', () => {
+    const out = runBrs(LIB, `
+        p = bowtie_deviceauth_pollOutcome
+        out.type = Type(box(428))
+        out.pending = p({ ok: false, error: { code: box(428), kind: "pending", message: "" } })
+        out.expired = p({ ok: false, error: { code: box(410), kind: "expired", message: "" } })
+        out.offline = p({ ok: false, error: { code: box(0), kind: "server", message: "" } })
+        out.down = p({ ok: false, error: { code: box(502), kind: "server", message: "" } })
+        out.old = bowtie_deviceauth_startOutcome({ ok: false, error: { code: box(404), kind: "server", message: "" } })
+        out.busy = bowtie_deviceauth_startOutcome({ ok: false, error: { code: box(429), kind: "server", message: "" } })
+        out.long = bowtie_deviceauth_errorCode({ ok: false, error: { code: box(428&) } })
+        s = bowtie_deviceauth_newSession({ deviceCode: "dc", userCode: "BCDF-2345", qrUrl: "", interval: box(3), expiresIn: box(120) }, "${BASE}", 1000)
+        out.interval = s.intervalSec
+        out.expiresat = s.expiresAtSec
+    `);
+    assert.equal(out.type, 'roInt');
+    assert.equal(out.pending.action, 'wait');
+    assert.equal(out.pending.message, 'Waiting for you to approve it on your phone…');
+    assert.equal(out.expired.action, 'expired');
+    assert.equal(out.offline.message, "Can't reach the server. Still trying…");
+    assert.equal(out.down.message, "Can't reach the server. Still trying…");
+    assert.equal(out.old.action, 'password');
+    assert.equal(out.busy.message, 'Too many sign-ins are in progress. Try again in a minute.');
+    assert.equal(out.long, 428);
+    assert.equal(out.interval, 3);
+    assert.equal(out.expiresat, 1120);
+});
+
 test('isExpired: the code lapses at expiresAtSec even if the server never says 410', () => {
     const out = runBrs(LIB, `
         s = { "expiresAtSec": 1600 }
