@@ -5,6 +5,26 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **A slow channel start says so.** On Roku, iPhone, iPad, Apple TV, Mac,
+  Android phone and TV, and the web player (and multiview tiles), when a
+  channel is still starting after 5 seconds, "Starting…" changes to "Still
+  starting — the stream is buffering. This can take a little while." Each
+  new channel or quality change starts the count over; "Reconnecting…"
+  stays as it is. On Roku and the web the note stays up until the first
+  frame plays.
+
+### Fixed
+
+- **A slow start no longer reads as "Can't reach your Bowtie server".**
+  Roku and Android gave up on starting a channel after 10 seconds, while
+  the server can take longer (tuning, then the first segment). They now
+  wait up to 60 seconds, like the Apple apps; a server that doesn't answer
+  at all still shows "Can't reach".
+
 ## [0.22.1] — 2026-10-06
 
 ### Fixed
