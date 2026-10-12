@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 
 /**
  * A channel start can take a while: the server answers once the tuner is on
@@ -31,4 +31,31 @@ export function useSlowStart(active: boolean, restartKey: unknown): boolean {
     return scheduleSlowStart(() => setSlow(true))
   }, [active, restartKey])
   return slow
+}
+
+/**
+ * The viewer is open but its first frame hasn't loaded: arm it when the
+ * server answers; the video's `loadeddata` or `playing` disarms it.
+ */
+export function useAwaitingFirstFrame(
+  videoRef: RefObject<HTMLVideoElement | null>,
+): [boolean, (on: boolean) => void] {
+  const [awaiting, setAwaiting] = useState(false)
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !awaiting) return
+    const onFrame = () => setAwaiting(false)
+    video.addEventListener('loadeddata', onFrame)
+    video.addEventListener('playing', onFrame)
+    return () => {
+      video.removeEventListener('loadeddata', onFrame)
+      video.removeEventListener('playing', onFrame)
+    }
+  }, [videoRef, awaiting])
+  return [awaiting, setAwaiting]
+}
+
+/** "Starting stream…" shows while the server starts the stream and until the first frame. */
+export function showsStarting(loading: boolean, awaitingFrame: boolean, failed: boolean): boolean {
+  return (loading || awaitingFrame) && !failed
 }

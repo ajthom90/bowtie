@@ -19,7 +19,7 @@ import { SeekBar } from './SeekBar'
 import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import { createSessionAttempt, type SessionAttempt, type SessionHandle } from './sessionLifecycle'
 import { signalStatsLine, weakSignalNote } from './signalModel'
-import { startingText, useSlowStart } from './startingNote'
+import { showsStarting, startingText, useAwaitingFirstFrame, useSlowStart } from './startingNote'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -144,7 +144,7 @@ export function Player({ target, onBack }: Props) {
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [loading, setLoading] = useState(true)
   /** The viewer is open but its first frame hasn't loaded yet. */
-  const [awaitingFrame, setAwaitingFrame] = useState(false)
+  const [awaitingFrame, setAwaitingFrame] = useAwaitingFirstFrame(videoRef)
   const [error, setError] = useState<StartError | null>(null)
   const [playing, setPlaying] = useState(true)
   const [muted, setMuted] = useState(false)
@@ -343,7 +343,7 @@ export function Player({ target, onBack }: Props) {
   }, [])
 
   // Open the viewer for this channel and quality (again on Try again). Starting
-  // can take 10–20 s: whichever of "created" and "cleanup" (Back, a new quality,
+  // can take up to about 50 s: whichever of "created" and "cleanup" (Back, a new quality,
   // StrictMode's dev remount) comes second stops the viewer, so leaving while
   // "Starting stream…" never strands a tuner until the server's reaper.
   useEffect(() => {
@@ -543,20 +543,8 @@ export function Player({ target, onBack }: Props) {
     return () => window.clearInterval(id)
   }, [showStats])
 
-  // The first frame is in: "Starting stream…" (and its slow-start note) goes.
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !awaitingFrame) return
-    const onFrame = () => setAwaitingFrame(false)
-    video.addEventListener('loadeddata', onFrame)
-    video.addEventListener('playing', onFrame)
-    return () => {
-      video.removeEventListener('loadeddata', onFrame)
-      video.removeEventListener('playing', onFrame)
-    }
-  }, [awaitingFrame])
-
-  const starting = (loading || awaitingFrame) && !error
+  // "Starting stream…" (and its slow-start note) stays up until the first frame.
+  const starting = showsStarting(loading, awaitingFrame, !!error)
   const slowStart = useSlowStart(starting, `${target.channelId}|${profile}|${sessionEpoch}`)
 
   // Sync play state from video element.
