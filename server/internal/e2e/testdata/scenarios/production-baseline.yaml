@@ -16,6 +16,7 @@ expect:
   maxTailGapSeconds: 12
   maxAudioHoleMs: 50
   maxAVStartSkewMs: 100
+  maxStartAVOffsetMs: 100
   pairedAfterEachFault: true
   maxStartSeconds: 10
   discontinuitySequenceOK: true

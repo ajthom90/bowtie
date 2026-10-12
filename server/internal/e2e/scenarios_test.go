@@ -216,6 +216,7 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 		obs.TimelineExcess = r.TimelineExcess
 		obs.MaxAudioHole = r.MaxAudioHole
 		obs.MaxAVStartSkew = r.MaxAVStartSkew
+		obs.MaxStartAVOffset = r.MaxStartAVOffset
 		obs.ProbedAudio, obs.ProbedVideo = r.ProbedAudio, r.ProbedVideo
 		obs.FetchErrors = r.FetchErrors
 		obs.AVPairs = r.AVPairs
@@ -246,8 +247,8 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 		for _, pr := range c.Problems {
 			t.Logf("consistency: %s", pr)
 		}
-		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v over %d pairs probed=%d/%d cues=%d (%d timed, %d mistimed or unmatched)",
-			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CuesTimed, r.CueErrors)
+		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v startAV=%v over %d pairs probed=%d/%d cues=%d (%d timed, %d mistimed or unmatched)",
+			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.MaxStartAVOffset, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CuesTimed, r.CueErrors)
 		t.Logf("player: polls=%d segments=%d segErrors=%d backward=%d discontinuities=%d maxGap=%v gone=%v newest=%v errors=%v",
 			r.Polls, r.SegmentsFetched, r.SegmentErrors, r.BackwardJumps, r.Discontinuities, r.MaxGap.Round(100*time.Millisecond), r.SessionGone, r.Newest, r.Errors)
 		p.Stop(context.Background())
