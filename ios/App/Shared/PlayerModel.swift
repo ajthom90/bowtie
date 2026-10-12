@@ -19,6 +19,9 @@ import BowtieKit
 ///   reading (`signal`) for the weak-signal note and the stats panel.
 /// - Viewer-facing failure text is plain words (`ViewerErrorCopy`); the
 ///   technical cause goes to the log.
+/// - Slow start: `StartingCopy.slowAfter` into `.starting`, `isSlowStart`
+///   turns true and `startingText` says the stream is still buffering. Every
+///   zap / new start resets it.
 @Observable
 @MainActor
 public final class PlayerModel {
@@ -84,6 +87,12 @@ public final class PlayerModel {
     /// that gets no answer keeps the last reading, so the note doesn't flash.
     public private(set) var signal: SessionSignal?
 
+    /// This start has been `.starting` for `StartingCopy.slowAfter`.
+    public private(set) var isSlowStart = false
+
+    /// The spinner's text while `.starting`.
+    public var startingText: String { StartingCopy.text(slow: isSlowStart) }
+
     /// The live session is open (playing, or reconnecting after a stall).
     private var isSessionOpen: Bool {
         switch state {
@@ -116,7 +125,9 @@ public final class PlayerModel {
     private let debounce: Duration
     private let clock: any Clock<Duration>
     private let heartbeatInterval: Duration
+    private let slowStartClock: any Clock<Duration>
 
+    private var slowStartTask: Task<Void, Never>?
     private var replaceTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var activeViewerId: String?
@@ -130,13 +141,15 @@ public final class PlayerModel {
         caps: ClientCaps,
         debounce: Duration = .milliseconds(400),
         clock: any Clock<Duration> = ContinuousClock(),
-        heartbeatInterval: Duration = PlayerModel.heartbeatInterval
+        heartbeatInterval: Duration = PlayerModel.heartbeatInterval,
+        slowStartClock: any Clock<Duration> = ContinuousClock()
     ) {
         self.client = client
         self.caps = caps
         self.debounce = debounce
         self.clock = clock
         self.heartbeatInterval = heartbeatInterval
+        self.slowStartClock = slowStartClock
     }
 
     /// Caps sent on every create: base device caps + current profile selection.
@@ -182,6 +195,7 @@ public final class PlayerModel {
         sharedSessionId = nil
         replaceTask?.cancel()
         replaceTask = nil
+        resetSlowStart()
         stopHeartbeat()
         generation &+= 1
 
@@ -379,10 +393,26 @@ public final class PlayerModel {
 
     // MARK: - Replace machine
 
+    private func resetSlowStart() {
+        slowStartTask?.cancel()
+        slowStartTask = nil
+        isSlowStart = false
+    }
+
     private func scheduleReplace() async {
         replaceTask?.cancel()
         generation &+= 1
         let gen = generation
+        resetSlowStart()
+        slowStartTask = Task { @MainActor [weak self, slowStartClock] in
+            do {
+                try await slowStartClock.sleep(for: StartingCopy.slowAfter)
+            } catch {
+                return
+            }
+            guard let self, self.isCurrent(gen), case .starting = self.state else { return }
+            self.isSlowStart = true
+        }
         let task = Task { @MainActor in
             await self.performReplace(generation: gen)
         }
@@ -431,6 +461,7 @@ public final class PlayerModel {
             activeViewerId = session.viewerId
             lastSession = session
             state = .playing(session)
+            resetSlowStart()
             moveGroupIfSharing(channel: channel, session: session)
             startHeartbeat(viewerId: session.viewerId, playlistUrl: session.playlistUrl)
         } catch let error as BowtieError {

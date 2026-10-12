@@ -6,6 +6,7 @@ import { canPlayNativeHls, detectCaps } from '../player/caps'
 import { isParentalBlock, startErrorFrom, type StartError } from '../player/errorModel'
 import { createHeartbeatController } from '../player/seekModel'
 import { bestEffortDelete, streamTokenFromPlaylist } from '../player/sessionStop'
+import { startingText, useSlowStart } from '../player/startingNote'
 import type { Tile } from './multiviewModel'
 import styles from './Multiview.module.css'
 
@@ -43,6 +44,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
 
   const { channelId } = tile.channel
   const { profile } = tile
+  const slowStart = useSlowStart(loading && !error, `${channelId}|${profile}|${epoch}`)
 
   useEffect(() => {
     let cancelled = false
@@ -226,7 +228,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
     >
       <video ref={videoRef} className={styles.video} playsInline autoPlay muted />
 
-      {loading && !error ? <div className={styles.tileStatus}>Starting stream…</div> : null}
+      {loading && !error ? <div className={styles.tileStatus}>{startingText(slowStart)}</div> : null}
 
       {error ? (
         <div className={styles.tileError} role="alert">

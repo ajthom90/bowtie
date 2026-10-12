@@ -92,6 +92,8 @@ public actor BowtieClient {
     public nonisolated var serverURL: URL { server }
     private let store: SessionStore
     private let urlSession: URLSession
+    /// How long `createSession` waits (see `sessionStartTimeout`).
+    private let sessionStartWait: TimeInterval
 
     public private(set) var currentUser: User?
     private var accessToken: String?
@@ -139,10 +141,18 @@ public actor BowtieClient {
         return f
     }()
 
-    public init(server: URL, store: SessionStore, urlSession: URLSession = .shared) {
+    /// - Parameter sessionStartWait: how long `createSession` waits; tests
+    ///   pass another value to prove it is set on that request.
+    public init(
+        server: URL,
+        store: SessionStore,
+        urlSession: URLSession = .shared,
+        sessionStartWait: TimeInterval = BowtieClient.sessionStartTimeout
+    ) {
         self.server = server
         self.store = store
         self.urlSession = urlSession
+        self.sessionStartWait = sessionStartWait
     }
 
     // MARK: - Viewer allowlist
@@ -227,6 +237,12 @@ public actor BowtieClient {
         )
     }
 
+    /// How long `createSession` waits for the server. The server answers once
+    /// the stream is ready: device connect 5 s + answer 12 s + track probe
+    /// 3 s + first playlist 15 s + one simpler layout 15 s ≈ 50 s. Waiting
+    /// less would turn a slow start into "can't reach".
+    public static let sessionStartTimeout: TimeInterval = 60
+
     /// - Parameter joinSessionId: SharePlay — join this server session (the
     ///   sharer's `session.id`); the server starts a normal session if it can't.
     public func createSession(
@@ -239,7 +255,8 @@ public actor BowtieClient {
             method: "POST",
             body: CreateSessionBody(channelId: channelId, caps: caps, joinSessionId: joinSessionId),
             authorize: true,
-            retryOn401: true
+            retryOn401: true,
+            timeout: sessionStartWait
         )
     }
 
@@ -662,14 +679,16 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
         let data = try await sendRaw(
             path: path,
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
         do {
             return try decoder.decode(T.self, from: data)
@@ -704,7 +723,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = ServerURL.resolve(path: path, against: server)
         return try await sendRawURL(
@@ -712,7 +732,8 @@ public actor BowtieClient {
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
     }
 
@@ -721,7 +742,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let bodyData: Data?
         if let body {
@@ -730,12 +752,12 @@ public actor BowtieClient {
             bodyData = nil
         }
 
-        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
         let (data, response) = try await perform(request)
 
         if let http = response as? HTTPURLResponse, http.statusCode == 401, retryOn401 {
             try await refreshSingleFlight()
-            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
             let (data2, response2) = try await perform(retry)
             return try mapSuccess(data: data2, response: response2)
         }
@@ -747,10 +769,14 @@ public actor BowtieClient {
         url: URL,
         method: String,
         bodyData: Data?,
-        authorize: Bool
+        authorize: Bool,
+        timeout: TimeInterval? = nil
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         if let bodyData {
             request.httpBody = bodyData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

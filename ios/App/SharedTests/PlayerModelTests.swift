@@ -71,6 +71,84 @@ final class PlayerModelTests: XCTestCase {
         await runThroughDebounce { await model.play(channel: channel) }
     }
 
+    // MARK: - Slow start note
+
+    /// Waits until `clock` has a sleeper, then advances it.
+    private func advance(_ clock: ManualClock, by duration: Duration) async {
+        for _ in 0..<1_000 where clock.pendingWaiterCount == 0 {
+            await Task.yield()
+        }
+        clock.advance(by: duration)
+        for _ in 0..<20 { await Task.yield() }
+    }
+
+    func testSlowStartNoteAfterFiveSecondsResetOnZap() async {
+        let slowClock = ManualClock()
+        let model = PlayerModel(
+            client: makeClient(),
+            caps: SharedFixtures.sampleCaps,
+            debounce: .milliseconds(400),
+            clock: clock,
+            heartbeatInterval: .zero,
+            slowStartClock: slowClock
+        )
+        // The debounce clock never moves: the start stays `.starting`.
+        let first = Task { await model.play(channel: SharedFixtures.sampleChannel) }
+        await advance(slowClock, by: .milliseconds(4_900))
+        XCTAssertEqual(model.state, .starting)
+        XCTAssertFalse(model.isSlowStart)
+        XCTAssertEqual(model.startingText, "Starting…")
+
+        slowClock.advance(by: .milliseconds(200))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.isSlowStart)
+        XCTAssertEqual(
+            model.startingText,
+            "Still starting — the stream is buffering. This can take a little while."
+        )
+
+        // A zap is a new start: back to "Starting…" and a fresh 5 s.
+        let second = Task { await model.play(channel: SharedFixtures.sampleChannel2) }
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(model.isSlowStart)
+        await advance(slowClock, by: .milliseconds(4_900))
+        XCTAssertFalse(model.isSlowStart)
+        slowClock.advance(by: .milliseconds(200))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.isSlowStart)
+
+        await model.stop()
+        XCTAssertFalse(model.isSlowStart, "leaving clears it")
+        first.cancel()
+        second.cancel()
+    }
+
+    func testSlowStartNoteGoesWhenTheServerAnswers() async {
+        StubURLProtocol.handler = { _ in
+            (200, SharedFixtures.createdSessionJSON(), [:])
+        }
+        let slowClock = ManualClock()
+        let model = PlayerModel(
+            client: makeClient(),
+            caps: SharedFixtures.sampleCaps,
+            debounce: .milliseconds(400),
+            clock: clock,
+            heartbeatInterval: .zero,
+            slowStartClock: slowClock
+        )
+        // Parked in the debounce (the debounce clock hasn't moved): still starting.
+        let task = Task { await model.play(channel: SharedFixtures.sampleChannel) }
+        await advance(slowClock, by: .milliseconds(5_100))
+        XCTAssertEqual(model.state, .starting)
+        XCTAssertTrue(model.isSlowStart, "the note is up")
+
+        // The start finishes: the note goes with it.
+        await advancePastDebounce()
+        await task.value
+        guard case .playing = model.state else { return XCTFail("expected playing, got \(model.state)") }
+        XCTAssertFalse(model.isSlowStart, "note cleared once playing")
+    }
+
     // MARK: - Debounced triple-play → one create
 
     func testRapidTriplePlayCreatesExactlyOneSession() async throws {

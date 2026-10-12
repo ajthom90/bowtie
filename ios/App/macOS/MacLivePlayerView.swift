@@ -156,6 +156,7 @@ struct MacLivePlayerView: View {
             loadPlayerIfNeeded()
         }
         .announcesWeakSignal(playerModel)
+        .announcesSlowStart(playerModel)
         #if SHAREPLAY
         .task(id: coordinationKey) {
             coordinatePlayback()
@@ -370,15 +371,16 @@ struct MacLivePlayerView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .tint(Theme.amber)
-            Text(playerModel.state == .stalled ? "Reconnecting…" : "Starting…")
+            Text(playerModel.state == .stalled ? "Reconnecting…" : playerModel.startingText)
                 .font(Theme.body(14))
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.dim)
         }
         .padding(20)
         .background(Theme.bg.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .allowsHitTesting(false)
-        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : "Starting")
+        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : (playerModel.isSlowStart ? StartingCopy.slowStart : "Starting"))
     }
 
     private func showOutOfWindowNotice() {

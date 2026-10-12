@@ -21,6 +21,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,6 +64,14 @@ class PlayerViewModelTest {
     private var createStatusCodes: List<Int> = emptyList()
     private var createBodies: List<String> = emptyList()
 
+    /** Session POSTs get no answer (a slow start still in progress). */
+    @Volatile
+    private var createHangs = false
+
+    /** When set, session POSTs wait for it before answering (a start in progress). */
+    @Volatile
+    private var createGate: java.util.concurrent.CountDownLatch? = null
+
     /** Heartbeat answer (status, body). */
     @Volatile
     private var heartbeatResponse: Pair<Int, String> = 204 to ""
@@ -77,6 +86,8 @@ class PlayerViewModelTest {
         createStatusCodes = emptyList()
         createBodies = emptyList()
         heartbeatResponse = 204 to ""
+        createHangs = false
+        createGate = null
 
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -94,6 +105,10 @@ class PlayerViewModelTest {
                     return MockResponse().setBody(tokenPairJson())
                 }
                 if (method == "POST" && path == "/api/v1/sessions") {
+                    if (createHangs) {
+                        return MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
+                    }
+                    createGate?.await(10, java.util.concurrent.TimeUnit.SECONDS)
                     val n = createSeq.incrementAndGet()
                     val code = createStatusCodes.getOrElse(n - 1) { 200 }
                     if (code != 200) {
@@ -266,6 +281,67 @@ class PlayerViewModelTest {
 
         val body = sessionCreates().single().body
         assertTrue("body=$body", body.contains("\"channelId\":3"))
+    }
+
+    // ── Slow start note ─────────────────────────────────────────────────────
+
+    @Test
+    fun slowStartNoteAfterFiveSecondsResetOnZap() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        createHangs = true
+
+        vm.play(ch1)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertFalse("not before 5 s", vm.slowStart.value)
+        assertEquals("Starting…", PlayerViewModel.startingText(vm.slowStart.value))
+
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("after 5 s still starting", vm.slowStart.value)
+        assertEquals(
+            "Still starting — the stream is buffering. This can take a little while.",
+            PlayerViewModel.startingText(vm.slowStart.value),
+        )
+
+        // A zap is a new start: back to "Starting…" and a fresh 5 s.
+        vm.play(ch2)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.slowStart.value)
+
+        vm.stop()
+        assertFalse("leaving clears it", vm.slowStart.value)
+    }
+
+    @Test
+    fun slowStartNoteGoesWhenTheServerAnswers() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        createGate = gate
+
+        vm.play(ch1)
+        advanceTimeBy(5_100)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("the note is up", vm.slowStart.value)
+
+        // The server answers: the start is over, and so is the note.
+        gate.countDown()
+        advanceDebounceAndPump { vm.state.value is PlayerViewModel.State.Playing }
+        assertFalse("note cleared once playing", vm.slowStart.value)
+        vm.stop()
     }
 
     // ── Zap: delete old then create new ─────────────────────────────────────

@@ -51,6 +51,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
@@ -96,6 +97,7 @@ fun PlayerScreen(
     val activity = context as? Activity
     val state by playerViewModel.state.collectAsStateWithLifecycle()
     val signal by playerViewModel.signal.collectAsStateWithLifecycle()
+    val slowStart by playerViewModel.slowStart.collectAsStateWithLifecycle()
     // Only while this session is open: a failed or busy panel says enough.
     val sessionOpen = state is PlayerViewModel.State.Playing || state is PlayerViewModel.State.Stalled
     val weakNote = if (sessionOpen) SignalCopy.weakNote(signal) else null
@@ -344,8 +346,10 @@ fun PlayerScreen(
                             text = if (state is PlayerViewModel.State.Stalled) {
                                 "Reconnecting…"
                             } else {
-                                "Starting…"
+                                PlayerViewModel.startingText(slowStart)
                             },
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp).semantics { liveRegion = LiveRegionMode.Polite },
                             style = BowtieType.mono,
                             color = BowtieColors.dim,
                         )

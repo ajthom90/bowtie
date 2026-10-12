@@ -42,6 +42,13 @@ extension View {
             }
         }
     }
+
+    /// Tells VoiceOver once when "Starting…" turns into the slow-start note.
+    func announcesSlowStart(_ model: PlayerModel) -> some View {
+        onChange(of: model.isSlowStart) { _, slow in
+            if slow { AccessibilityNotification.Announcement(StartingCopy.slowStart).post() }
+        }
+    }
 }
 
 /// "All tuners are in use — …" above a channel list (`ChannelListModel.tunersBusyNote`).

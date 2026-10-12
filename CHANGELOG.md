@@ -15,12 +15,38 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   TV. The phone and TV need to be on the same Wi-Fi; typing the address on
   the TV still works. Apple TV may ask for Local Network access the first
   time Connect shows.
+- **A slow channel start says so.** On Roku, iPhone, iPad, Apple TV, Mac,
+  Android phone and TV, and the web player and multiview tiles, when a
+  channel is still starting after 5 seconds, "Starting…" changes to "Still
+  starting — the stream is buffering. This can take a little while." Each
+  new channel, quality change or Try again starts the count over, and
+  "Reconnecting…" stays as it is. On Roku and in the web player the
+  spinner and note stay up until the first frame plays; in the Apple and
+  Android apps and in multiview tiles they end when the server has the
+  stream ready and the picture starts loading. On Roku, a reconnect's
+  "Reconnecting… (n/3)" now also stays up until the picture is back.
 
 ### Changed
 
 - **Android TV / Fire TV sign-in opens on "Sign in with your phone"**, as on
   Apple TV and Roku, and asks for a code by itself; "Use a password
   instead" switches to the username and password form.
+
+### Fixed
+
+- **A slow start no longer reads as "Can't reach your Bowtie server".**
+  Roku and Android gave up on starting a channel after 10 seconds, while
+  the server can take up to about 50 (tuning, then the first segment).
+  They now wait up to 60 seconds, like the Apple apps; a server that
+  doesn't answer at all still shows "Can't reach".
+- **Roku: changing channel or going back during a slow start no longer
+  waits for it.** The old start is hung up at once, so the server drops it
+  instead of opening a viewer that held a tuner and counted against the
+  account's stream limit ("already watching") while the next channel
+  started.
+- **Roku: a server that refuses the connection or can't be found** now
+  shows "Can't reach your Bowtie server. Check your connection and try
+  again." instead of "Playback failed".
 
 ## [0.22.1] — 2026-10-06
 

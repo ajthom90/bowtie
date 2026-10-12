@@ -186,8 +186,12 @@ namespace bowtie.client
             headers = bowtie.client.authHeaders(accessToken)
 
         else if kind = "createSession"
+            ' The server answers once the stream is ready: tuning, then the
+            ' first segment, plus one simpler retry, can take ~50 s. A shorter
+            ' wait gave up on a slow start and showed "Can't reach".
             url = base + "/api/v1/sessions"
             method = "POST"
+            timeoutMs = bowtie.client.sessionStartTimeoutMs()
             headers = bowtie.client.authHeaders(accessToken)
             headers["Content-Type"] = "application/json"
             caps = params.caps
@@ -238,6 +242,8 @@ namespace bowtie.client
             headers: headers
             body: body
             timeoutMs: timeoutMs
+            ' A channel start may be hung up early (zap / Back): ApiTask cancel.
+            cancellable: (kind = "createSession")
         }
     end function
 
@@ -596,7 +602,33 @@ namespace bowtie.client
         return msg
     end function
 
+    ' How long createSession waits for the server (ms). The server's own bound
+    ' on a start: device connect 5 s + answer 12 s + track probe 3 s + first
+    ' playlist 15 s + one fallback layout 15 s ≈ 50 s; this stays above it so
+    ' a slow start is never "can't reach".
+    function sessionStartTimeoutMs() as integer
+        return 60000
+    end function
+
     ' ── What a viewer sees ───────────────────────────────────────────────────
+
+    ' Seconds of "Starting…" before the player says why it is slow.
+    function slowStartSeconds() as integer
+        return 5
+    end function
+
+    function slowStartText() as string
+        return "Still starting — the stream is buffering. This can take a little while."
+    end function
+
+    ' The slow-start note replaces "Starting…" only while the first start is
+    ' still on (spinner up, no picture yet) and no reconnect is showing.
+    function showsSlowStartNote(uiPhase as string, awaitingFirstFrame as boolean, retryAttempt as integer) as boolean
+        if retryAttempt > 0 then return false
+        if uiPhase = "starting" then return true
+        if uiPhase = "playing" then return awaitingFirstFrame
+        return false
+    end function
 
     function cantReachText() as string
         return "Can't reach your Bowtie server. Check your connection and try again."
@@ -610,14 +642,15 @@ namespace bowtie.client
         return "The stream stopped. Try again."
     end function
 
-    ' A failed request in plain words: no answer at all (offline, timed out)
+    ' A failed request in plain words: no answer at all (offline, timed out:
+    ' code 0; refused, DNS, reset: roUrlTransfer's negative curl codes)
     ' → can't reach; the server's own message as-is; anything else (a reply
     ' we couldn't read, an internal error) → fallback.
     function viewerMessage(err as dynamic, fallback as string) as string
         if err = invalid or Type(err) <> "roAssociativeArray" then return fallback
         code = 0
         if err.code <> invalid and bowtie.client.isNumber(err.code) then code = err.code
-        if code = 0
+        if code <= 0
             if bowtie.client.isString(err.kind, "build") then return fallback
             return bowtie.client.cantReachText()
         end if

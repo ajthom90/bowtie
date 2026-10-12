@@ -123,11 +123,12 @@
             />
             <Label
                 id="loadingLabel"
-                translation="[0, 580]"
-                width="1920"
-                height="40"
+                translation="[160, 580]"
+                width="1600"
+                height="96"
                 text="Starting…"
                 horizAlign="center"
+                wrap="true"
                 color="0x9BA5AEFF"
                 font="font:MediumSystemFont"
             />
@@ -264,5 +265,7 @@
         <Timer id="heartbeatTimer" duration="15" repeat="true" />
         <!-- Sleep timer tick (bowtie.sleep) while it is on -->
         <Timer id="sleepTimer" duration="1" repeat="true" />
+        <!-- Slow start: "Starting…" becomes a note after 5 s (duration set in init) -->
+        <Timer id="slowStartTimer" duration="5" repeat="false" />
     </children>
 </component>

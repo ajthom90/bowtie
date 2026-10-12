@@ -19,6 +19,7 @@ import { SeekBar } from './SeekBar'
 import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import { createSessionAttempt, type SessionAttempt, type SessionHandle } from './sessionLifecycle'
 import { signalStatsLine, weakSignalNote } from './signalModel'
+import { showsStarting, startingText, useAwaitingFirstFrame, useSlowStart } from './startingNote'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -142,6 +143,8 @@ export function Player({ target, onBack }: Props) {
   const [profile, setProfile] = useState<Profile>('original')
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [loading, setLoading] = useState(true)
+  /** The viewer is open but its first frame hasn't loaded yet. */
+  const [awaitingFrame, setAwaitingFrame] = useAwaitingFirstFrame(videoRef)
   const [error, setError] = useState<StartError | null>(null)
   const [playing, setPlaying] = useState(true)
   const [muted, setMuted] = useState(false)
@@ -340,7 +343,7 @@ export function Player({ target, onBack }: Props) {
   }, [])
 
   // Open the viewer for this channel and quality (again on Try again). Starting
-  // can take 10–20 s: whichever of "created" and "cleanup" (Back, a new quality,
+  // can take up to about 50 s: whichever of "created" and "cleanup" (Back, a new quality,
   // StrictMode's dev remount) comes second stops the viewer, so leaving while
   // "Starting stream…" never strands a tuner until the server's reaper.
   useEffect(() => {
@@ -352,6 +355,7 @@ export function Player({ target, onBack }: Props) {
     // asked for, so the two never hold two tuners at once.
     const prevStop = pendingStopRef.current
     setLoading(true)
+    setAwaitingFrame(false)
     setError(null)
     setSessionMeta(null)
     setSignal(null)
@@ -373,6 +377,7 @@ export function Player({ target, onBack }: Props) {
       viewerIdRef.current = res.viewerId
       playlistUrlRef.current = res.playlistUrl
       setSessionMeta(res.session ?? null)
+      setAwaitingFrame(true)
       attachPlayback(res.playlistUrl)
       setLoading(false)
       bumpOverlay()
@@ -538,6 +543,10 @@ export function Player({ target, onBack }: Props) {
     return () => window.clearInterval(id)
   }, [showStats])
 
+  // "Starting stream…" (and its slow-start note) stays up until the first frame.
+  const starting = showsStarting(loading, awaitingFrame, !!error)
+  const slowStart = useSlowStart(starting, `${target.channelId}|${profile}|${sessionEpoch}`)
+
   // Sync play state from video element.
   useEffect(() => {
     const video = videoRef.current
@@ -648,7 +657,11 @@ export function Player({ target, onBack }: Props) {
           }}
         />
 
-        {loading && !error ? <div className={styles.loading}>Starting stream…</div> : null}
+        {starting ? (
+          <div className={styles.loading} role="status" aria-live="polite">
+            {startingText(slowStart)}
+          </div>
+        ) : null}
 
         {/* Outside the auto-hiding overlay so it stays put while the signal is weak. */}
         {signalNote && !loading && !error ? (
