@@ -46,7 +46,8 @@ and [docs/roadmap.md](docs/roadmap.md) for what's next.
 | Choose a quality (Original 1080p, High/Medium 720p, Low 480p) | ✅ | Per viewer; the admin can cap it per account |
 | Automatic quality as the connection changes | ✅ | Admin setting, off by default; hardware encoders only |
 | HEVC for devices that can play it | ✅ | Admin setting, off by default; not with automatic quality yet |
-| Captions, every broadcast audio track, 5.1 sound | ✅ | |
+| Every broadcast audio track, 5.1 sound | ✅ | |
+| Live captions | 🚧 | Off since 0.24.0: they held up the video during caption gaps. Coming back in their own process |
 | Pause and rewind live TV | ✅ | 15 minutes by default; the admin can raise it to 60 |
 | Multiview (up to 4 channels at once) | ✅ | Web app |
 | Sleep timer | ✅ | Every TV and mobile app |

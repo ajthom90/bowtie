@@ -56,9 +56,10 @@ requests that come up most in their forums and subreddits.
 
 ## Known rough edges
 
-- **First start on some channels takes ~20 s** when FFmpeg's full layout
-  (all renditions, captions) times out and Bowtie falls back to one rung.
-  Seen intermittently on FOX 9 locally.
+- **Live captions are off** (0.24.0). FFmpeg stopped reading the video
+  while it waited for the next caption, which froze the picture during ads
+  and made some starts slow. They come back once they run in their own
+  FFmpeg process.
 - **Record by time** is on the web only (0.19.0); the TV and mobile apps
   still need guide data to record.
 - **Recording list/details** can't tell "commercial detection hasn't run"
