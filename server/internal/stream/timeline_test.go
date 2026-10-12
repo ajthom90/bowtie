@@ -73,7 +73,7 @@ func chain(end0, dur float64, n int, pts0 float64) []seg {
 	return out
 }
 
-func cat(parts ...[]seg) []seg {
+func catSegs(parts ...[]seg) []seg {
 	var out []seg
 	for _, p := range parts {
 		out = append(out, p...)
@@ -163,7 +163,7 @@ func TestTimelineJumpsForwardOverAClosedGap(t *testing.T) {
 	tl, logs, _ := newTestTimeline(dir, "v480")
 	writeRun(t, dir, "v480", 0, chain(0, 4, 2, 1.4)...)
 	tl.Observe()
-	raw := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), []seg{{4, 17, 9.4}})...)
+	raw := writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 2, 1.4), []seg{{4, 17, 9.4}})...)
 	tl.Observe()
 	_, _, segs := served(t, tl, "v480", raw)
 	if !near(segs[2].pdt, sec(13)) || segs[2].disc {
@@ -253,8 +253,8 @@ func TestTimelineEncoderDelayIsNotAGap(t *testing.T) {
 	if len(*logs) != 0 {
 		t.Fatalf("encoder delay logged as a gap: %v", *logs)
 	}
-	rv := writeRun(t, dir, "v480", 0, cat(chain(3, 4, 5, 1.4), []seg{{4, 3 + 24 + 5, 21.4}})...)
-	ra := writeRun(t, dir, "aac0", 0, cat(chain(0, 4, 5, 1.4), []seg{{4, 24 + 5, 21.4}})...)
+	rv := writeRun(t, dir, "v480", 0, catSegs(chain(3, 4, 5, 1.4), []seg{{4, 3 + 24 + 5, 21.4}})...)
+	ra := writeRun(t, dir, "aac0", 0, catSegs(chain(0, 4, 5, 1.4), []seg{{4, 24 + 5, 21.4}})...)
 	tl.Observe()
 	_, _, vs := served(t, tl, "v480", rv)
 	_, _, as := served(t, tl, "aac0", ra)
@@ -296,7 +296,7 @@ func TestTimelinePartialRunIsNeverServed(t *testing.T) {
 	writeRun(t, dir, "v480", 0, chain(0, 4, 3, 1.4)...)
 	writeRun(t, dir, "aac0", 0, chain(0, 4, 4, 1.4)...) // audio one segment ahead
 	restarted(tl)
-	held := writeRun(t, dir, "aac0", 0, cat(chain(0, 4, 4, 1.4), []seg{{4, 40, 1.4}})...) // run 1: audio only
+	held := writeRun(t, dir, "aac0", 0, catSegs(chain(0, 4, 4, 1.4), []seg{{4, 40, 1.4}})...) // run 1: audio only
 	tl.Observe()
 	if _, _, as := served(t, tl, "aac0", held); len(as) != 3 {
 		t.Fatalf("served %d audio segments while run 1 is held, want 3", len(as))
@@ -304,8 +304,8 @@ func TestTimelinePartialRunIsNeverServed(t *testing.T) {
 	restarted(tl)
 	// Run 2: audio's first segment ends 20 ms after video's, so video's
 	// second segment is what lets the run open.
-	rv := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 3, 1.4), []seg{{4, 64, 1.4}, {4, 68, 5.4}})...)
-	ra := writeRun(t, dir, "aac0", 0, cat(chain(0, 4, 4, 1.4), []seg{{4, 40, 1.4}, {4, 64, 1.42}})...)
+	rv := writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 3, 1.4), []seg{{4, 64, 1.4}, {4, 68, 5.4}})...)
+	ra := writeRun(t, dir, "aac0", 0, catSegs(chain(0, 4, 4, 1.4), []seg{{4, 40, 1.4}, {4, 64, 1.42}})...)
 	tl.Observe()
 	mv, dv, vs := served(t, tl, "v480", rv)
 	ma, da, as := served(t, tl, "aac0", ra)
@@ -358,8 +358,8 @@ func TestTimelineRenditionMissingTwoRunsReturnsAligned(t *testing.T) {
 	for _, end := range []float64{30, 50} { // runs 1 and 2: no ac30
 		restarted(tl)
 		extra = append(extra, seg{4, end, 1.4})
-		writeRun(t, dir, "v480", 0, cat(base, extra)...)
-		writeRun(t, dir, "aac0", 0, cat(base, extra)...)
+		writeRun(t, dir, "v480", 0, catSegs(base, extra)...)
+		writeRun(t, dir, "aac0", 0, catSegs(base, extra)...)
 		tl.Observe()
 		if _, _, expired := tl.ExpireStalledRun(10*time.Second, true); expired {
 			t.Fatal("expired before the timeout")
@@ -373,9 +373,9 @@ func TestTimelineRenditionMissingTwoRunsReturnsAligned(t *testing.T) {
 	restarted(tl) // the kill path restarted FFmpeg again
 	extra = append(extra, seg{4, 70, 1.4})
 	raw := map[string][]byte{
-		"v480": writeRun(t, dir, "v480", 0, cat(base, extra)...),
-		"aac0": writeRun(t, dir, "aac0", 0, cat(base, extra)...),
-		"ac30": writeRun(t, dir, "ac30", 0, cat(base, []seg{{4, 70, 1.4}})...),
+		"v480": writeRun(t, dir, "v480", 0, catSegs(base, extra)...),
+		"aac0": writeRun(t, dir, "aac0", 0, catSegs(base, extra)...),
+		"ac30": writeRun(t, dir, "ac30", 0, catSegs(base, []seg{{4, 70, 1.4}})...),
 	}
 	tl.Observe()
 	// Opening doesn't reset the stall budget (only a healthy stretch does),
@@ -417,7 +417,7 @@ func TestTimelineNeverGoesBackwardsAtRestart(t *testing.T) {
 	writeRun(t, dir, "v480", 0, chain(0, 4, 3, 1.4)...)
 	restarted(tl)
 	// The new run's first segment claims to end at 10 s, before the old run's 12 s end.
-	raw := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 3, 1.4), []seg{{4, 10, 1.4}})...)
+	raw := writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 3, 1.4), []seg{{4, 10, 1.4}})...)
 	tl.Observe()
 	_, _, segs := served(t, tl, "v480", raw)
 	if !segs[3].disc || !near(segs[3].pdt, sec(12)) {
@@ -431,7 +431,7 @@ func TestTimelineRestartWithoutSegmentsCountsOnce(t *testing.T) {
 	writeRun(t, dir, "v480", 0, chain(0, 4, 2, 1.4)...)
 	restarted(tl) // this run dies before writing a segment
 	restarted(tl)
-	raw := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
+	raw := writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
 	tl.Observe()
 	_, _, segs := served(t, tl, "v480", raw)
 	if !segs[2].disc || segs[1].disc {
@@ -470,7 +470,7 @@ func TestTimelineCaptionsUseRungStamps(t *testing.T) {
 	tl, _, _ := newTestTimeline(dir, "v720")
 	writeRun(t, dir, "v720", 0, chain(0, 4, 2, 1.4)...)
 	restarted(tl)
-	rv := writeRun(t, dir, "v720", 0, cat(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
+	rv := writeRun(t, dir, "v720", 0, catSegs(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
 	tl.Observe()
 	caps := []byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000,\n.\n" +
 		"#EXTINF:4.000,\nv7201.vtt\n#EXT-X-DISCONTINUITY\n#EXTINF:4.000,\nv7202.vtt\n")
@@ -624,8 +624,8 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 	writeRun(t, dir, "aac0", 0, base...)
 	tl.Observe()
 	restarted(tl)
-	rv := writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}})...) // run 1: video [0,4)
-	writeRun(t, dir, "aac0", 0, cat(base, []seg{{4, 38, 9.4}})...)       // audio from media 8
+	rv := writeRun(t, dir, "v480", 0, catSegs(base, []seg{{4, 30, 1.4}})...) // run 1: video [0,4)
+	writeRun(t, dir, "aac0", 0, catSegs(base, []seg{{4, 38, 9.4}})...)       // audio from media 8
 	tl.Observe()
 	if _, _, vs := served(t, tl, "v480", rv); len(vs) != 3 {
 		t.Fatalf("run 1 opened with video alone: %d video segments served", len(vs))
@@ -634,8 +634,8 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 		t.Fatalf("blocking %v, want [aac0]", missing)
 	}
 	restarted(tl) // the crash: run 1 is discarded
-	rv = writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}})...)
-	ra := writeRun(t, dir, "aac0", 0, cat(base, []seg{{4, 38, 9.4}, {4, 60, 1.42}, {4, 64, 5.42}})...)
+	rv = writeRun(t, dir, "v480", 0, catSegs(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}})...)
+	ra := writeRun(t, dir, "aac0", 0, catSegs(base, []seg{{4, 38, 9.4}, {4, 60, 1.42}, {4, 64, 5.42}})...)
 	tl.Observe()
 	_, dv, vs := served(t, tl, "v480", rv)
 	_, da, as := served(t, tl, "aac0", ra)
@@ -650,7 +650,7 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 	// The required cohort survived the discarded run: a run without audio
 	// is held, then expired.
 	restarted(tl)
-	writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}, {4, 90, 1.4}})...)
+	writeRun(t, dir, "v480", 0, catSegs(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}, {4, 90, 1.4}})...)
 	tl.Observe()
 	if missing, _, expired := tl.ExpireStalledRun(timelineGateTimeout, true); !expired || strings.Join(missing, ",") != "aac0" {
 		t.Fatalf("ExpireStalledRun = %v, %v; want [aac0], true", missing, expired)
@@ -822,7 +822,7 @@ func TestTimelineStalledRunsExpireAtomically(t *testing.T) {
 	if !strings.Contains(strings.Join(*logs, "\n"), "discarded") {
 		t.Fatalf("expired run not discarded: %v", *logs)
 	}
-	rv := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), chain(40, 4, 2, 1.4))...)
+	rv := writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 2, 1.4), chain(40, 4, 2, 1.4))...)
 	writeRun(t, dir, "aac0", 0, chain(40, 4, 2, 1.4)...)
 	tl.Observe()
 	if _, _, vs := served(t, tl, "v480", rv); len(vs) != 2 || tl.stalls != 1 {
@@ -850,7 +850,7 @@ func TestTimelineStalledRunsExpireAtomically(t *testing.T) {
 	ra := writeRun(t, dir, "aac0", 0, chain(40, 4, 6, 1.4)...)
 	_, _, before := served(t, tl, "aac0", ra)
 	vWin, aWin := len(tl.Window("v480").Segments), len(tl.Window("aac0").Segments)
-	rv = writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), chain(40, 4, 6, 1.4))...)
+	rv = writeRun(t, dir, "v480", 0, catSegs(chain(0, 4, 2, 1.4), chain(40, 4, 6, 1.4))...)
 	check := func(when string) {
 		t.Helper()
 		_, _, vs := served(t, tl, "v480", rv)
@@ -1241,7 +1241,7 @@ func TestTimelineCaptionSkipsSurviveALaggingPlaylist(t *testing.T) {
 	restarted(tl)
 
 	// Run held: video seq 2 only. Audio is required and absent, so 2 is discarded.
-	writeRun(t, dir, "v720", 0, cat(base, []seg{{4, 30, 1.4}})...)
+	writeRun(t, dir, "v720", 0, catSegs(base, []seg{{4, 30, 1.4}})...)
 	tl.Observe()
 	restarted(tl)
 
