@@ -331,6 +331,11 @@ func (s *IngestSub) OnForceClose(f func()) {
 	s.onForceClose.Store(&f)
 }
 
+// FreshBytes is how many live source bytes have reached this subscriber's
+// transcoder (Task 10's gate clock). The join snapshot, a reset head and
+// PAT+PMT put back after an overflow are cached copies and don't count.
+func (s *IngestSub) FreshBytes() uint64 { return s.q.freshBytes() }
+
 // forceClose closes the sub on ingest's initiative and runs the owner's hook.
 func (s *IngestSub) forceClose() {
 	_ = s.Close()
@@ -370,16 +375,16 @@ func (s *IngestSub) drain(join []byte) {
 	}()
 	if len(join) > 0 {
 		s.q.addInFlight(len(join))
-		if !s.writeChunk(join) {
+		if !s.writeChunk(join, true) { // the join snapshot is a cached copy
 			return
 		}
 	}
 	for {
-		chunk, ok := s.q.pop()
+		chunk, cached, ok := s.q.popChunk()
 		if !ok {
 			return
 		}
-		if !s.writeChunk(chunk) {
+		if !s.writeChunk(chunk, cached) {
 			return
 		}
 	}
@@ -389,7 +394,7 @@ func (s *IngestSub) drain(join []byte) {
 // reset (drain) it abandons the rest of the chunk at the next slice
 // boundary, so the fresh headers follow at most one slice of old data.
 // False when the pipe is closed.
-func (s *IngestSub) writeChunk(chunk []byte) bool {
+func (s *IngestSub) writeChunk(chunk []byte, cached bool) bool {
 	gen := s.q.resetGen()
 	for off := 0; off < len(chunk); {
 		if s.q.resetGen() != gen {
@@ -402,7 +407,7 @@ func (s *IngestSub) writeChunk(chunk []byte) bool {
 		}
 		n, err := s.pw.Write(chunk[off:end])
 		if n > 0 {
-			s.q.wrote(n)
+			s.q.wroteFrom(n, cached)
 		}
 		if err != nil {
 			return false

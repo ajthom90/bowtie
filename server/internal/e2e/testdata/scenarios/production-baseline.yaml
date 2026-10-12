@@ -18,3 +18,7 @@ expect:
   maxAVStartSkewMs: 100
   pairedAfterEachFault: true
   maxStartSeconds: 10
+  discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true

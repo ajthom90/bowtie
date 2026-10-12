@@ -8,3 +8,8 @@ expect:
   maxStartSeconds: 10
   maxTailGapSeconds: 12
   maxAudioHoleMs: 50
+  renditionsMonotonic: true
+  discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true

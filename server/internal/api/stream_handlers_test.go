@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -46,6 +47,7 @@ type stubStreams struct {
 	media      map[string]stream.SessionMedia // viewerID → media
 	blocked    map[string]string              // viewerID → parental reason
 	onStop     func(id string)
+	retime     func(viewerID, rendition string, raw []byte) ([]byte, bool)
 }
 
 func newStubStreams() *stubStreams {
@@ -165,6 +167,14 @@ func (s *stubStreams) SessionMediaOf(viewerID string) (stream.SessionMedia, bool
 	}
 	m, ok := s.media[viewerID]
 	return m, ok
+}
+
+func (s *stubStreams) RetimePlaylist(viewerID, rendition string, raw []byte) ([]byte, bool) {
+	if s.retime == nil {
+		// Tests that don't install a timeline still serve the file they wrote.
+		return raw, true
+	}
+	return s.retime(viewerID, rendition, raw)
 }
 
 // fixtureLayout matches writeFixtureSession: 720/480/360, eng+spa (AC-3), captions.
@@ -843,18 +853,39 @@ func (r *e2eStubRunner) Start(_ context.Context, spec transcode.JobSpec) (stream
 	if spec.Stdin != nil {
 		go func() { _, _ = io.Copy(io.Discard, spec.Stdin) }()
 	}
-	// Realistic ready playlist with EXTINF + segment files.
+	// Realistic ready playlist with EXTINF + segment files. Each file starts
+	// with a TS packet that carries a PTS: the session timeline publishes a
+	// segment only once that PTS is read, and an unpublished segment is left
+	// out of the served playlist. The FAKE-TS marker stays so the lifecycle
+	// test can still read the file back.
 	rung := strings.TrimSuffix(spec.Layout.ReadyPlaylist(), ".m3u8")
 	m3u := mediaPlaylist(rung, "ts")
 	if err := os.WriteFile(filepath.Join(spec.OutDir, rung+".m3u8"), []byte(m3u), 0o644); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{rung + "_00000.ts", rung + "_00001.ts"} {
-		if err := os.WriteFile(filepath.Join(spec.OutDir, name), []byte("FAKE-TS-"+name), 0o644); err != nil {
+	for i, name := range []string{rung + "_00000.ts", rung + "_00001.ts"} {
+		if err := os.WriteFile(filepath.Join(spec.OutDir, name), segmentWithPTS(name, 1.4+4*float64(i)), 0o644); err != nil {
 			return nil, err
 		}
 	}
 	return newE2EProc(), nil
+}
+
+// segmentWithPTS is one TS packet whose first PES has pts (seconds), then the
+// FAKE-TS marker the lifecycle test expects in the segment body.
+func segmentWithPTS(name string, pts float64) []byte {
+	v := int64(math.Round(pts*90000)) & (int64(1)<<33 - 1)
+	p := make([]byte, 188)
+	for i := range p {
+		p[i] = 0xFF
+	}
+	copy(p, []byte{0x47, 0x41, 0x00, 0x10, 0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 5})
+	p[13] = byte(0x21 | (v>>29)&0x0E)
+	p[14] = byte(v >> 22)
+	p[15] = byte((v>>14)&0xFE | 1)
+	p[16] = byte(v >> 7)
+	p[17] = byte((v<<1)&0xFE | 1)
+	return append(p, []byte("FAKE-TS-"+name)...)
 }
 
 func TestTunersBusyFilteredForViewers(t *testing.T) {
@@ -1723,5 +1754,84 @@ func TestBlockedViewerGets403WithReason(t *testing.T) {
 		if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), `"code":"parental"`) || !strings.Contains(rr.Body.String(), "TV-MA") {
 			t.Fatalf("%s: %d %s", path, rr.Code, rr.Body.String())
 		}
+	}
+}
+
+// Rendition and caption playlists go through the session timeline before
+// segment URLs are signed, each under its own name (the timeline maps the
+// captions to their rung's stamps and keeps a MEDIA-SEQUENCE floor each).
+func TestMediaPlaylistServedThroughTimeline(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	// FFmpeg 5.1 append shape: "." instead of a caption name, plus ENDLIST.
+	// repairCaptionPlaylist rebuilds v7200.vtt and drops ENDLIST. retime has
+	// to see that, with segment names still bare.
+	mangled := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000000,\n.\n#EXT-X-ENDLIST\n"
+	if err := os.WriteFile(filepath.Join(dir, "v720_vtt.m3u8"), []byte(mangled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const repairedVTT = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000000,\nv7200.vtt\n"
+	var renditions []string
+	ss.retime = func(viewerID, rendition string, raw []byte) ([]byte, bool) {
+		renditions = append(renditions, rendition)
+		body := string(raw)
+		if strings.Contains(body, "/api/v1/stream/") {
+			t.Fatalf("retime of %s saw rewritten URLs:\n%s", rendition, body)
+		}
+		switch rendition {
+		case "v720":
+			if !strings.Contains(body, "\nv720_00000.ts\n") {
+				t.Fatalf("retime of v720 missing bare segment name:\n%s", body)
+			}
+		case "aac0":
+			if !strings.Contains(body, "\naac0_00000.ts\n") {
+				t.Fatalf("retime of aac0 missing bare segment name:\n%s", body)
+			}
+		case "v720_vtt":
+			if body != repairedVTT {
+				t.Fatalf("retime of v720_vtt saw:\n%q\nwant repaired:\n%q", body, repairedVTT)
+			}
+		}
+		return append([]byte("#EXT-X-BOWTIE-TIMELINE\n"), raw...), true
+	}
+	ss.register("viewer-a", dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), "viewer-a", time.Now().UTC().Add(time.Hour))
+	for _, name := range []string{"v720.m3u8", "aac0.m3u8", "v720_vtt.m3u8"} {
+		rr := doJSON(t, h, "GET", "/api/v1/stream/viewer-a/"+name+"?token="+tok, nil, nil)
+		body := rr.Body.String()
+		if rr.Code != http.StatusOK || !strings.HasPrefix(body, "#EXT-X-BOWTIE-TIMELINE\n") ||
+			!strings.Contains(body, "/api/v1/stream/viewer-a/") {
+			t.Fatalf("%s: status %d body:\n%s", name, rr.Code, body)
+		}
+	}
+	if got := strings.Join(renditions, ","); got != "v720,aac0,v720_vtt" {
+		t.Fatalf("retimed playlists %s, want v720,aac0,v720_vtt", got)
+	}
+}
+
+// A session removed after the playlist was read (budget teardown, admin
+// terminate) makes RetimePlaylist return false. The handler answers as it
+// does for a gone viewer and does not serve FFmpeg's bytes.
+func TestRetimeMissDoesNotServeRawPlaylist(t *testing.T) {
+	ss := newStubStreams()
+	ss.retime = func(viewerID, rendition string, raw []byte) ([]byte, bool) {
+		return nil, false
+	}
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	ss.register("viewer-a", dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), "viewer-a", time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "GET", "/api/v1/stream/viewer-a/v720.m3u8?token="+tok, nil, nil)
+	body := rr.Body.String()
+	if rr.Code == http.StatusOK || strings.Contains(body, "#EXTM3U") || strings.Contains(body, "v720_00000.ts") {
+		t.Fatalf("raw playlist served: status %d body:\n%s", rr.Code, body)
+	}
+	if rr.Code != http.StatusNotFound || !strings.Contains(body, "viewer not found") {
+		t.Fatalf("status %d body %s, want 404 viewer not found", rr.Code, body)
 	}
 }

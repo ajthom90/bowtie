@@ -143,3 +143,17 @@ func TestMasterPlaylistHEVCSingleRung(t *testing.T) {
 		t.Fatalf("hevc codecs:\n%s", got)
 	}
 }
+
+func TestLayoutRenditions(t *testing.T) {
+	l := transcode.Layout{
+		Rungs:   transcode.Ladder(720),
+		Audio:   []transcode.AudioTrack{{Lang: "eng", AC3: true}, {Lang: "spa", AC3: true}},
+		AC3Copy: true, Captions: true,
+	}
+	if got := strings.Join(l.Renditions(), ","); got != "v720,v480,v360,aac0,aac1,ac30,ac31" {
+		t.Fatalf("Renditions = %s", got)
+	}
+	if got := strings.Join((transcode.Layout{Rungs: []transcode.Rung{{Height: 480}}}).Renditions(), ","); got != "v480,aac0" {
+		t.Fatalf("single rung Renditions = %s", got)
+	}
+}
