@@ -80,10 +80,11 @@ type ManagerDeps struct {
 	// ForceAdaptive (tests) makes every start use the ladder, whatever the
 	// settings and the encoder say: the e2e production layout ladders libx264.
 	ForceAdaptive bool
-	// LiveCaptions turns the live WebVTT rendition on. Off in production
-	// because of the caption-gap freeze (see
-	// .superpowers/sdd/2026-10-11-stream-resilience-part1/stall-investigation.md);
-	// tests set it to exercise the caption path.
+	// LiveCaptions turns the live WebVTT rendition on. Off in production:
+	// FFmpeg serves the output with the lowest timestamp, and the WebVTT
+	// stream only advances on a cue, so during a caption gap it reads only
+	// the fd 3 caption input and video output freezes. Tests set it to
+	// exercise the caption path.
 	LiveCaptions bool
 	// NoCaptions (tests) leaves the caption rendition out even when
 	// LiveCaptions is set. A live source without CEA-608 never gives the
