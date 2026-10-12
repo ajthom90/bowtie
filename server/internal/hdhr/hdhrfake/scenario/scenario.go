@@ -153,9 +153,9 @@ func (s *Scenario) validate() error {
 }
 
 // overlaps reports same-kind, same-scope steps whose active windows intersect.
-// One-shot kinds (drop and timeline faults) never overlap.
+// One-shot kinds (drop, pts-jump and timeline faults) never overlap.
 func overlaps(a, b Step, end time.Duration) bool {
-	if a.Fault != b.Fault || a.Scope != b.Scope || a.Fault == faults.Drop || a.Fault.IsTimeline() {
+	if a.Fault != b.Fault || a.Scope != b.Scope || a.Fault == faults.Drop || a.Fault == faults.PTSJump || a.Fault.IsTimeline() {
 		return false
 	}
 	window := func(s Step) (time.Duration, time.Duration) {

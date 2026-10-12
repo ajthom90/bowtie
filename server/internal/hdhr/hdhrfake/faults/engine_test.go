@@ -348,3 +348,121 @@ func TestDeterministicWithSeed(t *testing.T) {
 		}
 	}
 }
+
+// pesPkt is a video PES start (PUSI) carrying PTS and DTS.
+func pesPkt(pid uint16, pts, dts int64) []byte {
+	p := pkt(pid)
+	p[1] |= 0x40
+	copy(p[4:], []byte{0, 0, 1, 0xE0, 0, 0, 0x80, 0xC0, 10, 0x31, 0, 1, 0, 1, 0x11, 0, 1, 0, 1})
+	tsloop.SetPESTimestamps(p, pts, dts)
+	return p
+}
+
+func TestPTSJumpShiftsOneVideoPES(t *testing.T) {
+	e, _ := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: 3 * time.Second}, "c1")
+
+	in := pesPkt(0x100, 1000, 900)
+	orig := append([]byte(nil), in...)
+	d := e.Decide("90.1", "c1", in, tsloop.TrackVideo)
+	if d.Action != Emit || len(d.Packets) != 1 {
+		t.Fatalf("decision %+v", d)
+	}
+	pts, dts, _, _ := tsloop.PESTimestamps(d.Packets[0])
+	if pts != 1000+270000 || dts != 900+270000 {
+		t.Fatalf("pts=%d dts=%d, want +270000", pts, dts)
+	}
+	if !bytes.Equal(in, orig) {
+		t.Fatal("Decide modified the caller's packet")
+	}
+	// Fires once per connection: the next PES passes unchanged.
+	d = e.Decide("90.1", "c1", pesPkt(0x100, 4000, 3900), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(d.Packets[0]); pts != 4000 {
+		t.Fatalf("second PES pts=%d, want 4000", pts)
+	}
+	// Another connection on the channel gets its own one jump.
+	d = e.Decide("90.1", "c2", pesPkt(0x100, 5000, 4900), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(d.Packets[0]); pts != 5000+270000 {
+		t.Fatalf("c2 pts=%d, want jumped", pts)
+	}
+}
+
+func TestPTSJumpSkipsAudioAndNonPESPackets(t *testing.T) {
+	e, _ := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: time.Second}, "c1")
+	a := e.Decide("90.1", "c1", pesPkt(0x101, 1000, 1000), tsloop.TrackAudio)
+	if pts, _, _, _ := tsloop.PESTimestamps(a.Packets[0]); pts != 1000 {
+		t.Fatalf("audio pts=%d, want untouched", pts)
+	}
+	mid := e.Decide("90.1", "c1", pkt(0x100), tsloop.TrackVideo) // no PUSI
+	if !bytes.Equal(mid.Packets[0], pkt(0x100)) {
+		t.Fatal("non-PES video packet changed")
+	}
+	v := e.Decide("90.1", "c1", pesPkt(0x100, 1000, 1000), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(v.Packets[0]); pts != 1000+90000 {
+		t.Fatalf("first video PES pts=%d, want jumped", pts)
+	}
+}
+
+func TestPTSJumpWrapsAt33Bits(t *testing.T) {
+	e, _ := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: time.Second}, "c1")
+	const max33 = int64(1)<<33 - 1
+	d := e.Decide("90.1", "c1", pesPkt(0x100, max33-10, max33-10), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(d.Packets[0]); pts != 90000-11 {
+		t.Fatalf("pts=%d, want wrapped %d", pts, 90000-11)
+	}
+}
+
+func TestPTSJumpExpires(t *testing.T) {
+	e, mc := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: time.Second}, "c1")
+	mc.Advance(dropFaultLife)
+	d := e.Decide("90.1", "c1", pesPkt(0x100, 1000, 1000), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(d.Packets[0]); pts != 1000 {
+		t.Fatalf("pts=%d after expiry, want 1000", pts)
+	}
+}
+
+func TestPTSJumpPTSOnlyKeepsDTS(t *testing.T) {
+	e, _ := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: 3 * time.Second, PTSOnly: true}, "c1")
+	// A PES without a DTS doesn't qualify (its PTS is its DTS): unchanged, shot kept.
+	p := pkt(0x100)
+	p[1] |= 0x40
+	copy(p[4:], []byte{0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 5, 0x21, 0, 1, 0, 1})
+	tsloop.SetPESTimestamps(p, 1000, 0)
+	if pts, _, _, _ := tsloop.PESTimestamps(e.Decide("90.1", "c1", p, tsloop.TrackVideo).Packets[0]); pts != 1000 {
+		t.Fatalf("PTS-only PES without DTS changed: pts=%d", pts)
+	}
+	d := e.Decide("90.1", "c1", pesPkt(0x100, 2000, 1900), tsloop.TrackVideo)
+	pts, dts, _, _ := tsloop.PESTimestamps(d.Packets[0])
+	if pts != 2000+270000 || dts != 1900 {
+		t.Fatalf("pts=%d dts=%d, want pts+270000 and dts unchanged", pts, dts)
+	}
+}
+
+// A pts-jump that starts while the signal is below lock isn't used up by held
+// packets: it fires on the first video PES emitted after the lock returns.
+func TestPTSJumpSurvivesHeldPackets(t *testing.T) {
+	e, mc := newEngine(t)
+	mustAdd(t, e, ch, Spec{Fault: Signal, Quality: intp(10), For: 2 * time.Second})
+	mustAdd(t, e, ch, Spec{Fault: PTSJump, By: time.Second}, "c1")
+	if d := e.Decide("90.1", "c1", pesPkt(0x100, 1000, 1000), tsloop.TrackVideo); d.Action != Hold {
+		t.Fatalf("below lock: %+v, want Hold", d)
+	}
+	mc.Advance(2 * time.Second)
+	d := e.Decide("90.1", "c1", pesPkt(0x100, 1000, 1000), tsloop.TrackVideo)
+	if pts, _, _, _ := tsloop.PESTimestamps(d.Packets[0]); pts != 1000+90000 {
+		t.Fatalf("after lock pts=%d, want jumped", pts)
+	}
+}
+
+func TestPTSJumpNeedsBy(t *testing.T) {
+	if err := (Spec{Fault: PTSJump}).Validate(); err == nil {
+		t.Fatal("pts-jump without by validated")
+	}
+	if err := (Spec{Fault: Stall, PTSOnly: true}).Validate(); err == nil {
+		t.Fatal("ptsOnly on a stall validated")
+	}
+}

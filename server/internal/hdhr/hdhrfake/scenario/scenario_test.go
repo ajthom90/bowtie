@@ -196,3 +196,16 @@ func TestParseKillTranscoder(t *testing.T) {
 		t.Fatalf("KillTranscoderAt = %+v", s.Bowtie)
 	}
 }
+
+func TestPTSJumpStepsNeverOverlap(t *testing.T) {
+	_, err := Parse([]byte(`
+name: pj
+duration: 30s
+timeline:
+  - {at: 8s, fault: pts-jump, by: 3s}
+  - {at: 9s, fault: pts-jump, by: 6s}
+`))
+	if err != nil {
+		t.Fatalf("one-shot pts-jump steps rejected: %v", err)
+	}
+}

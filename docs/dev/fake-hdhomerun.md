@@ -58,9 +58,15 @@ expect:
 
 Faults: `signal` (strength/quality/symbol), `stall` (for, burst), `drop`
 (mode clean|reset), `corrupt` (rate, type bitflip|tei|sync), `slow` (rate),
-`timestamp-jump` (by), `pid-loss` (track audio|video, for), `source-switch`
-(to), `busy`, `hang`. Scope: `channel` (default; everyone on the channel, now
+`timestamp-jump` (by), `pts-jump` (by, ptsOnly), `pid-loss` (track
+audio|video, for), `source-switch` (to), `busy`, `hang`. Scope: `channel` (default; everyone on the channel, now
 and later), `connections` (only connections open when it fires), `device`.
+
+`pts-jump` adds `by` to the PTS and DTS of one emitted video PES on each
+connection (with `ptsOnly: true`, only the PTS of a PES that carries a DTS,
+leaving the DTS valid). It fires once per connection within 10 s of starting,
+wraps at 33 bits, and waits out a held lock, so it models a single corrupt
+timestamp. Scenario steps: `{at: 8s, fault: pts-jump, by: 3s, ptsOnly: true}`.
 
 While a channel's signal quality is below 30 (loss of lock), open
 connections go silent and new tunes get `503` with `X-HDHomeRun-Error: 807
