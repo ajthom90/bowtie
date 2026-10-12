@@ -191,8 +191,30 @@ func TestKeyJoinPATKeepsUnclassifiedCandidate(t *testing.T) {
 	next := cc.ts(pid, true, cat(pesHead, nal(0x41)))
 	feed(c, next)
 	got := c.joinSnapshotLocked()
-	if !bytes.Equal(got[:tsPacketSize], pat2) || !bytes.Equal(got[2*tsPacketSize:], cat(key, next)) {
+	if !c.joinValid || !bytes.Equal(got[:tsPacketSize], pat2) || !bytes.Equal(got[2*tsPacketSize:], cat(key, next)) {
 		t.Fatalf("PAT dropped the unclassified key (len=%d want %d, joinValid=%v)", len(got), 4*tsPacketSize, c.joinValid)
+	}
+}
+
+// SPS/PPS in one PES and the IDR in the next: a PAT between them must keep
+// both, so the IDR still becomes a key that starts at the parameter sets.
+func TestKeyJoinPATKeepsParameterSetsAheadOfIDR(t *testing.T) {
+	c, b, _ := h264Ingest(t)
+	pid := b.mediaPID
+	var cc ccSeq
+	params := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68)))
+	idr := cc.ts(pid, true, cat(pesHead, nal(0x65)))
+	feed(c, params, idr)
+	if c.joinValid || c.pesDone || c.paramOff < 0 || !c.ppsSeen {
+		t.Fatalf("setup: parameter sets are not pending (valid=%v done=%v param=%d pps=%v)", c.joinValid, c.pesDone, c.paramOff, c.ppsSeen)
+	}
+	pat2 := b.PAT()
+	c.handleTSPacketLocked(pat2)
+	next := cc.ts(pid, true, cat(pesHead, nal(0x41)))
+	feed(c, next)
+	got := c.joinSnapshotLocked()
+	if !c.joinValid || !bytes.Equal(got[:tsPacketSize], pat2) || !bytes.Equal(got[2*tsPacketSize:], cat(params, idr, next)) {
+		t.Fatalf("PAT dropped the SPS/PPS ahead of the IDR (valid=%v len=%d want %d)", c.joinValid, len(got), 5*tsPacketSize)
 	}
 }
 
@@ -358,6 +380,52 @@ func TestKeyJoinCCGapDoesNotSpliceIDR(t *testing.T) {
 	}
 }
 
+// A key promoted at the 16th payload (the scan cap) is still the same PES.
+// A continuity gap at payload 20 must drop that key.
+func TestKeyJoinDamageAfterPromotionInvalidates(t *testing.T) {
+	c, b, _ := h264Ingest(t)
+	pid := b.mediaPID
+	var cc ccSeq
+	// 184 elementary-stream bytes per payload (4-byte start codes, so the
+	// PES-header parser does not consume them). 16 payloads fill keyScanBytes.
+	first := make([]byte, 184)
+	copy(first, cat(nal(0x67), nal(0x68), nal(0x65)))
+	c.handleTSPacketLocked(cc.ts(pid, true, first))
+	for n := 2; n <= 16; n++ {
+		c.handleTSPacketLocked(cc.ts(pid, false, make([]byte, 184)))
+	}
+	if !c.joinValid {
+		t.Fatal("key PES was not promoted once its 16th payload filled the scan")
+	}
+	for n := 17; n <= 19; n++ {
+		c.handleTSPacketLocked(cc.ts(pid, false, make([]byte, 184)))
+	}
+	cc.skip()
+	c.handleTSPacketLocked(cc.ts(pid, false, make([]byte, 184))) // payload 20
+	if c.joinValid {
+		t.Fatal("CC gap after promotion left the damaged key valid")
+	}
+}
+
+// A discontinuity on the next PES start is a splice, not a reason to classify
+// the previous PES. Its missing tail must not replace the last good key.
+func TestKeyJoinDiscontinuityPUSIKeepsPreviousKey(t *testing.T) {
+	c, b, tables := h264Ingest(t)
+	pid := b.mediaPID
+	var cc ccSeq
+	good := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68), nal(0x65)))
+	cls := cc.ts(pid, true, cat(pesHead, nal(0x41)))
+	cand := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68), nal(0x65)))
+	cc.skip() // the candidate's tail never arrived
+	next := cc.ts(pid, true, cat(pesHead, nal(0x41)))
+	next[5] |= 0x80 // discontinuity_indicator
+	feed(c, good, cls, cand, next)
+	got := c.joinSnapshotLocked()
+	if !c.joinValid || !bytes.HasPrefix(got, cat(tables, good)) {
+		t.Fatalf("discontinuity promoted the truncated candidate (valid=%v len=%d)", c.joinValid, len(got))
+	}
+}
+
 // A transport_error_indicator packet inside a candidate PES abandons it.
 func TestKeyJoinTEIAbandonsCandidate(t *testing.T) {
 	c, b, tables := h264Ingest(t)
@@ -389,6 +457,25 @@ func TestKeyJoinDuplicatePacketKeepsKey(t *testing.T) {
 	got := c.joinSnapshotLocked()
 	if !c.joinValid || !bytes.HasPrefix(got, cat(tables, head)) {
 		t.Fatalf("duplicate packet abandoned the key (valid=%v len=%d)", c.joinValid, len(got))
+	}
+}
+
+// A repeated payload is not a legal duplicate when transport_error_indicator
+// is set. It abandons the open candidate.
+func TestKeyJoinTEIDuplicateAbandonsCandidate(t *testing.T) {
+	c, b, tables := h264Ingest(t)
+	pid := b.mediaPID
+	var cc ccSeq
+	good := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68), nal(0x65)))
+	cls := cc.ts(pid, true, cat(pesHead, nal(0x41)))
+	cand := cc.ts(pid, true, cat(pesHead, nal(0x67), nal(0x68), nal(0x65)))
+	tei := cc.dup(cand)
+	tei[1] |= 0x80
+	follow := cc.ts(pid, true, cat(pesHead, nal(0x41)))
+	feed(c, good, cls, cand, tei, follow)
+	got := c.joinSnapshotLocked()
+	if !c.joinValid || !bytes.HasPrefix(got, cat(tables, good)) {
+		t.Fatalf("TEI duplicate did not abandon the candidate (valid=%v len=%d)", c.joinValid, len(got))
 	}
 }
 
@@ -432,7 +519,7 @@ func TestReconnectDropsStaleKey(t *testing.T) {
 
 	var phase atomic.Int64
 	var second atomic.Pointer[pipeBody]
-	im, cd := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) {
 		pb := newPipeBody()
 		if phase.Add(1) == 1 {
 			go func() {
@@ -460,18 +547,16 @@ func TestReconnectDropsStaleKey(t *testing.T) {
 		defer ch.mu.Unlock()
 		return ch.joinValid
 	})
-	for i := 0; i < 3 && cd.DialCalls() < 2; i++ {
-		time.Sleep(20 * time.Millisecond)
-		clock.Advance(ingestReconnectMin + time.Millisecond)
-	}
-	if cd.DialCalls() < 2 {
-		t.Fatalf("reconnect did not dial (calls=%d)", cd.DialCalls())
-	}
+	waitCond(t, 2*time.Second, func() bool {
+		return clock.HasTimerIn(ingestReconnectMin)
+	})
+	clock.Advance(ingestReconnectMin + time.Millisecond)
+	var body *pipeBody
+	waitCond(t, 2*time.Second, func() bool {
+		body = second.Load()
+		return body != nil
+	})
 	pat2 := b.PAT()
-	body := second.Load()
-	if body == nil {
-		t.Fatal("second dial returned no body")
-	}
 	if _, err := body.Write(pat2); err != nil {
 		t.Fatal(err)
 	}

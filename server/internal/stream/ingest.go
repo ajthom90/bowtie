@@ -990,15 +990,21 @@ func (c *channelIngest) handleTSPacketLocked(pkt []byte) {
 }
 
 // restartJoinOnPATLocked restarts the since-PAT buffer. A PAT that arrives
-// while a candidate PES is still unclassified keeps that PES: dropping it
-// would lose a key whose first packet has already been seen.
+// while a candidate PES is still unclassified keeps that PES and, when an
+// earlier PES holds its parameter sets, keeps from there too.
 func (c *channelIngest) restartJoinOnPATLocked() {
 	if !c.pesDone && c.pesOff >= 0 {
-		if c.pesOff > 0 {
-			c.sinceJoin = c.sinceJoin[c.pesOff:]
+		off := c.pesOff
+		if c.paramOff >= 0 && c.paramOff < off {
+			off = c.paramOff
 		}
-		c.pesOff = 0
-		c.paramOff, c.ppsSeen = -1, false
+		if off > 0 {
+			c.sinceJoin = c.sinceJoin[off:]
+			c.pesOff -= off
+			if c.paramOff >= 0 {
+				c.paramOff -= off
+			}
+		}
 		c.joinValid = false
 		return
 	}
@@ -1041,42 +1047,48 @@ func (c *channelIngest) videoPacketLocked(pkt []byte) {
 	afc := (pkt[3] >> 4) & 0x3
 	if afc == 0 || afc == 2 { // no payload: the continuity counter does not increment
 		if tsDiscontinuity(pkt) && pkt[1]&0x40 == 0 {
-			c.abandonCandidateLocked()
+			c.damagePESLocked()
 		}
 		c.sinceJoin = append(c.sinceJoin, pkt...)
 		return
 	}
 	payload := tsPayload(pkt)
 	cc := int(pkt[3] & 0x0F)
-	// One identical copy of the previous payload packet is legal and does not
-	// advance the continuity counter.
-	if c.videoCC >= 0 && cc == c.videoCC && bytes.Equal(payload, c.videoPay) {
+	tei := pkt[1]&0x80 != 0
+	disc := tsDiscontinuity(pkt)
+	// One identical copy is legal only when the packet is clean. TEI and a
+	// discontinuity are damage even if the payload repeats.
+	if !tei && !disc && c.videoCC >= 0 && cc == c.videoCC && bytes.Equal(payload, c.videoPay) {
 		return
 	}
-	disc := tsDiscontinuity(pkt)
-	loss := pkt[1]&0x80 != 0 // transport_error_indicator: do not scan
+	pusi := pkt[1]&0x40 != 0
+	loss := tei // transport_error_indicator: do not scan
 	if c.videoCC >= 0 && cc != (c.videoCC+1)&0x0F && !disc {
 		loss = true // missing packet: don't splice the two sides together
 	}
-	if disc && pkt[1]&0x40 == 0 {
+	if disc && !pusi {
 		loss = true // discontinuity mid-PES
 	}
 	c.videoCC = cc
 	c.videoPay = append(c.videoPay[:0], payload...)
-	pusi := pkt[1]&0x40 != 0
 	switch {
-	case pusi && loss:
-		c.abandonCandidateLocked() // the previous PES lost its tail
-		if pkt[1]&0x80 != 0 {
-			c.pesOff, c.pesDone = -1, true
-		} else {
-			c.startPESLocked(payload)
+	case pusi && tei:
+		c.damagePESLocked()
+		c.pesOff, c.pesDone = -1, true
+	case pusi && disc:
+		// Splice: the previous PES did not finish, so do not classify it.
+		if !c.pesDone {
+			c.abandonCandidateLocked()
 		}
+		c.startPESLocked(payload)
+	case pusi && loss:
+		c.damagePESLocked()
+		c.startPESLocked(payload)
 	case pusi:
 		c.classifyPESLocked()
 		c.startPESLocked(payload)
 	case loss:
-		c.abandonCandidateLocked()
+		c.damagePESLocked()
 	default:
 		c.scanPESLocked(payload)
 	}
@@ -1106,6 +1118,21 @@ func (c *channelIngest) scanPESLocked(payload []byte) {
 	}
 	c.pesHdr = append(c.pesHdr, payload...)
 	c.finishPESHeaderLocked()
+}
+
+// damagePESLocked drops loss inside the current video PES. An unclassified
+// candidate is abandoned. A key already promoted from this same PES is
+// invalidated, because the PES was damaged before it ended.
+func (c *channelIngest) damagePESLocked() {
+	if c.joinValid && c.pesDone && c.pesOff >= 0 {
+		cc := c.videoCC
+		pay := append([]byte(nil), c.videoPay...)
+		c.restartJoinLocked()
+		c.videoCC = cc
+		c.videoPay = pay
+		return
+	}
+	c.abandonCandidateLocked()
 }
 
 // abandonCandidateLocked drops the open PES. It is not classified, and the
