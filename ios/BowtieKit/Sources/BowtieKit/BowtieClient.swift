@@ -92,6 +92,8 @@ public actor BowtieClient {
     public nonisolated var serverURL: URL { server }
     private let store: SessionStore
     private let urlSession: URLSession
+    /// How long `createSession` waits (see `sessionStartTimeout`).
+    private let sessionStartWait: TimeInterval
 
     public private(set) var currentUser: User?
     private var accessToken: String?
@@ -139,10 +141,18 @@ public actor BowtieClient {
         return f
     }()
 
-    public init(server: URL, store: SessionStore, urlSession: URLSession = .shared) {
+    /// - Parameter sessionStartWait: how long `createSession` waits; tests
+    ///   pass another value to prove it is set on that request.
+    public init(
+        server: URL,
+        store: SessionStore,
+        urlSession: URLSession = .shared,
+        sessionStartWait: TimeInterval = BowtieClient.sessionStartTimeout
+    ) {
         self.server = server
         self.store = store
         self.urlSession = urlSession
+        self.sessionStartWait = sessionStartWait
     }
 
     // MARK: - Viewer allowlist
@@ -228,9 +238,9 @@ public actor BowtieClient {
     }
 
     /// How long `createSession` waits for the server. The server answers once
-    /// the stream is ready: device answer 12 s + first playlist 15 s + one
-    /// simpler layout 15 s. Waiting less would turn a slow start into
-    /// "can't reach".
+    /// the stream is ready: device connect 5 s + answer 12 s + track probe
+    /// 3 s + first playlist 15 s + one simpler layout 15 s ≈ 50 s. Waiting
+    /// less would turn a slow start into "can't reach".
     public static let sessionStartTimeout: TimeInterval = 60
 
     /// - Parameter joinSessionId: SharePlay — join this server session (the
@@ -246,7 +256,7 @@ public actor BowtieClient {
             body: CreateSessionBody(channelId: channelId, caps: caps, joinSessionId: joinSessionId),
             authorize: true,
             retryOn401: true,
-            timeout: Self.sessionStartTimeout
+            timeout: sessionStartWait
         )
     }
 

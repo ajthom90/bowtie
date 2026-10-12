@@ -123,7 +123,7 @@ final class PlayerModelTests: XCTestCase {
         second.cancel()
     }
 
-    func testQuickStartNeverShowsTheSlowStartNote() async {
+    func testSlowStartNoteGoesWhenTheServerAnswers() async {
         StubURLProtocol.handler = { _ in
             (200, SharedFixtures.createdSessionJSON(), [:])
         }
@@ -136,11 +136,17 @@ final class PlayerModelTests: XCTestCase {
             heartbeatInterval: .zero,
             slowStartClock: slowClock
         )
-        await playThroughDebounce(model)
+        // Parked in the debounce (the debounce clock hasn't moved): still starting.
+        let task = Task { await model.play(channel: SharedFixtures.sampleChannel) }
+        await advance(slowClock, by: .milliseconds(5_100))
+        XCTAssertEqual(model.state, .starting)
+        XCTAssertTrue(model.isSlowStart, "the note is up")
+
+        // The start finishes: the note goes with it.
+        await advancePastDebounce()
+        await task.value
         guard case .playing = model.state else { return XCTFail("expected playing, got \(model.state)") }
-        slowClock.advance(by: .seconds(6))
-        for _ in 0..<20 { await Task.yield() }
-        XCTAssertFalse(model.isSlowStart)
+        XCTAssertFalse(model.isSlowStart, "note cleared once playing")
     }
 
     // MARK: - Debounced triple-play → one create

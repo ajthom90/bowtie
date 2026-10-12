@@ -198,7 +198,7 @@ class BowtieClientTest {
 
     /**
      * The server answers createSession only once the stream is ready, which
-     * can take ~45 s. createSession must outwait the client's usual read
+     * can take ~50 s. createSession must outwait the client's usual read
      * timeout (OkHttp's default is 10 s), or a slow start reads as "can't
      * reach". Here the usual timeout is 1 s and the start takes 2 s.
      */
@@ -225,7 +225,7 @@ class BowtieClientTest {
         } catch (e: BowtieError.Network) {
             assertEquals(ViewerErrors.CANT_REACH_SERVER, ViewerErrors.message(e))
         }
-        assertTrue(BowtieClient.SESSION_START_TIMEOUT_SECONDS > 12 + 15 + 15)
+        assertTrue(BowtieClient.SESSION_START_TIMEOUT_SECONDS > 5 + 12 + 3 + 15 + 15)
     }
 
     // ── single-flight refresh ───────────────────────────────────────────────

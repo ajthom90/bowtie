@@ -41,7 +41,7 @@ class BowtieClient(
 ) {
     /**
      * The same client with a longer read timeout, for [createSession]: the
-     * server answers once the stream is ready, which can take ~45 s
+     * server answers once the stream is ready, which can take ~50 s
      * (OkHttp's default 10 s gave up and said "can't reach").
      */
     private val sessionStartHttp: OkHttpClient by lazy {
@@ -667,8 +667,9 @@ class BowtieClient(
     companion object {
         /**
          * How long [createSession] waits for the server. Above the server's
-         * own bound on a start (device answer 12 s + first playlist 15 s +
-         * one simpler layout 15 s), so a slow start isn't "can't reach".
+         * own bound on a start (device connect 5 s + answer 12 s + track
+         * probe 3 s + first playlist 15 s + one simpler layout 15 s ≈ 50 s),
+         * so a slow start isn't "can't reach".
          */
         const val SESSION_START_TIMEOUT_SECONDS = 60L
 

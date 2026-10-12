@@ -68,6 +68,10 @@ class PlayerViewModelTest {
     @Volatile
     private var createHangs = false
 
+    /** When set, session POSTs wait for it before answering (a start in progress). */
+    @Volatile
+    private var createGate: java.util.concurrent.CountDownLatch? = null
+
     /** Heartbeat answer (status, body). */
     @Volatile
     private var heartbeatResponse: Pair<Int, String> = 204 to ""
@@ -83,6 +87,7 @@ class PlayerViewModelTest {
         createBodies = emptyList()
         heartbeatResponse = 204 to ""
         createHangs = false
+        createGate = null
 
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -103,6 +108,7 @@ class PlayerViewModelTest {
                     if (createHangs) {
                         return MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
                     }
+                    createGate?.await(10, java.util.concurrent.TimeUnit.SECONDS)
                     val n = createSeq.incrementAndGet()
                     val code = createStatusCodes.getOrElse(n - 1) { 200 }
                     if (code != 200) {
@@ -318,16 +324,24 @@ class PlayerViewModelTest {
     }
 
     @Test
-    fun quickStartNeverShowsTheSlowStartNote() = runTest {
+    fun slowStartNoteGoesWhenTheServerAnswers() = runTest {
         installMain()
         val client = authedClient()
         val vm = makeVm(client, this)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        createGate = gate
 
-        playThroughDebounce(vm, ch1)
-        assertTrue(vm.state.value is PlayerViewModel.State.Playing)
-        advanceTimeBy(6_000)
+        vm.play(ch1)
+        advanceTimeBy(5_100)
         runCurrent()
-        assertFalse(vm.slowStart.value)
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("the note is up", vm.slowStart.value)
+
+        // The server answers: the start is over, and so is the note.
+        gate.countDown()
+        advanceDebounceAndPump { vm.state.value is PlayerViewModel.State.Playing }
+        assertFalse("note cleared once playing", vm.slowStart.value)
+        vm.stop()
     }
 
     // ── Zap: delete old then create new ─────────────────────────────────────
