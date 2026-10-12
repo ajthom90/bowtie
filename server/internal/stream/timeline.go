@@ -176,7 +176,7 @@ type tlRend struct {
 	lastSeq     int64           // highest FFmpeg sequence seen (-1: none)
 	pending     []*tlItem       // seen in the current run, not yet published
 	segs        map[int64]tlSeg // FFmpeg sequence → published stamp (window, and captions' lag)
-	skip        map[int64]bool  // FFmpeg sequences never served (window only)
+	skip        map[int64]bool  // FFmpeg sequences never served (window, and the reference's caption lag)
 	nextB       int64           // Bowtie's next media sequence number
 	prevEnd     time.Time       // end of the last published segment
 	everPub     bool            // published at least one segment
@@ -185,6 +185,7 @@ type tlRend struct {
 	pubTick     bool            // stamped a segment since the last liveness tick
 	fedNoPub    time.Duration   // fed time since it last published (open run)
 	sincePub    time.Duration   // tick time since it last published (open run; healthy check)
+	nextFirst   bool            // the run's first segment was trimmed with an empty queue; the next arrival carries it
 }
 
 type tlItem struct {
@@ -547,7 +548,9 @@ func (t *Timeline) observe() {
 			}
 			r.lastSeq = seq
 			path := filepath.Join(t.dir, sg.URI)
-			it := &tlItem{seq: seq, dur: sg.Duration, path: path, first: !run.seen[name], reads: 1}
+			first := !run.seen[name] || r.nextFirst
+			r.nextFirst = false
+			it := &tlItem{seq: seq, dur: sg.Duration, path: path, first: first, reads: 1}
 			it.obs, it.file = t.observedStart(path, sg.Duration, now)
 			it.raw, it.hasPTS = segmentFirstPTS(path)
 			run.seen[name] = true
@@ -575,15 +578,23 @@ func (t *Timeline) observe() {
 // are never served.
 func (t *Timeline) trimPendingLocked(name string, r *tlRend) {
 	n := 0
+	carried := false
 	for n < len(r.pending) && (r.pending[n].seq < r.ffMseq || len(r.pending)-n > timelineMaxPending) {
+		if r.pending[n].first {
+			carried = true
+		}
 		r.skip[r.pending[n].seq] = true
 		n++
 	}
 	if n == 0 {
 		return
 	}
-	if r.pending[n-1].first && n < len(r.pending) {
-		r.pending[n].first = true // the run's first segment for this rendition is now the next one
+	if carried {
+		if n < len(r.pending) {
+			r.pending[n].first = true // the run's first segment for this rendition is now the next one
+		} else {
+			r.nextFirst = true // queue emptied; the next arrival carries first
+		}
 	}
 	r.pending = r.pending[n:]
 	t.logf("stream: timeline %s: %s: %d segments waited too long and are never served", filepath.Base(t.dir), name, n)
@@ -649,12 +660,17 @@ func assignPending(run *tlRun, r *tlRend) {
 // the run's base (unwrapped next to where the rendition's chain expects
 // it), or the chain itself when a later segment's PTS couldn't be read.
 func assignMedia(run *tlRun, r *tlRend, it *tlItem) {
+	// A first segment has no chain of its own. Hint from the reference's
+	// media clock (0 until it has published): otherwise a sibling joining
+	// past half a 33-bit period unwraps a full cycle early.
+	expected := r.runMediaEnd
 	if it.first {
+		expected = run.refMediaEnd
 		r.runMediaEnd = 0
 	}
 	m := r.runMediaEnd
 	if it.hasPTS && run.hasBase {
-		m = unwrapMedia(it.raw-run.base, r.runMediaEnd)
+		m = unwrapMedia(it.raw-run.base, expected)
 	}
 	it.media, it.hasMedia = m, true
 	r.runMediaEnd = m + it.dur
@@ -846,9 +862,10 @@ func segmentFirstPTS(path string) (int64, bool) {
 	return 0, false
 }
 
-// pruneLocked keeps r's skips for its own window, and its stamps for its
-// window or, for the reference, as far back as the caption playlist still
-// lists (at most timelineCaptionKeep segments further).
+// pruneLocked keeps r's stamps and skips for its own window, or, for the
+// reference, as far back as the caption playlist still lists (at most
+// timelineCaptionKeep segments further). A discarded sequence in that
+// range has to stay skipped, or a lagging caption playlist stops there.
 func (t *Timeline) pruneLocked(name string, r *tlRend) {
 	keep := r.ffMseq
 	if name == t.ref && t.capMseq >= 0 && t.capMseq < keep {
@@ -860,7 +877,7 @@ func (t *Timeline) pruneLocked(name string, r *tlRend) {
 		}
 	}
 	for seq := range r.skip {
-		if seq < r.ffMseq {
+		if seq < keep {
 			delete(r.skip, seq)
 		}
 	}

@@ -474,10 +474,14 @@ func TestTimelineCaptionsUseRungStamps(t *testing.T) {
 	tl.Observe()
 	caps := []byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000,\n.\n" +
 		"#EXTINF:4.000,\nv7201.vtt\n#EXT-X-DISCONTINUITY\n#EXTINF:4.000,\nv7202.vtt\n")
-	_, _, cs := served(t, tl, "v720", caps)
-	_, _, vs := served(t, tl, "v720", rv)
+	cm, cd, cs := served(t, tl, "v720_vtt", caps)
+	vm, vd, vs := served(t, tl, "v720", rv)
 	if len(cs) != 3 || cs[0].uri != "." || cs[2].uri != "v7202.vtt" {
 		t.Fatalf("caption segments %+v", cs)
+	}
+	if cm != 0 || vm != 0 || cd != 0 || vd != 0 || dnum(cd, cs, 0) != 0 || dnum(cd, cs, 2) != 1 || dnum(vd, vs, 2) != 1 {
+		t.Fatalf("caption mseq %d dseq %d dnum %d→%d; video mseq %d dseq %d dnum %d",
+			cm, cd, dnum(cd, cs, 0), dnum(cd, cs, 2), vm, vd, dnum(vd, vs, 2))
 	}
 	for i := range cs {
 		if !cs[i].pdt.Equal(vs[i].pdt) || cs[i].disc != vs[i].disc {
@@ -1109,6 +1113,156 @@ func TestTimelineAnchorCapNeverStampsFromIncompleteHistory(t *testing.T) {
 	aw := tl2.Window("ac30")
 	if len(aw.Segments) != 1 || !near(aw.Segments[0].Start, last.Start) {
 		t.Fatalf("ac30 window %+v, want one segment at %v", aw, last.Start)
+	}
+}
+
+// A held rendition's first segment is not the last one trimmed when the
+// window jumps by more than one. The survivor has to stay the run's first,
+// or the gate never opens.
+func TestTimelineTrimCarriesFirstToTheSurvivor(t *testing.T) {
+	dir := t.TempDir()
+	tl, _, _ := newTestTimeline(dir, "v480", "aac0")
+	base := chain(0, 4, 2, 1.4)
+	writeRun(t, dir, "v480", 0, base...)
+	writeRun(t, dir, "aac0", 0, base...)
+	tl.Observe()
+	restarted(tl)
+
+	// Video seq 2–5, only 2 marked first. Audio has not arrived, so the run stays held.
+	writeRun(t, dir, "v480", 2, chain(20, 4, 4, 1.4)...)
+	tl.Observe()
+	if tl.cur.state != runHeld {
+		t.Fatal("video-only run opened")
+	}
+	// Window advances to 4: seq 2 and 3 drop. Seq 2 carried first; seq 3 did not.
+	rv := writeRun(t, dir, "v480", 4, seg{4, 32, 9.4}, seg{4, 36, 13.4})
+	ra := writeRun(t, dir, "aac0", 2, seg{4, 40, 9.4})
+	tl.Observe()
+	if tl.cur.state != runOpen {
+		t.Fatalf("run stayed held after the window slide; blocking %v", tl.blockingLocked(tl.cur))
+	}
+	_, _, vs := served(t, tl, "v480", rv)
+	_, _, as := served(t, tl, "aac0", ra)
+	if len(vs) != 2 || len(as) != 1 || !vs[0].disc || !as[0].disc {
+		t.Fatalf("video %+v\naudio %+v", vs, as)
+	}
+	if !near(vs[0].pdt, as[0].pdt) || !near(vs[1].pdt, sec(32)) {
+		t.Fatalf("video %+v audio %+v, want a shared start and video[1] at %v", vs, as, sec(32))
+	}
+}
+
+// Trimming the whole queue must keep "first" for the next segment that
+// arrives, which is now this rendition's first in the run.
+func TestTimelineTrimKeepsFirstForTheNextArrival(t *testing.T) {
+	dir := t.TempDir()
+	tl, _, _ := newTestTimeline(dir, "v480", "aac0")
+	base := chain(0, 4, 2, 1.4)
+	writeRun(t, dir, "v480", 0, base...)
+	writeRun(t, dir, "aac0", 0, base...)
+	tl.Observe()
+	restarted(tl)
+
+	writeRun(t, dir, "aac0", 2, chain(20, 4, 2, 1.4)...) // seq 2 (first) and 3, no video
+	tl.Observe()
+	if err := os.WriteFile(filepath.Join(dir, "aac0.m3u8"),
+		[]byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tl.Observe() // both pending segments slide out; the queue is empty
+
+	ra := writeRun(t, dir, "aac0", 6, seg{4, 50, 1.4})
+	rv := writeRun(t, dir, "v480", 2, chain(40, 4, 2, 1.4)...)
+	tl.Observe()
+	if tl.cur.state != runOpen {
+		t.Fatalf("run stayed held for the arrival after an empty trim; blocking %v", tl.blockingLocked(tl.cur))
+	}
+	_, _, as := served(t, tl, "aac0", ra)
+	_, _, vs := served(t, tl, "v480", rv)
+	if len(as) != 1 || !as[0].disc || len(vs) != 2 || !vs[0].disc || !near(as[0].pdt, vs[0].pdt) {
+		t.Fatalf("video %+v\naudio %+v", vs, as)
+	}
+}
+
+// A rendition that has never published joins after the reference has passed
+// half a 33-bit PTS period. Its first segment must land on the reference's
+// media clock, not one period (~26.5 h) earlier.
+func TestTimelineLateJoinPastHalfPTSPeriod(t *testing.T) {
+	dir := t.TempDir()
+	tl, _, _ := newTestTimeline(dir, "v480", "aac0")
+	// Steps stay under half a PTS period, so the reference itself chains
+	// forward. The run's media end is past that halfway point.
+	const join = 50400.0
+	rv := writeRun(t, dir, "v480", 0,
+		seg{4, 4, 1.4},
+		seg{40000, 40004, 5.4},
+		seg{20000, 60004, 40005.4},
+	)
+	tl.Observe()
+	_, _, vs := served(t, tl, "v480", rv)
+	if len(vs) != 3 || !near(vs[0].pdt, sec(0)) || !near(vs[2].pdt, sec(40004)) {
+		t.Fatalf("video %+v, want the reference out to %v", vs, sec(40004))
+	}
+	ra := writeRun(t, dir, "aac0", 0, seg{4, 100, 1.4 + join})
+	tl.Observe()
+	_, _, as := served(t, tl, "aac0", ra)
+	if len(as) != 1 || as[0].disc || !near(as[0].pdt, sec(join)) {
+		got := "<none>"
+		if len(as) == 1 {
+			got = as[0].pdt.Format(time.RFC3339Nano)
+		}
+		t.Fatalf("audio at %s disc %v, want one untagged segment at %s", got, len(as) == 1 && as[0].disc, sec(join).Format(time.RFC3339Nano))
+	}
+}
+
+// Captions still list sequence 0 while the video window has slid to 3.
+// Sequence 2 was a discarded run. Its skip marker has to survive with the
+// stamps, or retiming stops at 2 and withholds 3 (and its discontinuity).
+func TestTimelineCaptionSkipsSurviveALaggingPlaylist(t *testing.T) {
+	dir := t.TempDir()
+	tl, _, _ := newTestTimeline(dir, "v720", "aac0")
+	caps := func(mseq int64, n int) []byte {
+		t.Helper()
+		var b strings.Builder
+		fmt.Fprintf(&b, "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:%d\n", mseq)
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "#EXTINF:4.000,\nv720%d.vtt\n", mseq+int64(i))
+		}
+		raw := []byte(b.String())
+		if err := os.WriteFile(filepath.Join(dir, "v720_vtt.m3u8"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	base := chain(0, 4, 2, 1.4)
+	writeRun(t, dir, "v720", 0, base...)
+	writeRun(t, dir, "aac0", 0, base...)
+	c0 := caps(0, 2)
+	tl.Observe()
+	restarted(tl)
+
+	// Run held: video seq 2 only. Audio is required and absent, so 2 is discarded.
+	writeRun(t, dir, "v720", 0, cat(base, []seg{{4, 30, 1.4}})...)
+	tl.Observe()
+	restarted(tl)
+
+	rv := writeRun(t, dir, "v720", 3, seg{4, 40, 1.4}, seg{4, 44, 5.4})
+	writeRun(t, dir, "aac0", 2, seg{4, 40, 1.42})
+	tl.Observe()
+	_, _, vs := served(t, tl, "v720", rv)
+	if len(vs) != 2 || !vs[0].disc {
+		t.Fatalf("recovered video %+v", vs)
+	}
+	// Captions still start at 0 and list the discarded 2 between 1 and 3.
+	mseq, dseq, cs := served(t, tl, "v720_vtt", caps(0, 4))
+	if mseq != 0 || len(cs) != 3 || cs[0].uri != "v7200.vtt" || cs[2].uri != "v7203.vtt" || !cs[2].disc || dnum(dseq, cs, 2) != 1 {
+		t.Fatalf("lagging captions: mseq %d dseq %d %+v", mseq, dseq, cs)
+	}
+	if !cs[2].pdt.Equal(vs[0].pdt) || dnum(dseq, cs, 0) != 0 {
+		t.Fatalf("caption discontinuity %+v, video %v", cs, vs[0].pdt)
+	}
+	// The on-disk playlist the observer last saw is still the pre-slide one.
+	if _, _, stale := served(t, tl, "v720_vtt", c0); len(stale) != 2 {
+		t.Fatalf("captions the observer saw: %+v", stale)
 	}
 }
 
