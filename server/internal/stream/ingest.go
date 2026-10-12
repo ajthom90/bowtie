@@ -349,7 +349,9 @@ func (s *IngestSub) isClosed() bool {
 
 // pipeWriteSlice is how much drain hands FFmpeg's pipe at once (whole TS
 // packets): every completed slice counts as progress, so a slow reader of
-// a large join chunk is never mistaken for a stuck one.
+// a large join chunk is never mistaken for a stuck one. A reader slower
+// than about one slice per 30s (~2 KiB/s, roughly 1000x slower than real
+// time for broadcast TS) is treated as stuck; it cannot keep up anyway.
 const pipeWriteSlice = 348 * tsPacketSize
 
 func (s *IngestSub) drain(join []byte) {
@@ -856,12 +858,18 @@ func (c *channelIngest) checkStuckLocked(s *IngestSub, now time.Time) bool {
 		}
 		return now.Sub(s.drainedAt) >= ingestSubKillGrace
 	}
-	if idle := s.q.idleFor(now); idle >= ingestSubStuckTimeout {
-		dropped := s.q.reset(c.joinSnapshotLocked())
-		s.drainedAt, s.writtenAtDrain = now, s.q.writtenBytes()
-		log.Printf("ingest: channel %d: transcoder read nothing for %v; dropped its %d KiB backlog and resent the stream headers",
-			c.channelID, idle.Round(time.Second), dropped>>10)
+	dropped, baseline, idle, drained := s.q.beginDrain(now, ingestSubStuckTimeout, c.joinSnapshotLocked())
+	if !drained {
+		return false
 	}
+	// Baseline is already fixed. A write here is progress after the drain
+	// and clears it on the next check.
+	if s.q.betweenResetAndBaseline != nil {
+		s.q.betweenResetAndBaseline()
+	}
+	s.drainedAt, s.writtenAtDrain = now, baseline
+	log.Printf("ingest: channel %d: transcoder read nothing for %v; dropped its %d KiB backlog and resent the stream headers",
+		c.channelID, idle.Round(time.Second), dropped>>10)
 	return false
 }
 

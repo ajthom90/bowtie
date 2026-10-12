@@ -612,6 +612,38 @@ func TestStuckSubThatReadsAgainIsNotClosed(t *testing.T) {
 	_ = sub.Close()
 }
 
+// A slice write that lands between the backlog reset and the written-byte
+// baseline is progress after the drain, not the baseline itself. The reader
+// gets a fresh 30s, then another drain and grace — it is not killed on the
+// first grace.
+func TestWriteBetweenResetAndBaselineRestartsGrace(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 12, 20, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	sub, _ := im.Attach(context.Background(), 1, "u") // never reads
+	var once sync.Once
+	sub.q.betweenResetAndBaseline = func() {
+		once.Do(func() { sub.q.wrote(188) })
+	}
+	t.Cleanup(func() { sub.q.betweenResetAndBaseline = nil })
+	chunk := make([]byte, 188*10)
+	// First drain at 30s, then the 30s grace. Including the boundary step
+	// kills the sub when the raced write was swallowed into the baseline.
+	feedAndStep(pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+1)
+	if sub.isClosed() {
+		t.Fatal("closed on the first grace; a write between reset and the baseline must clear the drain")
+	}
+	if got := sub.q.size(); got > 3*len(chunk) {
+		t.Fatalf("backlog %d bytes after the fresh drain, want ≤ %d", got, 3*len(chunk))
+	}
+	feedAndStep(pb, clock, chunk, int(ingestSubKillGrace/time.Second)-4)
+	if sub.isClosed() {
+		t.Fatal("closed before the second grace ended")
+	}
+	feedAndStep(pb, clock, chunk, 6)
+	waitFor(t, 2*time.Second, sub.isClosed)
+}
+
 // A slow reader working through a 4 MiB join chunk (32 KiB per simulated
 // second: two minutes for the chunk) is making progress the whole time:
 // never drained, never closed.

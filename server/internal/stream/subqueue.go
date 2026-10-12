@@ -20,6 +20,11 @@ type subQueue struct {
 	inFlight     int    // popped bytes not yet written to the pipe
 	written      uint64 // bytes written to the pipe
 	gen          uint64 // bumped by reset
+
+	// betweenResetAndBaseline, if set, runs when a drain has committed its
+	// written-byte baseline. Tests land a pipe write there; that write must
+	// count as progress after the drain, not as the baseline. Nil outside tests.
+	betweenResetAndBaseline func()
 }
 
 func newSubQueue(max int, now func() time.Time) *subQueue {
@@ -146,6 +151,11 @@ func (q *subQueue) size() int {
 func (q *subQueue) reset(head []byte) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	return q.resetLocked(head)
+}
+
+// resetLocked is reset for a caller that holds q.mu.
+func (q *subQueue) resetLocked(head []byte) int {
 	if q.closed {
 		return 0
 	}
@@ -161,6 +171,26 @@ func (q *subQueue) reset(head []byte) int {
 		q.cond.Signal()
 	}
 	return dropped
+}
+
+// beginDrain, when data has waited at least minIdle without a byte written,
+// replaces the backlog with head and returns the bytes dropped and the
+// written-byte baseline. The idle re-check, the reset and that baseline
+// share one hold of q.mu, so a slice that finishes cannot be stored as the
+// baseline and also count as later progress. drained is false when nothing
+// is waiting or a write has already ended the idle.
+func (q *subQueue) beginDrain(now time.Time, minIdle time.Duration, head []byte) (dropped int, baseline uint64, idle time.Duration, drained bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed || (q.bytes == 0 && q.inFlight == 0) {
+		return 0, q.written, 0, false
+	}
+	idle = now.Sub(q.lastProgress)
+	if idle < minIdle {
+		return 0, q.written, idle, false
+	}
+	dropped = q.resetLocked(head)
+	return dropped, q.written, idle, true
 }
 
 // addInFlight counts bytes handed to the writer outside pop (the join).
