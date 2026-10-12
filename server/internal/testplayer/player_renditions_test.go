@@ -300,6 +300,58 @@ func TestPlayerDrainsWaitingComparisons(t *testing.T) {
 	}
 }
 
+// probedCaptionPlayer has one probed video segment (PTS pts–end) and the
+// subtitle rendition timed against it. The caption segment shares that PDT.
+func probedCaptionPlayer(pts, end float64) (*Player, *rendition, SegmentObs) {
+	now := time.Now()
+	t0 := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
+	v, cc := newRendition("v480", "", now), newRendition("v480_vtt", "", now)
+	p := &Player{primary: v, others: []*rendition{cc}, windows: []*CoverageWindow{newWindow(now)}}
+	seg := SegmentObs{Seq: 5, Duration: 4, PDT: t0}
+	p.mu.Lock()
+	v.addProbed(&probed{seg: PDTSeg{Start: t0, Dur: 4}, pts: pts, end: end})
+	p.mu.Unlock()
+	return p, cc, seg
+}
+
+// FFmpeg 5.1 writes WebVTT with no X-TIMESTAMP-MAP; cue times already sit on
+// the video PTS timeline. RFC 8216 §3.5 maps cue time 0 to MPEG-TS 0, the
+// same as X-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000.
+func TestPlayerTimesUnmappedCueInsideVideoPTS(t *testing.T) {
+	p, cc, seg := probedCaptionPlayer(21.49, 25.49)
+	body := fmt.Sprintf("WEBVTT\n\n%s --> %s\nhello\n\n", vttTime(21.39), vttTime(22.39))
+	p.cues(cc, seg, 0, []byte(body))
+	r := p.Report()
+	if r.Cues != 1 || r.CuesTimed != 1 || r.Windows[0].CuesTimed["v480_vtt"] != 1 || r.CueErrors != 0 {
+		t.Fatalf("unmapped cue inside range: cues %d timed %d window %v errors %d %q",
+			r.Cues, r.CuesTimed, r.Windows[0].CuesTimed, r.CueErrors, r.Errors)
+	}
+}
+
+// A cue with no map is still a CueError when it lands beyond cueTolerance
+// of the PDT-paired video segment.
+func TestPlayerUnmappedCueOutsideRangeIsCueError(t *testing.T) {
+	p, cc, seg := probedCaptionPlayer(21.49, 25.49)
+	body := fmt.Sprintf("WEBVTT\n\n%s --> %s\nhello\n\n", vttTime(30), vttTime(31))
+	p.cues(cc, seg, 0, []byte(body))
+	r := p.Report()
+	if r.Cues != 1 || r.CuesTimed != 1 || r.CueErrors != 1 || !strings.Contains(strings.Join(r.Errors, "\n"), "outside") {
+		t.Fatalf("unmapped cue outside range: cues %d timed %d errors %d %q", r.Cues, r.CuesTimed, r.CueErrors, r.Errors)
+	}
+}
+
+// An X-TIMESTAMP-MAP line with MPEGTS or LOCAL missing or unparseable stays
+// a CueError. This cue would sit inside the video PTS range if timed from 0.
+func TestPlayerMalformedTimestampMapIsCueError(t *testing.T) {
+	p, cc, seg := probedCaptionPlayer(21.49, 25.49)
+	body := fmt.Sprintf("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:not-a-time\n\n%s --> %s\nhello\n\n", vttTime(21.39), vttTime(22.39))
+	p.cues(cc, seg, 0, []byte(body))
+	r := p.Report()
+	if r.Cues != 1 || r.CuesTimed != 0 || r.CueErrors != 1 || !strings.Contains(strings.Join(r.Errors, "\n"), "X-TIMESTAMP-MAP") {
+		t.Fatalf("malformed map: cues %d timed %d errors %d %q", r.Cues, r.CuesTimed, r.CueErrors, r.Errors)
+	}
+}
+
 // An hour-long soak polls each rendition thousands of times. What the player
 // keeps must grow with the segments it saw at most, never with the polls,
 // and the incremental consistency result must equal the batch one.

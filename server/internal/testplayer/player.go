@@ -140,7 +140,9 @@ type Report struct {
 	TailGap map[string]time.Duration
 	// Cues is the number of WebVTT cues fetched; CuesTimed the cues whose
 	// time was checked against the PDT-paired video segment's PTS range
-	// (±1 s); CueErrors those outside it or without X-TIMESTAMP-MAP.
+	// (±1 s); CueErrors those outside it or with a malformed X-TIMESTAMP-MAP.
+	// A segment with no map is timed as MPEGTS:0, LOCAL:00:00:00.000
+	// (RFC 8216 §3.5).
 	Cues, CuesTimed, CueErrors int
 }
 
@@ -730,11 +732,14 @@ type pendingCue struct {
 
 // cues counts a WebVTT segment's cues and checks each cue's start, mapped
 // to PTS through X-TIMESTAMP-MAP, against the PTS range of the probed rung
-// segment it PDT-pairs with. When that segment isn't probed yet, the cues
-// wait (retried after every poll; drain counts what never matches).
+// segment it PDT-pairs with. A segment with no map is timed as
+// MPEGTS:0, LOCAL:00:00:00.000 (RFC 8216 §3.5: cue time 0 maps to MPEG-TS
+// timestamp 0). A map line with MPEGTS or LOCAL missing or unparseable is a
+// CueError. When the video segment isn't probed yet, the cues wait (retried
+// after every poll; drain counts what never matches).
 func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
 	c := pendingCue{r: r, g: g, win: win}
-	mapped := false
+	malformed := false
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -742,7 +747,9 @@ func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
 			a, b := mpegtsRe.FindStringSubmatch(m), localRe.FindStringSubmatch(m)
 			if a != nil && b != nil {
 				n, _ := strconv.ParseFloat(a[1], 64)
-				mapped, c.mpegts, c.local = true, n/90000, vttSeconds(b[1])
+				c.mpegts, c.local = n/90000, vttSeconds(b[1])
+			} else {
+				malformed = true
 			}
 			continue
 		}
@@ -756,9 +763,9 @@ func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
 	p.windows[win].Cues[r.name] += len(c.starts)
 	switch {
 	case len(c.starts) == 0:
-	case !mapped:
+	case malformed:
 		p.report.CueErrors += len(c.starts)
-		p.cueErrorf("%s segment %d: cues without X-TIMESTAMP-MAP", r.name, g.Seq)
+		p.cueErrorf("%s segment %d: cues with a malformed X-TIMESTAMP-MAP", r.name, g.Seq)
 	case p.timeCuesLocked(c):
 	case len(p.pendingCues) >= maxPendingCues:
 		p.report.CueErrors += len(c.starts)
