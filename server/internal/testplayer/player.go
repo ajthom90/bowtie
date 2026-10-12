@@ -171,10 +171,11 @@ type Player struct {
 	pendingCues []pendingCue
 
 	excessStarted bool
-	excessBase    int64 // newest segment at the first poll that listed any
-	excessFirst   time.Time
-	excessLast    time.Time
-	excessSum     float64
+	excessBase    int64     // newest segment at the first poll that listed any
+	excessFirst   time.Time // poll that first saw a segment after the base
+	excessAnchor  int64     // newest segment of that poll; nothing in the poll is counted
+	excessLast    time.Time // last poll that found a segment after the reference
+	excessSum     float64   // Σ EXTINF of primary segments after the reference
 }
 
 // Start creates a session for cfg.ChannelID.
@@ -465,7 +466,21 @@ func (p *Player) poll(ctx context.Context) bool {
 		}
 		p.prevNews = newest
 		if !p.excessStarted {
-			p.excessStarted, p.excessBase, p.excessFirst = true, newest, pollAt
+			// The clock starts at the next poll that sees anything newer.
+			p.excessStarted, p.excessBase = true, newest
+		} else if p.excessFirst.IsZero() {
+			// Anchor on the newest segment of this poll. A batch that
+			// arrives together contributes nothing at zero wall time.
+			anchor, found := p.excessBase, false
+			for _, g := range snap.Segments {
+				if g.Seq > anchor {
+					anchor, found = g.Seq, true
+				}
+			}
+			if found {
+				p.excessFirst = pollAt
+				p.excessAnchor = anchor
+			}
 		}
 	}
 	p.mu.Unlock()
@@ -496,7 +511,7 @@ func (p *Player) poll(ctx context.Context) bool {
 		}
 		p.lastNew = now
 		p.highest = g.Seq
-		if g.Seq > p.excessBase {
+		if !p.excessFirst.IsZero() && g.Seq > p.excessAnchor {
 			p.excessSum += g.Duration
 			p.excessLast = pollAt
 		}
