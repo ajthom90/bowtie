@@ -84,7 +84,7 @@
    - Partial runs (a restart that dies before every rendition has written), a rendition that misses runs, and a rendition whose playlist appears late must never leave an untagged PTS reset or renditions that disagree on the number, even while old segments are in the window.
    - Pinned by:
      - Task 9: `TestTimelinePartialRunIsNeverServed`, `TestTimelineRenditionMissingTwoRunsReturnsAligned`, `TestTimelineLateRenditionAtStartupJoinsEpochZero`, `TestTimelineGateWaitsForAPublishableSegmentInEveryRendition`, `TestTimelineDelayedRenditionGetsEveryGap`, `TestTimelineWaitsForFirstSegmentPTS`, `TestTimelineWaitsForEveryReferencePTS`, `TestTimelineNearAlignedCutsShareTheGapShift`, `TestTimelineAnchorCapNeverStampsFromIncompleteHistory` and `TestTimelineCaptionSequenceNeverGoesBack`;
-     - Task 9: `TestTimelineStalledRunsExpireAtomically` and `TestTimelineStallBudgetOnlyResetsAfterHealthyOutput`; Task 10: `TestSessionTimelineGatesRestartedRuns`, `TestThirdGateStallEndsSessionAndFreesTuner`, `TestOpenThenStalledRunsUseUpTheBudget`, `TestOutageAndCachedJoinNeverExpire`, `TestContinuousFeedingResetsTheBudget` and `TestCachedBytesAreNotFresh` (a gate or a stalled run never holds the tuner forever, and an outage never ends a session);
+     - Task 9: `TestTimelineStalledRunsExpireAtomically` and `TestTimelineStallBudgetOnlyResetsAfterHealthyOutput`; Task 10: `TestSessionTimelineGatesRestartedRuns`, `TestThirdGateStallEndsSessionAndFreesTuner`, `TestOpenThenStalledRunsUseUpTheBudget`, `TestOutageAndCachedJoinNeverExpire`, `TestContinuousFeedingResetsTheBudget`, `TestNoSignalAttachRetriesDontUseTheBudget` and `TestCachedBytesAreNotFresh` (a gate or a stalled run never holds the tuner forever, and an outage never ends a session);
      - Task 2: `TestConsistencyFlagsDifferentNumbersForTheSameMoment` and `TestConsistencyFlagsReturningRenditionNumberedFromZero`.
 4. **A slow-but-alive transcoder killed while reading a large join, or a hung one never killed.**
    - Pinned by:
@@ -5901,7 +5901,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
     - A **held** run is stalled once its fed time reaches `timelineGateTimeout` (missing lists the blocking renditions, including "no segment at all").
     - An **open** run is stalled when any required rendition has published nothing for `timelineGateTimeout` of fed time, whether or not it has a pending segment: a reference that stopped, a sibling stuck past it, or a segment whose PTS can't be read. Each required rendition has its own counter, reset on every tick in which it published.
     - A run whose required renditions still need gap history beyond the anchor cap is stalled at once (see "Per-segment state").
-  - Expiry is atomic: under the timeline lock the run is marked expired, and an expired run never opens or publishes again. Nothing can open between the decision and the manager stopping FFmpeg. The restart's `MarkRestart` discards it.
+  - Expiry is atomic: under the timeline lock the run is marked expired, and an expired run never opens or publishes again. `publishLocked` returns at once for an expired run, so neither the observer nor `MarkRestart`'s final observation stamps a segment that becomes publishable after the expiry (the reference resuming before the kill lands). Nothing can open between the decision and the manager stopping FFmpeg. The restart's `MarkRestart` discards it.
+  - **Only a process that ran ends a run.** A run belongs to a process: run 0 to the first, and each later run once the manager calls `ProcessStarted` after the restart's FFmpeg started. `MarkRestart` on a run without a process (a restart attempt whose attach failed, during an outage) is a no-op: it ends nothing, counts nothing, creates no run and returns the budget used. So any number of failed attach attempts cost nothing, and only the process that actually died used budget.
   - **The stall budget.** `ExpireStalledRun` and `MarkRestart` return the count of failed runs. Every expiry counts, and so does a run that ended without being expired (a crash that `supervise` restarts before the gate fires; `MarkRestart` counts it). Opening a run does **not** reset the count. It resets only after `timelineHealthyAfter` (60 s, `healthyResetAfter`, the same as backoff's healthy reset) of ticks in which the run was open and no required rendition had gone `timelineHealthyGap` (2 × `hlsSegmentDuration`, 8 s) without publishing. Segments are 4–6 s and ticks 5 s, so a tick without a new segment is normal; two in a row are not, and restart the 60 s. An outage publishes nothing, so it never counts as healthy. The manager ends the session at `timelineMaxStalls` (3) (Task 10). Renditions are never dropped part-way.
   - A process fed nothing is in an outage, not a stall: ingest owns that case, and a restart during a long outage must survive it (`long-outage-restart`).
   - There is no partial-run merging and no `maxMergedRuns`.
@@ -5950,7 +5951,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
     - `renditions` are the media playlists to observe, reference first, never captions. The reference's caption playlist `<reference>_vtt.m3u8` is read for its `MEDIA-SEQUENCE` only.
     - `now` must be the real clock, because stamps are compared with segment file mtimes.
   - `(*Timeline).Observe()`, `Run(ctx)`.
-  - `(*Timeline).MarkRestart() (stalls int)`: ends the current run, counts it as failed if it ended without being expired, and returns the failed-run count. Call it at the start of an append restart, before the new process exists.
+  - `(*Timeline).MarkRestart() (stalls int)`: ends the current run, counts it as failed if it ended without being expired, and returns the failed-run count. Call it at the start of every append restart attempt, before the new process exists. Idempotent until `ProcessStarted`.
+  - `(*Timeline).ProcessStarted()`: the restart's FFmpeg is running; the current run now belongs to it, and the next `MarkRestart` ends it.
   - `(*Timeline).ExpireStalledRun(elapsed time.Duration, fresh bool) (missing []string, stalls int, expired bool)`: one maintain tick; `elapsed` is the time since the last tick, `fresh` whether fresh source bytes reached FFmpeg in it.
   - `(*Timeline).Retime(playlist string, raw []byte) []byte`. `playlist` is the served name without `.m3u8`: a rendition, or `<reference>_vtt`.
   - `(*Timeline).Window(rendition string) WindowTimeline`, with `WindowTimeline{MediaSequence int64; Segments []TimelineSegment}`, `TimelineSegment{Start time.Time; Duration float64}`, and `WindowStart()`/`LiveEdge()`.
@@ -6258,13 +6260,13 @@ func TestTimelinePartialRunIsNeverServed(t *testing.T) {
 	tl, logs, _ := newTestTimeline(dir, "v480", "aac0")
 	writeRun(t, dir, "v480", 0, chain(0, 4, 3, 1.4)...)
 	writeRun(t, dir, "aac0", 0, chain(0, 4, 4, 1.4)...) // audio one segment ahead
-	tl.MarkRestart()
+	restarted(tl)
 	held := writeRun(t, dir, "aac0", 0, cat(chain(0, 4, 4, 1.4), []seg{{4, 40, 1.4}})...) // run 1: audio only
 	tl.Observe()
 	if _, _, as := served(t, tl, "aac0", held); len(as) != 3 {
 		t.Fatalf("served %d audio segments while run 1 is held, want 3", len(as))
 	}
-	tl.MarkRestart()
+	restarted(tl)
 	// Run 2: audio's first segment ends 20 ms after video's, so video's
 	// second segment is what lets the run open.
 	rv := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 3, 1.4), []seg{{4, 64, 1.4}, {4, 68, 5.4}})...)
@@ -6319,7 +6321,7 @@ func TestTimelineRenditionMissingTwoRunsReturnsAligned(t *testing.T) {
 	tl.Observe()
 	extra := []seg{}
 	for _, end := range []float64{30, 50} { // runs 1 and 2: no ac30
-		tl.MarkRestart()
+		restarted(tl)
 		extra = append(extra, seg{4, end, 1.4})
 		writeRun(t, dir, "v480", 0, cat(base, extra)...)
 		writeRun(t, dir, "aac0", 0, cat(base, extra)...)
@@ -6333,7 +6335,7 @@ func TestTimelineRenditionMissingTwoRunsReturnsAligned(t *testing.T) {
 			t.Fatalf("ExpireStalledRun = %v, %d, %v; want [ac30], %d, true", missing, stalls, expired, 1+len(extra))
 		}
 	}
-	tl.MarkRestart() // the kill path restarted FFmpeg again
+	restarted(tl) // the kill path restarted FFmpeg again
 	extra = append(extra, seg{4, 70, 1.4})
 	raw := map[string][]byte{
 		"v480": writeRun(t, dir, "v480", 0, cat(base, extra)...),
@@ -6378,7 +6380,7 @@ func TestTimelineNeverGoesBackwardsAtRestart(t *testing.T) {
 	dir := t.TempDir()
 	tl, _, _ := newTestTimeline(dir, "v480")
 	writeRun(t, dir, "v480", 0, chain(0, 4, 3, 1.4)...)
-	tl.MarkRestart()
+	restarted(tl)
 	// The new run's first segment claims to end at 10 s, before the old run's 12 s end.
 	raw := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 3, 1.4), []seg{{4, 10, 1.4}})...)
 	tl.Observe()
@@ -6392,8 +6394,8 @@ func TestTimelineRestartWithoutSegmentsCountsOnce(t *testing.T) {
 	dir := t.TempDir()
 	tl, _, _ := newTestTimeline(dir, "v480")
 	writeRun(t, dir, "v480", 0, chain(0, 4, 2, 1.4)...)
-	tl.MarkRestart() // this run dies before writing a segment
-	tl.MarkRestart()
+	restarted(tl) // this run dies before writing a segment
+	restarted(tl)
 	raw := writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
 	tl.Observe()
 	_, _, segs := served(t, tl, "v480", raw)
@@ -6432,7 +6434,7 @@ func TestTimelineCaptionsUseRungStamps(t *testing.T) {
 	dir := t.TempDir()
 	tl, _, _ := newTestTimeline(dir, "v720")
 	writeRun(t, dir, "v720", 0, chain(0, 4, 2, 1.4)...)
-	tl.MarkRestart()
+	restarted(tl)
 	rv := writeRun(t, dir, "v720", 0, cat(chain(0, 4, 2, 1.4), []seg{{4, 30, 1.4}})...)
 	tl.Observe()
 	caps := []byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000,\n.\n" +
@@ -6488,7 +6490,7 @@ func TestTimelineStateStaysBounded(t *testing.T) {
 			end += 5 // an outage FFmpeg closed
 		}
 		if i%15 == 14 {
-			tl.MarkRestart() // and now and then a restart
+			restarted(tl) // and now and then a restart
 			pts = 1.4
 		}
 		end += 4
@@ -6582,7 +6584,7 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 	writeRun(t, dir, "v480", 0, base...)
 	writeRun(t, dir, "aac0", 0, base...)
 	tl.Observe()
-	tl.MarkRestart()
+	restarted(tl)
 	rv := writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}})...) // run 1: video [0,4)
 	ra := writeRun(t, dir, "aac0", 0, cat(base, []seg{{4, 38, 9.4}})...) // audio from media 8
 	tl.Observe()
@@ -6592,7 +6594,7 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 	if missing := tl.blockingLocked(tl.cur); strings.Join(missing, ",") != "aac0" {
 		t.Fatalf("blocking %v, want [aac0]", missing)
 	}
-	tl.MarkRestart() // the crash: run 1 is discarded
+	restarted(tl) // the crash: run 1 is discarded
 	rv = writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}})...)
 	ra = writeRun(t, dir, "aac0", 0, cat(base, []seg{{4, 38, 9.4}, {4, 60, 1.42}, {4, 64, 5.42}})...)
 	tl.Observe()
@@ -6608,7 +6610,7 @@ func TestTimelineGateWaitsForAPublishableSegmentInEveryRendition(t *testing.T) {
 	}
 	// The required cohort survived the discarded run: a run without audio
 	// is held, then expired.
-	tl.MarkRestart()
+	restarted(tl)
 	writeRun(t, dir, "v480", 0, cat(base, []seg{{4, 30, 1.4}, {4, 60, 1.4}, {4, 64, 5.4}, {4, 68, 9.4}, {4, 90, 1.4}})...)
 	tl.Observe()
 	if missing, _, expired := tl.ExpireStalledRun(timelineGateTimeout, true); !expired || strings.Join(missing, ",") != "aac0" {
@@ -6775,7 +6777,7 @@ func TestTimelineStalledRunsExpireAtomically(t *testing.T) {
 	if tl.cur.state != runHeld {
 		t.Fatal("an expired run opened")
 	}
-	if stalls := tl.MarkRestart(); stalls != 1 {
+	if stalls := restarted(tl); stalls != 1 {
 		t.Fatalf("MarkRestart after an expiry: %d stalls, want 1 (counted once)", stalls)
 	}
 	if !strings.Contains(strings.Join(*logs, "\n"), "discarded") {
@@ -6802,6 +6804,40 @@ func TestTimelineStalledRunsExpireAtomically(t *testing.T) {
 	}
 	if _, _, expired := tl.ExpireStalledRun(time.Hour, true); expired {
 		t.Fatal("the same run expired twice")
+	}
+	// An expired open run never publishes again: the reference resumes
+	// before the kill lands, and neither the observer nor MarkRestart's
+	// final observation stamps or serves any of it.
+	ra := writeRun(t, dir, "aac0", 0, chain(40, 4, 6, 1.4)...)
+	_, _, before := served(t, tl, "aac0", ra)
+	vWin, aWin := len(tl.Window("v480").Segments), len(tl.Window("aac0").Segments)
+	rv = writeRun(t, dir, "v480", 0, cat(chain(0, 4, 2, 1.4), chain(40, 4, 6, 1.4))...)
+	check := func(when string) {
+		t.Helper()
+		_, _, vs := served(t, tl, "v480", rv)
+		_, _, as := served(t, tl, "aac0", ra)
+		if len(vs) != 2 || len(as) != len(before) ||
+			len(tl.Window("v480").Segments) != vWin || len(tl.Window("aac0").Segments) != aWin {
+			t.Fatalf("%s: an expired run published: video %d (want 2), audio %d (want %d)", when, len(vs), len(as), len(before))
+		}
+	}
+	tl.Observe()
+	check("after Observe")
+	if stalls := tl.MarkRestart(); stalls != 2 {
+		t.Fatalf("MarkRestart after an open-run expiry: %d stalls, want 2 (counted once)", stalls)
+	}
+	check("after MarkRestart")
+	// Attach attempts that never start FFmpeg (an outage) end nothing and
+	// count nothing: MarkRestart is idempotent until ProcessStarted.
+	cur, runs := tl.cur, tl.runs
+	for i := 0; i < 5; i++ {
+		if stalls := tl.MarkRestart(); stalls != 2 || tl.cur != cur || tl.runs != runs {
+			t.Fatalf("attempt %d without a process: %d stalls, new run %v", i, stalls, tl.cur != cur)
+		}
+	}
+	tl.ProcessStarted()
+	if stalls := tl.MarkRestart(); stalls != 3 {
+		t.Fatalf("a started process that crashed: %d stalls, want 3", stalls)
 	}
 }
 
@@ -6838,7 +6874,7 @@ func TestTimelineStallBudgetOnlyResetsAfterHealthyOutput(t *testing.T) {
 	end := 0.0
 	for cycle := 1; cycle <= timelineMaxStalls; cycle++ {
 		if cycle > 1 {
-			if stalls := tl.MarkRestart(); stalls != cycle-1 {
+			if stalls := restarted(tl); stalls != cycle-1 {
 				t.Fatalf("cycle %d: MarkRestart after an expiry = %d", cycle, stalls)
 			}
 		}
@@ -6865,7 +6901,7 @@ func TestTimelineStallBudgetOnlyResetsAfterHealthyOutput(t *testing.T) {
 	// (segments a little over 5 s) and audio trails it by a tick, so each
 	// rendition sometimes has a tick without a new segment. That is still
 	// continuous; two silent ticks in a row are not, and restart the 60 s.
-	tl.MarkRestart()
+	restarted(tl)
 	pts, vEnd := 1.4, end
 	var lastVideo *seg
 	tick := func(video bool) {
@@ -7011,7 +7047,7 @@ func TestTimelineAnchorCapNeverStampsFromIncompleteHistory(t *testing.T) {
 	if n := len(tl.Window("aac0").Segments); n != 1 {
 		t.Fatalf("%d audio segments stamped after the run stopped, want 1", n)
 	}
-	if stalls := tl.MarkRestart(); stalls != 1 {
+	if stalls := restarted(tl); stalls != 1 {
 		t.Fatalf("MarkRestart = %d stalls, want 1 (the expiry already counted)", stalls)
 	}
 
@@ -7040,6 +7076,13 @@ func TestTimelineAnchorCapNeverStampsFromIncompleteHistory(t *testing.T) {
 		t.Fatalf("ac30 window %+v, want one segment at %v", aw, last.Start)
 	}
 }
+
+// restarted is an append restart whose FFmpeg started.
+func restarted(tl *Timeline) int {
+	stalls := tl.MarkRestart()
+	tl.ProcessStarted()
+	return stalls
+}
 ```
 
 The tests that pin the invariants:
@@ -7052,7 +7095,7 @@ The tests that pin the invariants:
 - `TestTimelineDelayedRenditionGetsEveryGap`: two gaps while the audio playlist is absent; every late audio segment gets its video segment's shift.
 - `TestTimelineWaitsForFirstSegmentPTS`: an unreadable first segment keeps the run held, and is placed by its real PTS (6 s later) once read. A late-joining rendition waits for its first PTS too. Real segment files, no EXTINF guess.
 - `TestTimelineCaptionSequenceNeverGoesBack`: a caption playlist lagging across a video window slide keeps its stamps; no read, staler or empty, makes its `MEDIA-SEQUENCE` go back.
-- `TestTimelineStalledRunsExpireAtomically`: fed time only (a run with no segment at all expires after 15 s of it; an outage of any length doesn't, and quiet ticks pause the clock without erasing it), an expired run never opens, a crash counts in `MarkRestart`, and an open run whose reference stops expires and counts.
+- `TestTimelineStalledRunsExpireAtomically`: fed time only (a run with no segment at all expires after 15 s of it; an outage of any length doesn't, and quiet ticks pause the clock without erasing it), an expired run never opens, a crash counts in `MarkRestart`, and an open run whose reference stops expires and counts. After that expiry the reference resumes: neither `Observe` nor `MarkRestart` stamps or serves anything more. Repeated `MarkRestart` without `ProcessStarted` counts nothing and makes no run; after `ProcessStarted` the next one counts. The tests' `restarted(tl)` helper is `MarkRestart` plus `ProcessStarted`, a restart whose FFmpeg started.
 - `TestTimelineStallBudgetOnlyResetsAfterHealthyOutput`: opening a run doesn't reset the budget. 60 s of output at broadcast cadence does: video skips one tick in three, and audio trails it by a tick. A rendition silent for two ticks in a row restarts that 60 s.
 - `TestTimelineWaitsForEveryReferencePTS`: a later reference segment whose PTS can't be read for several observations, then reads 6 s ahead, holds both renditions; both land on that PTS, and the gap anchor sits at the real position.
 - `TestTimelineNearAlignedCutsShareTheGapShift`: audio cut 20 ms before and 20 ms after a gap anchor, in both publication orders. The two renditions' PDTs agree within one segment, and the same moment carries the same discontinuity number.
@@ -7253,7 +7296,8 @@ const (
 type tlRun struct {
 	id          int
 	state       tlRunState
-	expired     bool          // ExpireStalledRun gave up on it: it never opens (and is counted)
+	expired     bool          // ExpireStalledRun gave up on it: it never opens or publishes again (and is counted)
+	started     bool          // a process is writing it (run 0, or after ProcessStarted)
 	fed         time.Duration // fed time since the process started
 	overflow    []string      // required renditions the anchor cap would cut off: stop and expire
 	headShift   time.Duration // shift before anchors[0] (of the anchors compacted away)
@@ -7376,6 +7420,7 @@ func NewTimeline(dir string, renditions []string, now func() time.Time) *Timelin
 		t.caption = t.ref + "_vtt"
 	}
 	t.cur = t.newRun()
+	t.cur.started = true // run 0 is the first process's
 	return t
 }
 
@@ -7409,15 +7454,26 @@ func (t *Timeline) Observe() {
 
 // MarkRestart ends the current run (after observing everything the dead
 // process wrote) and starts the next one, held until it is complete. Call
-// it at the start of an append restart, before anything else: that is the
-// new run's process start. A held run is discarded: its segments are never
-// served. A run that ended without ExpireStalledRun expiring it (a crash
-// supervise saw first, or a stuck kill) counts toward the stall budget
-// too. It returns the budget used; at timelineMaxStalls the caller ends
-// the session instead of starting FFmpeg.
+// it at the start of every append restart attempt, before anything else.
+// A held run is discarded: its segments are never served. A run that
+// ended without ExpireStalledRun expiring it (a crash supervise saw first,
+// or a stuck kill) counts toward the stall budget too. It returns the
+// budget used; at timelineMaxStalls the caller ends the session instead
+// of starting FFmpeg.
+//
+// It is idempotent across attempts that never start FFmpeg (an attach
+// that fails during an outage): until ProcessStarted, the current run has
+// no process, so a further MarkRestart ends nothing, counts nothing and
+// creates no other run.
 func (t *Timeline) MarkRestart() (stalls int) {
 	t.obsMu.Lock()
 	defer t.obsMu.Unlock()
+	t.mu.Lock()
+	started, stalls := t.cur.started, t.stalls
+	t.mu.Unlock()
+	if !started {
+		return stalls // no process since the last MarkRestart: nothing ended
+	}
 	t.observe()
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -7449,6 +7505,15 @@ func (t *Timeline) MarkRestart() (stalls int) {
 	t.healthy = 0
 	t.cur = t.newRun()
 	return t.stalls
+}
+
+// ProcessStarted records that the restart's FFmpeg is running: the
+// current run (made by MarkRestart) now belongs to a process, and the next
+// MarkRestart ends it.
+func (t *Timeline) ProcessStarted() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cur.started = true
 }
 
 // ExpireStalledRun is the manager's liveness tick. elapsed is the
@@ -7799,8 +7864,8 @@ func ptsBefore(a, b int64) bool {
 // sibling segment whose whole span the reference covers, with the shift
 // of the reference interval it overlaps most.
 func (t *Timeline) publishLocked(run *tlRun) {
-	if len(run.overflow) > 0 {
-		return // stopped for the anchor cap: the run is being expired
+	if run.expired || len(run.overflow) > 0 {
+		return // expired (or being expired for the anchor cap): never publishes again
 	}
 	if ref := t.rends[t.ref]; ref != nil {
 		for len(ref.pending) > 0 && ref.pending[0].hasMedia {
@@ -8181,7 +8246,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes:
-  - Task 9: `NewTimeline`, `(*Timeline).Observe`, `Run`, `MarkRestart`, `ExpireStalledRun`, `Retime`, `timelineMaxStalls`, `timelineGateTimeout`, and the test helper `tsWithPTS`.
+  - Task 9: `NewTimeline`, `(*Timeline).Observe`, `Run`, `MarkRestart`, `ProcessStarted`, `ExpireStalledRun`, `Retime`, `timelineMaxStalls`, `timelineGateTimeout`, and the test helper `tsWithPTS`.
   - Task 7: `subQueue.wrote`, `addInFlight`, `reset`, `IngestSub.drain`/`writeChunk` (slices of `pipeWriteSlice`).
 - Produces:
   - `func (l Layout) Renditions() []string`: the media playlist names FFmpeg writes, without `.m3u8` (rungs, `aacN`, `ac3N`). Caption playlists aren't renditions: they're served through their rung.
@@ -8203,7 +8268,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
     - On an expiry with the budget not spent, it logs `stream: session <id>: ffmpeg published no <renditions> for 15s of fed time; restarting it` and stops the process: `sess.proc.Stop()`, the existing kill path. `supervise` then marks the session crashed, and the next `maintain` restarts it with the usual backoff. The restart's `MarkRestart` discards an expired held run, so a half-aligned run is never published.
     - On the expiry that spends the budget (`timelineMaxStalls` failed runs without 60 s of continuous output from every required rendition between), it logs `stream: session <id>: 3 failed runs in a row (last: no <renditions>); ending the session` and calls `teardownSessionLocked`. That stops FFmpeg, closes the ingest subscription (the tuner is released after ingest's 5 s tail) and removes the viewers. Their next request gets the existing `404 session not found`, the same as an admin `Terminate`, and clients reconnect into a fresh session. Renditions are never dropped part-way.
     - The timeline never takes `m.mu`, so calling it under `m.mu` is safe.
-  - `restartSession` calls `sess.timeline.MarkRestart()` **first**, before `Attach` and `m.runner.Start`, outside `m.mu` as `restartSession` already runs. `MarkRestart` takes only the timeline's own locks.
+  - `restartSession` calls `sess.timeline.MarkRestart()` **first**, before `Attach` and `m.runner.Start`, outside `m.mu` as `restartSession` already runs. `MarkRestart` takes only the timeline's own locks. Its commit block calls `sess.timeline.ProcessStarted()` once the new FFmpeg is running.
+    - **Failed attaches cost nothing.** During a long outage ingest closes the device connection, and every restart attempt's `Attach` fails with `ErrNoSignal` (or busy), so FFmpeg never starts. `MarkRestart` is a no-op until `ProcessStarted`, so those attempts end no run, count nothing and create no held run. Only the process that actually died used budget, and a plain outage never ends a session.
     - It discards a run that never opened, and holds the next run until every rendition the last opened run published has a segment in it.
     - A run that ended without being expired (FFmpeg crashed, and `supervise` restarts it before the gate fires) counts toward the budget. `restartSession` is reached only from `maintain` for a crashed session, so a planned restart never counts as a failure. When the budget is spent, `restartSession` logs `stream: session <id>: 3 failed runs in a row; ending the session` and tears the session down instead of attaching or starting FFmpeg. So no restart path, gate or crash, ever starts a fourth FFmpeg.
   - `func (m *Manager) RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool)` reads the snapshot only. `playlist` is the served name without `.m3u8`, captions included, so each playlist keeps its own `MEDIA-SEQUENCE` floor.
@@ -8537,6 +8603,67 @@ func TestContinuousFeedingResetsTheBudget(t *testing.T) {
 	}
 }
 
+// A plain outage never ends a session, even when FFmpeg dies in it: the
+// restart's attaches fail with ErrNoSignal again and again (ingest closed
+// the device connection), and none of those attempts starts FFmpeg, so
+// none of them uses the stall budget or makes another run. Only the
+// process that actually died counts. When the signal returns, the
+// restart goes through and the viewer is still there.
+func TestNoSignalAttachRetriesDontUseTheBudget(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	var noSignal atomic.Bool
+	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if noSignal.Load() {
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		}
+		return newHangBody(), 200, nil
+	}
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, dial)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	g.write(top, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4)
+	tl.Observe() // run 0 opens
+
+	noSignal.Store(true)
+	runner.LastProc().Crash(errors.New("input ended: the antenna lost the signal"))
+	attaches := im.AttachCalls()
+	for i := 0; i < 60; i++ { // 5 min of outage
+		g.tick(0, 0)
+	}
+	if n := im.AttachCalls() - attaches; n <= int64(timelineMaxStalls) {
+		t.Fatalf("only %d restart attaches during the outage; the test needs more than %d", n, timelineMaxStalls)
+	}
+	tl.mu.Lock()
+	used, runs := tl.stalls, tl.runs
+	tl.mu.Unlock()
+	if g.sessionGone() || runner.Starts() != 1 || used != 1 || runs != 2 {
+		t.Fatalf("after failed attaches: session gone %v, starts %d, budget used %d (want 1), runs %d (want 2)",
+			g.sessionGone(), runner.Starts(), used, runs)
+	}
+
+	noSignal.Store(false) // the signal returns
+	g.restartTo(2)
+	g.write(top, 1.4, 5.4, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4, 1.4, 5.4)
+	tl.Observe()
+	tl.mu.Lock()
+	used, open := tl.stalls, tl.cur.state == runOpen
+	tl.mu.Unlock()
+	if g.sessionGone() || !open || used != 1 {
+		t.Fatalf("after the signal returned: session gone %v, run open %v, budget used %d (want 1)", g.sessionGone(), open, used)
+	}
+	if _, ok := m.RetimePlaylist(h.ViewerID, top, g.write(top, 1.4, 5.4, 1.4, 5.4)); !ok {
+		t.Fatal("the viewer lost its session")
+	}
+}
+
 // gateHarness drives a session's FFmpeg runs for the gate tests: real
 // segment files, byte counters, and real 5 s maintain ticks.
 type gateHarness struct {
@@ -8634,6 +8761,7 @@ The manager tests change nothing but the byte counters and the manager's clock. 
 - `TestOpenThenStalledRunsUseUpTheBudget`: three runs that open and then stop publishing the reference (audio goes on, fed) end the session; opening never resets the budget; no fourth FFmpeg.
 - `TestOutageAndCachedJoinNeverExpire`: 5 minutes of outage on an open run, then a crash restart whose FFmpeg drains a cached join slowly (cached bytes every tick for 5 minutes): never stopped, never ended.
 - `TestContinuousFeedingResetsTheBudget`: a crash uses one failed run (`MarkRestart`); 70 s of every rendition publishing resets the budget to 0 and stops nothing.
+- `TestNoSignalAttachRetriesDontUseTheBudget`: FFmpeg dies in an outage and the restart's attaches fail with `ErrNoSignal` for 5 minutes (well over three attempts). The session survives, FFmpeg isn't started, the budget used is 1 and there are 2 runs. When the signal returns the restart goes through, the new run opens, the budget is still 1, and the viewer still has its session.
 - `TestCachedBytesAreNotFresh` pins the ingest side of the slow join: a 1 MiB join drained in 64 KiB reads is written but never fresh, nor a reset head or the PAT+PMT put back after an overflow; live chunks are fresh.
 
 In `server/internal/api/stream_handlers_test.go`, add a field to `stubStreams`:
@@ -8688,7 +8816,7 @@ func TestMediaPlaylistServedThroughTimeline(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd server && go test ./internal/transcode/ ./internal/stream/ ./internal/api/ -run 'TestLayoutRenditions|TestCachedBytesAreNotFresh|TestSessionTimelineGatesRestartedRuns|TestThirdGateStallEndsSessionAndFreesTuner|TestOpenThenStalledRunsUseUpTheBudget|TestOutageAndCachedJoinNeverExpire|TestContinuousFeedingResetsTheBudget|TestMediaPlaylistServedThroughTimeline' -v`
+Run: `cd server && go test ./internal/transcode/ ./internal/stream/ ./internal/api/ -run 'TestLayoutRenditions|TestCachedBytesAreNotFresh|TestSessionTimelineGatesRestartedRuns|TestThirdGateStallEndsSessionAndFreesTuner|TestOpenThenStalledRunsUseUpTheBudget|TestOutageAndCachedJoinNeverExpire|TestContinuousFeedingResetsTheBudget|TestNoSignalAttachRetriesDontUseTheBudget|TestMediaPlaylistServedThroughTimeline' -v`
 Expected: FAIL to compile (`media.Layout.Renditions undefined`, `s.FreshBytes undefined`, `q.popChunk undefined`, `m.timelineOf undefined`).
 
 - [ ] **Step 3: Implement**
@@ -8896,7 +9024,16 @@ In `stream/manager.go`:
 	}
 ```
 
-  In its commit block, next to `sess.procStart = m.now()`, add `sess.lastFresh, sess.lastTick = 0, sess.procStart`: a new sub, whose counters start at 0.
+  In its commit block (after the `sess.terminated` check), next to `sess.procStart = m.now()`, add:
+
+```go
+	sess.lastFresh, sess.lastTick = 0, sess.procStart // a new sub: its counters start at 0
+	if sess.timeline != nil {
+		sess.timeline.ProcessStarted() // the next MarkRestart ends this process's run
+	}
+```
+
+  An attempt that fails at `Attach` or `Start` never reaches the commit, so its `MarkRestart` was a no-op for the next attempt.
 
   The run's fed time starts at `MarkRestart` with nothing accrued. The time `Attach` and `Start` take is never charged: `maintain` skips a restarting session, and the first tick after the commit measures from the new process start.
 
