@@ -342,8 +342,22 @@ sub onApiResponse()
         return
     end if
 
-    if rid <> m.pendingCreateId then return
+    if rid <> m.pendingCreateId
+        ' A create overtaken by a zap (it can take up to a minute): a viewer
+        ' it opened is nobody's, so stop it (no orphan against the limit).
+        if Left(rid, Len("player-create-")) = "player-create-" then discardStaleCreate(resp)
+        return
+    end if
     handleCreateResponse(resp)
+end sub
+
+sub discardStaleCreate(resp as object)
+    if resp.ok <> true then return
+    data = resp.data
+    if data = invalid then return
+    if data.viewerId = invalid then return
+    if data.viewerId = m.activeViewerId then return
+    enqueueDelete(data.viewerId)
 end sub
 
 sub handleCreateResponse(resp as object)

@@ -110,3 +110,11 @@ test('the loading label wraps so the note fits on screen', () => {
     const label = xml.slice(xml.indexOf('id="loadingLabel"'), xml.indexOf('/>', xml.indexOf('id="loadingLabel"')));
     assert.match(label, /wrap="true"/);
 });
+
+test('a create overtaken by a zap stops the viewer it opened (no orphan)', () => {
+    const resp = body(scene, 'sub onApiResponse()');
+    assert.match(resp, /if rid <> m\.pendingCreateId\n\s*'[^\n]*\n\s*'[^\n]*\n\s*if Left\(rid, Len\("player-create-"\)\) = "player-create-" then discardStaleCreate\(resp\)\n\s*return/);
+    const discard = body(scene, 'sub discardStaleCreate(');
+    assert.match(discard, /if resp\.ok <> true then return/);
+    assert.match(discard, /enqueueDelete\(data\.viewerId\)/);
+});
