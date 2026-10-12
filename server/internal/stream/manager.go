@@ -683,6 +683,12 @@ func (m *Manager) maintain() {
 	}
 
 	var due []*session
+	type captionSweep struct {
+		dir      string
+		layout   transcode.Layout
+		listSize int
+	}
+	var sweeps []captionSweep
 	for _, sess := range sessions {
 		if sess.terminated {
 			continue
@@ -692,6 +698,9 @@ func (m *Manager) maintain() {
 				m.teardownSessionLocked(sess)
 				continue
 			}
+		}
+		if sess.layout.Captions {
+			sweeps = append(sweeps, captionSweep{sess.dir, sess.layout, sess.hlsListSize})
 		}
 		if sess.crashed && !sess.restarting && !sess.restartAfter.IsZero() && !now.Before(sess.restartAfter) {
 			if m.prepareRestartLocked(sess) {
@@ -705,6 +714,13 @@ func (m *Manager) maintain() {
 	// after ~10s), so they run without m.mu; viewers keep being served.
 	for _, sess := range due {
 		m.restartSession(sess)
+	}
+
+	// File work runs without m.mu. Real clock: compared with file mtimes.
+	for _, s := range sweeps {
+		if n := sweepCaptions(s.dir, s.layout, s.listSize, time.Now()); n > 0 {
+			log.Printf("stream: removed %d stale caption segments in %s", n, filepath.Base(s.dir))
+		}
 	}
 }
 
