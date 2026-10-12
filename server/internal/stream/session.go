@@ -84,6 +84,14 @@ type session struct {
 	hlsListSize int              // fixed at session start (streaming.bufferMinutes → segments)
 	terminated  bool
 
+	timeline       *Timeline // server-side observer: wall-clock stamps, discontinuity epochs
+	timelineCancel func()    // stops the observer (teardown)
+	// Gate liveness (maintain): the fresh source bytes this process's input
+	// had at the last tick, and when that tick was (the process start
+	// before the first).
+	lastFresh uint64
+	lastTick  time.Time
+
 	// empty grace: set when viewers drop to 0
 	emptySince time.Time // zero if has viewers
 

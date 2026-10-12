@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -374,24 +375,33 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		return ViewerHandle{}, err, false
 	}
 
+	// Real clock: stamps are compared with segment file mtimes. One
+	// synchronous pass so the first playlist request already has stamps.
+	timeline := NewTimeline(dir, layout.Renditions(), time.Now)
+	timeline.Observe()
+	tlCtx, tlCancel := context.WithCancel(context.Background())
+
 	now := m.now()
 	sess := &session{
-		id:          sessionID,
-		channelID:   ch.ID,
-		channelName: ch.Name,
-		key:         key,
-		decision:    decision,
-		dir:         dir,
-		startedAt:   now,
-		proc:        proc,
-		procCancel:  procCancel,
-		procStart:   now,
-		inputURL:    inputURL,
-		sub:         sub,
-		capSub:      capSub,
-		layout:      layout,
-		hlsListSize: listSize,
-		viewers:     make(map[string]*Viewer),
+		id:             sessionID,
+		channelID:      ch.ID,
+		channelName:    ch.Name,
+		key:            key,
+		decision:       decision,
+		dir:            dir,
+		startedAt:      now,
+		proc:           proc,
+		procCancel:     procCancel,
+		procStart:      now,
+		inputURL:       inputURL,
+		sub:            sub,
+		capSub:         capSub,
+		layout:         layout,
+		hlsListSize:    listSize,
+		viewers:        make(map[string]*Viewer),
+		timeline:       timeline,
+		timelineCancel: tlCancel,
+		lastTick:       now,
 	}
 
 	m.mu.Lock()
@@ -401,6 +411,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		// Abandon our candidate (Close sub, stop process, remove dir) then join winner.
 		proc.Stop()
 		procCancel()
+		tlCancel()
 		_ = sub.Close()
 		closeSub(capSub)
 		_ = os.RemoveAll(dir)
@@ -426,6 +437,8 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		m.mu.Unlock()
 		return ViewerHandle{}, err, false
 	}
+
+	go timeline.Run(tlCtx)
 
 	m.wg.Add(1)
 	go m.supervise(sess)
@@ -702,6 +715,29 @@ func (m *Manager) maintain() {
 		if sess.layout.Captions {
 			sweeps = append(sweeps, captionSweep{sess.dir, sess.layout, sess.hlsListSize})
 		}
+		// Gate liveness: a run that publishes nothing for the gate timeout of
+		// fed time is expired and FFmpeg restarted; the third failed run
+		// without a healthy stretch ends the session.
+		if !sess.crashed && !sess.restarting && sess.proc != nil && sess.timeline != nil {
+			var fresh uint64
+			if sess.sub != nil {
+				fresh = sess.sub.FreshBytes()
+			}
+			moved := fresh != sess.lastFresh
+			elapsed := now.Sub(sess.lastTick)
+			sess.lastFresh, sess.lastTick = fresh, now
+			if missing, stalls, expired := sess.timeline.ExpireStalledRun(elapsed, moved); expired {
+				if stalls >= timelineMaxStalls {
+					log.Printf("stream: session %s: %d failed runs in a row (last: no %s); ending the session",
+						sess.id, stalls, strings.Join(missing, ","))
+					m.teardownSessionLocked(sess)
+					continue
+				}
+				log.Printf("stream: session %s: ffmpeg published no %s for %v of fed time; restarting it",
+					sess.id, strings.Join(missing, ","), timelineGateTimeout)
+				sess.proc.Stop()
+			}
+		}
 		if sess.crashed && !sess.restarting && !sess.restartAfter.IsZero() && !now.Before(sess.restartAfter) {
 			if m.prepareRestartLocked(sess) {
 				due = append(due, sess)
@@ -753,6 +789,21 @@ func (m *Manager) prepareRestartLocked(sess *session) bool {
 // restartSession attaches to the device and starts FFmpeg without m.mu, then
 // commits under m.mu. A session torn down meanwhile discards the new process.
 func (m *Manager) restartSession(sess *session) {
+	// The old process is dead: record everything it wrote (a run that never
+	// opened is discarded) and hold the next run until it is complete. A
+	// run that ended without being expired (a crash) counts toward the
+	// stall budget; a spent budget ends the session instead of restarting.
+	if sess.timeline != nil {
+		if stalls := sess.timeline.MarkRestart(); stalls >= timelineMaxStalls {
+			log.Printf("stream: session %s: %d failed runs in a row; ending the session", sess.id, stalls)
+			m.mu.Lock()
+			sess.restarting = false
+			m.teardownSessionLocked(sess)
+			m.mu.Unlock()
+			return
+		}
+	}
+
 	sub, err := m.ingest.Attach(context.Background(), sess.channelID, sess.inputURL)
 	if err != nil {
 		log.Printf("stream: session %s: re-Attach channel %d for restart: %v", sess.id, sess.channelID, err)
@@ -808,6 +859,10 @@ func (m *Manager) restartSession(sess *session) {
 	sess.proc = proc
 	sess.procCancel = procCancel
 	sess.procStart = m.now()
+	sess.lastFresh, sess.lastTick = 0, sess.procStart // a new sub: its counters start at 0
+	if sess.timeline != nil {
+		sess.timeline.ProcessStarted() // the next MarkRestart ends this process's run
+	}
 	sess.crashed = false
 	sess.restartAfter = time.Time{}
 }
@@ -896,6 +951,9 @@ func (m *Manager) teardownSessionLocked(sess *session) {
 	}
 	if sess.procCancel != nil {
 		sess.procCancel()
+	}
+	if sess.timelineCancel != nil {
+		sess.timelineCancel()
 	}
 	// Terminate/teardown Close (A4).
 	sess.closeSubs()
@@ -1033,4 +1091,34 @@ func (m *Manager) SessionMediaOf(viewerID string) (SessionMedia, bool) {
 		return SessionMedia{}, false
 	}
 	return SessionMedia{Dir: sess.dir, Layout: sess.layout, MaxHeight: v.MaxHeight}, true
+}
+
+// timelineOf returns the viewer's session timeline, its top rendition and
+// the viewer's user.
+func (m *Manager) timelineOf(viewerID string) (tl *Timeline, top string, owner int64, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.viewers[viewerID]
+	if !ok {
+		return nil, "", 0, false
+	}
+	sess, ok := m.sessions[v.SessionID]
+	if !ok || sess.terminated || sess.timeline == nil {
+		return nil, "", 0, false
+	}
+	return sess.timeline, sess.layout.TopName(), v.UserID, true
+}
+
+// RetimePlaylist rewrites one rendition or caption playlist (FFmpeg's
+// bytes, segment names still bare; playlist is its name without .m3u8)
+// from the session observer's snapshot: Bowtie's PDT on every segment,
+// DISCONTINUITY where a new epoch starts, DISCONTINUITY-SEQUENCE, and a
+// MEDIA-SEQUENCE that never goes back. It never reads files. False when
+// the viewer has no session.
+func (m *Manager) RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool) {
+	tl, _, _, ok := m.timelineOf(viewerID)
+	if !ok {
+		return nil, false
+	}
+	return tl.Retime(playlist, raw), true
 }

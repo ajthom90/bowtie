@@ -20,6 +20,12 @@ type subQueue struct {
 	inFlight     int    // popped bytes not yet written to the pipe
 	written      uint64 // bytes written to the pipe
 	gen          uint64 // bumped by reset
+	// fresh counts written bytes that came from the live source. Cached
+	// copies (the join snapshot, a reset head, the PAT+PMT put back after
+	// an overflow) are written but not fresh. They only ever enter at the
+	// front of the queue, so cachedFront counts them there.
+	fresh       uint64
+	cachedFront int
 
 	// betweenResetAndBaseline, if set, runs with q.mu held after beginDrain has
 	// copied the written-byte baseline and before it releases the lock. The
@@ -53,6 +59,9 @@ func (q *subQueue) push(chunk, tables []byte) int {
 		// Make room for the chunk and the PAT+PMT that will follow a drop.
 		for q.bytes+len(chunk)+len(tables) > q.max && len(q.chunks) > 0 {
 			dropped += len(q.chunks[0])
+			if q.cachedFront > 0 {
+				q.cachedFront-- // the dropped front chunk was a cached copy
+			}
 			q.bytes -= len(q.chunks[0])
 			q.chunks[0] = nil
 			q.chunks = q.chunks[1:]
@@ -61,6 +70,7 @@ func (q *subQueue) push(chunk, tables []byte) int {
 	if dropped > 0 && len(tables) > 0 {
 		q.chunks = append([][]byte{tables}, q.chunks...)
 		q.bytes += len(tables)
+		q.cachedFront++
 	}
 	q.chunks = append(q.chunks, chunk)
 	q.bytes += len(chunk)
@@ -70,20 +80,31 @@ func (q *subQueue) push(chunk, tables []byte) int {
 
 // pop blocks until a chunk is available; ok is false once the queue is closed.
 func (q *subQueue) pop() ([]byte, bool) {
+	c, _, ok := q.popChunk()
+	return c, ok
+}
+
+// popChunk is pop, and whether the chunk is a cached copy (a reset head or
+// PAT+PMT put back after an overflow) rather than live source bytes.
+func (q *subQueue) popChunk() (c []byte, cached, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for len(q.chunks) == 0 && !q.closed {
 		q.cond.Wait()
 	}
 	if len(q.chunks) == 0 {
-		return nil, false
+		return nil, false, false
 	}
-	c := q.chunks[0]
+	c = q.chunks[0]
 	q.chunks[0] = nil
 	q.chunks = q.chunks[1:]
 	q.bytes -= len(c)
 	q.inFlight += len(c)
-	return c, true
+	if q.cachedFront > 0 {
+		q.cachedFront--
+		cached = true
+	}
+	return c, cached, true
 }
 
 func (q *subQueue) close() {
@@ -92,6 +113,7 @@ func (q *subQueue) close() {
 	q.closed = true
 	q.chunks = nil
 	q.bytes = 0
+	q.cachedFront = 0
 	q.cond.Broadcast()
 }
 
@@ -121,6 +143,24 @@ func (q *subQueue) wroteLocked(n int) {
 	}
 	q.written += uint64(n)
 	q.lastProgress = q.now()
+}
+
+// wroteFrom is wrote, also counting the bytes as fresh unless they came
+// from a cached copy.
+func (q *subQueue) wroteFrom(n int, cached bool) {
+	q.wrote(n)
+	if !cached {
+		q.mu.Lock()
+		q.fresh += uint64(n)
+		q.mu.Unlock()
+	}
+}
+
+// freshBytes is the live source bytes written to the reader's pipe.
+func (q *subQueue) freshBytes() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.fresh
 }
 
 // abandon drops the unwritten rest of the current chunk (after a reset).
@@ -171,10 +211,12 @@ func (q *subQueue) resetLocked(head []byte) int {
 		q.chunks[i] = nil
 	}
 	q.chunks, q.bytes = q.chunks[:0], 0
+	q.cachedFront = 0
 	q.gen++
 	if len(head) > 0 {
 		q.chunks = append(q.chunks, head)
 		q.bytes = len(head)
+		q.cachedFront = 1
 		q.cond.Signal()
 	}
 	return dropped

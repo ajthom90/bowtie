@@ -128,6 +128,23 @@ func (l Layout) ReadyPlaylist() string {
 // CaptionPlaylist is FFmpeg's WebVTT playlist name for the top rung.
 func (l Layout) CaptionPlaylist() string { return l.TopName() + "_vtt.m3u8" }
 
+// Renditions are the media playlist names (without .m3u8) FFmpeg writes for
+// l: every rung, then the AAC and AC-3 renditions (VarStreamMap's names).
+// Caption playlists are not renditions; they share their rung's sequence.
+func (l Layout) Renditions() []string {
+	var out []string
+	for _, r := range l.rungs() {
+		out = append(out, rungName(r))
+	}
+	for i := range l.AACTracks() {
+		out = append(out, fmt.Sprintf("aac%d", i))
+	}
+	for i := range l.AC3Tracks() {
+		out = append(out, fmt.Sprintf("ac3%d", i))
+	}
+	return out
+}
+
 // Safe is the fallback: top rung, first audio as AAC, no AC-3, no captions.
 func (l Layout) Safe() Layout {
 	s := Layout{Rungs: l.rungs()[:1], AudioKbps: l.AudioKbps, VideoCodec: l.VideoCodec}

@@ -12,8 +12,6 @@ bowtie:
   # past the restart.
   killTranscoderAt: 30s
 expect:
-  xfail: "FFmpeg serves no DISCONTINUITY-SEQUENCE; Bowtie owns the timeline in Task 10"
-  xfailOn: "discontinuity sequence"
   minSegmentsAfterFault: 5
   maxTailGapSeconds: 12
   sessionSurvives: true
@@ -22,3 +20,8 @@ expect:
   minFfmpegRestarts: 1
   minDiscontinuitySequence: 1
   discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true
+  maxAVStartSkewMs: 100
+  pairedAfterEachFault: true

@@ -10,3 +10,9 @@ expect:
   renditionsMonotonic: true
   minSegmentsAfterFault: 3
   maxTailGapSeconds: 12
+  discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true
+  maxAVStartSkewMs: 100
+  pairedAfterEachFault: true

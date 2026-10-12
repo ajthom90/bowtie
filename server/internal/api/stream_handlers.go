@@ -53,6 +53,10 @@ type StreamController interface {
 	ChannelReception(channelID int64) (stream.Reception, bool)
 	// SessionMediaOf returns the viewer's session layout and quality ceiling.
 	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
+	// RetimePlaylist rewrites a rendition or caption playlist (name without
+	// .m3u8) from the session timeline (PDT, discontinuities); false when
+	// the viewer has no session.
+	RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool)
 	// BlockedReason reports why parental controls stopped a viewer.
 	BlockedReason(viewerID string) (string, bool)
 }
@@ -335,6 +339,11 @@ func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, view
 		if video, err := os.ReadFile(filepath.Join(dir, rung+".m3u8")); err == nil {
 			raw = repairCaptionPlaylist(raw, video, rung)
 		}
+	}
+	// Captions keep their own name: the timeline gives them the rung's
+	// stamps and their own MEDIA-SEQUENCE floor.
+	if retimed, ok := s.deps.Streams.RetimePlaylist(viewerID, strings.TrimSuffix(name, ".m3u8"), raw); ok {
+		raw = retimed
 	}
 	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")

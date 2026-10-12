@@ -1273,3 +1273,60 @@ func TestReceptionRecordsTuneOutcomes(t *testing.T) {
 	clock.Advance(ingestReconnectMin)
 	waitFor(t, 3*time.Second, func() bool { r, _ := im.Reception(1); return r.State == ReceptionNoSignal })
 }
+
+// The gate's clock counts only live source bytes reaching FFmpeg. A large
+// join snapshot drained slowly (during an outage, nothing else arrives),
+// a reset head and the PAT+PMT put back after an overflow are cached
+// copies: written, never fresh. Live chunks are fresh.
+func TestCachedBytesAreNotFresh(t *testing.T) {
+	now := time.Date(2026, 10, 11, 21, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	pr, pw := io.Pipe()
+	s := &IngestSub{R: pr, pr: pr, pw: pw, q: newSubQueue(1<<20, clock)}
+	defer func() { _ = s.Close() }()
+	go s.drain(make([]byte, 1<<20))
+	read := func(n int) {
+		t.Helper()
+		if _, err := io.ReadFull(pr, make([]byte, n)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond) // let drain record the slice
+	}
+	for i := 0; i < 16; i++ { // the 1 MiB join, 64 KiB at a time
+		read(64 << 10)
+		if f := s.FreshBytes(); f != 0 {
+			t.Fatalf("after %d KiB of the join, fresh = %d", (i+1)*64, f)
+		}
+	}
+	if w := s.q.writtenBytes(); w != 1<<20 {
+		t.Fatalf("written = %d, want the whole join", w)
+	}
+	live := bytes.Repeat([]byte{0x47}, 10*tsPacketSize)
+	s.q.push(live, nil)
+	read(len(live))
+	if f := s.FreshBytes(); f != uint64(len(live)) {
+		t.Fatalf("fresh = %d after a live chunk, want %d", f, len(live))
+	}
+	s.q.reset(bytes.Repeat([]byte{0x47}, 4*tsPacketSize)) // a reset head
+	read(4 * tsPacketSize)
+	if f := s.FreshBytes(); f != uint64(len(live)) {
+		t.Fatalf("a reset head counted as fresh: %d", f)
+	}
+	// Overflow on a queue nothing reads: the oldest chunks go (first an
+	// unread reset head) and PAT+PMT is put back at the head, cached; the
+	// live chunks after it are fresh.
+	q := newSubQueue(1000*tsPacketSize, clock)
+	tables := bytes.Repeat([]byte{0x47}, 2*tsPacketSize)
+	big := bytes.Repeat([]byte{0x47}, 400*tsPacketSize)
+	q.reset(tables)
+	for q.push(big, tables) == 0 {
+	}
+	if c, cached, _ := q.popChunk(); len(c) != len(tables) || !cached {
+		t.Fatalf("after an overflow popped %d bytes, cached %v; want the PAT+PMT, cached", len(c), cached)
+	}
+	for q.size() > 0 {
+		if _, cached, _ := q.popChunk(); cached {
+			t.Fatal("a live chunk after an overflow popped as cached")
+		}
+	}
+}
