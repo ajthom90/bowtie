@@ -102,8 +102,13 @@ func (e *DeviceError) Is(target error) bool {
 type DialFunc func(ctx context.Context, url string) (io.ReadCloser, int, error)
 
 const (
-	ingestChunkSize  = 64 * 1024
-	ingestJoinBufMax = 1 * 1024 * 1024
+	ingestChunkSize = 64 * 1024
+	// ingestJoinBufMax bounds the join buffer (tables + the stream since the
+	// join point): a 19 Mbps MPEG-2 GOP fits.
+	ingestJoinBufMax = 4 << 20
+	// keyScanBytes is how much of each video PES payload is scanned for a
+	// key (SEI before the IDR can be a few hundred bytes).
+	keyScanBytes = 16 * 184
 	// ingestSubQueueMax bounds each transcoder's backlog (≈7s at 19 Mbps);
 	// beyond it the oldest data is dropped instead of cutting FFmpeg off.
 	ingestSubQueueMax = 16 << 20
@@ -423,11 +428,18 @@ type channelIngest struct {
 	lastPMT []byte
 	// videoPID and sourceHeight come from the PMT and the first MPEG-2
 	// sequence header; sessions size their quality ladder from them.
-	videoPID     uint16
-	sourceHeight int
-	pmtPIDs      map[uint16]struct{}
-	sincePAT     []byte // non-table packets since last PAT
-	tsScrap      []byte // partial packet across chunk boundaries
+	videoPID        uint16
+	videoStreamType byte
+	sourceHeight    int
+	pmtPIDs         map[uint16]struct{}
+	sinceJoin       []byte // since the join point: a complete key if joinValid, else the last PAT
+	joinValid       bool   // sinceJoin starts at a complete video key
+	pesOff          int    // offset in sinceJoin of the current video PES (-1: before the buffer)
+	pesScan         []byte // its first keyScanBytes of payload
+	pesDone         bool   // the current PES was classified
+	paramOff        int    // offset of the last PES with an H.264 SPS since the join (-1: none)
+	ppsSeen         bool   // a PPS was seen at or after paramOff
+	tsScrap         []byte // partial packet across chunk boundaries
 
 	// tail: after last Close, keep device open this long
 	tailCancel chan struct{}
@@ -443,6 +455,8 @@ func newChannelIngest(im *IngestManager, channelID int64) *channelIngest {
 		channelID: channelID,
 		subs:      make(map[*IngestSub]struct{}),
 		pmtPIDs:   make(map[uint16]struct{}),
+		pesOff:    -1,
+		paramOff:  -1,
 	}
 }
 
@@ -512,14 +526,14 @@ func (c *channelIngest) addSubLocked() *IngestSub {
 }
 
 func (c *channelIngest) joinSnapshotLocked() []byte {
-	n := len(c.lastPAT) + len(c.lastPMT) + len(c.sincePAT)
+	n := len(c.lastPAT) + len(c.lastPMT) + len(c.sinceJoin)
 	if n == 0 {
 		return nil
 	}
 	out := make([]byte, 0, n)
 	out = append(out, c.lastPAT...)
 	out = append(out, c.lastPMT...)
-	out = append(out, c.sincePAT...)
+	out = append(out, c.sinceJoin...)
 	return out
 }
 
@@ -908,21 +922,106 @@ func (c *channelIngest) handleTSPacketLocked(pkt []byte) {
 	case pid == tsPIDPAT:
 		c.lastPAT = pkt
 		c.pmtPIDs = parsePATPMTPIDs(pkt)
-		c.sincePAT = c.sincePAT[:0]
+		if !c.joinValid {
+			c.restartJoinLocked()
+		}
 		c.capJoinLocked()
 	case c.isPMTPID(pid):
 		c.lastPMT = pkt
-		c.videoPID = parsePMT(pkt).VideoPID
-		// Tables are served from lastPAT/lastPMT; do not duplicate into sincePAT.
+		info := parsePMT(pkt)
+		if info.VideoPID != c.videoPID || info.VideoStreamType != c.videoStreamType {
+			c.videoPID, c.videoStreamType = info.VideoPID, info.VideoStreamType
+			c.joinValid = false // a different video stream: no key known yet
+		}
+		// Tables are served from lastPAT/lastPMT; do not duplicate into sinceJoin.
 		c.capJoinLocked()
 	default:
-		if c.sourceHeight == 0 && c.videoPID != 0 && pid == c.videoPID {
-			// A header split across packets only delays detection.
-			c.sourceHeight = sequenceHeaderHeight(pkt[4:])
+		if c.videoPID != 0 && pid == c.videoPID {
+			if c.sourceHeight == 0 {
+				// A header split across packets only delays detection.
+				c.sourceHeight = sequenceHeaderHeight(pkt[4:])
+			}
+			c.videoPacketLocked(pkt)
+		} else {
+			c.sinceJoin = append(c.sinceJoin, pkt...)
 		}
-		c.sincePAT = append(c.sincePAT, pkt...)
 		c.capJoinLocked()
 	}
+}
+
+// restartJoinLocked empties the buffer (today's join: since the last PAT).
+func (c *channelIngest) restartJoinLocked() {
+	c.sinceJoin = c.sinceJoin[:0]
+	c.pesOff, c.paramOff, c.ppsSeen = -1, -1, false
+	c.joinValid = false
+}
+
+// keyCodec reports whether joins can start at a video key for this stream.
+func (c *channelIngest) keyCodec() bool {
+	switch c.videoStreamType {
+	case 0x01, 0x02, 0x1B:
+		return true
+	}
+	return false
+}
+
+// videoPacketLocked appends a video packet, scanning each PES (across TS
+// packets) for a key; a complete key moves the join point to it.
+func (c *channelIngest) videoPacketLocked(pkt []byte) {
+	payload := tsPayload(pkt)
+	if pkt[1]&0x40 != 0 { // a new PES starts
+		c.classifyPESLocked()
+		c.pesOff, c.pesDone = len(c.sinceJoin), false
+		c.pesScan = append(c.pesScan[:0], pesPayload(payload)...)
+	} else if !c.pesDone && c.pesOff >= 0 && len(c.pesScan) < keyScanBytes {
+		c.pesScan = append(c.pesScan, payload...)
+	}
+	c.sinceJoin = append(c.sinceJoin, pkt...)
+	if !c.pesDone && len(c.pesScan) >= keyScanBytes {
+		c.classifyPESLocked()
+	}
+}
+
+// classifyPESLocked looks at the current PES once and moves the join point
+// when it completes a key.
+func (c *channelIngest) classifyPESLocked() {
+	if c.pesDone || c.pesOff < 0 || !c.keyCodec() {
+		c.pesDone = true
+		return
+	}
+	c.pesDone = true
+	f := scanVideoKey(c.pesScan, c.videoStreamType)
+	switch c.videoStreamType {
+	case 0x01, 0x02:
+		if f.seq {
+			c.joinAtLocked(c.pesOff)
+		}
+	case 0x1B:
+		if f.sps {
+			c.paramOff, c.ppsSeen = c.pesOff, f.pps
+		} else if f.pps && c.paramOff >= 0 {
+			c.ppsSeen = true
+		}
+		switch {
+		case f.idr && f.sps && f.pps:
+			c.joinAtLocked(c.pesOff)
+		case f.idr && c.paramOff >= 0 && c.ppsSeen:
+			c.joinAtLocked(c.paramOff) // keep the parameter sets ahead of the IDR
+		}
+		// An IDR without parameter sets is not a decodable join: keep the old one.
+	}
+}
+
+// joinAtLocked makes sinceJoin start at off (a complete key).
+func (c *channelIngest) joinAtLocked(off int) {
+	c.sinceJoin = append(c.sinceJoin[:0], c.sinceJoin[off:]...)
+	c.pesOff -= off
+	if c.paramOff >= off {
+		c.paramOff -= off
+	} else {
+		c.paramOff, c.ppsSeen = -1, false
+	}
+	c.joinValid = true
 }
 
 func (c *channelIngest) isPMTPID(pid uint16) bool {
@@ -931,13 +1030,86 @@ func (c *channelIngest) isPMTPID(pid uint16) bool {
 }
 
 func (c *channelIngest) capJoinLocked() {
-	for len(c.lastPAT)+len(c.lastPMT)+len(c.sincePAT) > ingestJoinBufMax && len(c.sincePAT) >= tsPacketSize {
-		c.sincePAT = c.sincePAT[tsPacketSize:]
+	trimmed := 0
+	for len(c.lastPAT)+len(c.lastPMT)+len(c.sinceJoin)-trimmed > ingestJoinBufMax && len(c.sinceJoin)-trimmed >= tsPacketSize {
+		trimmed += tsPacketSize
 	}
-	// If still over (tables alone > 1MB — impossible for single packets), drop since.
-	if len(c.lastPAT)+len(c.lastPMT)+len(c.sincePAT) > ingestJoinBufMax {
-		c.sincePAT = nil
+	if trimmed == 0 {
+		return
 	}
+	// Reslice. Compacting with append copies the whole buffer on every packet
+	// once the cap is reached, which stalls the ingest pump.
+	c.sinceJoin = c.sinceJoin[trimmed:]
+	// The key at the head is gone: not a decodable join any more.
+	c.joinValid = false
+	c.pesOff -= trimmed
+	if c.pesOff < 0 {
+		c.pesOff, c.pesDone = -1, true
+	}
+	c.paramOff -= trimmed
+	if c.paramOff < 0 {
+		c.paramOff, c.ppsSeen = -1, false
+	}
+}
+
+// tsPayload is the packet's payload after any adaptation field (nil if none).
+func tsPayload(pkt []byte) []byte {
+	if len(pkt) < tsPacketSize {
+		return nil
+	}
+	off := 4
+	switch (pkt[3] >> 4) & 0x3 {
+	case 0, 2:
+		return nil
+	case 3:
+		off += 1 + int(pkt[4])
+	}
+	if off >= len(pkt) {
+		return nil
+	}
+	return pkt[off:]
+}
+
+// pesPayload strips a PES header from the first packet's payload.
+func pesPayload(p []byte) []byte {
+	if len(p) >= 9 && p[0] == 0 && p[1] == 0 && p[2] == 1 {
+		if h := 9 + int(p[8]); h <= len(p) {
+			return p[h:]
+		}
+		return nil
+	}
+	return p
+}
+
+// nalFlags is what scanVideoKey found in a PES's first bytes.
+type nalFlags struct{ seq, sps, pps, idr bool }
+
+// scanVideoKey finds an MPEG-2 sequence header (stream types 0x01/0x02) or
+// H.264 SPS, PPS and IDR NAL units (0x1B). Other codecs report nothing.
+func scanVideoKey(b []byte, streamType byte) nalFlags {
+	var f nalFlags
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] != 0 || b[i+1] != 0 || b[i+2] != 1 {
+			continue
+		}
+		code := b[i+3]
+		switch streamType {
+		case 0x01, 0x02:
+			if code == 0xB3 {
+				f.seq = true
+			}
+		case 0x1B:
+			switch code & 0x1F {
+			case 7:
+				f.sps = true
+			case 8:
+				f.pps = true
+			case 5:
+				f.idr = true
+			}
+		}
+	}
+	return f
 }
 
 func tsPID(pkt []byte) uint16 {
