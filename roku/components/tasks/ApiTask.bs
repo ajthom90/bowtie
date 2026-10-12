@@ -366,7 +366,7 @@ sub emitResponse(id as string, parsed as object)
 end sub
 
 ' Synchronous HTTP via roUrlTransfer. Certs on every transfer. Per-request timeout
-' (healthz=2000ms from buildRequest; default 10000ms).
+' (healthz=2000ms, createSession=60000ms from buildRequest; default 10000ms).
 function doHttp(built as object) as object
     empty = { httpCode: 0, body: "" }
     if built = invalid or built.url = invalid or built.url = ""

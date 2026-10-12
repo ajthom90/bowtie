@@ -186,8 +186,12 @@ namespace bowtie.client
             headers = bowtie.client.authHeaders(accessToken)
 
         else if kind = "createSession"
+            ' The server answers once the stream is ready: tuning, then the
+            ' first segment, plus one simpler retry, can take ~45 s. A shorter
+            ' wait gave up on a slow start and showed "Can't reach".
             url = base + "/api/v1/sessions"
             method = "POST"
+            timeoutMs = bowtie.client.sessionStartTimeoutMs()
             headers = bowtie.client.authHeaders(accessToken)
             headers["Content-Type"] = "application/json"
             caps = params.caps
@@ -596,7 +600,32 @@ namespace bowtie.client
         return msg
     end function
 
+    ' How long createSession waits for the server (ms). The server's own bound
+    ' on a start: device answer 12 s + first playlist 15 s + one fallback
+    ' layout 15 s; this stays above it so a slow start is never "can't reach".
+    function sessionStartTimeoutMs() as integer
+        return 60000
+    end function
+
     ' ── What a viewer sees ───────────────────────────────────────────────────
+
+    ' Seconds of "Starting…" before the player says why it is slow.
+    function slowStartSeconds() as integer
+        return 5
+    end function
+
+    function slowStartText() as string
+        return "Still starting — the stream is buffering. This can take a little while."
+    end function
+
+    ' The slow-start note replaces "Starting…" only while the first start is
+    ' still on (spinner up, no picture yet) and no reconnect is showing.
+    function showsSlowStartNote(uiPhase as string, awaitingFirstFrame as boolean, retryAttempt as integer) as boolean
+        if retryAttempt > 0 then return false
+        if uiPhase = "starting" then return true
+        if uiPhase = "playing" then return awaitingFirstFrame
+        return false
+    end function
 
     function cantReachText() as string
         return "Can't reach your Bowtie server. Check your connection and try again."

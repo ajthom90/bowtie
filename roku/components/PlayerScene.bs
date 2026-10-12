@@ -17,6 +17,11 @@
 '   signal (46%) — …") follows the latest one, the top bar and info overlay
 '   show its percentages (quality first), and both go with the channel
 '   (zap, leave, error screens).
+' Slow start: the spinner stays up until the first frame plays (the Video
+'   node's "buffering" before it counts as starting). After
+'   bowtie.client.slowStartSeconds() of that, "Starting…" becomes the
+'   slow-start note; every zap / new start resets it, and a reconnect's
+'   "Reconnecting… (n/3)" is never replaced.
 
 import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Caps.bs"
@@ -64,6 +69,7 @@ sub init()
     m.chromeTimer = m.top.findNode("chromeTimer")
     m.heartbeatTimer = m.top.findNode("heartbeatTimer")
     m.sleepTimer = m.top.findNode("sleepTimer")
+    m.slowStartTimer = m.top.findNode("slowStartTimer")
     m.sleepWarning = m.top.findNode("sleepWarning")
     m.sleepWarningLabel = m.top.findNode("sleepWarningLabel")
     m.signalNote = m.top.findNode("signalNote")
@@ -96,6 +102,8 @@ sub init()
     m.lastErrorCode = 0
     m.lastErrorMsg = ""
     m.lastVideoState = ""
+    ' Playback was handed to the Video node and no frame has played yet.
+    m.awaitingFirstFrame = false
     m.sleep = bowtie.sleep.newState()
     ' Options offered by the open Sleep timer dialog (button index → option).
     m.sleepOptions = []
@@ -107,6 +115,8 @@ sub init()
     m.chromeTimer.observeField("fire", "onChromeTimerFire")
     m.heartbeatTimer.observeField("fire", "onHeartbeatFire")
     m.sleepTimer.observeField("fire", "onSleepTick")
+    m.slowStartTimer.duration = bowtie.client.slowStartSeconds()
+    m.slowStartTimer.observeField("fire", "onSlowStartFire")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("errorCode", "onVideoErrorFields")
     m.video.observeField("errorMsg", "onVideoErrorFields")
@@ -226,7 +236,9 @@ sub scheduleReplace()
     stopVideo()
 
     m.uiPhase = "starting"
+    m.awaitingFirstFrame = false
     showStarting("Starting…")
+    restartSlowStartTimer()
     updateChromeLabels()
     showChrome()
 
@@ -287,6 +299,8 @@ sub teardownSession(markClosed as boolean)
     m.debounceTimer.control = "stop"
     m.retryTimer.control = "stop"
     m.chromeTimer.control = "stop"
+    stopSlowStartTimer()
+    m.awaitingFirstFrame = false
     stopHeartbeat()
     clearSignal()
     m.pendingCreateId = ""
@@ -560,8 +574,10 @@ sub startPlayback(playlistUrl as string)
     m.video.control = "play"
     m.uiPhase = "playing"
     hideErrorOverlays()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    ' The spinner (and its text) stays up until the first frame plays.
+    m.awaitingFirstFrame = true
+    m.loadingGroup.visible = true
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "start"
     showChrome()
     updateDebugOverlay()
     m.top.setFocus(true)
@@ -585,18 +601,46 @@ sub onVideoState()
 
     if st = "error"
         handleVideoError()
-    else if st = "playing" or st = "buffering"
-        if m.uiPhase = "starting"
+    else if st = "playing"
+        ' First frame (or recovered from a reconnect): the spinner goes.
+        if m.uiPhase = "starting" or m.awaitingFirstFrame = true
             m.uiPhase = "playing"
             hideErrorOverlays()
-            m.loadingGroup.visible = false
-            if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+            hideLoading()
         end if
         ' Successful frame → reset mid-play retry counter.
-        if st = "playing"
-            m.retryAttempt = 0
-        end if
+        m.retryAttempt = 0
     end if
+    ' "buffering" before the first frame keeps the spinner (and the
+    ' slow-start note) up; mid-play the Video node shows its own.
+end sub
+
+' Spinner and its text off; the slow-start note is done with.
+sub hideLoading()
+    m.awaitingFirstFrame = false
+    stopSlowStartTimer()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+end sub
+
+' ── Slow start note ─────────────────────────────────────────────────────────
+
+sub restartSlowStartTimer()
+    if m.slowStartTimer = invalid then return
+    m.slowStartTimer.control = "stop"
+    m.slowStartTimer.control = "start"
+end sub
+
+sub stopSlowStartTimer()
+    if m.slowStartTimer = invalid then return
+    m.slowStartTimer.control = "stop"
+end sub
+
+sub onSlowStartFire()
+    if m.top.visible <> true then return
+    if m.loadingGroup.visible <> true then return
+    if not bowtie.client.showsSlowStartNote(m.uiPhase, m.awaitingFirstFrame, m.retryAttempt) then return
+    if m.loadingLabel <> invalid then m.loadingLabel.text = bowtie.client.slowStartText()
 end sub
 
 sub onVideoErrorFields()
@@ -667,6 +711,7 @@ sub startBoundedRetry()
     delaySec = delays[m.retryAttempt]
     m.retryAttempt = m.retryAttempt + 1
     m.uiPhase = "starting"
+    stopSlowStartTimer()
     showStarting("Reconnecting… (" + m.retryAttempt.toStr() + "/3)")
     m.retryTimer.duration = delaySec
     m.retryTimer.control = "stop"
@@ -698,8 +743,7 @@ sub showFailed(title as string, detail as string)
     m.uiPhase = "failed"
     clearSignal()
     stopVideo()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.tunersGroup.visible = false
     m.errorGroup.visible = true
     m.errorTitle.text = title
@@ -712,8 +756,7 @@ sub showTunersBusy(sessions as object)
     m.uiPhase = "tunersBusy"
     clearSignal()
     stopVideo()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.errorGroup.visible = false
     m.tunersGroup.visible = true
     m.tunersTitle.text = TUNERS_BUSY_COPY
@@ -769,8 +812,7 @@ end sub
 
 sub hideAllOverlays()
     hideErrorOverlays()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.chromeGroup.visible = false
     clearSignal()
 end sub
