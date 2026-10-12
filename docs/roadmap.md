@@ -42,6 +42,18 @@ requests that come up most in their forums and subreddits.
 6. **More free guide data.** Over-the-air PSIP/EIT from the tuner itself
    (about 12 hours, no account) as a last-resort fallback.
 
+## Also planned
+
+- **Smooth recovery from weak signal** (in progress): no jump to the start
+  of the rewind window and no A/V drift after a dropout; pick up at the same
+  moment; resume a show where you left off while it is recorded or watched.
+- **Free a tuner sooner when changing channels**, so flipping quickly
+  doesn't hit "All tuners are in use".
+- **Roku rewind, fast-forward and back to live.**
+- **HEVC with automatic quality** (today HEVC is single-quality only).
+- **AV1** where the server has an AV1 encoder (Intel Arc / Core Ultra) and
+  the device decodes it, with every app checking for AV1 support.
+
 ## Known rough edges
 
 - **First start on some channels takes ~20 s** when FFmpeg's full layout
