@@ -227,6 +227,12 @@ public actor BowtieClient {
         )
     }
 
+    /// How long `createSession` waits for the server. The server answers once
+    /// the stream is ready: device answer 12 s + first playlist 15 s + one
+    /// simpler layout 15 s. Waiting less would turn a slow start into
+    /// "can't reach".
+    public static let sessionStartTimeout: TimeInterval = 60
+
     /// - Parameter joinSessionId: SharePlay — join this server session (the
     ///   sharer's `session.id`); the server starts a normal session if it can't.
     public func createSession(
@@ -239,7 +245,8 @@ public actor BowtieClient {
             method: "POST",
             body: CreateSessionBody(channelId: channelId, caps: caps, joinSessionId: joinSessionId),
             authorize: true,
-            retryOn401: true
+            retryOn401: true,
+            timeout: Self.sessionStartTimeout
         )
     }
 
@@ -662,14 +669,16 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
         let data = try await sendRaw(
             path: path,
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
         do {
             return try decoder.decode(T.self, from: data)
@@ -704,7 +713,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = ServerURL.resolve(path: path, against: server)
         return try await sendRawURL(
@@ -712,7 +722,8 @@ public actor BowtieClient {
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
     }
 
@@ -721,7 +732,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let bodyData: Data?
         if let body {
@@ -730,12 +742,12 @@ public actor BowtieClient {
             bodyData = nil
         }
 
-        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
         let (data, response) = try await perform(request)
 
         if let http = response as? HTTPURLResponse, http.statusCode == 401, retryOn401 {
             try await refreshSingleFlight()
-            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
             let (data2, response2) = try await perform(retry)
             return try mapSuccess(data: data2, response: response2)
         }
@@ -747,10 +759,14 @@ public actor BowtieClient {
         url: URL,
         method: String,
         bodyData: Data?,
-        authorize: Bool
+        authorize: Bool,
+        timeout: TimeInterval? = nil
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         if let bodyData {
             request.httpBody = bodyData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

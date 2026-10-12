@@ -549,14 +549,15 @@ struct PlayerView: View {
             ProgressView()
                 .tint(Theme.amber)
                 .scaleEffect(1.2)
-            Text(playerModel.state == .stalled ? "Reconnecting…" : "Starting…")
+            Text(playerModel.state == .stalled ? "Reconnecting…" : playerModel.startingText)
                 .font(Theme.body(14))
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.dim)
         }
         .padding(20)
         .background(Theme.bg.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : "Starting")
+        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : (playerModel.isSlowStart ? StartingCopy.slowStart : "Starting"))
     }
 
     // MARK: - Error panels

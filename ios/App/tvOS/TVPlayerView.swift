@@ -199,14 +199,15 @@ struct TVPlayerView: View {
             ProgressView()
                 .tint(Theme.amber)
                 .scaleEffect(1.4)
-            Text(playerModel.state == .stalled ? "Reconnecting…" : "Starting…")
+            Text(playerModel.state == .stalled ? "Reconnecting…" : playerModel.startingText)
                 .font(Theme.body(22))
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.dim)
         }
         .padding(28)
         .background(Theme.bg.opacity(0.75))
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : "Starting")
+        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : (playerModel.isSlowStart ? StartingCopy.slowStart : "Starting"))
     }
 
     private var isBlockingError: Bool {
