@@ -27,19 +27,38 @@ test('createSession waits 60 s, longer than the server takes to start a stream',
         out.channels = bowtie_client_buildRequest("channels", {}, "a", "${BASE}").timeoutMs
         out.health = bowtie_client_buildRequest("healthz", {}, "", "${BASE}").timeoutMs
     `);
-    // Server: device answer 12 s + first playlist 15 s + one fallback 15 s.
+    // Server: connect 5 s + device answer 12 s + track probe 3 s + first
+    // playlist 15 s + one fallback 15 s ≈ 50 s.
     assert.equal(out.create, 60000);
-    assert.ok(out.create > (12 + 15 + 15) * 1000);
+    assert.ok(out.create > (5 + 12 + 3 + 15 + 15) * 1000);
     assert.equal(out.channels, 10000);
     assert.equal(out.health, 2000);
 });
 
-test('a request with no answer at all still says can\'t reach', () => {
+test('no answer, refused, DNS or reset (curl codes < 0) all say can\'t reach', () => {
     const out = runBrs(LIB, `
-        err = bowtie_client_parseResponse("createSession", 0, "", "${BASE}").error
-        out.msg = bowtie_client_viewerMessage(err, "Playback failed. Try again or pick a lower quality.")
+        fb = "Playback failed. Try again or pick a lower quality."
+        out.t = []
+        for each code in [0, -7, -6, -56, -28]
+            err = bowtie_client_parseResponse("createSession", code, "", "${BASE}").error
+            out.t.push(bowtie_client_viewerMessage(err, fb))
+        end for
+        out.build = bowtie_client_viewerMessage({ code: 0, kind: "build", message: "x" }, fb)
+        out.server = bowtie_client_viewerMessage(bowtie_client_parseResponse("createSession", 500, "", "${BASE}").error, fb)
     `);
-    assert.equal(out.msg, "Can't reach your Bowtie server. Check your connection and try again.");
+    const cant = "Can't reach your Bowtie server. Check your connection and try again.";
+    assert.deepEqual(out.t, [cant, cant, cant, cant, cant]);
+    assert.equal(out.build, 'Playback failed. Try again or pick a lower quality.');
+    assert.equal(out.server, 'Playback failed. Try again or pick a lower quality.');
+});
+
+test('only createSession may be hung up early', () => {
+    const out = runBrs(LIB, `
+        out.create = bowtie_client_buildRequest("createSession", { channelId: 9, caps: {} }, "a", "${BASE}").cancellable
+        out.del = bowtie_client_buildRequest("deleteSession", { viewerId: "v" }, "a", "${BASE}").cancellable
+        out.refresh = bowtie_client_buildRequest("refresh", { refreshToken: "r" }, "", "${BASE}").cancellable
+    `);
+    assert.deepEqual([out.create, out.del, out.refresh], [true, false, false]);
 });
 
 test('slow-start note: copy, 5 s, and only while the first start is on', () => {

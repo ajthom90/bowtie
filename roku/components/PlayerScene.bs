@@ -219,6 +219,8 @@ end function
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
 
 sub scheduleReplace()
+    ' A start still in flight is for the old channel: hang it up (no viewer).
+    cancelPendingCreate()
     m.gen = m.gen + 1
     gen = m.gen
     m.is422Retry = false
@@ -280,6 +282,16 @@ sub enqueueCreate(gen as integer, is422Retry as boolean)
     }
 end sub
 
+' Ask ApiTask to drop / hang up the create still waiting for an answer.
+' Its "superseded" answer then fails the gen check and is ignored.
+sub cancelPendingCreate()
+    if m.pendingCreateId = invalid then return
+    if m.pendingCreateId = "" then return
+    task = m.top.apiTask
+    if task = invalid then return
+    task.cancel = m.pendingCreateId
+end sub
+
 sub enqueueDelete(viewerId as string)
     if viewerId = invalid or viewerId = "" then return
     task = m.top.apiTask
@@ -303,6 +315,7 @@ sub teardownSession(markClosed as boolean)
     m.awaitingFirstFrame = false
     stopHeartbeat()
     clearSignal()
+    cancelPendingCreate()
     m.pendingCreateId = ""
     if m.activeViewerId <> invalid and m.activeViewerId <> ""
         enqueueDelete(m.activeViewerId)

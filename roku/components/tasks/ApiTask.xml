@@ -3,6 +3,8 @@
     <interface>
         <!-- Scenes write ONE request AA per call: {id, kind, params}. alwaysNotify so re-posts fire. -->
         <field id="request" type="assocarray" alwaysNotify="true" />
+        <!-- Cancel a request by id: dropped if queued; an in-flight createSession is hung up. Answered kind "superseded". -->
+        <field id="cancel" type="string" alwaysNotify="true" />
         <!-- Response: {id, ok, data|error}. Scenes match on their own id. -->
         <field id="response" type="assocarray" alwaysNotify="true" />
         <!-- Forced sign-out signal: {type: "signOut"}. -->

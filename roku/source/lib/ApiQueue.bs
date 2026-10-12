@@ -1,0 +1,101 @@
+' ApiTask's request queue rules (pure; ApiTask owns the queue and the I/O).
+'
+' A channel start (createSession) can take up to a minute, and ApiTask runs
+' one request at a time. So:
+' - a newer createSession replaces any createSession still waiting (only the
+'   latest zap matters); the replaced ones are answered "superseded";
+' - a deleteSession goes ahead of any waiting createSession, so a viewer is
+'   stopped (tuner and account limit freed) before the next channel starts;
+' - everything else is first in, first out.
+
+namespace bowtie.apiqueue
+
+    ' Adds req to queue (in place). Returns the requests it replaced.
+    function add(queue as object, req as object) as object
+        dropped = []
+        if req = invalid then return dropped
+        kind = bowtie.apiqueue.kindOf(req)
+
+        if kind = "createSession"
+            kept = []
+            for each item in queue
+                if bowtie.apiqueue.kindOf(item) = "createSession"
+                    dropped.push(item)
+                else
+                    kept.push(item)
+                end if
+            end for
+            queue.Clear()
+            queue.Append(kept)
+            queue.push(req)
+            return dropped
+        end if
+
+        if kind = "deleteSession"
+            at = bowtie.apiqueue.firstCreateIndex(queue)
+            if at < 0
+                queue.push(req)
+            else
+                bowtie.apiqueue.insertAt(queue, at, req)
+            end if
+            return dropped
+        end if
+
+        queue.push(req)
+        return dropped
+    end function
+
+    ' Removes the queued request with this id; returns it (invalid if none).
+    function removeId(queue as object, id as string) as dynamic
+        if id = invalid or id = "" then return invalid
+        for i = 0 to queue.count() - 1
+            item = queue[i]
+            if item <> invalid
+                if bowtie.apiqueue.idOf(item) = id
+                    queue.Delete(i)
+                    return item
+                end if
+            end if
+        end for
+        return invalid
+    end function
+
+    function firstCreateIndex(queue as object) as integer
+        for i = 0 to queue.count() - 1
+            if bowtie.apiqueue.kindOf(queue[i]) = "createSession" then return i
+        end for
+        return -1
+    end function
+
+    sub insertAt(queue as object, at as integer, req as object)
+        tail = []
+        while queue.count() > at
+            tail.push(queue[at])
+            queue.Delete(at)
+        end while
+        queue.push(req)
+        queue.Append(tail)
+    end sub
+
+    function kindOf(req as dynamic) as string
+        if req = invalid then return ""
+        if Type(req) <> "roAssociativeArray" then return ""
+        k = req.kind
+        if k = invalid then return ""
+        return k
+    end function
+
+    function idOf(req as dynamic) as string
+        if req = invalid then return ""
+        if Type(req) <> "roAssociativeArray" then return ""
+        v = req.id
+        if v = invalid then return ""
+        return v
+    end function
+
+    ' Answer for a request that was dropped or cancelled before it finished.
+    function supersededResponse() as object
+        return { ok: false, error: { code: 0, kind: "superseded", message: "" } }
+    end function
+
+end namespace
