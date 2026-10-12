@@ -1130,3 +1130,21 @@ func (m *Manager) RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte,
 	}
 	return tl.Retime(playlist, raw), true
 }
+
+// ViewerOwner is the viewer's user ID; false when the viewer has no live
+// session. Callers authorize on it before asking for anything else.
+func (m *Manager) ViewerOwner(viewerID string) (int64, bool) {
+	_, _, owner, ok := m.timelineOf(viewerID)
+	return owner, ok
+}
+
+// TimelineOf is the observer's snapshot of the viewer's window (top
+// rendition) on the wall clock. It reads no files. False when the viewer
+// has no session.
+func (m *Manager) TimelineOf(viewerID string) (WindowTimeline, bool) {
+	tl, top, _, ok := m.timelineOf(viewerID)
+	if !ok {
+		return WindowTimeline{}, false
+	}
+	return tl.Window(top), true
+}

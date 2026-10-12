@@ -1937,6 +1937,79 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/sessions/{viewerId}/timeline:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Wall-clock map of the viewer's current window
+      description: |
+        Maps the session's playlist window to wall-clock time for clients
+        that can't read EXT-X-PROGRAM-DATE-TIME (Roku): a client turns a
+        broadcast moment T into an offset into the window. Times are RFC 3339
+        with milliseconds (UTC), the same values the playlists' PDT carry.
+        Requires the Bearer token of the user who owns the viewer (a
+        stream token does not qualify). Any other signed-in user, admins
+        included, gets the same 404 as a missing viewer.
+      operationId: getSessionTimeline
+      tags: [stream]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The current window
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mediaSequence, windowStart, liveEdge, segments]
+                properties:
+                  mediaSequence:
+                    type: integer
+                    format: int64
+                    description: Media sequence number of the first segment, as the served playlists number it (Bowtie's numbering, not the transcoder's).
+                  windowStart:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Wall-clock start of the first segment (null while the window is empty).
+                  liveEdge:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Wall-clock end of the last segment (null while the window is empty).
+                  segments:
+                    type: array
+                    description: |
+                      One `[startWallClock, durationSec]` pair per segment in
+                      playlist order. An outage shows as a start later than
+                      the previous segment's end.
+                    items:
+                      type: array
+                      minItems: 2
+                      maxItems: 2
+                      items: {}
+        '401':
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such viewer, or the caller doesn't own it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Streaming not available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/stream/{viewerId}/index.m3u8:
     parameters:
       - name: viewerId

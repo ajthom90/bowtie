@@ -2281,3 +2281,43 @@ func (g *gateHarness) waitTunerFreed(im *IngestManager) {
 		g.t.Fatalf("tuner still held for channels %v", got)
 	}
 }
+
+func TestTimelineOfReportsOwnerAndObservedWindow(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m := newTestManager(st, cfg, clock, runner)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, ok := m.ViewerOwner(h.ViewerID); !ok || owner != user.ID {
+		t.Fatalf("ViewerOwner = %d, %v", owner, ok)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	pl := "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:3\n#EXTINF:4.0,\n" + top + "_00003.ts\n#EXTINF:4.0,\n" + top + "_00004.ts\n"
+	if err := os.WriteFile(filepath.Join(h.SessionDir, top+".m3u8"), []byte(pl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Real TS files: run 0 opens only once its first PTS is read (Task 9).
+	for i, pts := range []float64{1.4, 5.4} {
+		if err := os.WriteFile(filepath.Join(h.SessionDir, fmt.Sprintf("%s_%05d.ts", top, 3+i)), tsWithPTS(pts), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	tl.Observe()
+	win, ok := m.TimelineOf(h.ViewerID)
+	// MediaSequence is Bowtie's own number (the served playlists'), not FFmpeg's 3.
+	if !ok || win.MediaSequence != 0 || len(win.Segments) != 2 {
+		t.Fatalf("TimelineOf = %+v ok=%v", win, ok)
+	}
+	if !win.LiveEdge().Equal(win.WindowStart().Add(8 * time.Second)) {
+		t.Fatalf("window %v → %v, want 8 s", win.WindowStart(), win.LiveEdge())
+	}
+	if _, ok := m.TimelineOf("no-such-viewer"); ok {
+		t.Fatal("unknown viewer has a timeline")
+	}
+	if _, ok := m.ViewerOwner("no-such-viewer"); ok {
+		t.Fatal("unknown viewer has an owner")
+	}
+}

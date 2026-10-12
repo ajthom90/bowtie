@@ -34,20 +34,22 @@ const streamSecret = "0123456789abcdef0123456789abcdef"
 // --- stub StreamController ---------------------------------------------------
 
 type stubStreams struct {
-	mu         sync.Mutex
-	startFn    func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
-	joinFn     func(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
-	touchCalls []string
-	stopped    []string
-	terminated []string
-	sessions   []stream.SessionInfo
-	dirs       map[string]string // viewerID → dir
-	viewers    map[string]bool
-	reception  map[int64]stream.Reception
-	media      map[string]stream.SessionMedia // viewerID → media
-	blocked    map[string]string              // viewerID → parental reason
-	onStop     func(id string)
-	retime     func(viewerID, rendition string, raw []byte) ([]byte, bool)
+	mu            sync.Mutex
+	startFn       func(ctx context.Context, user store.User, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
+	joinFn        func(ctx context.Context, user store.User, sessionID string, channelID int64, caps transcode.ClientCaps) (stream.ViewerHandle, error)
+	touchCalls    []string
+	stopped       []string
+	terminated    []string
+	sessions      []stream.SessionInfo
+	dirs          map[string]string // viewerID → dir
+	viewers       map[string]bool
+	reception     map[int64]stream.Reception
+	media         map[string]stream.SessionMedia // viewerID → media
+	blocked       map[string]string              // viewerID → parental reason
+	onStop        func(id string)
+	retime        func(viewerID, rendition string, raw []byte) ([]byte, bool)
+	timelines     map[string]timelineStub // viewerID → window + owner
+	timelineBuilt []string                // viewers whose timeline was built
 }
 
 func newStubStreams() *stubStreams {
@@ -175,6 +177,28 @@ func (s *stubStreams) RetimePlaylist(viewerID, rendition string, raw []byte) ([]
 		return raw, true
 	}
 	return s.retime(viewerID, rendition, raw)
+}
+
+type timelineStub struct {
+	owner int64
+	win   stream.WindowTimeline
+}
+
+func (s *stubStreams) ViewerOwner(viewerID string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tl, ok := s.timelines[viewerID]
+	return tl.owner, ok
+}
+
+// TimelineOf records that a timeline was built, so the test can check that
+// authorization ran first.
+func (s *stubStreams) TimelineOf(viewerID string) (stream.WindowTimeline, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.timelineBuilt = append(s.timelineBuilt, viewerID)
+	tl, ok := s.timelines[viewerID]
+	return tl.win, ok
 }
 
 // fixtureLayout matches writeFixtureSession: 720/480/360, eng+spa (AC-3), captions.
@@ -1833,5 +1857,70 @@ func TestRetimeMissDoesNotServeRawPlaylist(t *testing.T) {
 	}
 	if rr.Code != http.StatusNotFound || !strings.Contains(body, "viewer not found") {
 		t.Fatalf("status %d body %s, want 404 viewer not found", rr.Code, body)
+	}
+}
+
+// Only the owner's Bearer token sees the timeline. Another user (even an
+// admin) gets the same 404 as a missing viewer; no Bearer (a stream token
+// included) gets 401. No timeline is built for a refused request.
+func TestSessionTimelineOwnerOnly(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	alice := seedUser(t, st, "alice", "pass-a", "viewer")
+	seedUser(t, st, "bob", "pass-b", "admin")
+	start := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
+	ss.timelines = map[string]timelineStub{"viewer-a": {owner: alice.ID, win: stream.WindowTimeline{
+		MediaSequence: 7,
+		Segments: []stream.TimelineSegment{
+			{Start: start, Duration: 4.004},
+			{Start: start.Add(4004 * time.Millisecond), Duration: 4.004},
+		},
+	}}}
+	login := func(user, pass string) string {
+		rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": user, "password": pass}, nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("login %s: %d", user, rr.Code)
+		}
+		return decodeLogin(t, rr).AccessToken
+	}
+	aliceTok, bobTok := login("alice", "pass-a"), login("bob", "pass-b")
+	const path = "/api/v1/sessions/viewer-a/timeline"
+	viewerTok := stream.SignStreamToken([]byte(streamSecret), "viewer-a", time.Now().UTC().Add(time.Hour))
+
+	for name, req := range map[string]struct {
+		path string
+		hdr  map[string]string
+		want int
+	}{
+		"another user's bearer (admin)": {path, map[string]string{"Authorization": "Bearer " + bobTok}, http.StatusNotFound},
+		"owner, unknown viewer":         {"/api/v1/sessions/viewer-x/timeline", map[string]string{"Authorization": "Bearer " + aliceTok}, http.StatusNotFound},
+		"viewer's own stream token":     {path + "?token=" + viewerTok, nil, http.StatusUnauthorized},
+		"no auth":                       {path, nil, http.StatusUnauthorized},
+		"garbage bearer":                {path, map[string]string{"Authorization": "Bearer nope"}, http.StatusUnauthorized},
+	} {
+		if rr := doJSON(t, h, "GET", req.path, nil, req.hdr); rr.Code != req.want {
+			t.Errorf("%s: status %d, want %d", name, rr.Code, req.want)
+		}
+	}
+	if len(ss.timelineBuilt) != 0 {
+		t.Fatalf("timelines built for refused requests: %v", ss.timelineBuilt)
+	}
+
+	rr := doJSON(t, h, "GET", path, nil, map[string]string{"Authorization": "Bearer " + aliceTok})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("owner: status %d body %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		MediaSequence int64   `json:"mediaSequence"`
+		WindowStart   string  `json:"windowStart"`
+		LiveEdge      string  `json:"liveEdge"`
+		Segments      [][]any `json:"segments"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.MediaSequence != 7 || body.WindowStart != "2026-10-11T20:00:00.000Z" || body.LiveEdge != "2026-10-11T20:00:08.008Z" ||
+		len(body.Segments) != 2 || body.Segments[1][0] != "2026-10-11T20:00:04.004Z" || body.Segments[1][1] != 4.004 {
+		t.Fatalf("body %+v", body)
 	}
 }
