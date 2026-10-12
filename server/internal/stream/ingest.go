@@ -146,6 +146,10 @@ type IngestManager struct {
 
 	attachCalls atomic.Int64
 
+	// chunkAck, if set, runs after each device chunk has been fanned out.
+	// Tests wait on it before advancing a fake clock. Nil outside tests.
+	chunkAck atomic.Pointer[func()]
+
 	mu       sync.Mutex
 	channels map[int64]*channelIngest
 	stopped  bool
@@ -427,7 +431,12 @@ type channelIngest struct {
 	sourceHeight int
 	pmtPIDs      map[uint16]struct{}
 	sincePAT     []byte // non-table packets since last PAT
-	tsScrap      []byte // partial packet across chunk boundaries
+
+	// onJoinSnapshot, if set, runs at the start of joinSnapshotLocked with
+	// c.mu held (it must not acquire c.mu). Tests count stuck-rule snapshots.
+	// Nil outside tests.
+	onJoinSnapshot func()
+	tsScrap        []byte // partial packet across chunk boundaries
 
 	// tail: after last Close, keep device open this long
 	tailCancel chan struct{}
@@ -512,6 +521,9 @@ func (c *channelIngest) addSubLocked() *IngestSub {
 }
 
 func (c *channelIngest) joinSnapshotLocked() []byte {
+	if c.onJoinSnapshot != nil {
+		c.onJoinSnapshot()
+	}
 	n := len(c.lastPAT) + len(c.lastPMT) + len(c.sincePAT)
 	if n == 0 {
 		return nil
@@ -840,6 +852,24 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout+ingestSubKillGrace)
 		s.forceClose()
 	}
+	c.im.noteChunk()
+}
+
+// setChunkAck installs the per-chunk test hook. Nil clears it.
+func (m *IngestManager) setChunkAck(fn func()) {
+	if fn == nil {
+		m.chunkAck.Store(nil)
+		return
+	}
+	f := fn
+	m.chunkAck.Store(&f)
+}
+
+// noteChunk runs the test hook, if any, after a device chunk is fanned out.
+func (m *IngestManager) noteChunk() {
+	if p := m.chunkAck.Load(); p != nil && *p != nil {
+		(*p)()
+	}
 }
 
 // checkStuckLocked applies the stuck rule to one sub and reports whether its
@@ -858,14 +888,15 @@ func (c *channelIngest) checkStuckLocked(s *IngestSub, now time.Time) bool {
 		}
 		return now.Sub(s.drainedAt) >= ingestSubKillGrace
 	}
+	// Cheap guard: the join snapshot copies up to 1 MiB under c.mu, so it is
+	// built only after this reader has already been idle. beginDrain
+	// re-checks under the queue lock; a write in between does not drain.
+	if s.q.idleFor(now) < ingestSubStuckTimeout {
+		return false
+	}
 	dropped, baseline, idle, drained := s.q.beginDrain(now, ingestSubStuckTimeout, c.joinSnapshotLocked())
 	if !drained {
 		return false
-	}
-	// Baseline is already fixed. A write here is progress after the drain
-	// and clears it on the next check.
-	if s.q.betweenResetAndBaseline != nil {
-		s.q.betweenResetAndBaseline()
 	}
 	s.drainedAt, s.writtenAtDrain = now, baseline
 	log.Printf("ingest: channel %d: transcoder read nothing for %v; dropped its %d KiB backlog and resent the stream headers",
