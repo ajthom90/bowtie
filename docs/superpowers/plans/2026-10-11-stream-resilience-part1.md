@@ -10,7 +10,7 @@
   - a multi-rendition testplayer with a pure consistency checker and ffprobe audio checks.
     - The checker pairs renditions by PDT overlap and requires paired segments to carry the same discontinuity number.
     - The player measures A/V skew on the same PDT pairing and counts every fetch failure.
-    - It opens a coverage window at each fault's end, and requires A/V-paired segments in every rendition and discontinuity of each window, plus progress to the end of observation;
+    - It opens a coverage window at the end of each fault cluster (faults ending less than 8 s apart form one cluster; only an outage-type fault hides a fault nested inside it). Each window must have A/V-paired segments in every rendition and in every discontinuity, one-segment discontinuities included, plus progress to the end of observation. Waiting comparisons are drained when observation ends, and a cue never matched to a video segment is an error;
   - a "production" e2e layout: a software ladder, every audio track, the AC-3 copy and captions;
   - new fault scenarios marked `xfail`. Each is pinned to the check that must fail until the task that fixes it.
 - **FFmpeg changes.** Input and audio hardening come first. Then the timestamp option is chosen by a gate on FFmpeg 5.1 (the production image's FFmpeg).
@@ -46,9 +46,9 @@
 
   The gate requires all of:
   - the PTS+DTS and PTS-only `ptsjump` variants at +3, +6 and +9 s, and the `splice` scenario, with no timeline inflation and no duplicate storm (warnings and `dup!` bursts);
-  - zero "timestamp discontinuity" re-bases on splices (FFmpeg 5.1 debug logs), with a positive control that must re-base;
+  - zero "timestamp discontinuity" re-bases on splices (FFmpeg 5.1 debug logs), with separate positive controls for re-bases and for duplicated frames;
   - the production layout with faults, AC-3 included;
-  - cue timing on a real clip with injected faults;
+  - cue timing on a real clip with injected faults, with timed cues in every coverage window;
   - no false re-bases on the real OTA clips, judged against their signal logs.
 
   If both kinds of option pass, prefer `fps_mode`. There is no "raise the threshold after the soak" escape hatch.
@@ -90,8 +90,8 @@
      - `TestStuckSubDrainedThenClosedAfterGrace` (Task 7);
      - the `stuck-hung` scenario (Task 4).
 5. **Checks that pass without comparing anything.**
-   - A/V skew limits must rest on PDT-paired comparisons made after each fault, in every rendition and discontinuity. Every fetch failure counts. A rendition that stops before the end fails.
-   - Pinned by `TestCoverageAfterFaults`, `TestCheckCoverageExpectations` (Task 4) and `TestPlayerPairsAVByPDTAndCountsPerWindow` (Task 3).
+   - A/V skew limits must rest on PDT-paired comparisons made after each fault cluster, in every rendition and discontinuity. Every fetch failure counts. A rendition that stops before the end fails. Captions need timed cues in every window, and an unmatched cue fails.
+   - Pinned by `TestCoverageAfterFaults`, `TestFaultEndsClusters`, `TestCheckCoverageExpectations` (Task 4), `TestPlayerPairsAVByPDTAndCountsPerWindow` and `TestPlayerDrainsWaitingComparisons` (Task 3).
 6. **The timeline endpoint leaking another user's session.** Only the owner's Bearer token sees it. Stream URL tokens, other users and admins get the same 404 as a missing viewer. Pinned by `TestSessionTimelineOwnerOnly` (Task 11).
 
 ---
@@ -104,7 +104,7 @@
 | `server/internal/hdhr/hdhrfake/scenario/scenario.go`, `run.go` | pts-jump one-shot; `ptsOnly`; layout; new expectations; pinned xfail; `windowSegments` | 1, 4 |
 | `server/internal/testplayer/consistency.go` (new) | pure cross-rendition playlist checks, PDT-overlap pairing | 2 |
 | `server/internal/testplayer/player.go` | follow every rendition, probe segments, PDT-paired A/V skew, coverage windows, every fetch failure, tail gaps, cue timing, per-segment events | 3 |
-| `server/internal/testplayer/coverage.go` (new) | per-window paired coverage, cue-less windows, max tail gap | 4 |
+| `server/internal/testplayer/coverage.go` (new) | per-window paired coverage, windows without timed cues, max tail gap | 4 |
 | `server/internal/e2e/harness.go`, `scenarios_test.go`, `ffprobe_test.go` (new), `rebases_test.go` (new), `otasignal_test.go` (new), `otaclips_test.go` (new) | plumbing, production layout, ffprobe probe, FFmpeg log reader (re-bases, dup bursts, argv), signal-log judge, OTA clip gate | 4, 6 |
 | `server/internal/e2e/testdata/scenarios/*.yaml` | new scenarios plus guards on existing ones | 4, 5, 6, 7, 10 |
 | `server/internal/stream/manager.go` | `HLSListSize`, `ForceAdaptive`; timeline observer per session; RetimePlaylist; TimelineOf; caption sweep | 4, 10, 11, 12 |
@@ -1071,7 +1071,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
   - `type Packet struct { PTS, Dur float64 }` (seconds) and `type SegmentProbe func(ctx context.Context, seg []byte) ([]Packet, error)`, which lists the packets of the segment's first stream.
   - `Config.AllRenditions bool`, `Config.Probe SegmentProbe`, `Config.OnSegment func(SegmentEvent)`.
   - `type SegmentEvent struct { At time.Time; Rendition string; Seq, DNum int64; AudioHole, AVSkew time.Duration; Paired bool; TimelineExcess float64 }`. It is called after each probed segment (time-local measurements for the soak).
-  - `type CoverageWindow struct { Start, End time.Time; Segments map[string]int; Epochs, Paired map[string]map[int64]int; Cues map[string]int }`. Window 0 starts at `Start`. `func (p *Player) Mark()` closes the current window and opens the next; Task 4 calls it at the end of **each** fault.
+  - `type CoverageWindow struct { Start, End time.Time; Segments map[string]int; Epochs, Paired map[string]map[int64]int; Cues, CuesTimed map[string]int }`. Window 0 starts at `Start`. `func (p *Player) Mark()` closes the current window and opens the next; Task 4 calls it at the end of **each** fault cluster.
   - New `Report` fields:
     - `Renditions []string` (primary first);
     - `TimelineExcess float64`;
@@ -1085,6 +1085,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
     - `TailGap map[string]time.Duration`;
     - `Cues, CuesTimed, CueErrors int`.
 - **A/V pairing is PDT overlap, the same as Task 2.** When an audio or video segment is probed, it is paired (`PairByPDT`, tolerance one segment) with the probed segments of every rendition of the other kind. The pair counts only when both segments carry the same discontinuity number; a different number is a Task 2 consistency failure. If the only candidate is a neighbour that doesn't overlap and the other rendition hasn't yet reached this segment's end, the pairing waits: the overlapping segment pairs when it is probed.
+  - **Drain at the end of observation.** When `Run` returns, every probed segment that is still unpaired is compared once more, and only an overlapping segment pairs it then. Every pending caption comparison is retried too.
   - Skew is `|(ptsA − ptsV) − (pdtA − pdtV)|`, with the PTS difference unwrapped over 33 bits. On a correct timeline the PDT difference is exactly the PTS difference, so the skew is the A/V offset the viewer sees, whatever the segment durations.
   - Each pairing adds one to `Paired[rendition][dnum]` of the window **in which each segment was fetched**, once per segment. A window therefore shows paired coverage only for segments that arrived after the fault, and a rendition that stopped shows none.
 - **Every fetch failure counts** in `FetchErrors = PlaylistErrors + SegmentErrors + ProbeErrors`:
@@ -1092,7 +1093,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
   - `SegmentErrors`: any rendition (bad status, empty, not TS, not `WEBVTT`).
   - `ProbeErrors`: any failed or empty probe.
 - **Progress through the end:** `TailGap[rendition]` is the time from that rendition's last new segment to the end of the run (or from `Start` if it delivered none). Task 4 and the soak (Task 13) bound it per rendition.
-- **Captions:** `TYPE=SUBTITLES` renditions (`<rung>_vtt`) feed the consistency checks, and their segments must start `WEBVTT`. Each cue's start is mapped to PTS through `X-TIMESTAMP-MAP` (Bowtie writes `MPEGTS:126000,LOCAL:00:00:00.000`). It must lie within ±1 s of the PTS range of the rung's PDT-paired probed segment. `Cues` and `Windows[i].Cues` count cues, `CuesTimed` the cues checked, and `CueErrors` the cues outside the range or without a map. Synthetic fake sources carry no captions, so `Cues` is 0 there; Task 6's caption row runs on OTA clips.
+- **Captions:** `TYPE=SUBTITLES` renditions (`<rung>_vtt`) feed the consistency checks, and their segments must start `WEBVTT`. Each cue's start is mapped to PTS through `X-TIMESTAMP-MAP` (Bowtie writes `MPEGTS:126000,LOCAL:00:00:00.000`). It must lie within ±1 s of the PTS range of the rung's PDT-paired probed segment. `Cues` and `Windows[i].Cues` count cues. `CuesTimed` and `Windows[i].CuesTimed` count the cues checked against a video segment. `CueErrors` counts the cues outside the range, without a map, or never matched.
+  - A caption segment whose video segment isn't probed yet waits in a pending list, bounded at 64 segments. The list is retried after every poll. When it is full, the overflow counts as `CueErrors`. Whatever is still pending at the drain counts as `CueErrors` too: an unmatched cue is a failure, not a skip. Synthetic fake sources carry no captions, so `Cues` is 0 there; Task 6's caption row runs on OTA clips.
 - Timeline excess is Σ EXTINF of the primary rendition's segments that first appear after the first poll that listed any, minus the wall time between that poll and the poll that first listed the newest of them.
 - Audio holes are measured within a segment, and from the end of the previous segment when the sequence numbers are consecutive and the segment carries no DISCONTINUITY. A rendition is audio when its name starts with `aac` or `ac3`.
 - Memory: each rendition keeps its last 64 probed segments for pairing, so an hour's soak stays bounded.
@@ -1361,11 +1363,52 @@ func TestPlayerPairsAVByPDTAndCountsPerWindow(t *testing.T) {
 		t.Fatalf("events %+v", events)
 	}
 }
+
+// Cues that arrive before their video segment wait for it; cues that never
+// find one, and comparisons still waiting, are settled when observation ends.
+func TestPlayerDrainsWaitingComparisons(t *testing.T) {
+	t0 := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
+	now := time.Now()
+	v, a, cc := newRendition("v480", "", now), newRendition("aac0", "", now), newRendition("v480_vtt", "", now)
+	p := &Player{primary: v, others: []*rendition{a, cc}, windows: []*CoverageWindow{newWindow(now)}}
+	seg := func(i int) SegmentObs {
+		return SegmentObs{Seq: int64(i), Duration: 4, PDT: t0.Add(time.Duration(4*i) * time.Second)}
+	}
+	vtt := func(cue float64) []byte {
+		return []byte(fmt.Sprintf("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000\n\n%s --> %s\nhi\n", vttTime(cue), vttTime(cue+1)))
+	}
+	// Caption segment 0 arrives before video segment 0 is probed: it waits.
+	p.cues(cc, seg(0), 0, vtt(100.5-1.4))
+	if r := p.Report(); r.Cues != 1 || r.CuesTimed != 0 || r.CueErrors != 0 {
+		t.Fatalf("before the video: cues %d timed %d errors %d", r.Cues, r.CuesTimed, r.CueErrors)
+	}
+	p.mu.Lock()
+	v.addProbed(&probed{seg: PDTSeg{Start: seg(0).PDT, Dur: 4}, pts: 100, end: 104})
+	p.retryCuesLocked()
+	p.mu.Unlock()
+	if r := p.Report(); r.CuesTimed != 1 || r.Windows[0].CuesTimed["v480_vtt"] != 1 || r.CueErrors != 0 {
+		t.Fatalf("after the video: timed %d (window %v) errors %d", r.CuesTimed, r.Windows[0].CuesTimed, r.CueErrors)
+	}
+	// Caption segment 5 never gets a video segment: unmatched at the end.
+	p.cues(cc, seg(5), 0, vtt(120.5-1.4))
+	// Audio segment 0 was probed but its pairing never ran: drain pairs it.
+	p.mu.Lock()
+	a.addProbed(&probed{seg: PDTSeg{Start: seg(0).PDT, Dur: 4}, pts: 100.03, end: 104})
+	p.mu.Unlock()
+	p.drain()
+	r := p.Report()
+	if r.CueErrors != 1 || !strings.Contains(strings.Join(r.Errors, "\n"), "no probed v480 segment") {
+		t.Fatalf("unmatched cue: errors %d %q", r.CueErrors, r.Errors)
+	}
+	if r.AVPairs != 1 || r.Windows[0].Paired["aac0"][0] != 1 || r.MaxAVStartSkew != 30*time.Millisecond {
+		t.Fatalf("drain pairing: pairs %d paired %v skew %v", r.AVPairs, r.Windows[0].Paired, r.MaxAVStartSkew)
+	}
+}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd server && go test ./internal/testplayer/ -run 'TestPlayerFollowsEveryRenditionAndProbes|TestPlayerPairsAVByPDTAndCountsPerWindow' -v`
+Run: `cd server && go test ./internal/testplayer/ -run 'TestPlayerFollowsEveryRenditionAndProbes|TestPlayerPairsAVByPDTAndCountsPerWindow|TestPlayerDrainsWaitingComparisons' -v`
 Expected: FAIL to compile with `unknown field AllRenditions` / `undefined: Packet`.
 
 - [ ] **Step 3: Implement**
@@ -1452,8 +1495,10 @@ type CoverageWindow struct {
 	// this window's probed segments that were PDT-paired with a probed
 	// segment of the other kind (so their A/V skew was measured).
 	Paired map[string]map[int64]int
-	// Cues counts WebVTT cues per subtitle rendition.
-	Cues map[string]int
+	// Cues counts WebVTT cues per subtitle rendition; CuesTimed those
+	// timed against their video segment (by the window the cue's segment
+	// was fetched in).
+	Cues, CuesTimed map[string]int
 }
 
 // StartError is returned by Start when session creation is refused.
@@ -1540,6 +1585,8 @@ type Player struct {
 	others  []*rendition
 	snaps   []Snapshot
 	windows []*CoverageWindow
+	// pendingCues wait for the video segment they are timed against.
+	pendingCues []pendingCue
 
 	excessStarted bool
 	excessBase    int64 // newest segment at the first poll that listed any
@@ -1610,6 +1657,7 @@ func (p *Player) ViewerID() string { return p.viewerID }
 // Run polls until ctx is done or the session disappears.
 func (p *Player) Run(ctx context.Context) {
 	defer func() {
+		p.drain()
 		p.mu.Lock()
 		p.stopped = time.Now()
 		p.mu.Unlock()
@@ -1671,7 +1719,7 @@ func (p *Player) Report() Report {
 	}
 	for i, w := range p.windows {
 		c := CoverageWindow{Start: w.Start, End: end, Segments: map[string]int{},
-			Epochs: map[string]map[int64]int{}, Paired: map[string]map[int64]int{}, Cues: map[string]int{}}
+			Epochs: map[string]map[int64]int{}, Paired: map[string]map[int64]int{}, Cues: map[string]int{}, CuesTimed: map[string]int{}}
 		if i+1 < len(p.windows) {
 			c.End = p.windows[i+1].Start
 		}
@@ -1686,6 +1734,9 @@ func (p *Player) Report() Report {
 		}
 		for k, n := range w.Cues {
 			c.Cues[k] = n
+		}
+		for k, n := range w.CuesTimed {
+			c.CuesTimed[k] = n
 		}
 		r.Windows = append(r.Windows, c)
 	}
@@ -1716,7 +1767,7 @@ func (p *Player) Mark() {
 
 func newWindow(at time.Time) *CoverageWindow {
 	return &CoverageWindow{Start: at, Segments: map[string]int{}, Epochs: map[string]map[int64]int{},
-		Paired: map[string]map[int64]int{}, Cues: map[string]int{}}
+		Paired: map[string]map[int64]int{}, Cues: map[string]int{}, CuesTimed: map[string]int{}}
 }
 
 func copyCounts(m map[int64]int) map[int64]int {
@@ -1875,6 +1926,9 @@ func (p *Player) poll(ctx context.Context) bool {
 	for _, r := range others {
 		p.pollRendition(ctx, r)
 	}
+	p.mu.Lock()
+	p.retryCuesLocked()
+	p.mu.Unlock()
 	return false
 }
 
@@ -1931,7 +1985,7 @@ func (p *Player) pollRendition(ctx context.Context, r *rendition) {
 		win := p.fetchedLocked(r, g, time.Now())
 		p.mu.Unlock()
 		if sub {
-			p.cues(r, g, seg)
+			p.cues(r, g, win, seg)
 		} else {
 			p.probe(ctx, r, g, win, seg)
 		}
@@ -1998,9 +2052,21 @@ func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int,
 		return // no wall-clock place: cannot be paired (Consistency flags it)
 	}
 	r.addProbed(rec)
-	all := append([]*rendition{p.primary}, p.others...)
-	for _, o := range all {
-		if o == r || isSubtitleRendition(o.name) || isAudioRendition(o.name) == audio {
+	ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
+}
+
+// pairLocked pairs rec (of rendition r) with the PDT-overlapping probed
+// segment of every rendition of the other kind and measures the skew.
+// A non-overlapping neighbour (within one segment) is accepted only once
+// the other rendition has passed rec's end; before that, the overlapping
+// segment may not be probed yet and pairs with rec when it is. final (the
+// end of observation) retries with overlapping segments only: a rendition
+// that stopped leaves its last moments unpaired, which coverage reports.
+func (p *Player) pairLocked(r *rendition, rec *probed, final bool) (bool, time.Duration) {
+	paired, max := false, time.Duration(0)
+	audio := isAudioRendition(r.name)
+	for _, o := range append([]*rendition{p.primary}, p.others...) {
+		if o == r || isSubtitleRendition(o.name) || isAudioRendition(o.name) == audio || len(o.probed) == 0 {
 			continue
 		}
 		k, ok := PairByPDT(rec.seg, o.pdtSegs(), durOf(rec.seg.Dur))
@@ -2008,22 +2074,45 @@ func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int,
 			continue // unpaired, or a numbering mismatch Consistency reports
 		}
 		other := o.probed[k]
-		if !overlaps(rec.seg, other.seg) && o.probed[len(o.probed)-1].seg.End().Before(rec.seg.End()) {
-			// Only a neighbour so far: the overlapping segment may not have
-			// been probed yet, and pairs with rec when it is.
+		if !overlaps(rec.seg, other.seg) && (final || o.probed[len(o.probed)-1].seg.End().Before(rec.seg.End())) {
 			continue
 		}
 		s := absSeconds(ptsDiff(rec.pts, other.pts) - rec.seg.Start.Sub(other.seg.Start).Seconds())
 		p.report.AVPairs++
-		ev.Paired = true
-		if s > ev.AVSkew {
-			ev.AVSkew = s
+		paired = true
+		if s > max {
+			max = s
 		}
 		if s > p.report.MaxAVStartSkew {
 			p.report.MaxAVStartSkew = s
 		}
 		p.pairedLocked(r, rec)
 		p.pairedLocked(o, other)
+	}
+	return paired, max
+}
+
+// drain finishes the comparisons still waiting at the end of observation:
+// every unpaired probed segment is retried against everything probed, and
+// cues still waiting for their video segment are timed or counted as
+// unmatched (CueErrors). Run calls it on return.
+func (p *Player) drain() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, r := range append([]*rendition{p.primary}, p.others...) {
+		for _, rec := range r.probed {
+			if !rec.paired {
+				p.pairLocked(r, rec, true)
+			}
+		}
+	}
+	waiting := p.pendingCues
+	p.pendingCues = nil
+	for _, c := range waiting {
+		if !p.timeCuesLocked(c) {
+			p.report.CueErrors += len(c.starts)
+			p.cueErrorf("%s segment %d: %d cue(s) with no probed %s segment to time them against", c.r.name, c.g.Seq, len(c.starts), strings.TrimSuffix(c.r.name, "_vtt"))
+		}
 	}
 }
 
@@ -2047,12 +2136,25 @@ var (
 // cueTolerance is how far a cue may start outside its video segment.
 const cueTolerance = 1.0
 
+// maxPendingCues bounds the WebVTT segments waiting for their video segment.
+const maxPendingCues = 64
+
+// pendingCue is a WebVTT segment's cues, waiting to be timed.
+type pendingCue struct {
+	r             *rendition
+	g             SegmentObs
+	win           int
+	starts        []float64
+	mpegts, local float64
+}
+
 // cues counts a WebVTT segment's cues and checks each cue's start, mapped
 // to PTS through X-TIMESTAMP-MAP, against the PTS range of the probed rung
-// segment it PDT-pairs with.
-func (p *Player) cues(r *rendition, g SegmentObs, body []byte) {
-	var starts []float64
-	mapped, mpegts, local := false, 0.0, 0.0
+// segment it PDT-pairs with. When that segment isn't probed yet, the cues
+// wait (retried after every poll; drain counts what never matches).
+func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
+	c := pendingCue{r: r, g: g, win: win}
+	mapped := false
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -2060,51 +2162,77 @@ func (p *Player) cues(r *rendition, g SegmentObs, body []byte) {
 			a, b := mpegtsRe.FindStringSubmatch(m), localRe.FindStringSubmatch(m)
 			if a != nil && b != nil {
 				n, _ := strconv.ParseFloat(a[1], 64)
-				mapped, mpegts, local = true, n/90000, vttSeconds(b[1])
+				mapped, c.mpegts, c.local = true, n/90000, vttSeconds(b[1])
 			}
 			continue
 		}
 		if m := cueRe.FindStringSubmatch(line); m != nil {
-			starts = append(starts, vttSeconds(m[1]))
+			c.starts = append(c.starts, vttSeconds(m[1]))
 		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.report.Cues += len(starts)
-	p.windows[len(p.windows)-1].Cues[r.name] += len(starts)
-	if len(starts) == 0 {
-		return
+	p.report.Cues += len(c.starts)
+	p.windows[win].Cues[r.name] += len(c.starts)
+	switch {
+	case len(c.starts) == 0:
+	case !mapped:
+		p.report.CueErrors += len(c.starts)
+		p.cueErrorf("%s segment %d: cues without X-TIMESTAMP-MAP", r.name, g.Seq)
+	case p.timeCuesLocked(c):
+	case len(p.pendingCues) >= maxPendingCues:
+		p.report.CueErrors += len(c.starts)
+		p.cueErrorf("%s segment %d: %d cue(s) never matched a video segment", r.name, g.Seq, len(c.starts))
+	default:
+		p.pendingCues = append(p.pendingCues, c)
 	}
-	if !mapped {
-		p.report.CueErrors += len(starts)
-		p.report.Errors = append(p.report.Errors, fmt.Sprintf("%s segment %d: cues without X-TIMESTAMP-MAP", r.name, g.Seq))
-		return
+}
+
+// retryCuesLocked times the waiting cues whose video segment has arrived.
+func (p *Player) retryCuesLocked() {
+	waiting := p.pendingCues[:0]
+	for _, c := range p.pendingCues {
+		if !p.timeCuesLocked(c) {
+			waiting = append(waiting, c)
+		}
 	}
+	p.pendingCues = waiting
+}
+
+// timeCuesLocked times c against the rung's PDT-paired probed segment; false
+// when there is none yet.
+func (p *Player) timeCuesLocked(c pendingCue) bool {
 	var rung *rendition
 	for _, o := range append([]*rendition{p.primary}, p.others...) {
-		if o.name == strings.TrimSuffix(r.name, "_vtt") {
+		if o.name == strings.TrimSuffix(c.r.name, "_vtt") {
 			rung = o
 		}
 	}
-	if rung == nil || g.PDT.IsZero() {
-		return
+	if rung == nil || c.g.PDT.IsZero() || len(rung.probed) == 0 {
+		return false
 	}
-	k, ok := PairByPDT(PDTSeg{Start: g.PDT, Dur: g.Duration, DNum: g.DNum}, rung.pdtSegs(), durOf(g.Duration))
-	if !ok {
-		return
+	k, ok := PairByPDT(PDTSeg{Start: c.g.PDT, Dur: c.g.Duration, DNum: c.g.DNum}, rung.pdtSegs(), durOf(c.g.Duration))
+	if !ok || !overlaps(rung.probed[k].seg, PDTSeg{Start: c.g.PDT, Dur: c.g.Duration}) {
+		return false
 	}
 	v := rung.probed[k]
-	for _, c := range starts {
-		pts := mpegts + (c - local)
+	for _, start := range c.starts {
+		pts := c.mpegts + (start - c.local)
 		p.report.CuesTimed++
+		p.windows[c.win].CuesTimed[c.r.name]++
 		lo, hi := ptsDiff(pts, v.pts), ptsDiff(pts, v.end)
 		if lo < -cueTolerance || hi > cueTolerance {
 			p.report.CueErrors++
-			if p.report.CueErrors <= 5 {
-				p.report.Errors = append(p.report.Errors, fmt.Sprintf("%s segment %d: cue at PTS %.3f outside %s segment %.3f–%.3f",
-					r.name, g.Seq, pts, rung.name, v.pts, v.end))
-			}
+			p.cueErrorf("%s segment %d: cue at PTS %.3f outside %s segment %.3f–%.3f", c.r.name, c.g.Seq, pts, rung.name, v.pts, v.end)
 		}
+	}
+	return true
+}
+
+// cueErrorf records a cue problem (the first few only).
+func (p *Player) cueErrorf(format string, a ...any) {
+	if p.report.CueErrors <= 5 {
+		p.report.Errors = append(p.report.Errors, fmt.Sprintf(format, a...))
 	}
 }
 
@@ -2295,9 +2423,9 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: the testplayer `Config.AllRenditions`, `Config.Probe`, `Packet`, `SegmentProbe`, `Mark` and the `Report` fields (Task 3).
 - Produces:
-  - testplayer: `const MinCoverageWindow = 8 * time.Second`. The checked windows are each window opened by a fault's end that lasted at least `MinCoverageWindow`, plus the last window (the only one when a run has no faults). Three `Report` methods use them:
-    - `func (r Report) UnpairedAfterFaults(minWindow time.Duration) []string` lists coverage holes in the checked windows. A hole is an audio or video rendition with no A/V-paired segment, or a discontinuity number of which it delivered at least two segments in the window with none paired. A run without both audio and video renditions is one hole.
-    - `func (r Report) CuelessWindows(minWindow time.Duration) []string` lists the checked windows in which a subtitle rendition delivered no cues.
+  - testplayer coverage. The checked windows are every window opened by a `Mark` (the end of a fault cluster; see `FaultEnds`), plus the last window. The last window is the only one when a run has no faults. Three `Report` methods use them:
+    - `func (r Report) UnpairedAfterFaults() []string` lists coverage holes in the checked windows. A hole is an audio or video rendition with no A/V-paired segment in the window, or a discontinuity number it delivered there with none of its segments paired. A one-segment discontinuity counts: a short restart that never paired is a hole. The single exemption is one segment of the rendition's last discontinuity in the last window, where observation ended before its partner could arrive. A run without both audio and video renditions is one hole.
+    - `func (r Report) UntimedCueWindows() []string` lists the checked windows in which a subtitle rendition had no cue timed against its video segment (`CoverageWindow.CuesTimed`). Cues that never matched a video segment are already `CueErrors` (Task 3's drain).
     - `func (r Report) MaxTailGap() (string, time.Duration)`.
   - `scenario.Scenario.WindowSegments int` (`windowSegments`: the session's `-hls_list_size`; 0 = default 30; otherwise ≥ 3).
   - `scenario.Expect` gains `RenditionsMonotonic, DiscontinuitiesAligned, DiscontinuitySequenceOK, PDTMonotonic, PDTAligned *bool`, `MinDiscontinuitySequence *int64`, `MaxTimelineExcessSeconds, MinTimelineExcessSeconds, MaxAudioHoleMs, MaxAVStartSkewMs *float64` and `MinFfmpegRestarts *int`. YAML keys are the lowerCamel field names.
@@ -2305,9 +2433,9 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
   - `scenario.Expect` also gains:
     - `XFailOn string` (`xfailOn`, required with `xfail`): the text of the violation that must occur. Any other violation fails the xfail run.
     - `MinSegmentsAfterFault *int` (`minSegmentsAfterFault`): every followed rendition fetched at least this many segments after the last fault ended.
-    - `PairedAfterEachFault *bool` (`pairedAfterEachFault`): `UnpairedAfterFaults` is empty. Every audio and video rendition had its A/V skew measured after **each** fault (window ≥ 8 s) and in every discontinuity it delivered there, not just somewhere in the run.
+    - `PairedAfterEachFault *bool` (`pairedAfterEachFault`): `UnpairedAfterFaults` is empty. Every audio and video rendition had its A/V skew measured after **each** fault cluster, in every discontinuity it delivered there, not just somewhere in the run.
     - `MaxTailGapSeconds *float64` (`maxTailGapSeconds`): every rendition kept delivering until the end of observation. Its last new segment is at most this old when the run ends.
-    - `CaptionsTimed *bool` (`captionsTimed`): cues arrived in every checked window, and none fell outside its PDT-paired video segment (`CueErrors == 0`).
+    - `CaptionsTimed *bool` (`captionsTimed`): captions are expected. Every checked window has timed cues (`UntimedCueWindows` is empty), and no cue fell outside its PDT-paired video segment or went unmatched (`CueErrors == 0`).
     - `NoFetchErrors *bool` (`noFetchErrors`): `Report.FetchErrors` is 0 (every playlist, segment and probe failure in any rendition; Task 3), and every listed rendition delivered a segment.
     - `MinRenditions *int` (`minRenditions`).
     - `MaxStartSeconds *float64` (`maxStartSeconds`): from POST /sessions to its answer, which waits for the first playlist.
@@ -2315,9 +2443,14 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
     - `MinSegmentsAfterFault int`, `FetchErrors int`, `RenditionsCovered bool`, `Renditions int`, `StartLatency time.Duration`;
     - `AVPairs int`, `UnpairedCoverage []string`;
     - `MaxTailGap time.Duration`, `MaxTailGapRendition string`;
-    - `Cues, CueErrors int`, `CuelessWindows []string`.
+    - `Cues, CuesTimed, CueErrors int`, `UntimedCueWindows []string`.
   - `scenario.BowtieSpec.Layout string` (`bowtie: {layout: production}`). The production layout is what a real server serves: multitrack (every audio track as AAC, the AC-3 copy, captions) and a ladder, even with the software encoder. The default stays one rung and one AAC.
-  - `func (s *Scenario) FaultEnds() []time.Duration` lists when each fault is over, ascending and without duplicates. A fault ends at a timeline step's `at` + `for`, the slow-consumer window's end, or the kill or close time. An end inside another fault is left out: a kill during an outage opens no window, because nothing can arrive until the outage is over. The e2e runner calls `Mark` at each end, so every fault gets its own coverage window. `func (s *Scenario) LastFaultEnd() time.Duration` is the last of them (0 without faults).
+  - `const scenario.FaultClusterGap = 8 * time.Second` and `func (s *Scenario) FaultEnds() []time.Duration`: the end of each fault cluster, ascending. The e2e runner calls `Mark` at each one.
+    - A fault ends at a timeline step's `at` + `for`, the slow-consumer window's end, or the kill or close time.
+    - Ends closer together than 8 s form one explicit cluster. Its window opens at the cluster's last end and must show coverage for all of its faults.
+    - Only a delivery-blocking fault suppresses the window of a fault that ends inside it: `signal`, `stall`, `hang`, `pid-loss`, the slow consumer, a kill or a close. A kill during an outage therefore opens no window, because nothing can arrive until the outage is over; the outage's own end opens one.
+    - Corruption and timestamp faults (`corrupt`, `drop`, `slow`, `pts-jump`, `timestamp-jump`, …) never suppress a window. A pts-jump inside a long corruption burst gets its own window.
+    - `func (s *Scenario) LastFaultEnd() time.Duration` is the last end (0 without faults).
   - `stream.ManagerDeps.HLSListSize int` overrides `-hls_list_size` for new sessions (tests).
   - `stream.ManagerDeps.ForceAdaptive bool` (tests) makes every start use the ladder, whatever the settings and encoder say (libx264 normally never ladders).
   - `e2e.Options.Production bool` sets `Multitrack: true`, `ForceAdaptive: true` and a 3 s `TrackProbeTimeout`, so the PMT's audio tracks are known.
@@ -2385,18 +2518,9 @@ func TestXFailNeedsXFailOnAndNewExpectations(t *testing.T) {
 	if s.Bowtie.Layout != "production" || s.LastFaultEnd() != 20*time.Second {
 		t.Fatalf("layout %q, last fault end %v", s.Bowtie.Layout, s.LastFaultEnd())
 	}
-	if got := s.FaultEnds(); len(got) != 2 || got[0] != 14*time.Second || got[1] != 20*time.Second {
-		t.Fatalf("fault ends %v, want [14s 20s]", got)
-	}
-	// A kill during an outage opens no window of its own: nothing can be
-	// delivered until the signal is back.
-	outage, err := Parse([]byte("name: o\nduration: 140s\ntimeline:\n  - {at: 10s, fault: signal, quality: 10, for: 65s}\n" +
-		"bowtie: {killTranscoderAt: 30s}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := outage.FaultEnds(); len(got) != 1 || got[0] != 75*time.Second {
-		t.Fatalf("fault ends %v, want [75s]", got)
+	// The stall ends at 14 s and the kill comes 6 s later: one cluster.
+	if got := s.FaultEnds(); len(got) != 1 || got[0] != 20*time.Second {
+		t.Fatalf("fault ends %v, want [20s]", got)
 	}
 	if _, err := Parse([]byte("name: x\nduration: 5s\nbowtie: {layout: fancy}\n")); err == nil {
 		t.Fatal("unknown layout accepted")
@@ -2416,7 +2540,7 @@ func TestXFailNeedsXFailOnAndNewExpectations(t *testing.T) {
 func TestCheckCoverageExpectations(t *testing.T) {
 	yes, f := true, func(v float64) *float64 { return &v }
 	e := &Expect{PairedAfterEachFault: &yes, MaxTailGapSeconds: f(12), CaptionsTimed: &yes, MaxAVStartSkewMs: f(100)}
-	good := Observed{AVPairs: 4, ProbedAudio: 4, ProbedVideo: 4, MaxTailGap: 5 * time.Second, MaxTailGapRendition: "aac0", Cues: 10}
+	good := Observed{AVPairs: 4, ProbedAudio: 4, ProbedVideo: 4, MaxTailGap: 5 * time.Second, MaxTailGapRendition: "aac0", Cues: 10, CuesTimed: 10}
 	if v := e.Check(good); len(v) != 0 {
 		t.Fatalf("good: %v", v)
 	}
@@ -2424,7 +2548,7 @@ func TestCheckCoverageExpectations(t *testing.T) {
 		ProbedAudio: 4, ProbedVideo: 4, // probed, but never paired
 		UnpairedCoverage: []string{"window 2: aac0 has no A/V-paired segment (0 fetched)"},
 		MaxTailGap:       30 * time.Second, MaxTailGapRendition: "aac0",
-		CueErrors: 1, CuelessWindows: []string{"window 1: v480_vtt has no cues"},
+		Cues: 3, CuesTimed: 2, CueErrors: 1, UntimedCueWindows: []string{"window 1: v480_vtt has no timed cues (1 cues)"},
 	}
 	v := e.Check(bad)
 	joined := strings.Join(v, "\n")
@@ -2439,7 +2563,29 @@ func TestCheckCoverageExpectations(t *testing.T) {
 }
 ```
 
-Add `"strings"` to the test file's imports if it isn't there.
+```go
+func TestFaultEndsClusters(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, want string }{
+		{"spaced point faults", "timeline:\n  - {at: 8s, fault: pts-jump, by: 3s}\n  - {at: 18s, fault: pts-jump, by: 3s}\n  - {at: 28s, fault: pts-jump, by: 3s}\n", "[8s 18s 28s]"},
+		{"8 s apart is not a cluster", "timeline:\n  - {at: 30s, fault: timestamp-jump, by: 2s}\n  - {at: 38s, fault: timestamp-jump, by: 2s}\n", "[30s 38s]"},
+		{"closer than 8 s is one cluster", "timeline:\n  - {at: 30s, fault: timestamp-jump, by: 2s}\n  - {at: 35s, fault: timestamp-jump, by: 2s}\n", "[35s]"},
+		{"kill inside an outage", "timeline:\n  - {at: 10s, fault: signal, quality: 10, for: 65s}\nbowtie: {killTranscoderAt: 30s}\n", "[1m15s]"},
+		{"jump inside corruption", "timeline:\n  - {at: 10s, fault: corrupt, type: tei, rate: 0.01, for: 50s}\n  - {at: 12s, fault: pts-jump, by: 3s}\n", "[12s 1m0s]"},
+		{"jump inside the slow consumer", "timeline:\n  - {at: 20s, fault: pts-jump, by: 3s}\nbowtie: {slowConsumer: {at: 10s, for: 40s}}\n", "[50s]"},
+		{"no faults", "", "[]"},
+	} {
+		s, err := Parse([]byte("name: f\nduration: 100s\n" + tc.yaml))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := fmt.Sprint(s.FaultEnds()); got != tc.want {
+			t.Errorf("%s: fault ends %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+```
+
+Add `"fmt"` and `"strings"` to the test file's imports if they aren't there.
 
 Create `server/internal/testplayer/coverage_test.go`:
 
@@ -2454,7 +2600,7 @@ import (
 
 func TestCoverageAfterFaults(t *testing.T) {
 	t0 := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
-	win := func(start, end float64, paired map[string]map[int64]int, epochs map[string]map[int64]int, cues int) CoverageWindow {
+	win := func(start, end float64, paired, epochs map[string]map[int64]int, timed int) CoverageWindow {
 		segs := map[string]int{}
 		for n, m := range epochs {
 			for _, c := range m {
@@ -2463,38 +2609,46 @@ func TestCoverageAfterFaults(t *testing.T) {
 		}
 		return CoverageWindow{
 			Start: t0.Add(time.Duration(start * float64(time.Second))), End: t0.Add(time.Duration(end * float64(time.Second))),
-			Segments: segs, Epochs: epochs, Paired: paired, Cues: map[string]int{"v480_vtt": cues},
+			Segments: segs, Epochs: epochs, Paired: paired,
+			Cues: map[string]int{"v480_vtt": timed + 1}, CuesTimed: map[string]int{"v480_vtt": timed},
 		}
 	}
 	r := Report{
 		Renditions: []string{"v480", "aac0", "v480_vtt"},
 		TailGap:    map[string]time.Duration{"v480": time.Second, "aac0": 9 * time.Second, "v480_vtt": 2 * time.Second},
 		Windows: []CoverageWindow{
-			// Before the first fault: never checked unless it is the last.
+			// Before the first fault cluster: not checked.
 			win(0, 10, nil, map[string]map[int64]int{"v480": {0: 2}}, 0),
-			// 4 s between two faults: too short to check.
-			win(10, 14, nil, map[string]map[int64]int{"v480": {0: 1}}, 0),
-			// After the restart: audio delivered epoch 1 but none of it paired.
-			win(14, 40,
+			// After a restart: audio's epoch 1 delivered segments but none
+			// paired, and video's one-segment epoch 2 never paired (a short
+			// restart; not exempt, because it isn't the end of observation).
+			win(10, 40,
 				map[string]map[int64]int{"v480": {0: 1, 1: 2}, "aac0": {0: 1}},
-				map[string]map[int64]int{"v480": {0: 1, 1: 5}, "aac0": {0: 1, 1: 5}}, 3),
-			// The last window, however short, is checked: audio stopped.
-			win(40, 42, map[string]map[int64]int{"v480": {1: 1}}, map[string]map[int64]int{"v480": {1: 1}}, 0),
+				map[string]map[int64]int{"v480": {0: 1, 1: 5, 2: 1}, "aac0": {0: 1, 1: 5}}, 3),
+			// The last window: video's single segment of its last epoch is
+			// exempt; audio stopped.
+			win(40, 52, map[string]map[int64]int{"v480": {3: 2}}, map[string]map[int64]int{"v480": {3: 2, 4: 1}}, 0),
 		},
 	}
-	got := strings.Join(r.UnpairedAfterFaults(MinCoverageWindow), "\n")
-	want := "window 2: aac0 discontinuity 1 has 5 segments, none A/V-paired\nwindow 3: aac0 has no A/V-paired segment (0 fetched)"
+	got := strings.Join(r.UnpairedAfterFaults(), "\n")
+	want := "window 1: v480 discontinuity 2 has 1 segment(s), none A/V-paired\n" +
+		"window 1: aac0 discontinuity 1 has 5 segment(s), none A/V-paired\n" +
+		"window 2: aac0 has no A/V-paired segment (0 fetched)"
 	if got != want {
 		t.Fatalf("unpaired:\n%s\nwant:\n%s", got, want)
 	}
-	if got := strings.Join(r.CuelessWindows(MinCoverageWindow), "\n"); got != "window 3: v480_vtt has no cues" {
-		t.Fatalf("cueless: %q", got)
+	if got := strings.Join(r.UntimedCueWindows(), "\n"); got != "window 2: v480_vtt has no timed cues (1 cues)" {
+		t.Fatalf("untimed: %q", got)
 	}
 	if n, g := r.MaxTailGap(); n != "aac0" || g != 9*time.Second {
 		t.Fatalf("max tail gap %s %v", n, g)
 	}
-	if got := (Report{Renditions: []string{"v480"}, Windows: r.Windows[:1]}).UnpairedAfterFaults(MinCoverageWindow); len(got) != 1 {
+	if got := (Report{Renditions: []string{"v480"}, Windows: r.Windows[:1]}).UnpairedAfterFaults(); len(got) != 1 {
 		t.Fatalf("video alone must be reported: %v", got)
+	}
+	// With no faults, the only window is the last and is checked.
+	if got := (Report{Renditions: []string{"v480", "aac0"}, Windows: r.Windows[:1]}).UnpairedAfterFaults(); len(got) != 2 {
+		t.Fatalf("a run without faults is checked as one window: %v", got)
 	}
 }
 ```
@@ -2547,8 +2701,8 @@ func TestForceAdaptiveLaddersSoftware(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd server && go test ./internal/testplayer/ ./internal/hdhr/hdhrfake/scenario/ ./internal/stream/ -run 'TestCoverageAfterFaults|TestCheckTimelineExpectations|TestCheckCoverageExpectations|TestParseWindowSegments|TestXFailNeedsXFailOn|TestHLSListSizeOverride|TestForceAdaptive' -v`
-Expected: FAIL to compile (`undefined: MinCoverageWindow`, `unknown field RenditionsMonotonic`, `unknown field HLSListSize`).
+Run: `cd server && go test ./internal/testplayer/ ./internal/hdhr/hdhrfake/scenario/ ./internal/stream/ -run 'TestCoverageAfterFaults|TestCheckTimelineExpectations|TestCheckCoverageExpectations|TestParseWindowSegments|TestXFailNeedsXFailOn|TestFaultEndsClusters|TestHLSListSizeOverride|TestForceAdaptive' -v`
+Expected: FAIL to compile (`r.UnpairedAfterFaults undefined`, `s.FaultEnds undefined`, `unknown field RenditionsMonotonic`, `unknown field HLSListSize`).
 
 - [ ] **Step 3: Implement the coverage helpers, scenario and manager changes**
 
@@ -2563,18 +2717,14 @@ import (
 	"time"
 )
 
-// MinCoverageWindow is the shortest window (faults closer together than
-// this) whose coverage is checked; the last window is always checked.
-const MinCoverageWindow = 8 * time.Second
-
-// checkedWindows are the windows opened by a fault's end (index ≥ 1) that
-// lasted at least minWindow, plus the last window (the only one when the
-// run had no faults).
-func (r Report) checkedWindows(minWindow time.Duration) []int {
+// checkedWindows are the windows whose coverage is checked: every window
+// opened by a Mark (the end of a fault cluster; scenario.FaultEnds spaces
+// them at least 8 s apart) and the last window, which is the only one
+// when nothing was marked.
+func (r Report) checkedWindows() []int {
 	var out []int
-	for i, w := range r.Windows {
-		last := i == len(r.Windows)-1
-		if last || (i > 0 && w.End.Sub(w.Start) >= minWindow) {
+	for i := range r.Windows {
+		if i > 0 || i == len(r.Windows)-1 {
 			out = append(out, i)
 		}
 	}
@@ -2583,10 +2733,12 @@ func (r Report) checkedWindows(minWindow time.Duration) []int {
 
 // UnpairedAfterFaults lists coverage holes in the checked windows: an audio
 // or video rendition with no segment PDT-paired with the other kind, or a
-// discontinuity number it delivered at least two segments of in the window
-// with none of them paired. Empty means every rendition's A/V alignment was
-// measured after every fault.
-func (r Report) UnpairedAfterFaults(minWindow time.Duration) []string {
+// discontinuity number it delivered in the window with none of its
+// segments paired. The only exemption is a single segment of the
+// rendition's last discontinuity in the last window: observation ended
+// before its partner could arrive. Empty means every rendition's A/V
+// alignment was measured after every fault cluster, in every discontinuity.
+func (r Report) UnpairedAfterFaults() []string {
 	var av []string
 	audio, video := false, false
 	for _, name := range r.Renditions {
@@ -2603,9 +2755,19 @@ func (r Report) UnpairedAfterFaults(minWindow time.Duration) []string {
 	if !audio || !video {
 		return []string{fmt.Sprintf("renditions %v: no audio and video to pair", r.Renditions)}
 	}
+	final := map[string]int64{} // each rendition's last discontinuity number
+	for _, w := range r.Windows {
+		for name, m := range w.Epochs {
+			for d := range m {
+				if f, ok := final[name]; !ok || d > f {
+					final[name] = d
+				}
+			}
+		}
+	}
 	var out []string
-	for _, i := range r.checkedWindows(minWindow) {
-		w := r.Windows[i]
+	for _, i := range r.checkedWindows() {
+		w, last := r.Windows[i], i == len(r.Windows)-1
 		for _, name := range av {
 			paired := 0
 			for _, n := range w.Paired[name] {
@@ -2621,23 +2783,25 @@ func (r Report) UnpairedAfterFaults(minWindow time.Duration) []string {
 			}
 			sort.Slice(dnums, func(a, b int) bool { return dnums[a] < dnums[b] })
 			for _, d := range dnums {
-				if w.Epochs[name][d] >= 2 && w.Paired[name][d] == 0 {
-					out = append(out, fmt.Sprintf("window %d: %s discontinuity %d has %d segments, none A/V-paired", i, name, d, w.Epochs[name][d]))
+				n := w.Epochs[name][d]
+				if w.Paired[name][d] > 0 || (last && d == final[name] && n == 1) {
+					continue
 				}
+				out = append(out, fmt.Sprintf("window %d: %s discontinuity %d has %d segment(s), none A/V-paired", i, name, d, n))
 			}
 		}
 	}
 	return out
 }
 
-// CuelessWindows lists checked windows in which a subtitle rendition
-// delivered no cues.
-func (r Report) CuelessWindows(minWindow time.Duration) []string {
+// UntimedCueWindows lists checked windows in which a subtitle rendition
+// had no cue timed against its video segment (no cues, or none matched).
+func (r Report) UntimedCueWindows() []string {
 	var out []string
-	for _, i := range r.checkedWindows(minWindow) {
+	for _, i := range r.checkedWindows() {
 		for _, name := range r.Renditions {
-			if isSubtitleRendition(name) && r.Windows[i].Cues[name] == 0 {
-				out = append(out, fmt.Sprintf("window %d: %s has no cues", i, name))
+			if isSubtitleRendition(name) && r.Windows[i].CuesTimed[name] == 0 {
+				out = append(out, fmt.Sprintf("window %d: %s has no timed cues (%d cues)", i, name, r.Windows[i].Cues[name]))
 			}
 		}
 	}
@@ -2706,24 +2870,45 @@ Add to `BowtieSpec`:
 Add to `scenario.go`:
 
 ```go
-// FaultEnds lists when each fault of the run is over, ascending and
-// without duplicates: each timeline step's at + for, the slow-consumer
-// window's end, and the kill and close times. An end that falls inside
-// another fault (a kill during an outage) is left out: nothing can be
-// delivered until that fault is over too.
+// FaultClusterGap: fault ends closer together than this form one cluster,
+// with one coverage window after the cluster's last end.
+const FaultClusterGap = 8 * time.Second
+
+// blocksDelivery reports whether a fault kind stops segments from arriving
+// while it lasts (an outage), as opposed to damaging what arrives.
+func blocksDelivery(k faults.Kind) bool {
+	switch k {
+	case faults.Signal, faults.Stall, faults.Hang, faults.PIDLoss:
+		return true
+	}
+	return false
+}
+
+// FaultEnds lists where the e2e runner opens a coverage window: the end of
+// each fault cluster, ascending. A fault ends at a timeline step's at + for,
+// the slow-consumer window's end, or the kill or close time. Ends closer
+// together than FaultClusterGap form one cluster, whose window opens at
+// its last end and must show coverage for all of them. An end strictly
+// inside a delivery-blocking fault (an outage, a stall, a hung tuner, a
+// lost PID, FFmpeg not reading) opens no window: nothing can arrive until
+// that fault is over, and its own end opens one. Corruption and timestamp
+// faults never suppress another fault's window.
 func (s *Scenario) FaultEnds() []time.Duration {
-	type span struct{ from, to time.Duration }
+	type span struct {
+		from, to time.Duration
+		blocks   bool
+	}
 	var spans []span
 	for _, st := range s.Timeline {
-		spans = append(spans, span{st.At, st.At + st.Spec.For})
+		spans = append(spans, span{st.At, st.At + st.Spec.For, blocksDelivery(st.Spec.Fault)})
 	}
 	if b := s.Bowtie; b != nil {
 		if w := b.SlowConsumer; w != nil {
-			spans = append(spans, span{w.At, w.At + w.For})
+			spans = append(spans, span{w.At, w.At + w.For, true})
 		}
 		for _, t := range []time.Duration{b.KillTranscoderAt, b.CloseTranscoderInputAt} {
 			if t > 0 {
-				spans = append(spans, span{t, t})
+				spans = append(spans, span{t, t, true})
 			}
 		}
 	}
@@ -2731,7 +2916,7 @@ func (s *Scenario) FaultEnds() []time.Duration {
 	for _, a := range spans {
 		inside := false
 		for _, b := range spans {
-			if b.from < a.to && a.to < b.to {
+			if b.blocks && b.from < a.to && a.to < b.to {
 				inside = true
 			}
 		}
@@ -2740,11 +2925,12 @@ func (s *Scenario) FaultEnds() []time.Duration {
 		}
 	}
 	sort.Slice(ends, func(i, j int) bool { return ends[i] < ends[j] })
-	out := ends[:0]
+	var out []time.Duration
 	for i, e := range ends {
-		if i == 0 || e != ends[i-1] {
-			out = append(out, e)
+		if i+1 < len(ends) && ends[i+1]-e < FaultClusterGap {
+			continue // the cluster goes on: its window opens at a later end
 		}
+		out = append(out, e)
 	}
 	return out
 }
@@ -2759,7 +2945,7 @@ func (s *Scenario) LastFaultEnd() time.Duration {
 }
 ```
 
-(`Step` embeds `faults.Spec`, so `st.Spec.For` is the step's `for`. Add `"sort"` to `scenario.go`'s imports if it isn't there.)
+(`Step` embeds `faults.Spec`, so `st.Spec.For` and `st.Spec.Fault` are the step's `for` and `fault`. Add `"sort"` to `scenario.go`'s imports if it isn't there.)
 
 In `validate()`, after the duration check:
 
@@ -2811,8 +2997,8 @@ func (e *Expect) empty() bool {
 	UnpairedCoverage         []string // testplayer Report.UnpairedAfterFaults
 	MaxTailGap               time.Duration
 	MaxTailGapRendition      string
-	Cues, CueErrors          int
-	CuelessWindows           []string
+	Cues, CuesTimed, CueErrors int
+	UntimedCueWindows          []string
 	RenditionsCovered        bool
 	Renditions               int
 	StartLatency             time.Duration
@@ -2869,8 +3055,9 @@ Append to `Check` before `return v`:
 	if e.MaxTailGapSeconds != nil && o.MaxTailGap.Seconds() > *e.MaxTailGapSeconds {
 		v = append(v, fmt.Sprintf("%s stopped %.1fs before the end, want ≤ %.1fs", o.MaxTailGapRendition, o.MaxTailGap.Seconds(), *e.MaxTailGapSeconds))
 	}
-	if e.CaptionsTimed != nil && *e.CaptionsTimed && (o.Cues == 0 || o.CueErrors > 0 || len(o.CuelessWindows) > 0) {
-		v = append(v, fmt.Sprintf("cues = %d, mistimed = %d, windows without cues: %s", o.Cues, o.CueErrors, strings.Join(firstN(o.CuelessWindows, 3), "; ")))
+	if e.CaptionsTimed != nil && *e.CaptionsTimed && (o.CuesTimed == 0 || o.CueErrors > 0 || len(o.UntimedCueWindows) > 0) {
+		v = append(v, fmt.Sprintf("cues = %d, timed = %d, mistimed or unmatched = %d, windows without timed cues: %s",
+			o.Cues, o.CuesTimed, o.CueErrors, strings.Join(firstN(o.UntimedCueWindows, 3), "; ")))
 	}
 	if e.NoFetchErrors != nil && *e.NoFetchErrors && (o.FetchErrors > 0 || !o.RenditionsCovered) {
 		v = append(v, fmt.Sprintf("fetch errors = %d, every rendition delivered = %v", o.FetchErrors, o.RenditionsCovered))
@@ -2926,7 +3113,7 @@ Add `forceAdaptive bool` to `Manager`, set it in `NewManager`, and make it the f
 	}
 ```
 
-Run: `cd server && go test ./internal/testplayer/ ./internal/hdhr/hdhrfake/scenario/ ./internal/stream/ -run 'TestCoverage|TestCheck|TestParse|TestXFail|TestHLSListSize|TestForceAdaptive' -v`
+Run: `cd server && go test ./internal/testplayer/ ./internal/hdhr/hdhrfake/scenario/ ./internal/stream/ -run 'TestCoverage|TestCheck|TestParse|TestXFail|TestFaultEnds|TestHLSListSize|TestForceAdaptive' -v`
 Expected: PASS.
 
 - [ ] **Step 4: e2e plumbing**
@@ -3092,10 +3279,10 @@ func TestParseProbeCSV(t *testing.T) {
 		obs.ProbedAudio, obs.ProbedVideo = r.ProbedAudio, r.ProbedVideo
 		obs.FetchErrors = r.FetchErrors
 		obs.AVPairs = r.AVPairs
-		obs.UnpairedCoverage = r.UnpairedAfterFaults(testplayer.MinCoverageWindow)
+		obs.UnpairedCoverage = r.UnpairedAfterFaults()
 		obs.MaxTailGapRendition, obs.MaxTailGap = r.MaxTailGap()
-		obs.Cues, obs.CueErrors = r.Cues, r.CueErrors
-		obs.CuelessWindows = r.CuelessWindows(testplayer.MinCoverageWindow)
+		obs.Cues, obs.CuesTimed, obs.CueErrors = r.Cues, r.CuesTimed, r.CueErrors
+		obs.UntimedCueWindows = r.UntimedCueWindows()
 		obs.Renditions = len(r.Renditions)
 		obs.RenditionsCovered = true
 		obs.MinSegmentsAfterFault = -1
@@ -3111,7 +3298,7 @@ func TestParseProbeCSV(t *testing.T) {
 			r.SegmentsSinceMark, r.RenditionSegments, r.AudioHoleBy, r.FetchErrors, r.PlaylistErrors, r.SegmentErrors, r.ProbeErrors,
 			r.TailGap, obs.StartLatency.Round(100*time.Millisecond))
 		for i, w := range r.Windows {
-			t.Logf("window %d (%v): segments %v paired %v cues %v", i, w.End.Sub(w.Start).Round(time.Second), w.Segments, w.Paired, w.Cues)
+			t.Logf("window %d (%v): segments %v paired %v cues %v timed %v", i, w.End.Sub(w.Start).Round(time.Second), w.Segments, w.Paired, w.Cues, w.CuesTimed)
 		}
 		for _, u := range obs.UnpairedCoverage {
 			t.Logf("coverage: %s", u)
@@ -3119,8 +3306,8 @@ func TestParseProbeCSV(t *testing.T) {
 		for _, pr := range c.Problems {
 			t.Logf("consistency: %s", pr)
 		}
-		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v over %d pairs probed=%d/%d cues=%d (%d mistimed)",
-			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CueErrors)
+		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v over %d pairs probed=%d/%d cues=%d (%d timed, %d mistimed or unmatched)",
+			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CuesTimed, r.CueErrors)
 ```
 
 - Replace the xfail block at the end of `runScenario`:
@@ -3676,7 +3863,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 | Check | Required |
 |---|---|
 | argv proof | every live FFmpeg run in the candidate's logs (`argv:` lines with `pipe:0`) carries its marker: A `-dts_delta_threshold 1 `, A′ `-dts_delta_threshold 2.6`, C `PREV_OUTPTS`. The base carries none |
-| positive control | `rebase-control` logs at least one re-base, in both halves. If it logs none, the logging is broken: stop and fix it before judging anything |
+| positive controls | Re-bases and duplicates get separate controls, because a step that FFmpeg re-bases leaves no gap and so duplicates no frames. **Re-base:** `rebase-control` logs at least one re-base, in both halves, for every candidate. **Duplicates:** the **base** candidate's `ptsjump` shows `dupFrames` ≥ 60 (its xfail is that duplicate storm). If either control reads zero, the logging is broken: stop and fix it before judging anything |
 | `ptsjump`, `ptsjump-ptsonly` (+3/+6/+9 s) | every expectation: \|excess\| ≤ 2 s, ≤ 50 ms audio holes, ≤ 100 ms A/V skew paired after **each** fault, no restarts, progress to the end |
 | no duplicate storm | in `ptsjump`, `ptsjump-ptsonly` and `splice`: zero `frames duplicated` warnings, no `dup!` burst over 15 frames (½ s), and total duplicated frames ≤ the same candidate's `baseline` total + 30 |
 | `splice` (±1.5–2.5 s steps) | every expectation (\|excess\| ≤ 1.5 s, audio holes, skew paired after each fault), **and zero `timestamp discontinuity` lines** during the run |
@@ -3695,8 +3882,13 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - There is no later "raise the threshold" step: the Task 13 soak confirms the choice or sends it back here.
 
 **Deadlines.** Every command below is bounded:
-- Go runs pass `-timeout` (`-test.timeout` in the image).
-- Standalone FFmpeg and ffprobe calls run under `dl <seconds>`. It is a `perl alarm` wrapper (macOS has no `timeout`); `ffmpeg51`'s watchdog kills the container when the wrapper dies.
+- Go runs pass `-timeout` (`-test.timeout` in the image). That bounds the tests, not the stages around them.
+- Every stage also runs under an outer deadline, `dl <seconds>`. It is a `perl alarm` wrapper (macOS has no `timeout`): the alarm survives `exec`, so the command is killed with SIGALRM and `dl` exits 142.
+  - Standalone FFmpeg and ffprobe calls. `ffmpeg51`'s watchdog kills the container when the wrapper dies.
+  - `docker build` (30 min) and `go test -c` (10 min).
+  - The scenario half's `go test` (125 min, over its 120 min `-timeout`).
+  - The image half's `docker run` (305 min, over its 300 min `-test.timeout`). Killing the docker client leaves the container running, so the run is named `gate-<candidate>-run` and is always removed with `docker rm -f` afterwards.
+- A stage that fails or hits its deadline prints one line, `GATE-ERROR <candidate> <stage> exit=<code>`, switches back to the task branch and exits 1. A test run that completes with failing tests is not a stage failure: those verdicts are the gate's data. A test stage fails only when it exits with anything other than 0 or 1, or its log has no `--- ` result line.
 - Every FFmpeg call that writes a file passes `-y`.
 - `clipDuration` uses a 30 s context.
 
@@ -3871,22 +4063,27 @@ cd server && (scripts/ffmpeg51 -hide_banner -f lavfi -re -i testsrc -t 60 -f nul
 
 Expected: `0`.
 
-Log test, with a forced re-base (positive control for the wrapper's grep) and forced duplicates:
+Log test. Re-base and duplication get separate positive controls, because FFmpeg corrects a re-based step before encoding, so a re-based step leaves no gap for CFR to fill:
+- `jump.ts` has a 20 s step, over the 10 s default. It must log a re-base.
+- `gap.ts` has a 3 s step, under the default. FFmpeg keeps the gap, and CFR output at 25 fps fills it with duplicates.
 
 ```bash
-cd server && dl() { perl -e 'alarm shift @ARGV; exec @ARGV or die "exec $ARGV[0]: $!\n"' "$@"; } && \
-L="${TMPDIR%/}/ff51-logtest" && d="${TMPDIR%/}/ff51-flags" && rm -rf "$L" && \
-dl 120 scripts/ffmpeg51 -y -hide_banner -loglevel error -f lavfi -i testsrc=d=6:s=320x240 \
-  -vf "setpts=PTS+if(gte(T\,3)\,20/TB\,0)" -c:v mpeg2video -f mpegts "$d/jump.ts" && \
-FF51_LOGDIR="$L" FF51_LOGLEVEL=level+debug dl 120 scripts/ffmpeg51 -hide_banner -loglevel warning \
-  -i "$d/jump.ts" -c:v libx264 -fps_mode:v cfr -r 25 -f null - ; \
-grep -c ' argv: ' "$L"/*.log; grep -c 'timestamp discontinuity' "$L"/*.log; grep -c ' dup!' "$L"/*.log
+cd server && dl() { perl -e 'alarm shift @ARGV; exec @ARGV or die "dl: exec $ARGV[0]: $!\n"' "$@"; } && \
+d="${TMPDIR%/}/ff51-flags" && mkdir -p "$d" && \
+for k in jump:20 gap:3; do
+  n=${k%%:*} step=${k#*:}
+  dl 120 scripts/ffmpeg51 -y -hide_banner -loglevel error -f lavfi -i testsrc=d=6:s=320x240 \
+    -vf "setpts=PTS+if(gte(T\,3)\,$step/TB\,0)" -c:v mpeg2video -f mpegts "$d/$n.ts" || { echo "GATE-ERROR logtest make-$n"; break; }
+  L="${TMPDIR%/}/ff51-logtest-$n"; rm -rf "$L"
+  FF51_LOGDIR="$L" FF51_LOGLEVEL=level+debug dl 120 scripts/ffmpeg51 -hide_banner -loglevel warning \
+    -i "$d/$n.ts" -c:v libx264 -fps_mode:v cfr -r 25 -f null -
+  echo "$n: argv=$(cat "$L"/*.log | grep -c ' argv: ') rebases=$(cat "$L"/*.log | grep -c 'timestamp discontinuity') dups=$(cat "$L"/*.log | grep -c ' dup!')"
+done
 ```
 
-Expected: three counts, each at least 1:
-- one `argv:` line;
-- a "timestamp discontinuity" line, because the 20 s step in the file is over the 10 s default;
-- `dup!` lines, because CFR output across the step duplicates frames.
+Expected:
+- `jump: argv=1 rebases=` at least 1. Its `dups` count doesn't matter: the re-base removed the gap.
+- `gap: argv=1 rebases=0 dups=` at least 1. A 3 s gap at 25 fps is about 75 duplicated frames.
 
 If a count is 0, fix the wrapper's grep or log level before going on. The gate depends on these lines.
 
@@ -4435,34 +4632,52 @@ git commit -qam "scratch: gate candidate C (never merged)" && git switch -q "$ta
 
 - [ ] **Step 4: Run the gate, scenario half (wrapper, default layout)**
 
+Both halves use these shell functions. Define them once in the shell that runs Steps 4 and 5:
+
+```bash
+dl() { perl -e 'alarm shift @ARGV; exec @ARGV or die "dl: exec $ARGV[0]: $!\n"' "$@"; }
+# gate_error CANDIDATE STAGE CODE: the one failure line; back to the task branch.
+gate_error() { echo "GATE-ERROR $1 $2 exit=$3"; docker rm -f "gate-$1-run" >/dev/null 2>&1; git switch -q "$task"; exit 1; }
+# test_ran CODE LOG: a test stage finished (0 = all passed, 1 = some failed) and logged results.
+test_ran() { { [ "$1" -eq 0 ] || [ "$1" -eq 1 ]; } && grep -q -- '--- ' "$2"; }
+# argv_proof CANDIDATE DIR: every live FFmpeg run logged in DIR carries the candidate's marker.
+argv_proof() {
+  live=$(cat "$2"/*.log 2>/dev/null | grep -c ' argv: .*pipe:0')
+  runs() { cat "$1"/*.log 2>/dev/null | grep ' argv: .*pipe:0'; }
+  case $1 in
+  base) marked=$(runs "$2" | grep -cE 'dts_delta_threshold|PREV_OUTPTS') ; want=0 ;;
+  A) marked=$(runs "$2" | grep -c -- '-dts_delta_threshold 1 ') ; want=$live ;;
+  A2) marked=$(runs "$2" | grep -c -- '-dts_delta_threshold 2.6 ') ; want=$live ;;
+  C) marked=$(runs "$2" | grep -c 'PREV_OUTPTS') ; want=$live ;;
+  *) echo "argv proof: unknown candidate $1"; return 1 ;;
+  esac
+  echo "argv proof ($2): $live live runs, $marked marked, want $want"
+  runs "$2" | head -1
+  [ "$live" -gt 0 ] && [ "$marked" -eq "$want" ]
+}
+```
+
 ```bash
 cd "$(git rev-parse --show-toplevel)" && task=$(git branch --show-current)
 for v in base A A2 C; do
-  git switch -q "scratch/gate-$v" || exit 1
+  git switch -q "scratch/gate-$v" || gate_error "$v" switch $?
   L="${TMPDIR%/}/gate-$v"; rm -rf "$L"; mkdir -p "$L"
   (cd server && FF51_LOGDIR="$L/ff" FF51_LOGLEVEL=level+debug BOWTIE_FFMPEG_PATH="$PWD/scripts/ffmpeg51" \
-    go test -count=1 -tags ffmpeg -p 1 -parallel 1 -timeout 120m \
+    dl 7500 go test -count=1 -tags ffmpeg -p 1 -parallel 1 -timeout 120m \
     -run 'TestScenarios/(rebase-control|ptsjump|ptsjump-ptsonly|splice|brief-dropout|threshold-dropout|baseline)$' -v ./internal/e2e/ \
-    > "$L/scenarios.log" 2>&1)
+    > "$L/scenarios.log" 2>&1); rc=$?
+  test_ran $rc "$L/scenarios.log" || gate_error "$v" scenarios $rc
   echo "== $v"
   grep -E -- '--- (PASS|FAIL)|observed:|player: renditions|fetchErrors=|coverage:|ff: |rebase at|xfail \(|known gap|unexpected' "$L/scenarios.log"
-  live=$(grep -h ' argv: .*pipe:0' "$L"/ff/*.log | wc -l)
-  case $v in
-  base) marked=$(grep -h ' argv: .*pipe:0' "$L"/ff/*.log | grep -cE 'dts_delta_threshold|PREV_OUTPTS') ; want=0 ;;
-  A) marked=$(grep -h ' argv: .*pipe:0' "$L"/ff/*.log | grep -c -- '-dts_delta_threshold 1 ') ; want=$live ;;
-  A2) marked=$(grep -h ' argv: .*pipe:0' "$L"/ff/*.log | grep -c -- '-dts_delta_threshold 2.6 ') ; want=$live ;;
-  C) marked=$(grep -h ' argv: .*pipe:0' "$L"/ff/*.log | grep -c 'PREV_OUTPTS') ; want=$live ;;
-  esac
-  echo "argv proof: $live live runs, $marked marked, want $want"
-  grep -h ' argv: .*pipe:0' "$L"/ff/*.log | head -1
-  [ "$live" -gt 0 ] && [ "$marked" -eq "$want" ] || { echo "candidate $v did not run as built"; git switch -q "$task"; exit 1; }
+  argv_proof "$v" "$L/ff" || gate_error "$v" argv-proof 1
 done
 git switch -q "$task"
 ```
 
 - `-parallel 1` keeps each scenario's FFmpeg lines apart, because `ffLogSince` reads every log written after the scenario's start.
 - The xfail markers are still in place, so judge the gate's rows from the `observed:`, `coverage:` and `ff:` lines. Ignore the xfail verdicts.
-- If `rebase-control` shows `ff: rebases=0` for any candidate, stop: the logging is broken.
+- If `rebase-control` shows `ff: rebases=0` for any candidate, or the base candidate's `ptsjump` shows `dupFrames` under 60, stop: the logging is broken.
+- `GATE-ERROR` means the stage itself failed (a build, a deadline, a missing log), not the candidate. Fix the cause and re-run; never fill the gate table from a run that printed it.
 
 - [ ] **Step 5: Run the gate, image half (production layout, captions, the OTA clips)**
 
@@ -4474,12 +4689,15 @@ clips=<folder with the chosen clips>          # this session: …/scratchpad/ota
 signals=<folder with ch<N>.signal.tsv>        # this session: …/scratchpad/ota/log
 faultclip=<one clip with captions, no dips>   # file name inside $clips
 for v in base A A2 C; do
-  git switch -q "scratch/gate-$v" || exit 1
-  docker build -q -f deploy/Dockerfile -t "bowtie:gate-$v" . >/dev/null || exit 1
-  arch=$(docker image inspect "bowtie:gate-$v" --format '{{.Architecture}}')
-  (cd server && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go test -c -tags ffmpeg -o "${TMPDIR%/}/e2e-gate-$v.test" ./internal/e2e/) || exit 1
+  git switch -q "scratch/gate-$v" || gate_error "$v" switch $?
+  dl 1800 docker build -q -f deploy/Dockerfile -t "bowtie:gate-$v" . >/dev/null; rc=$?
+  [ $rc -eq 0 ] || gate_error "$v" docker-build $rc
+  arch=$(docker image inspect "bowtie:gate-$v" --format '{{.Architecture}}') || gate_error "$v" inspect $?
+  (cd server && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 dl 600 go test -c -tags ffmpeg -o "${TMPDIR%/}/e2e-gate-$v.test" ./internal/e2e/); rc=$?
+  [ $rc -eq 0 ] || gate_error "$v" compile $rc
   L="${TMPDIR%/}/gate-$v"; rm -rf "$L/img"; mkdir -p "$L/img"
-  docker run --rm --entrypoint /work/e2e.test \
+  docker rm -f "gate-$v-run" >/dev/null 2>&1
+  dl 18300 docker run --rm --name "gate-$v-run" --entrypoint /work/e2e.test \
     -v "${TMPDIR%/}/e2e-gate-$v.test:/work/e2e.test:ro" -v "$PWD/server/internal/e2e:/src/e2e:ro" -w /src/e2e \
     -v "$PWD/server/scripts/ffmpeg-soak:/usr/local/bin/ffmpeg-soak:ro" \
     -v "$clips:/clips:ro" -v "$signals:/signals:ro" -v "$L/img:/logs" \
@@ -4487,16 +4705,17 @@ for v in base A A2 C; do
     -e FF51_LOGDIR=/logs/ff -e BOWTIE_OTA_CLIPS=/clips -e BOWTIE_OTA_SIGNAL_DIR=/signals -e BOWTIE_OTA_FOR=60m \
     -e BOWTIE_OTA_FAULT_CLIP="/clips/$faultclip" \
     "bowtie:gate-$v" -test.run 'TestScenarios/(rebase-control|production-baseline|corrupt-audio|faults-production)$|TestOTAClips' \
-    -test.v -test.parallel 1 -test.timeout 300m > "$L/img.log" 2>&1
+    -test.v -test.parallel 1 -test.timeout 300m > "$L/img.log" 2>&1; rc=$?
+  docker rm -f "gate-$v-run" >/dev/null 2>&1   # the container outlives a killed client
+  test_ran $rc "$L/img.log" || gate_error "$v" image-run $rc
   echo "== $v (image)"
   grep -E -- '--- (PASS|FAIL)|observed:|fetchErrors=|coverage:|ff: |rebase at|false re-base|consistency:|cues=' "$L/img.log"
-  live=$(grep -h ' argv: .*pipe:0' "$L"/img/ff/*.log | wc -l)
-  echo "argv proof (from inside the container): $live live runs"; grep -h ' argv: .*pipe:0' "$L"/img/ff/*.log | head -1
+  argv_proof "$v" "$L/img/ff" || gate_error "$v" image-argv-proof 1   # lines written by ffmpeg-soak in the container
 done
 git switch -q "$task"
 ```
 
-Apply the same argv-proof rule as Step 4 to `"$L"/img/ff/*.log`. Those `argv:` lines are written by `ffmpeg-soak` inside the container. `TestOTAClips` itself fails a candidate on any false re-base; its log names each re-base with its verdict.
+The image loop applies Step 4's argv proof to `"$L"/img/ff/*.log`, the `argv:` lines that `ffmpeg-soak` writes inside the container, and exits 1 on a mismatch: an image that didn't run its candidate's argv stops the gate. `TestOTAClips` itself fails a candidate on any false re-base; its log names each re-base with its verdict.
 
 Choosing the clips: pick them at run time from what was captured.
 - `TestOTAClips`: include the clips with logged signal dips (2.2 around 21:54:16–26 local CDT; 4.1 at 22:13:27 and 22:14:58) and the parts of 9.1 that cover ad breaks.
@@ -4508,14 +4727,14 @@ dl 600 ffmpeg -y -ss <start> -t <len> -i ch9.1.ts -map 0 -c copy "<scratch>/ch9.
 ```
 
 - `BOWTIE_OTA_FAULT_CLIP` must have captions throughout and no dips in its signal log. `ffprobe` shows `Closed Captions` on its video stream. A news segment is a good choice.
-  - Check the base candidate's `window i … cues` log lines: base fails the timeline rows, but if it shows a window without cues, the clip's captions have gaps. Pick another clip.
+  - Check the base candidate's `window i … cues` log lines: base fails the timeline rows, but if it shows a window with no cues at all (timed or not), the clip's captions have gaps. Pick another clip.
 
 Fill in the gate table for the task report, one row per candidate:
 - excess, audio holes (per rendition) and skew for each scenario;
 - `coverage:` lines;
-- `ff:` counts (re-bases, duplicated frames, max burst, warnings), including `splice`'s re-bases and `rebase-control`'s;
+- `ff:` counts (re-bases, duplicated frames, max burst, warnings), including `splice`'s re-bases, `rebase-control`'s re-bases and the base candidate's `ptsjump` duplicates (the two positive controls);
 - production-layout results;
-- caption row: cues, mistimed cues, windows without cues;
+- caption row: cues, timed cues, mistimed or unmatched cues, windows without timed cues;
 - per clip: true and false re-bases;
 - argv proof;
 - pass/fail.
@@ -8029,7 +8248,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes:
-  - testplayer: `AllRenditions`, `Probe`, `Report`, `Consistency`, `OnSegment`/`SegmentEvent`, `Mark`, `FetchErrors`, `TailGap` (Task 3); `UnpairedAfterFaults` and `MinCoverageWindow` (Task 4).
+  - testplayer: `AllRenditions`, `Probe`, `Report`, `Consistency`, `OnSegment`/`SegmentEvent`, `Mark`, `FetchErrors`, `TailGap` (Task 3); `UnpairedAfterFaults` (Task 4).
   - `FFprobe` and `ffprobePath` (Task 4).
   - `rebasesSince` and the `FF51_LOGDIR` log format (Task 6).
 - Produces `TestRealSoak` (build tags `ffmpeg && realsoak`). It watches a running Bowtie and reads everything from the environment, so nothing in the code names a host:
@@ -8227,7 +8446,7 @@ func TestRealSoak(t *testing.T) {
 			t.Errorf("rendition %s stopped %v before the end of the soak", name, g.Round(time.Second))
 		}
 	}
-	for _, u := range r.UnpairedAfterFaults(testplayer.MinCoverageWindow) {
+	for _, u := range r.UnpairedAfterFaults() {
 		t.Errorf("coverage: %s", u)
 	}
 
