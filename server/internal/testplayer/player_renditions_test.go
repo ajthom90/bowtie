@@ -352,6 +352,31 @@ func TestPlayerMalformedTimestampMapIsCueError(t *testing.T) {
 	}
 }
 
+// A colon separator is still a map header. This cue is inside the video PTS
+// range from MPEG-TS 0 and from MPEGTS:126000, so only rejecting the header
+// produces a CueError.
+func TestPlayerTimestampMapColonIsCueError(t *testing.T) {
+	p, cc, seg := probedCaptionPlayer(21.49, 25.49)
+	body := fmt.Sprintf("WEBVTT\nX-TIMESTAMP-MAP:MPEGTS:126000,LOCAL:00:00:00.000\n\n%s --> %s\nhello\n\n", vttTime(21.39), vttTime(22.39))
+	p.cues(cc, seg, 0, []byte(body))
+	r := p.Report()
+	if r.Cues != 1 || r.CuesTimed != 0 || r.CueErrors != 1 || !strings.Contains(strings.Join(r.Errors, "\n"), "X-TIMESTAMP-MAP") {
+		t.Fatalf("colon map: cues %d timed %d errors %d %q", r.Cues, r.CuesTimed, r.CueErrors, r.Errors)
+	}
+}
+
+// A malformed map header stays a CueError when a later line is valid. The
+// cue is inside the video PTS range under that valid map.
+func TestPlayerMalformedMapBeforeValidMapIsCueError(t *testing.T) {
+	p, cc, seg := probedCaptionPlayer(21.49, 25.49)
+	body := fmt.Sprintf("WEBVTT\nX-TIMESTAMP-MAP:MPEGTS:0,LOCAL:00:00:00.000\nX-TIMESTAMP-MAP=MPEGTS:126000,LOCAL:00:00:00.000\n\n%s --> %s\nhello\n\n", vttTime(21.39), vttTime(22.39))
+	p.cues(cc, seg, 0, []byte(body))
+	r := p.Report()
+	if r.Cues != 1 || r.CuesTimed != 0 || r.CueErrors != 1 || !strings.Contains(strings.Join(r.Errors, "\n"), "X-TIMESTAMP-MAP") {
+		t.Fatalf("malformed then valid map: cues %d timed %d errors %d %q", r.Cues, r.CuesTimed, r.CueErrors, r.Errors)
+	}
+}
+
 // An hour-long soak polls each rendition thousands of times. What the player
 // keeps must grow with the segments it saw at most, never with the polls,
 // and the incremental consistency result must equal the batch one.

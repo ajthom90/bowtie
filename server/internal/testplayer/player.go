@@ -710,7 +710,6 @@ func (p *Player) pairedLocked(r *rendition, rec *probed) {
 
 var (
 	cueRe    = regexp.MustCompile(`^((?:\d+:)?\d{2}:\d{2}\.\d{3})\s+-->`)
-	tsMapRe  = regexp.MustCompile(`X-TIMESTAMP-MAP=.*`)
 	mpegtsRe = regexp.MustCompile(`MPEGTS:(\d+)`)
 	localRe  = regexp.MustCompile(`LOCAL:((?:\d+:)?\d{2}:\d{2}\.\d{3})`)
 )
@@ -732,10 +731,12 @@ type pendingCue struct {
 
 // cues counts a WebVTT segment's cues and checks each cue's start, mapped
 // to PTS through X-TIMESTAMP-MAP, against the PTS range of the probed rung
-// segment it PDT-pairs with. A segment with no map is timed as
+// segment it PDT-pairs with. A segment with no map header is timed as
 // MPEGTS:0, LOCAL:00:00:00.000 (RFC 8216 §3.5: cue time 0 maps to MPEG-TS
-// timestamp 0). A map line with MPEGTS or LOCAL missing or unparseable is a
-// CueError. When the video segment isn't probed yet, the cues wait (retried
+// timestamp 0). Any line that starts with X-TIMESTAMP-MAP is a map header.
+// It is valid only as X-TIMESTAMP-MAP= with parseable MPEGTS and LOCAL;
+// anything else is a CueError, and a later valid map line does not clear
+// that. When the video segment isn't probed yet, the cues wait (retried
 // after every poll; drain counts what never matches).
 func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
 	c := pendingCue{r: r, g: g, win: win}
@@ -743,11 +744,13 @@ func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if m := tsMapRe.FindString(line); m != "" {
-			a, b := mpegtsRe.FindStringSubmatch(m), localRe.FindStringSubmatch(m)
-			if a != nil && b != nil {
-				n, _ := strconv.ParseFloat(a[1], 64)
-				c.mpegts, c.local = n/90000, vttSeconds(b[1])
+		if strings.HasPrefix(line, "X-TIMESTAMP-MAP") {
+			a, b := mpegtsRe.FindStringSubmatch(line), localRe.FindStringSubmatch(line)
+			if strings.HasPrefix(line, "X-TIMESTAMP-MAP=") && a != nil && b != nil {
+				if !malformed {
+					n, _ := strconv.ParseFloat(a[1], 64)
+					c.mpegts, c.local = n/90000, vttSeconds(b[1])
+				}
 			} else {
 				malformed = true
 			}
