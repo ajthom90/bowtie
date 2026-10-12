@@ -51,7 +51,8 @@ type BowtieSpec struct {
 	// ingest does when it gives up on a transcoder; FFmpeg exits gracefully.
 	CloseTranscoderInputAt time.Duration `yaml:"closeTranscoderInputAt"`
 	// Layout: "" (one rung, first audio as AAC) or "production" (ladder even
-	// with libx264, every audio track, the AC-3 group, captions).
+	// with libx264, every audio track, the AC-3 group). Live captions are
+	// not part of the layout; the harness turns them on for captionsTimed.
 	Layout string `yaml:"layout"`
 }
 

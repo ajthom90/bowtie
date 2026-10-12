@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -731,15 +733,116 @@ func writeAndAwaitIngest(t *testing.T, im *IngestManager, pb *pipeBody, chunk []
 	}
 }
 
-// feedAndStep plays a live device: write chunk, wait until ingest has
-// processed it, then advance the clock 1s, steps times (a single big jump
-// would look like silence to the watchdog).
+// feedAndStep plays a live device one fake second at a time: write chunk,
+// wait until ingest has fanned it out and every subscriber drain is
+// quiescent, then advance the clock. A single big jump would look like
+// silence to the watchdog. Quiescent means the drain goroutine is blocked
+// in its pipe write (the popped chunk is in flight) or has caught up
+// (nothing queued and nothing in flight). The clock has to wait for that:
+// a push onto an empty queue with nothing in flight restarts lastProgress,
+// and after a reset that restart slides the next drain past an exact step.
 func feedAndStep(t *testing.T, im *IngestManager, pb *pipeBody, clock *ingestClock, chunk []byte, steps int) {
 	t.Helper()
 	for i := 0; i < steps; i++ {
 		writeAndAwaitIngest(t, im, pb, chunk)
+		awaitDrainQuiescent(t, im)
 		clock.Advance(time.Second)
 	}
+}
+
+// awaitDrainQuiescent waits until every subscriber drain has observed the
+// chunk ingest just fanned out. A reader that is not taking bytes blocks
+// in the pipe write with the chunk in flight; a reader that keeps up drains
+// the queue. Either state is stable across the following clock step.
+func awaitDrainQuiescent(t *testing.T, im *IngestManager) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if drainQuiescent(im) {
+			return
+		}
+		if time.Now().After(deadline) {
+			buf := make([]byte, 1<<16)
+			n := runtime.Stack(buf, true)
+			t.Fatalf("subscriber drain was not quiescent before the clock step\n%s", buf[:n])
+		}
+		runtime.Gosched()
+	}
+}
+
+type drainSnap struct {
+	closed   bool
+	size     int
+	inFlight int
+}
+
+func drainQuiescent(im *IngestManager) bool {
+	im.mu.Lock()
+	chs := make([]*channelIngest, 0, len(im.channels))
+	for _, ch := range im.channels {
+		chs = append(chs, ch)
+	}
+	im.mu.Unlock()
+
+	needWrite := 0
+	for _, ch := range chs {
+		ch.mu.Lock()
+		subs := make([]*IngestSub, 0, len(ch.subs))
+		for s := range ch.subs {
+			subs = append(subs, s)
+		}
+		ch.mu.Unlock()
+		for _, s := range subs {
+			if s.isClosed() {
+				continue
+			}
+			snap := snapDrain(s.q)
+			if snap.closed || (snap.size == 0 && snap.inFlight == 0) {
+				continue
+			}
+			// Bytes are queued and the drain goroutine has not popped them,
+			// so it cannot be blocked in the pipe write yet.
+			if snap.inFlight == 0 {
+				return false
+			}
+			needWrite++
+		}
+	}
+	if needWrite == 0 {
+		return true
+	}
+	return countDrainPipeWrites() >= needWrite
+}
+
+func snapDrain(q *subQueue) drainSnap {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return drainSnap{closed: q.closed, size: q.bytes, inFlight: q.inFlight}
+}
+
+// countDrainPipeWrites counts subscriber drain goroutines blocked inside
+// the pipe write. That frame is reached only after pop has moved the chunk
+// to inFlight, and the goroutine stays there until a reader takes the bytes,
+// so a later reset cannot abandon the chunk and drop inFlight to zero.
+func countDrainPipeWrites() int {
+	buf := make([]byte, 32<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return countDrainPipeWritesIn(buf[:n])
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+}
+
+func countDrainPipeWritesIn(stack []byte) int {
+	n := 0
+	for _, g := range strings.Split(string(stack), "\n\n") {
+		if strings.Contains(g, "io.(*pipe).write") && strings.Contains(g, "(*IngestSub).drain") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestLastCloseTailThenDialClosed(t *testing.T) {

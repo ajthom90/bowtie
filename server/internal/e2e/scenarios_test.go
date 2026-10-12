@@ -96,16 +96,20 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 	// After loading the source (a large clip takes seconds), before New
 	// starts the fake's channel timeline.
 	sourceStart := time.Now()
+	// captionsTimed is the caption row (TestOTAClipsWithFaults). Synthetic
+	// sources still set NoCaptions, which wins over LiveCaptions.
+	liveCaptions := sc.Expect != nil && sc.Expect.CaptionsTimed != nil && *sc.Expect.CaptionsTimed
 	h := New(t, Options{
 		Fake: hdhrfake.Options{
 			TunerCount: 2,
 			Channels:   []hdhrfake.Channel{{GuideNumber: sc.Channel, Name: "FAKE " + sc.Name, Source: src, PTSWrapIn: sc.PTSWrapIn}},
 		},
-		Runner:      count,
-		FFmpegPath:  ffmpegPath(),
-		HLSListSize: sc.WindowSegments,
-		Production:  sc.Bowtie != nil && sc.Bowtie.Layout == "production",
-		NoCaptions:  synthetic,
+		Runner:       count,
+		FFmpegPath:   ffmpegPath(),
+		HLSListSize:  sc.WindowSegments,
+		Production:   sc.Bowtie != nil && sc.Bowtie.Layout == "production",
+		LiveCaptions: liveCaptions,
+		NoCaptions:   synthetic,
 	})
 
 	// Steps at 0s happen before the viewer tunes in (e.g. a busy device);

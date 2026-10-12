@@ -1826,7 +1826,7 @@ func TestNoCaptionsDropsCaptionRendition(t *testing.T) {
 			Cfg:               cfg, Store: st,
 			StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
 			Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
-			Multitrack: true, NoCaptions: noCaptions,
+			Multitrack: true, LiveCaptions: true, NoCaptions: noCaptions,
 		})
 		if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
 			t.Fatal(err)
@@ -1835,6 +1835,71 @@ func TestNoCaptionsDropsCaptionRendition(t *testing.T) {
 		if l.Captions == noCaptions || !l.AC3Copy {
 			t.Fatalf("NoCaptions=%v: captions=%v ac3Copy=%v, want captions=%v with the AC-3 copy", noCaptions, l.Captions, l.AC3Copy, !noCaptions)
 		}
+	}
+}
+
+// TestLiveCaptionsOffByDefault: production leaves LiveCaptions false, so a
+// multitrack live session has no caption rendition, tap, fd 3 input or
+// SUBTITLES group. LiveCaptions true keeps the previous caption path.
+func TestLiveCaptionsOffByDefault(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		t.Run(fmt.Sprintf("LiveCaptions=%v", live), func(t *testing.T) {
+			st, cfg, clock, runner, chID, user := setupEnv(t)
+			im, _ := newManagerIngest(clock, nil)
+			t.Cleanup(im.Shutdown)
+			m := NewManager(ManagerDeps{
+				TrackProbeTimeout: time.Millisecond,
+				Cfg:               cfg, Store: st,
+				StreamURL: func(ch store.Channel) (string, error) {
+					return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
+				},
+				Caps: softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+				Multitrack: true, LiveCaptions: live,
+			})
+			h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := runner.LastSpec()
+			if spec.Layout.Captions != live || (spec.CaptionInput != nil) != live {
+				t.Fatalf("Captions=%v captionInput=%v, want %v", spec.Layout.Captions, spec.CaptionInput != nil, live)
+			}
+			m.mu.Lock()
+			var capSub *IngestSub
+			for _, s := range m.sessions {
+				capSub = s.capSub
+			}
+			m.mu.Unlock()
+			if (capSub != nil) != live {
+				t.Fatalf("capSub set=%v, want %v", capSub != nil, live)
+			}
+			wantAttaches := int64(1)
+			if live {
+				wantAttaches = 2 // video sub plus the caption tap
+			}
+			if n := im.attachCalls.Load(); n != wantAttaches {
+				t.Fatalf("attach calls=%d, want %d", n, wantAttaches)
+			}
+			argv := strings.Join(transcode.BuildArgs(spec), " ")
+			hasCaptionInput := strings.Contains(argv, "subcc") || strings.Contains(argv, "pipe:3") || strings.Contains(argv, `pipe\:3`)
+			if hasCaptionInput != live {
+				t.Fatalf("argv caption input=%v, want %v\n%s", hasCaptionInput, live, argv)
+			}
+			// The caption playlist existing is not enough: the master lists
+			// SUBTITLES only when the layout's caption rendition is on.
+			if err := os.WriteFile(filepath.Join(spec.OutDir, spec.Layout.CaptionPlaylist()), []byte("#EXTM3U\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			media, ok := m.SessionMediaOf(h.ViewerID)
+			if !ok {
+				t.Fatal("no session media")
+			}
+			_, statErr := os.Stat(filepath.Join(media.Dir, media.Layout.CaptionPlaylist()))
+			pl := transcode.MasterPlaylist(media.Layout, media.MaxHeight, "?token=t", media.Layout.Captions && statErr == nil)
+			if got := strings.Contains(pl, "SUBTITLES"); got != live {
+				t.Fatalf("master SUBTITLES=%v, want %v\n%s", got, live, pl)
+			}
+		})
 	}
 }
 

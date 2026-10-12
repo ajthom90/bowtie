@@ -48,9 +48,13 @@ type Options struct {
 	// HLSListSize overrides the sessions' -hls_list_size (0: default 30).
 	HLSListSize int
 	// Production runs the layout a real server serves: multitrack (AAC per
-	// track, the AC-3 group, captions) and a ladder even with libx264.
+	// track, the AC-3 group) and a ladder even with libx264. Live captions
+	// stay off unless LiveCaptions is set.
 	Production bool
-	// NoCaptions drops the caption rendition from the production layout:
+	// LiveCaptions opts the production layout into the live WebVTT rendition.
+	// OTA caption tests set it; the real server leaves it off.
+	LiveCaptions bool
+	// NoCaptions drops the caption rendition even when LiveCaptions is set:
 	// synthetic sources carry no CEA-608, and FFmpeg then writes no playlist.
 	NoCaptions bool
 }
@@ -129,6 +133,7 @@ func New(t testing.TB, o Options) *Harness {
 		HLSListSize:       o.HLSListSize,
 		Multitrack:        o.Production,
 		ForceAdaptive:     o.Production,
+		LiveCaptions:      o.LiveCaptions,
 		NoCaptions:        o.NoCaptions,
 		Cfg:               cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
 	})

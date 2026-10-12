@@ -80,10 +80,16 @@ type ManagerDeps struct {
 	// ForceAdaptive (tests) makes every start use the ladder, whatever the
 	// settings and the encoder say: the e2e production layout ladders libx264.
 	ForceAdaptive bool
-	// NoCaptions (tests) leaves the caption rendition out of multitrack
-	// layouts. A live source without CEA-608 never gives the WebVTT stream a
-	// packet, so FFmpeg's HLS muxer writes no playlist at all; e2e runs on
-	// caption-less synthetic sources set it.
+	// LiveCaptions turns the live WebVTT rendition on. Off in production:
+	// FFmpeg serves the output with the lowest timestamp, and the WebVTT
+	// stream only advances on a cue, so during a caption gap it reads only
+	// the fd 3 caption input and video output freezes. Tests set it to
+	// exercise the caption path.
+	LiveCaptions bool
+	// NoCaptions (tests) leaves the caption rendition out even when
+	// LiveCaptions is set. A live source without CEA-608 never gives the
+	// WebVTT stream a packet, so FFmpeg's HLS muxer writes no playlist at
+	// all; e2e runs on caption-less synthetic sources set it.
 	NoCaptions bool
 	// BlockedFor reports why a user may not keep watching a channel now
 	// (parental controls; "" = allowed). Checked every 30 s; nil = never.
@@ -115,6 +121,7 @@ type Manager struct {
 	// ManagerDeps.ForceAdaptive (tests).
 	listSizeOverride int
 	forceAdaptive    bool
+	liveCaptions     bool
 	noCaptions       bool
 	onWatched        func(userID, channelID int64, at time.Time)
 	blockedFor       func(userID, channelID int64, now time.Time) string
@@ -154,6 +161,7 @@ func NewManager(deps ManagerDeps) *Manager {
 		trackProbe:       trackProbe,
 		listSizeOverride: deps.HLSListSize,
 		forceAdaptive:    deps.ForceAdaptive,
+		liveCaptions:     deps.LiveCaptions,
 		noCaptions:       deps.NoCaptions,
 		cfg:              deps.Cfg,
 		store:            deps.Store,
@@ -1042,8 +1050,10 @@ func (m *Manager) adaptiveForStart(d transcode.Decision) (bool, error) {
 
 // layoutFor builds the session's output once the video sub is attached. The
 // rungs always follow the broadcast (ladder ≤ source, or one rung capped at
-// the source height); tracks adds every audio track, the AC-3 copies and
-// captions (off with the BOWTIE_MULTITRACK kill switch or in the fallback).
+// the source height); tracks adds every audio track and the AC-3 copies.
+// Captions are on only when LiveCaptions is set and NoCaptions is not
+// (off with the BOWTIE_MULTITRACK kill switch or in the fallback, which
+// pass tracks=false).
 func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tracks bool) transcode.Layout {
 	info, ok := m.ingest.ProgramInfo(channelID, m.trackProbe)
 	src := info.SourceHeight
@@ -1067,7 +1077,7 @@ func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tra
 		}
 		return l
 	}
-	l.Captions = !m.noCaptions
+	l.Captions = m.liveCaptions && !m.noCaptions
 	l.AC3Copy = true
 	return l
 }
