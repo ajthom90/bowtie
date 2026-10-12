@@ -5,6 +5,54 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.24.0] — 2026-10-12
+
+### Fixed
+
+- **Live TV no longer freezes during ads or shows without captions.** While
+  a channel sent no captions, the transcoder could stop reading the video,
+  so the picture froze until captions came back, and after a minute Bowtie
+  restarted the stream. The same thing made some channels slow to start.
+  Live captions are off for now to fix this (see Changed).
+- **Live sound stays in step after a reception glitch.** Missing audio is
+  filled with silence, so it no longer drifts away from the picture. The
+  Dolby Digital (AC-3) track is now re-encoded (384 kb/s) for live TV
+  instead of copied, so its dropouts are filled too.
+- **A slow transcoder is no longer restarted.** When FFmpeg stops reading
+  for 30 seconds, Bowtie first drops its backlog and lets it catch up; it
+  restarts FFmpeg only if it still reads nothing 30 seconds later.
+- **Restarts pick up faster and cleaner.** A restarted transcoder starts at
+  the last full video frame instead of mid-picture.
+- **Players keep their place across a restart.** Every playlist carries
+  Bowtie's own clock (program date-time) and marks a restart at the same
+  moment in every quality and audio track, so players and SharePlay stay
+  in step. A restarted transcoder's output is held back until every quality
+  and audio track has started, so no player sees half a restart; if a track
+  doesn't start within 15 seconds, Bowtie restarts the transcoder again.
+- **Old caption files are cleaned up** after a transcoder restart.
+
+### Changed
+
+- **Live captions are temporarily off.** They come back in a later release,
+  run in their own process so they can't hold up the video.
+
+### Added
+
+- `GET /api/v1/sessions/{viewerId}/timeline` maps the current live window
+  to wall-clock time, for players that can't read program date-time. It
+  needs the signed-in owner's Bearer token; anyone else gets 404.
+
+### Notes for Intel Quick Sync (QSV) servers
+
+After updating, please watch the server log around ad breaks for:
+- `transcoder stuck` (should no longer appear on a healthy encoder);
+- `transcoder read nothing … dropped its … backlog` followed by
+  `transcoder reading again` (a slow moment that recovered — expected);
+- `stream: timeline … gap before` outside real reception problems;
+- `restarting it` or `discarded before it was complete` (a restart
+  that didn't produce every track in time), and `ending the session`
+  (three failed runs in a row: viewers reconnect to a fresh session).
+
 ## [0.23.0] — 2026-10-11
 
 ### Added

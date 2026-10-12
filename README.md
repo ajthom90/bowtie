@@ -12,7 +12,8 @@ for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
 - Finds your HDHomeRun tuners and streams over-the-air channels to every
   screen as HLS, with hardware transcoding (Quick Sync, NVENC, VAAPI,
-  VideoToolbox) when available, captions, every broadcast audio track and 5.1
+  VideoToolbox) when available, every broadcast audio track and 5.1
+  (live captions are temporarily off)
 - Shows a TV guide — free from your HDHomeRun, or XMLTV / Schedules Direct —
   with search, favorites, recents and **All · Sports · Movies · News · Kids ·
   New** filters

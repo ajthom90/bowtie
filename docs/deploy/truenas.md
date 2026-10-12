@@ -85,6 +85,17 @@ Apps → bowtie → Workloads → the container's ⋮ → Logs — look for
 - Inside the container, `qsv` requires the iHD driver (bundled in the image on
   amd64); `vaapi` is the fallback and also hardware-accelerated on Intel.
 
+### What to watch after updating (stream resilience)
+
+Bowtie now drains a transcoder that stops reading before it restarts it.
+On QSV, check the app's log around ad breaks for a while after updating:
+
+- `transcoder stuck for 1m0s, closing its input` means the encoder read
+  nothing for a full minute and was restarted. Occasional lines point at
+  the iGPU; frequent ones are worth an issue with the surrounding log.
+- `transcoder read nothing for 30s; dropped its … backlog` followed by
+  `transcoder reading again` is a slow moment that recovered on its own.
+
 ## Networking notes
 
 - Bridge mode (the YAML above) is the TrueNAS-friendly default: only port 8400
