@@ -64,6 +64,9 @@ type Observed struct {
 	MaxAudioHole               time.Duration
 	MaxAVStartSkew             time.Duration
 	MaxStartAVOffset           time.Duration // |first audio PTS − first video PTS|, max over runs
+	StartAVRuns                int           // discontinuities seen on video or the chosen audio
+	StartAVMeasured            int           // those with both sides probed
+	UnmeasuredStartAV          []int64       // discontinuity numbers with no start pair, ascending
 	ProbedAudio, ProbedVideo   int
 	MinSegmentsAfterFault      int // fewest segments any rendition fetched after the last fault
 	FetchErrors                int // testplayer Report.FetchErrors: every failed fetch
@@ -133,10 +136,13 @@ func (e *Expect) Check(o Observed) []string {
 		}
 	}
 	if e.MaxStartAVOffsetMs != nil {
-		switch {
-		case o.ProbedAudio == 0 || o.ProbedVideo == 0:
+		if o.ProbedAudio == 0 || o.ProbedVideo == 0 {
 			v = append(v, "no audio/video start offset measured")
-		case ms(o.MaxStartAVOffset) > *e.MaxStartAVOffsetMs:
+		}
+		for _, d := range o.UnmeasuredStartAV {
+			v = append(v, fmt.Sprintf("start A/V offset not measured for discontinuity %d", d))
+		}
+		if ms(o.MaxStartAVOffset) > *e.MaxStartAVOffsetMs {
 			v = append(v, fmt.Sprintf("A/V start offset = %.0fms, want ≤ %.0fms", ms(o.MaxStartAVOffset), *e.MaxStartAVOffsetMs))
 		}
 	}

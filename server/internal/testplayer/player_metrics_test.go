@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,6 +155,78 @@ func TestTimelineExcessCountsSkippedMedia(t *testing.T) {
 	}
 }
 
+// The first poll after the base that delivers several segments at once
+// anchors on the newest of them. None of that batch counts, so the extra
+// segments do not become excess at zero wall time. Real-time segments
+// after the batch still read about zero.
+func TestTimelineExcessAnchorsOnNewestOfFirstBatch(t *testing.T) {
+	const d = 1.0
+	dur := time.Second
+	var (
+		mu      sync.Mutex
+		polls   int
+		batchAt time.Time
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			_, _ = fmt.Fprint(w, `{"viewerId":"v1","playlistUrl":"/s/index.m3u8?token=tk"}`)
+		case r.URL.Path == "/s/index.m3u8":
+			mu.Lock()
+			polls++
+			n := polls
+			if n > 1 && batchAt.IsZero() {
+				batchAt = time.Now()
+			}
+			elapsed := time.Duration(0)
+			if !batchAt.IsZero() {
+				elapsed = time.Since(batchAt)
+			}
+			mu.Unlock()
+			// Poll 1: the base only. The next poll releases three new
+			// segments together. Two more follow one duration apart.
+			count := 1
+			if n > 1 {
+				count = 4
+				if elapsed >= dur {
+					count = 5
+				}
+				if elapsed >= 2*dur {
+					count = 6
+				}
+			}
+			var b strings.Builder
+			b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n")
+			for i := 0; i < count; i++ {
+				fmt.Fprintf(&b, "#EXTINF:%.3f,\n/s/%05d.ts\n", d, i)
+			}
+			_, _ = w.Write([]byte(b.String()))
+		case len(r.URL.Path) > 3 && r.URL.Path[:3] == "/s/":
+			_, _ = w.Write([]byte{0x47})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p, err := Start(context.Background(), Config{
+		BaseURL: srv.URL, Token: "t", ChannelID: 1, PollEvery: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*dur+time.Second)
+	defer cancel()
+	p.Run(ctx)
+	r := p.Report()
+	if r.SegmentsFetched < 6 {
+		t.Fatalf("fetched %d segments, want the base, the batch of 3, and 2 real-time segments", r.SegmentsFetched)
+	}
+	if !nearSec(r.TimelineExcess, 0, 0.5) {
+		t.Fatalf("TimelineExcess=%v, want |excess| < 0.5s when three segments arrive in one poll", r.TimelineExcess)
+	}
+}
+
 // avSeg is one segment of a rendition in a start-offset fixture.
 type avSeg struct {
 	disc bool
@@ -260,6 +333,14 @@ func nearDur(got, want, tol time.Duration) bool {
 	return d < tol
 }
 
+func wantMeasuredRuns(t *testing.T, r Report, n int) {
+	t.Helper()
+	if r.StartAVRuns != n || r.StartAVMeasured != n || len(r.UnmeasuredStartAV) != 0 {
+		t.Fatalf("start runs=%d measured=%d unmeasured=%v, want %d runs all measured",
+			r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV, n)
+	}
+}
+
 // Audio starting 400 ms before video is invisible to AVSkew once PDT is
 // derived from PTS, and visible to MaxStartAVOffset. aac0 is preferred
 // over an earlier audio rendition with a larger offset.
@@ -293,6 +374,7 @@ func TestStartAVOffsetAligned(t *testing.T) {
 	if r.MaxStartAVOffset >= 50*time.Millisecond {
 		t.Fatalf("MaxStartAVOffset=%v, want < 50ms", r.MaxStartAVOffset)
 	}
+	wantMeasuredRuns(t, r, 1)
 	ms := 100.0
 	if v := (&scenario.Expect{MaxStartAVOffsetMs: &ms}).Check(scenario.Observed{
 		MaxStartAVOffset: r.MaxStartAVOffset, ProbedAudio: r.ProbedAudio, ProbedVideo: r.ProbedVideo,
@@ -323,6 +405,7 @@ func TestStartAVOffsetMeasuresEachDiscontinuity(t *testing.T) {
 	if !nearDur(r.MaxStartAVOffset, 400*time.Millisecond, 2*time.Millisecond) {
 		t.Fatalf("MaxStartAVOffset=%v, want 400ms from the discontinuity's first segments", r.MaxStartAVOffset)
 	}
+	wantMeasuredRuns(t, r, 2)
 	if r.MaxAVStartSkew > 2*time.Millisecond {
 		t.Fatalf("MaxAVStartSkew=%v, want ≈0", r.MaxAVStartSkew)
 	}
@@ -353,5 +436,77 @@ func TestStartAVOffsetFallsBackToFirstAudio(t *testing.T) {
 	)
 	if !nearDur(r.MaxStartAVOffset, 400*time.Millisecond, 2*time.Millisecond) {
 		t.Fatalf("MaxStartAVOffset=%v, want 400ms from the only audio rendition", r.MaxStartAVOffset)
+	}
+}
+
+// Adjacent PDT ranges do not overlap, but they are still the first segments
+// of the same run. A 1 s PTS gap must be reported.
+func TestStartAVOffsetAdjacentSegments(t *testing.T) {
+	const d = 1.0
+	r := runAV(t,
+		[]avSeg{{dur: d, pdt: time.Second, pts: 10}},
+		[]avSeg{{dur: d, pdt: 0, pts: 9}},
+		nil,
+	)
+	if !nearDur(r.MaxStartAVOffset, time.Second, 2*time.Millisecond) {
+		t.Fatalf("MaxStartAVOffset=%v, want 1000ms", r.MaxStartAVOffset)
+	}
+	wantMeasuredRuns(t, r, 1)
+}
+
+func startOffsetViolations(r Report) []string {
+	ms := 100.0
+	return (&scenario.Expect{MaxStartAVOffsetMs: &ms}).Check(scenario.Observed{
+		MaxStartAVOffset:  r.MaxStartAVOffset,
+		ProbedAudio:       r.ProbedAudio,
+		ProbedVideo:       r.ProbedVideo,
+		StartAVRuns:       r.StartAVRuns,
+		StartAVMeasured:   r.StartAVMeasured,
+		UnmeasuredStartAV: append([]int64(nil), r.UnmeasuredStartAV...),
+	})
+}
+
+// Video probed only in run 0 and audio only in run 1: neither run has a pair.
+func TestStartAVOffsetUnmeasuredWhenSidesSplitAcrossRuns(t *testing.T) {
+	const d = 1.0
+	r := runAV(t,
+		[]avSeg{{dur: d, pdt: 0, pts: 10}},
+		[]avSeg{{disc: true, dur: d, pdt: 0, pts: 9}},
+		nil,
+	)
+	if r.StartAVRuns != 2 || r.StartAVMeasured != 0 || len(r.UnmeasuredStartAV) != 2 ||
+		r.UnmeasuredStartAV[0] != 0 || r.UnmeasuredStartAV[1] != 1 {
+		t.Fatalf("runs=%d measured=%d unmeasured=%v, want 2 runs missing 0 and 1",
+			r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV)
+	}
+	v := startOffsetViolations(r)
+	got := strings.Join(v, "; ")
+	if !strings.Contains(got, "discontinuity 0") || !strings.Contains(got, "discontinuity 1") {
+		t.Fatalf("violations %v, want both runs unmeasured", v)
+	}
+}
+
+// aac0 is the chosen audio rendition. Segments from ac30 do not measure the
+// run while aac0 itself was never probed.
+func TestStartAVOffsetUnmeasuredWhenChosenAudioMissing(t *testing.T) {
+	const d = 1.0
+	r := runAV(t,
+		[]avSeg{{dur: d, pdt: 0, pts: 10}},
+		[]avSeg{},
+		map[string][]avSeg{"ac30": {{dur: d, pdt: 0, pts: 8}}},
+	)
+	if r.ProbedAudio == 0 || r.ProbedVideo == 0 {
+		t.Fatalf("probed audio=%d video=%d, want both (ac30 must not count as the chosen audio)", r.ProbedAudio, r.ProbedVideo)
+	}
+	if r.StartAVRuns != 1 || r.StartAVMeasured != 0 || len(r.UnmeasuredStartAV) != 1 || r.UnmeasuredStartAV[0] != 0 {
+		t.Fatalf("runs=%d measured=%d unmeasured=%v, want run 0 unmeasured",
+			r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV)
+	}
+	if r.MaxStartAVOffset != 0 {
+		t.Fatalf("MaxStartAVOffset=%v, want 0 when aac0 was not probed", r.MaxStartAVOffset)
+	}
+	v := startOffsetViolations(r)
+	if len(v) != 1 || !strings.Contains(v[0], "discontinuity 0") {
+		t.Fatalf("violations %v, want discontinuity 0 unmeasured", v)
 	}
 }

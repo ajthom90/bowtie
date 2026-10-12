@@ -298,6 +298,12 @@ func TestCheckStartAVOffset(t *testing.T) {
 	if v := s.Expect.Check(Observed{}); len(v) != 1 || !strings.Contains(v[0], "no audio") {
 		t.Fatalf("unmeasured: %v", v)
 	}
+	// Both sides were probed, but not in the same run.
+	split := s.Expect.Check(Observed{ProbedAudio: 1, ProbedVideo: 1, UnmeasuredStartAV: []int64{0, 1}})
+	got := strings.Join(split, "; ")
+	if !strings.Contains(got, "discontinuity 0") || !strings.Contains(got, "discontinuity 1") {
+		t.Fatalf("split runs: %v", split)
+	}
 }
 
 func TestCheckCoverageExpectations(t *testing.T) {
