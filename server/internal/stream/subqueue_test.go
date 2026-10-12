@@ -92,6 +92,7 @@ func TestSubQueueIdleForIgnoresQuietInput(t *testing.T) {
 	if _, ok := q.pop(); !ok {
 		t.Fatal("pop failed")
 	}
+	q.wrote(188)
 	now = now.Add(40 * time.Second) // no input for 40s; queue empty
 	q.push(make([]byte, 188), nil)
 	if d := q.idleFor(now); d != 0 {
@@ -100,5 +101,54 @@ func TestSubQueueIdleForIgnoresQuietInput(t *testing.T) {
 	now = now.Add(31 * time.Second) // now the reader really is stuck
 	if d := q.idleFor(now); d < 30*time.Second {
 		t.Fatalf("idleFor = %v after 31s unconsumed, want ≥30s", d)
+	}
+}
+
+// Progress is bytes written to FFmpeg, not pops: a 4 MiB chunk popped once
+// and then written slowly keeps the stuck clock fresh with every slice; a
+// reset (drain) never counts as progress.
+func TestSubQueueProgressCountsWrittenBytesNotPops(t *testing.T) {
+	now := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
+	q := newSubQueue(8<<20, func() time.Time { return now })
+	q.push(make([]byte, 4<<20), nil)
+	if _, ok := q.pop(); !ok {
+		t.Fatal("pop")
+	}
+	now = now.Add(20 * time.Second)
+	if got := q.idleFor(now); got != 20*time.Second {
+		t.Fatalf("idleFor=%v with 4 MiB in flight and nothing written, want 20s", got)
+	}
+	q.wrote(pipeWriteSlice)
+	now = now.Add(5 * time.Second)
+	if got := q.idleFor(now); got != 5*time.Second {
+		t.Fatalf("idleFor=%v 5 s after a slice was written, want 5s", got)
+	}
+	q.push([]byte("aaaa"), nil)
+	gen := q.resetGen()
+	if n := q.reset([]byte("HEAD")); n != 4 {
+		t.Fatalf("reset dropped %d bytes, want 4 (the in-flight chunk isn't queued)", n)
+	}
+	if q.resetGen() == gen || q.size() != 4 {
+		t.Fatalf("resetGen unchanged or size=%d after reset", q.size())
+	}
+	now = now.Add(10 * time.Second)
+	if got := q.idleFor(now); got != 15*time.Second {
+		t.Fatalf("idleFor=%v after reset, want 15s (a reset is not progress)", got)
+	}
+	if q.writtenBytes() != pipeWriteSlice {
+		t.Fatalf("writtenBytes=%d", q.writtenBytes())
+	}
+}
+
+// With nothing queued and nothing in flight the reader isn't stuck (a quiet input).
+func TestSubQueueIdleIsZeroWhenNothingWaits(t *testing.T) {
+	now := time.Date(2026, 10, 11, 20, 0, 0, 0, time.UTC)
+	q := newSubQueue(1<<20, func() time.Time { return now })
+	q.push([]byte("abcd"), nil)
+	c, _ := q.pop()
+	q.wrote(len(c))
+	now = now.Add(time.Hour)
+	if got := q.idleFor(now); got != 0 {
+		t.Fatalf("idleFor=%v with nothing waiting", got)
 	}
 }

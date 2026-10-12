@@ -107,16 +107,21 @@ const (
 	// ingestSubQueueMax bounds each transcoder's backlog (≈7s at 19 Mbps);
 	// beyond it the oldest data is dropped instead of cutting FFmpeg off.
 	ingestSubQueueMax = 16 << 20
-	// ingestSubStuckTimeout: a transcoder that takes nothing for this long is
-	// hung and its input is closed so the manager restarts it.
+	// ingestSubStuckTimeout: a transcoder that takes no bytes for this long
+	// while data waits is drained: its backlog is dropped and it gets the
+	// stream headers again.
 	ingestSubStuckTimeout = 30 * time.Second
-	ingestTailDuration    = 5 * time.Second
-	ingestReconnectMin    = 1 * time.Second
-	ingestReconnectMax    = 30 * time.Second
-	ingestGiveUpAfter     = 60 * time.Second
-	tsPacketSize          = 188
-	tsSyncByte            = 0x47
-	tsPIDPAT              = 0
+	// ingestSubKillGrace: a drained transcoder that still takes no bytes for
+	// this long is hung (a wedged encoder); its input is closed and the
+	// manager kills and restarts it.
+	ingestSubKillGrace = 30 * time.Second
+	ingestTailDuration = 5 * time.Second
+	ingestReconnectMin = 1 * time.Second
+	ingestReconnectMax = 30 * time.Second
+	ingestGiveUpAfter  = 60 * time.Second
+	tsPacketSize       = 188
+	tsSyncByte         = 0x47
+	tsPIDPAT           = 0
 )
 
 // Reception states, learned from real tunes (the HDHomeRun reports signal only
@@ -301,6 +306,11 @@ type IngestSub struct {
 	// lastDropLog rate-limits the "transcoder behind" log (under channelIngest.mu).
 	lastDropLog time.Time
 
+	// drainedAt is when ingest dropped this stuck sub's backlog (zero: not
+	// drained); writtenAtDrain is the bytes written to its pipe then. Under channelIngest.mu.
+	drainedAt      time.Time
+	writtenAtDrain uint64
+
 	onForceClose atomic.Pointer[func()]
 }
 
@@ -337,12 +347,18 @@ func (s *IngestSub) isClosed() bool {
 	return s.closed.Load()
 }
 
+// pipeWriteSlice is how much drain hands FFmpeg's pipe at once (whole TS
+// packets): every completed slice counts as progress, so a slow reader of
+// a large join chunk is never mistaken for a stuck one.
+const pipeWriteSlice = 348 * tsPacketSize
+
 func (s *IngestSub) drain(join []byte) {
 	defer func() {
 		_ = s.pw.Close()
 	}()
 	if len(join) > 0 {
-		if _, err := s.pw.Write(join); err != nil {
+		s.q.addInFlight(len(join))
+		if !s.writeChunk(join) {
 			return
 		}
 	}
@@ -351,10 +367,37 @@ func (s *IngestSub) drain(join []byte) {
 		if !ok {
 			return
 		}
-		if _, err := s.pw.Write(chunk); err != nil {
+		if !s.writeChunk(chunk) {
 			return
 		}
 	}
+}
+
+// writeChunk writes chunk in slices, recording each as progress. After a
+// reset (drain) it abandons the rest of the chunk at the next slice
+// boundary, so the fresh headers follow at most one slice of old data.
+// False when the pipe is closed.
+func (s *IngestSub) writeChunk(chunk []byte) bool {
+	gen := s.q.resetGen()
+	for off := 0; off < len(chunk); {
+		if s.q.resetGen() != gen {
+			s.q.abandon(len(chunk) - off)
+			return true
+		}
+		end := off + pipeWriteSlice
+		if end > len(chunk) {
+			end = len(chunk)
+		}
+		n, err := s.pw.Write(chunk[off:end])
+		if n > 0 {
+			s.q.wrote(n)
+		}
+		if err != nil {
+			return false
+		}
+		off = end
+	}
+	return true
 }
 
 // channelIngest is the per-channel single-flight device stream + fan-out.
@@ -786,15 +829,40 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 			s.lastDropLog = now
 			log.Printf("ingest: channel %d: transcoder behind, dropped %d KiB of old data", c.channelID, n>>10)
 		}
-		if s.q.idleFor(now) >= ingestSubStuckTimeout {
+		if c.checkStuckLocked(s, now) {
 			stuck = append(stuck, s)
 		}
 	}
 	c.mu.Unlock()
 	for _, s := range stuck {
-		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout)
+		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout+ingestSubKillGrace)
 		s.forceClose()
 	}
+}
+
+// checkStuckLocked applies the stuck rule to one sub and reports whether its
+// input must be closed. A transcoder that takes no bytes for
+// ingestSubStuckTimeout is drained first: its backlog is replaced by PAT,
+// PMT and the stream since the join point, as after an overflow. It is
+// closed only if no byte reaches it for ingestSubKillGrace after that; one
+// that reads again was just slow and is left alone.
+func (c *channelIngest) checkStuckLocked(s *IngestSub, now time.Time) bool {
+	if !s.drainedAt.IsZero() {
+		if s.q.writtenBytes() != s.writtenAtDrain {
+			log.Printf("ingest: channel %d: transcoder reading again %v after its backlog was dropped",
+				c.channelID, now.Sub(s.drainedAt).Round(time.Second))
+			s.drainedAt = time.Time{}
+			return false
+		}
+		return now.Sub(s.drainedAt) >= ingestSubKillGrace
+	}
+	if idle := s.q.idleFor(now); idle >= ingestSubStuckTimeout {
+		dropped := s.q.reset(c.joinSnapshotLocked())
+		s.drainedAt, s.writtenAtDrain = now, s.q.writtenBytes()
+		log.Printf("ingest: channel %d: transcoder read nothing for %v; dropped its %d KiB backlog and resent the stream headers",
+			c.channelID, idle.Round(time.Second), dropped>>10)
+	}
+	return false
 }
 
 // tablesLocked returns a fresh copy of the current PAT+PMT (nil if unknown).

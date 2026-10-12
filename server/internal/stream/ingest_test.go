@@ -573,18 +573,70 @@ func TestSlowSubDropsInsteadOfClosing(t *testing.T) {
 	_ = fast.Close()
 }
 
-// A reader stuck for ingestSubStuckTimeout with data queued is closed.
-func TestStuckSubClosedAfter30s(t *testing.T) {
+// A reader that takes nothing is drained at the stuck timeout and closed only
+// after the grace period passes without a single byte written to it.
+func TestStuckSubDrainedThenClosedAfterGrace(t *testing.T) {
 	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
 	pb := newPipeBody()
 	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
 	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
-	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)-2)
+	chunk := make([]byte, 188*10)
+	feedAndStep(pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)+2)
 	if stuck.isClosed() {
-		t.Fatal("closed before the 30s stuck timeout")
+		t.Fatal("closed at the stuck timeout; want a drain first")
 	}
-	feedAndStep(pb, clock, make([]byte, 188*10), 4)
+	if got := stuck.q.size(); got > 3*len(chunk) {
+		t.Fatalf("backlog %d bytes after the drain, want ≤ %d", got, 3*len(chunk))
+	}
+	feedAndStep(pb, clock, chunk, int(ingestSubKillGrace/time.Second)-4)
+	if stuck.isClosed() {
+		t.Fatal("closed before the grace period ended")
+	}
+	feedAndStep(pb, clock, chunk, 6)
 	waitFor(t, 2*time.Second, stuck.isClosed)
+}
+
+// A transcoder that reads again after the drain was slow, not hung: it stays.
+func TestStuckSubThatReadsAgainIsNotClosed(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 21, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	sub, _ := im.Attach(context.Background(), 1, "u")
+	chunk := make([]byte, 188*10)
+	feedAndStep(pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)+2) // drained
+	go func() { _, _ = io.Copy(io.Discard, sub.R) }()
+	feedAndStep(pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+5)
+	if sub.isClosed() {
+		t.Fatal("a transcoder that read again was closed")
+	}
+	_ = sub.Close()
+}
+
+// A slow reader working through a 4 MiB join chunk (32 KiB per simulated
+// second: two minutes for the chunk) is making progress the whole time:
+// never drained, never closed.
+func TestSlowReaderOfLargeJoinIsNotStuck(t *testing.T) {
+	now := time.Date(2026, 10, 11, 21, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	pr, pw := io.Pipe()
+	s := &IngestSub{R: pr, pr: pr, pw: pw, q: newSubQueue(8<<20, clock)}
+	join := make([]byte, 4<<20)
+	go s.drain(join)
+	buf := make([]byte, 32<<10)
+	for sec := 0; sec < 70; sec++ {
+		if _, err := io.ReadFull(pr, buf); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond) // let drain record the slice it finished
+		mu.Lock()
+		now = now.Add(time.Second)
+		mu.Unlock()
+		if idle := s.q.idleFor(clock()); idle >= 4*time.Second {
+			t.Fatalf("at %ds idleFor=%v while the reader keeps reading", sec, idle)
+		}
+	}
+	_ = s.Close()
 }
 
 // feedAndStep plays a live device: write chunk, then advance the clock 1s,
@@ -851,9 +903,9 @@ func TestConcurrentCloseVsForceClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Bring the sub to the edge of the stuck timeout.
+	// Bring the sub to the edge of the kill (drained, grace nearly over).
 	chunk := make([]byte, 188*10)
-	feedAndStep(pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)-1)
+	feedAndStep(pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)-1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -1050,7 +1102,7 @@ func TestStuckSubRunsForceCloseHook(t *testing.T) {
 	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
 	var stopped atomic.Bool
 	stuck.OnForceClose(func() { stopped.Store(true) })
-	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)+2)
+	feedAndStep(pb, clock, make([]byte, 188*10), int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+2)
 	waitFor(t, 2*time.Second, stopped.Load)
 }
 
