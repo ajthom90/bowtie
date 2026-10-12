@@ -611,7 +611,7 @@ func TestParseMediaPlaylist(t *testing.T) {
 	}
 }
 
-// Codex's storm: a restarted run's video covers media [0,4) and its audio
+// The review's storm case: a restarted run's video covers media [0,4) and its audio
 // starts at 8. Seen is not publishable: the run stays held instead of
 // opening with video alone, and the crash that follows discards it. The
 // next run opens as discontinuity 1 in both renditions, and audio is still
