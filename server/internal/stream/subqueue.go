@@ -21,9 +21,11 @@ type subQueue struct {
 	written      uint64 // bytes written to the pipe
 	gen          uint64 // bumped by reset
 
-	// betweenResetAndBaseline, if set, runs when a drain has committed its
-	// written-byte baseline. Tests land a pipe write there; that write must
-	// count as progress after the drain, not as the baseline. Nil outside tests.
+	// betweenResetAndBaseline, if set, runs with q.mu held after beginDrain has
+	// copied the written-byte baseline and before it releases the lock. The
+	// hook must not lock q.mu. A write it performs is progress after the
+	// drain; reading q.written after the hook would swallow that write into
+	// the baseline. Nil outside tests.
 	betweenResetAndBaseline func()
 }
 
@@ -108,6 +110,11 @@ func (q *subQueue) idleFor(now time.Time) time.Duration {
 func (q *subQueue) wrote(n int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	q.wroteLocked(n)
+}
+
+// wroteLocked is wrote for a caller that holds q.mu.
+func (q *subQueue) wroteLocked(n int) {
 	q.inFlight -= n
 	if q.inFlight < 0 {
 		q.inFlight = 0
@@ -190,7 +197,15 @@ func (q *subQueue) beginDrain(now time.Time, minIdle time.Duration, head []byte)
 		return 0, q.written, idle, false
 	}
 	dropped = q.resetLocked(head)
-	return dropped, q.written, idle, true
+	baseline = q.written
+	// The baseline is the count above, not a later read. The hook runs in
+	// the old gap — after the reset, before the lock is released — so a
+	// write here is progress. Sampling q.written after this hook would
+	// store that write as the baseline.
+	if q.betweenResetAndBaseline != nil {
+		q.betweenResetAndBaseline()
+	}
+	return dropped, baseline, idle, true
 }
 
 // addInFlight counts bytes handed to the writer outside pop (the join).
