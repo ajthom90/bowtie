@@ -40,7 +40,7 @@ const (
 // timelineRunHook, when set, sees the context a session observer runs on.
 // The duplicate-key abandon path cancels that context and never starts Run.
 // Tests set it; production leaves it nil.
-var timelineRunHook func(ctx context.Context)
+var timelineRunHook atomic.Pointer[func(context.Context)]
 
 // Process is a running transcode job supervised by the manager.
 type Process interface {
@@ -385,8 +385,8 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 	timeline := NewTimeline(dir, layout.Renditions(), time.Now)
 	timeline.Observe()
 	tlCtx, tlCancel := context.WithCancel(context.Background())
-	if timelineRunHook != nil {
-		timelineRunHook(tlCtx)
+	if h := timelineRunHook.Load(); h != nil {
+		(*h)(tlCtx)
 	}
 
 	now := m.now()

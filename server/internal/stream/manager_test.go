@@ -1065,12 +1065,13 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	st, cfg, clock, _, chID, userA := setupEnv(t)
 	var timelineMu sync.Mutex
 	var timelineCtxs []context.Context
-	timelineRunHook = func(ctx context.Context) {
+	fn := func(ctx context.Context) {
 		timelineMu.Lock()
 		timelineCtxs = append(timelineCtxs, ctx)
 		timelineMu.Unlock()
 	}
-	t.Cleanup(func() { timelineRunHook = nil })
+	timelineRunHook.Store(&fn)
+	t.Cleanup(func() { timelineRunHook.Store(nil) })
 	runner := newRaceRunner()
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
