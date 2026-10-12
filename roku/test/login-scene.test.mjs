@@ -11,6 +11,7 @@ const read = (p) => readFileSync(new URL(`../components/${p}`, import.meta.url),
 const scene = read('LoginScene.bs');
 const xml = read('LoginScene.xml');
 const apiTask = read('tasks/ApiTask.bs');
+const app = read('AppScene.bs');
 
 function body(src, signature) {
     const start = src.indexOf(signature);
@@ -79,6 +80,27 @@ test('phone sign-in asks for a code named after this Roku', () => {
     assert.match(start, /bowtie\.deviceauth\.deviceName\(/);
     assert.match(scene, /CreateObject\("roDeviceInfo"\)/);
     assert.match(scene, /\.GetFriendlyName\(\)/);
+});
+
+// At launch with a saved server but no sign-in, AppScene used to show Login
+// from its own init(). Login wrote deviceStart before ApiTask's thread had
+// observed its request field, so no event fired and Login sat on "Getting a
+// code…" until Get a new code (seen on a Roku TV). Reading task.ready from a
+// scene can't close this: the render thread sees the old value until the
+// change is delivered, and an observer added after the change never fires.
+// AppScene observes ready before RUN, so it holds Login until then.
+test('at launch Login waits for ApiTask to be ready (AppScene holds it on Checking)', () => {
+    const route = body(app, 'sub routeFromRegistry()');
+    const signedOut = route.slice(route.indexOf('if rt = invalid or rt = ""'));
+    assert.match(signedOut, /m\.loginWhenReady = true/);
+    assert.match(signedOut, /setPhase\("checking"\)/);
+    assert.doesNotMatch(signedOut.slice(0, signedOut.indexOf('else')), /setPhase\("login"\)/);
+    const ready = body(app, 'sub onApiReady()');
+    assert.match(ready, /m\.loginWhenReady = false[\s\S]*?setPhase\("login"\)/);
+    assert.match(ready, /enqueueBootRefresh\(\)/);
+    // The observer is in place before the task can run.
+    const init = body(app, 'sub init()');
+    assert.ok(init.indexOf('observeFieldScoped("ready", "onApiReady")') < init.indexOf('m.apiTask.control = "RUN"'));
 });
 
 test('the code response shows the QR from the server and starts the poll timer', () => {
