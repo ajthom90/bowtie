@@ -86,10 +86,16 @@ func TestScenarios(t *testing.T) {
 	}
 }
 
-func runScenario(t *testing.T, sc *scenario.Scenario) {
+// runScenario plays sc and checks its expectations. It returns when the fake's
+// channel timeline started (a clip's offset 0), for judging FFmpeg's re-bases
+// against the source.
+func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 	src, synthetic := resolveSource(t, sc.Source)
 	gate := NewGate()
 	count := &CountingRunner{Inner: &GatedRunner{Inner: &stream.FFmpegRunner{Path: ffmpegPath()}, Gate: gate}}
+	// After loading the source (a large clip takes seconds), before New
+	// starts the fake's channel timeline.
+	sourceStart := time.Now()
 	h := New(t, Options{
 		Fake: hdhrfake.Options{
 			TunerCount: 2,
@@ -123,6 +129,13 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 	cfg.AllRenditions = true
 	cfg.Probe = FFprobe(ffprobePath())
 	startAt := time.Now()
+	defer func() {
+		ff := ffLogSince(t, startAt)
+		t.Logf("ff: rebases=%d dupFrames=%d maxDupBurst=%d dupWarnings=%d", len(ff.Rebases), ff.DupFrames, ff.MaxDupBurst, ff.DupWarnings)
+		for _, rb := range ff.Rebases {
+			t.Logf("rebase at +%v: %s", rb.At.Round(100*time.Millisecond), rb.Line)
+		}
+	}()
 	p, err := testplayer.Start(context.Background(), cfg)
 	obs.StartLatency = time.Since(startAt)
 	var se *testplayer.StartError
@@ -267,17 +280,18 @@ func runScenario(t *testing.T, sc *scenario.Scenario) {
 		for _, v := range other {
 			t.Errorf("unexpected (not the known gap): %s", v)
 		}
-		return
+		return sourceStart
 	}
 	if sc.Expect.Flaky != "" {
 		if len(violations) > 0 {
 			t.Logf("flaky (%s): %s", sc.Expect.Flaky, strings.Join(violations, "; "))
 		}
-		return
+		return sourceStart
 	}
 	for _, v := range violations {
 		t.Error(v)
 	}
+	return sourceStart
 }
 
 func slowWindow(sc *scenario.Scenario) *scenario.Window {
