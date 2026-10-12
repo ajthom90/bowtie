@@ -34,6 +34,39 @@ docker run --rm -v "$PWD:/src" -w /src -e CGO_ENABLED=0 golang:1.22-bookworm bas
   'apt-get update -qq && apt-get install -y -qq ffmpeg && go test -tags ffmpeg -run TestScenarios -v ./internal/e2e/'
 ```
 
+### On FFmpeg 5.1 (the production image's FFmpeg)
+
+`server/scripts/ffmpeg51` runs Debian bookworm's FFmpeg 5.1 in Docker as a
+drop-in for `BOWTIE_FFMPEG_PATH` (software encode):
+
+```sh
+cd server
+BOWTIE_FFMPEG_PATH=$PWD/scripts/ffmpeg51 go test -tags ffmpeg -p 1 -parallel 2 -timeout 60m -run TestScenarios ./internal/e2e/
+```
+
+`FF51_LOGLEVEL` changes the log level; `FF51_LOGDIR` collects each run's
+argv and its re-base and duplicate lines with timestamps (scenarios then log
+`ff: rebases=… dupFrames=…` and `rebase at +…`). To compare FFmpeg options,
+commit each to its own scratch branch and run from it: the wrapper never
+injects options, and the logged argv shows what ran. Captions (fd 3) can't
+cross into the container, so scenarios with `bowtie: {layout: production}`
+run inside the production image instead: build `deploy/Dockerfile`,
+cross-compile the e2e test binary (`go test -c -tags ffmpeg`) and run it in
+the image with `BOWTIE_FFMPEG_PATH` pointing at `scripts/ffmpeg-soak`
+mounted into the container (see the stream resilience plan, Task 6).
+
+### On real over-the-air clips
+
+`TestOTAClips` plays captured `.ts` files through the production layout and
+fails on a timestamp re-base that isn't near a signal dip in the capture's
+tuner log. The clips stay out of the repo: point `BOWTIE_OTA_CLIPS` at their
+folder and `BOWTIE_OTA_SIGNAL_DIR` at the `ch<N>.signal.tsv` logs
+(optionally `BOWTIE_OTA_CLIP_FILES=ch2.2.ts,ch9.1@1200.ts` and
+`BOWTIE_OTA_FOR=60m`). Clips are loaded into memory: cut clips over 1 GiB,
+naming each piece `ch<N>@<start seconds>.ts`. `TestOTAClipsWithFaults`
+injects timestamp faults into `BOWTIE_OTA_FAULT_CLIP` (a clip with captions)
+and checks that the cues stay on the video.
+
 ## Writing a scenario
 
 Drop a file in `server/internal/e2e/testdata/scenarios/`. With an `expect:`
