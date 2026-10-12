@@ -9,18 +9,28 @@ import (
 // push never blocks: when full it drops the oldest chunks, and after any drop
 // it puts the current PAT+PMT at the head so the demuxer resyncs immediately.
 type subQueue struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	chunks  [][]byte
-	bytes   int
-	max     int
-	closed  bool
-	now     func() time.Time
-	lastPop time.Time
+	mu           sync.Mutex
+	cond         *sync.Cond
+	chunks       [][]byte
+	bytes        int
+	max          int
+	closed       bool
+	now          func() time.Time
+	lastProgress time.Time
+	inFlight     int    // popped bytes not yet written to the pipe
+	written      uint64 // bytes written to the pipe
+	gen          uint64 // bumped by reset
+
+	// betweenResetAndBaseline, if set, runs with q.mu held after beginDrain has
+	// copied the written-byte baseline and before it releases the lock. The
+	// hook must not lock q.mu. A write it performs is progress after the
+	// drain; reading q.written after the hook would swallow that write into
+	// the baseline. Nil outside tests.
+	betweenResetAndBaseline func()
 }
 
 func newSubQueue(max int, now func() time.Time) *subQueue {
-	q := &subQueue{max: max, now: now, lastPop: now()}
+	q := &subQueue{max: max, now: now, lastProgress: now()}
 	q.cond = sync.NewCond(&q.mu)
 	return q
 }
@@ -33,10 +43,10 @@ func (q *subQueue) push(chunk, tables []byte) int {
 	if q.closed {
 		return 0
 	}
-	if len(q.chunks) == 0 {
+	if len(q.chunks) == 0 && q.inFlight == 0 {
 		// Data starts waiting now: a quiet input (no signal) is not a stuck
 		// reader, so the stuck clock must not count the empty time.
-		q.lastPop = q.now()
+		q.lastProgress = q.now()
 	}
 	dropped := 0
 	if q.bytes+len(chunk) > q.max {
@@ -72,7 +82,7 @@ func (q *subQueue) pop() ([]byte, bool) {
 	q.chunks[0] = nil
 	q.chunks = q.chunks[1:]
 	q.bytes -= len(c)
-	q.lastPop = q.now()
+	q.inFlight += len(c)
 	return c, true
 }
 
@@ -85,16 +95,127 @@ func (q *subQueue) close() {
 	q.cond.Broadcast()
 }
 
-// idleFor is how long queued data has waited without the reader taking any
-// (since the last pop, or since data arrived in an empty queue); 0 when
-// nothing is queued.
+// idleFor is how long data has waited (queued or in flight) without a byte
+// reaching the reader; 0 when nothing waits.
 func (q *subQueue) idleFor(now time.Time) time.Duration {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.bytes == 0 {
+	if q.bytes == 0 && q.inFlight == 0 {
 		return 0
 	}
-	return now.Sub(q.lastPop)
+	return now.Sub(q.lastProgress)
+}
+
+// wrote records n bytes written to the reader's pipe: the only progress.
+func (q *subQueue) wrote(n int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.wroteLocked(n)
+}
+
+// wroteLocked is wrote for a caller that holds q.mu.
+func (q *subQueue) wroteLocked(n int) {
+	q.inFlight -= n
+	if q.inFlight < 0 {
+		q.inFlight = 0
+	}
+	q.written += uint64(n)
+	q.lastProgress = q.now()
+}
+
+// abandon drops the unwritten rest of the current chunk (after a reset).
+func (q *subQueue) abandon(n int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.inFlight -= n
+	if q.inFlight < 0 {
+		q.inFlight = 0
+	}
+}
+
+func (q *subQueue) writtenBytes() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.written
+}
+
+func (q *subQueue) resetGen() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.gen
+}
+
+// size is the queued byte count (not counting the chunk in flight).
+func (q *subQueue) size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.bytes
+}
+
+// reset replaces the queued backlog with head and returns the bytes dropped.
+// The stuck clock, the in-flight count and the written count are left
+// alone: a drain is not progress.
+func (q *subQueue) reset(head []byte) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.resetLocked(head)
+}
+
+// resetLocked is reset for a caller that holds q.mu.
+func (q *subQueue) resetLocked(head []byte) int {
+	if q.closed {
+		return 0
+	}
+	dropped := q.bytes
+	for i := range q.chunks {
+		q.chunks[i] = nil
+	}
+	q.chunks, q.bytes = q.chunks[:0], 0
+	q.gen++
+	if len(head) > 0 {
+		q.chunks = append(q.chunks, head)
+		q.bytes = len(head)
+		q.cond.Signal()
+	}
+	return dropped
+}
+
+// beginDrain, when data has waited at least minIdle without a byte written,
+// replaces the backlog with head and returns the bytes dropped and the
+// written-byte baseline. The idle re-check, the reset and that baseline
+// share one hold of q.mu, so a slice that finishes cannot be stored as the
+// baseline and also count as later progress. drained is false when nothing
+// is waiting or a write has already ended the idle.
+func (q *subQueue) beginDrain(now time.Time, minIdle time.Duration, head []byte) (dropped int, baseline uint64, idle time.Duration, drained bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed || (q.bytes == 0 && q.inFlight == 0) {
+		return 0, q.written, 0, false
+	}
+	idle = now.Sub(q.lastProgress)
+	if idle < minIdle {
+		return 0, q.written, idle, false
+	}
+	dropped = q.resetLocked(head)
+	baseline = q.written
+	// The baseline is the count above, not a later read. The hook runs in
+	// the old gap — after the reset, before the lock is released — so a
+	// write here is progress. Sampling q.written after this hook would
+	// store that write as the baseline.
+	if q.betweenResetAndBaseline != nil {
+		q.betweenResetAndBaseline()
+	}
+	return dropped, baseline, idle, true
+}
+
+// addInFlight counts bytes handed to the writer outside pop (the join).
+func (q *subQueue) addInFlight(n int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.bytes == 0 && q.inFlight == 0 {
+		q.lastProgress = q.now()
+	}
+	q.inFlight += n
 }
 
 // alignTS joins carry and data and splits off the whole TS packets. Both
