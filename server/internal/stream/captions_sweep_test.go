@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,70 @@ func TestSweepCaptionsRemovesOldUnlistedVTT(t *testing.T) {
 	write("v4801.vtt", "WEBVTT\n", time.Minute)
 	if n := sweepCaptions(dir, l, 3, now); n != 0 {
 		t.Fatalf("swept %d files of a session without captions", n)
+	}
+}
+
+func TestSweepCaptionsKeepsAgedFilesWhenPlaylistUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	l := transcode.Layout{Rungs: []transcode.Rung{{Height: 480, VideoKbps: 1500}}, Captions: true}
+	now := time.Now()
+	// A directory at the playlist path fails ReadFile with an error other
+	// than not-exist, including when the process is root.
+	if err := os.Mkdir(filepath.Join(dir, l.CaptionPlaylist()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aged := filepath.Join(dir, "v4800.vtt")
+	if err := os.WriteFile(aged, []byte("WEBVTT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-time.Hour)
+	if err := os.Chtimes(aged, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if n := sweepCaptions(dir, l, 3, now); n != 0 {
+		t.Fatalf("removed %d files with an unreadable playlist, want 0", n)
+	}
+	if _, err := os.Stat(aged); err != nil {
+		t.Fatalf("aged caption gone after unreadable playlist: %v", err)
+	}
+}
+
+func TestSweepCaptionsKeepsOneWindowBelowMediaSequence(t *testing.T) {
+	dir := t.TempDir()
+	l := transcode.Layout{Rungs: []transcode.Rung{{Height: 480, VideoKbps: 1500}}, Captions: true}
+	now := time.Now()
+	const listSize = 3
+	const mediaSequence = 5
+	write := func(name string) {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("WEBVTT\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		old := now.Add(-time.Hour)
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	playlist := fmt.Sprintf("#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:%d\n#EXTINF:4.0,\n%s%d.vtt\n",
+		mediaSequence, l.TopName(), mediaSequence)
+	if err := os.WriteFile(filepath.Join(dir, l.CaptionPlaylist()), []byte(playlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// [MediaSequence-listSize, MediaSequence) stays. One seq before that window does not.
+	justBelow := fmt.Sprintf("%s%d.vtt", l.TopName(), mediaSequence-1)
+	windowStart := fmt.Sprintf("%s%d.vtt", l.TopName(), mediaSequence-listSize)
+	beforeWindow := fmt.Sprintf("%s%d.vtt", l.TopName(), mediaSequence-listSize-1)
+	write(justBelow)
+	write(windowStart)
+	write(beforeWindow)
+	if n := sweepCaptions(dir, l, listSize, now); n != 1 {
+		t.Fatalf("removed %d files, want 1", n)
+	}
+	for name, want := range map[string]bool{justBelow: true, windowStart: true, beforeWindow: false} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
+			t.Errorf("%s exists=%v, want %v", name, err == nil, want)
+		}
 	}
 }
 

@@ -1,7 +1,9 @@
 package stream
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,11 @@ import (
 // caption playlist no longer lists that are older than the window plus one
 // segment. (FFmpeg 5.1 loses track of them after an append restart: its
 // playlist lists "." and delete_segments then fails on the directory.)
-// It returns how many files it removed.
+// A playlist that was read also keeps <TopName><seq>.vtt for every seq in
+// [MediaSequence-listSize, MediaSequence), clamped at 0: one extra window
+// below the first listed sequence, so a segment that just slid out is not
+// deleted on the next sweep. A read error other than a missing playlist
+// deletes nothing. It returns how many files it removed.
 func sweepCaptions(dir string, l transcode.Layout, listSize int, now time.Time) int {
 	if !l.Captions {
 		return 0
@@ -23,11 +29,22 @@ func sweepCaptions(dir string, l transcode.Layout, listSize int, now time.Time) 
 		listSize = transcode.DefaultHLSListSize
 	}
 	keep := map[string]bool{}
-	if raw, err := os.ReadFile(filepath.Join(dir, l.CaptionPlaylist())); err == nil {
+	raw, err := os.ReadFile(filepath.Join(dir, l.CaptionPlaylist()))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return 0
+	}
+	if err == nil {
 		p := ParseMediaPlaylist(raw)
 		for i, sg := range p.Segments {
 			keep[fmt.Sprintf("%s%d.vtt", l.TopName(), p.MediaSequence+int64(i))] = true
 			keep[sg.URI] = true
+		}
+		start := p.MediaSequence - int64(listSize)
+		if start < 0 {
+			start = 0
+		}
+		for seq := start; seq < p.MediaSequence; seq++ {
+			keep[fmt.Sprintf("%s%d.vtt", l.TopName(), seq)] = true
 		}
 	}
 	maxAge := time.Duration(listSize+1) * hlsSegmentDuration
