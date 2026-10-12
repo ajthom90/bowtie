@@ -111,6 +111,7 @@ struct TVPlayerView: View {
             handleStateChange(newState)
         }
         .announcesWeakSignal(playerModel)
+        .announcesSlowStart(playerModel)
         .onChange(of: bridge.playerErrorIsForbidden) { _, isForbidden in
             if isForbidden {
                 bridge.playerErrorIsForbidden = false

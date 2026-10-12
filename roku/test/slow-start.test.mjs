@@ -101,6 +101,7 @@ test('the note replaces the label only when showsSlowStartNote says so', () => {
     assert.match(fire, /if m\.loadingGroup\.visible <> true then return/);
     assert.match(fire, /if not bowtie\.client\.showsSlowStartNote\(m\.uiPhase, m\.awaitingFirstFrame, m\.retryAttempt\) then return/);
     assert.match(fire, /m\.loadingLabel\.text = bowtie\.client\.slowStartText\(\)/);
+    assert.match(fire, /announce\(bowtie\.client\.slowStartText\(\)\)/);
 });
 
 test('a reconnect keeps its "Reconnecting… (n/3)" text', () => {

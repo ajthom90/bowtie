@@ -668,6 +668,7 @@ sub onSlowStartFire()
     if m.loadingGroup.visible <> true then return
     if not bowtie.client.showsSlowStartNote(m.uiPhase, m.awaitingFirstFrame, m.retryAttempt) then return
     if m.loadingLabel <> invalid then m.loadingLabel.text = bowtie.client.slowStartText()
+    announce(bowtie.client.slowStartText())
 end sub
 
 sub onVideoErrorFields()

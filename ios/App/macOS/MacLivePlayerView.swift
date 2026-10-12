@@ -156,6 +156,7 @@ struct MacLivePlayerView: View {
             loadPlayerIfNeeded()
         }
         .announcesWeakSignal(playerModel)
+        .announcesSlowStart(playerModel)
         #if SHAREPLAY
         .task(id: coordinationKey) {
             coordinatePlayback()

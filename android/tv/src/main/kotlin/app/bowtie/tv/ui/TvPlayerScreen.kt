@@ -478,7 +478,7 @@ fun TvPlayerScreen(
                             PlayerViewModel.startingText(slowStart)
                         },
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 32.dp),
+                        modifier = Modifier.padding(horizontal = 32.dp).semantics { liveRegion = LiveRegionMode.Polite },
                         style = BowtieType.body,
                         color = BowtieColors.dim,
                     )
