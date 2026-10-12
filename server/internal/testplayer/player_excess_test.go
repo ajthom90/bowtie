@@ -12,32 +12,46 @@ import (
 	"time"
 )
 
-// liveSeg is one primary segment, visible once `at` has passed since the
-// server started, with EXTINF `dur` seconds.
+// liveSeg is one primary segment. Poll n lists the first n segments, and
+// the handler holds the gap `at` since the previous segment so that poll
+// starts on that schedule. EXTINF is `dur` seconds.
 type liveSeg struct {
 	at  time.Duration
 	dur float64
 }
 
-// runLive plays segs on a fake HLS server and returns the report. The
-// playlist grows as each segment's `at` arrives; nothing is published ahead
-// of that clock.
+// runLive plays segs on a fake HLS server and returns the report. Each poll
+// lists one more segment than the poll before it. The gap until the next
+// segment is slept inside that poll, so a late wake cannot publish several
+// segments at once.
 func runLive(t *testing.T, segs []liveSeg, poll, runFor time.Duration, on func(SegmentEvent)) Report {
 	t.Helper()
-	start := time.Now()
+	var (
+		mu    sync.Mutex
+		polls int
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			_, _ = fmt.Fprint(w, `{"viewerId":"v1","playlistUrl":"/s/index.m3u8?token=tk"}`)
 		case r.URL.Path == "/s/index.m3u8":
-			elapsed := time.Since(start)
+			mu.Lock()
+			polls++
+			n := polls
+			mu.Unlock()
+			count := n
+			if count > len(segs) {
+				count = len(segs)
+			}
+			if n < len(segs) {
+				if gap := segs[n].at - segs[n-1].at; gap > 0 {
+					time.Sleep(gap)
+				}
+			}
 			var b strings.Builder
 			b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:0\n")
-			for i, s := range segs {
-				if elapsed < s.at {
-					break
-				}
-				fmt.Fprintf(&b, "#EXTINF:%.3f,\n/s/%05d.ts\n", s.dur, i)
+			for i := 0; i < count; i++ {
+				fmt.Fprintf(&b, "#EXTINF:%.3f,\n/s/%05d.ts\n", segs[i].dur, i)
 			}
 			_, _ = w.Write([]byte(b.String()))
 		case len(r.URL.Path) > 3 && r.URL.Path[:3] == "/s/":
@@ -160,10 +174,21 @@ func TestTimelineExcessCountsSkippedMedia(t *testing.T) {
 func TestTimelineExcessAnchorsOnNewestOfFirstBatch(t *testing.T) {
 	const d = 1.0
 	dur := time.Second
+	// Poll 1 is the base. Poll 2 lists three new segments together and
+	// holds one duration. Each later poll adds one segment and holds the
+	// same duration, so the two segments after the batch take real time.
+	script := []struct {
+		count int
+		hold  time.Duration
+	}{
+		{1, 0},
+		{4, dur},
+		{5, dur},
+		{6, 0},
+	}
 	var (
-		mu      sync.Mutex
-		polls   int
-		batchAt time.Time
+		mu    sync.Mutex
+		polls int
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -173,29 +198,17 @@ func TestTimelineExcessAnchorsOnNewestOfFirstBatch(t *testing.T) {
 			mu.Lock()
 			polls++
 			n := polls
-			if n > 1 && batchAt.IsZero() {
-				batchAt = time.Now()
-			}
-			elapsed := time.Duration(0)
-			if !batchAt.IsZero() {
-				elapsed = time.Since(batchAt)
-			}
 			mu.Unlock()
-			// Poll 1: the base only. The next poll releases three new
-			// segments together. Two more follow one duration apart.
-			count := 1
-			if n > 1 {
-				count = 4
-				if elapsed >= dur {
-					count = 5
-				}
-				if elapsed >= 2*dur {
-					count = 6
-				}
+			step := script[len(script)-1]
+			if n <= len(script) {
+				step = script[n-1]
+			}
+			if step.hold > 0 {
+				time.Sleep(step.hold)
 			}
 			var b strings.Builder
 			b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n")
-			for i := 0; i < count; i++ {
+			for i := 0; i < step.count; i++ {
 				fmt.Fprintf(&b, "#EXTINF:%.3f,\n/s/%05d.ts\n", d, i)
 			}
 			_, _ = w.Write([]byte(b.String()))

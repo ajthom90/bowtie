@@ -288,11 +288,11 @@ func TestCheckStartAVOffset(t *testing.T) {
 	if err != nil || s.Expect == nil || s.Expect.MaxStartAVOffsetMs == nil || *s.Expect.MaxStartAVOffsetMs != 100 {
 		t.Fatalf("parse maxStartAVOffsetMs: %v %+v", err, s.Expect)
 	}
-	bad := s.Expect.Check(Observed{MaxStartAVOffset: 400 * time.Millisecond, ProbedAudio: 1, ProbedVideo: 1})
+	bad := s.Expect.Check(Observed{MaxStartAVOffset: 400 * time.Millisecond, ProbedAudio: 1, ProbedVideo: 1, StartAVRuns: 1, StartAVMeasured: 1})
 	if len(bad) != 1 || !strings.Contains(bad[0], "400") || !strings.Contains(bad[0], "100") {
 		t.Fatalf("violations %v, want one 400ms-over-100ms start-offset violation", bad)
 	}
-	if v := s.Expect.Check(Observed{MaxStartAVOffset: 20 * time.Millisecond, ProbedAudio: 1, ProbedVideo: 1}); len(v) != 0 {
+	if v := s.Expect.Check(Observed{MaxStartAVOffset: 20 * time.Millisecond, ProbedAudio: 1, ProbedVideo: 1, StartAVRuns: 1, StartAVMeasured: 1}); len(v) != 0 {
 		t.Fatalf("aligned: %v", v)
 	}
 	if v := s.Expect.Check(Observed{}); len(v) != 1 || !strings.Contains(v[0], "no audio") {
@@ -303,6 +303,11 @@ func TestCheckStartAVOffset(t *testing.T) {
 	got := strings.Join(split, "; ")
 	if !strings.Contains(got, "discontinuity 0") || !strings.Contains(got, "discontinuity 1") {
 		t.Fatalf("split runs: %v", split)
+	}
+	// Both sides were probed and no run was measured.
+	bare := s.Expect.Check(Observed{ProbedAudio: 1, ProbedVideo: 1})
+	if len(bare) != 1 || !strings.Contains(bare[0], "no start A/V run measured") {
+		t.Fatalf("zero coverage: %v", bare)
 	}
 }
 

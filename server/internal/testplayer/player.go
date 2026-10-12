@@ -670,11 +670,12 @@ func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int,
 	}
 	last := pk[len(pk)-1]
 	rec := &probed{seg: PDTSeg{Start: g.PDT, Dur: g.Duration, DNum: g.DNum}, pts: pk[0].PTS, end: last.PTS + last.Dur, win: win}
-	if g.PDT.IsZero() {
-		return // no wall-clock place: cannot be paired (Consistency flags it)
+	// Pairing needs a wall-clock place. The start offset needs only the PTS
+	// and the discontinuity number, so a segment with no PDT is still recorded.
+	if !g.PDT.IsZero() {
+		r.addProbed(rec)
+		ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
 	}
-	r.addProbed(rec)
-	ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
 	p.noteStartLocked(r, rec)
 }
 
@@ -687,8 +688,8 @@ type startRun struct {
 // noteStartLocked records |first audio PTS − first video PTS| for rec's
 // discontinuity once both sides of that run have been probed. The two
 // segments are each side's first probe of this discontinuity number; they
-// are the run's starts whether or not their PDT ranges overlap. Video is
-// the primary rendition. Audio is aac0, or the first audio rendition when
+// are the run's starts whether or not they carry a PDT. Video is the
+// primary rendition. Audio is aac0, or the first audio rendition when
 // the master lists no aac0. Later segments of the run are not part of the
 // offset. A run seen on only one side stays unmeasured.
 func (p *Player) noteStartLocked(r *rendition, rec *probed) {

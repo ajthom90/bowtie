@@ -80,8 +80,9 @@ type Expect struct {
 	MaxTimelineExcessSeconds *float64 `yaml:"maxTimelineExcessSeconds"`
 	MinTimelineExcessSeconds *float64 `yaml:"minTimelineExcessSeconds"`
 	// ffprobe checks; a run that probed no audio violates them. The start
-	// offset also requires a probed video segment, and each discontinuity
-	// seen on only one side is a violation.
+	// offset also requires a probed video segment. Each discontinuity seen
+	// on only one side is a violation, and so is probed audio and video
+	// with no measured run.
 	MaxAudioHoleMs     *float64 `yaml:"maxAudioHoleMs"`
 	MaxAVStartSkewMs   *float64 `yaml:"maxAVStartSkewMs"`
 	MaxStartAVOffsetMs *float64 `yaml:"maxStartAVOffsetMs"`

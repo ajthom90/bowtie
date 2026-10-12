@@ -142,6 +142,9 @@ func (e *Expect) Check(o Observed) []string {
 		for _, d := range o.UnmeasuredStartAV {
 			v = append(v, fmt.Sprintf("start A/V offset not measured for discontinuity %d", d))
 		}
+		if o.ProbedAudio > 0 && o.ProbedVideo > 0 && o.StartAVMeasured == 0 && len(o.UnmeasuredStartAV) == 0 {
+			v = append(v, "no start A/V run measured")
+		}
 		if ms(o.MaxStartAVOffset) > *e.MaxStartAVOffsetMs {
 			v = append(v, fmt.Sprintf("A/V start offset = %.0fms, want ≤ %.0fms", ms(o.MaxStartAVOffset), *e.MaxStartAVOffsetMs))
 		}

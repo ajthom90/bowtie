@@ -14,10 +14,11 @@ import (
 
 // avSeg is one segment of a rendition in a start-offset fixture.
 type avSeg struct {
-	disc bool
-	dur  float64
-	pdt  time.Duration
-	pts  float64
+	disc  bool
+	dur   float64
+	pdt   time.Duration
+	pts   float64
+	noPDT bool
 }
 
 // runAV serves video (primary), aac0 and any extra audio renditions, probes
@@ -34,8 +35,11 @@ func runAV(t *testing.T, video, aac []avSeg, extra map[string][]avSeg) Report {
 			if s.disc {
 				b.WriteString("#EXT-X-DISCONTINUITY\n")
 			}
-			fmt.Fprintf(&b, "#EXT-X-PROGRAM-DATE-TIME:%s\n#EXTINF:%.3f,\n/s/%s_%05d.ts\n",
-				t0.Add(s.pdt).Format("2006-01-02T15:04:05.000Z07:00"), s.dur, name, i)
+			if !s.noPDT {
+				fmt.Fprintf(&b, "#EXT-X-PROGRAM-DATE-TIME:%s\n",
+					t0.Add(s.pdt).Format("2006-01-02T15:04:05.000Z07:00"))
+			}
+			fmt.Fprintf(&b, "#EXTINF:%.3f,\n/s/%s_%05d.ts\n", s.dur, name, i)
 			ptsOf[fmt.Sprintf("%s_%05d.ts", name, i)] = s.pts
 		}
 		playlists[name] = b.String()
@@ -139,10 +143,7 @@ func TestStartAVOffsetAudioLeadsVideo(t *testing.T) {
 	if !nearDur(r.MaxStartAVOffset, 400*time.Millisecond, 2*time.Millisecond) {
 		t.Fatalf("MaxStartAVOffset=%v, want 400ms (aac0, not ac30's 2s)", r.MaxStartAVOffset)
 	}
-	ms := 100.0
-	v := (&scenario.Expect{MaxStartAVOffsetMs: &ms}).Check(scenario.Observed{
-		MaxStartAVOffset: r.MaxStartAVOffset, ProbedAudio: r.ProbedAudio, ProbedVideo: r.ProbedVideo,
-	})
+	v := startOffsetViolations(r)
 	if len(v) != 1 || !strings.Contains(v[0], "400") || !strings.Contains(v[0], "100") {
 		t.Fatalf("violations %v, want one 400ms-over-100ms start-offset violation", v)
 	}
@@ -160,10 +161,7 @@ func TestStartAVOffsetAligned(t *testing.T) {
 		t.Fatalf("MaxStartAVOffset=%v, want < 50ms", r.MaxStartAVOffset)
 	}
 	wantMeasuredRuns(t, r, 1)
-	ms := 100.0
-	if v := (&scenario.Expect{MaxStartAVOffsetMs: &ms}).Check(scenario.Observed{
-		MaxStartAVOffset: r.MaxStartAVOffset, ProbedAudio: r.ProbedAudio, ProbedVideo: r.ProbedVideo,
-	}); len(v) != 0 {
+	if v := startOffsetViolations(r); len(v) != 0 {
 		t.Fatalf("aligned stream violations %v", v)
 	}
 }
@@ -293,5 +291,50 @@ func TestStartAVOffsetUnmeasuredWhenChosenAudioMissing(t *testing.T) {
 	v := startOffsetViolations(r)
 	if len(v) != 1 || !strings.Contains(v[0], "discontinuity 0") {
 		t.Fatalf("violations %v, want discontinuity 0 unmeasured", v)
+	}
+}
+
+// A segment with no PDT still has a PTS and a discontinuity number. The
+// 1 s gap between those first segments is a start offset.
+func TestStartAVOffsetWithoutPDT(t *testing.T) {
+	const d = 1.0
+	r := runAV(t,
+		[]avSeg{{dur: d, pts: 10, noPDT: true}},
+		[]avSeg{{dur: d, pts: 9, noPDT: true}},
+		nil,
+	)
+	if !nearDur(r.MaxStartAVOffset, time.Second, 2*time.Millisecond) {
+		t.Fatalf("MaxStartAVOffset=%v runs=%d measured=%d unmeasured=%v, want 1000ms",
+			r.MaxStartAVOffset, r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV)
+	}
+	wantMeasuredRuns(t, r, 1)
+	v := startOffsetViolations(r)
+	if len(v) != 1 || !strings.Contains(v[0], "1000") || !strings.Contains(v[0], "100") {
+		t.Fatalf("violations %v, want one 1000ms-over-100ms violation", v)
+	}
+}
+
+// An aligned opening run must not hide a later run whose segments have no PDT.
+func TestStartAVOffsetWithoutPDTAfterAlignedRun(t *testing.T) {
+	const d = 1.0
+	r := runAV(t,
+		[]avSeg{
+			{dur: d, pdt: 0, pts: 10},
+			{disc: true, dur: d, pts: 20, noPDT: true},
+		},
+		[]avSeg{
+			{dur: d, pdt: 0, pts: 10},
+			{disc: true, dur: d, pts: 19, noPDT: true},
+		},
+		nil,
+	)
+	if !nearDur(r.MaxStartAVOffset, time.Second, 2*time.Millisecond) {
+		t.Fatalf("MaxStartAVOffset=%v runs=%d measured=%d unmeasured=%v, want 1000ms from the PDT-less run",
+			r.MaxStartAVOffset, r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV)
+	}
+	wantMeasuredRuns(t, r, 2)
+	v := startOffsetViolations(r)
+	if len(v) != 1 || !strings.Contains(v[0], "1000") || !strings.Contains(v[0], "100") {
+		t.Fatalf("violations %v, want one 1000ms-over-100ms violation", v)
 	}
 }
