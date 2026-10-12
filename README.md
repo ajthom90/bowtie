@@ -31,6 +31,82 @@ for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 **Project status:** see [CHANGELOG.md](CHANGELOG.md) for the latest release
 and [docs/roadmap.md](docs/roadmap.md) for what's next.
 
+## Features
+
+✅ available now · 🚧 in progress · 🗓️ planned
+
+### Watching
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Live TV from your HDHomeRun on every screen | ✅ | Web, iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV, Roku |
+| Watch away from home | ✅ | Through a reverse proxy, Cloudflare Tunnel or Tailscale ([Remote access](#remote-access)) |
+| Hardware transcoding | ✅ | Quick Sync, NVENC, VAAPI, VideoToolbox; software fallback |
+| Choose a quality (Original 1080p, High/Medium 720p, Low 480p) | ✅ | Per viewer; the admin can cap it per account |
+| Automatic quality as the connection changes | ✅ | Admin setting, off by default; hardware encoders only |
+| HEVC for devices that can play it | ✅ | Admin setting, off by default; not with automatic quality yet |
+| Captions, every broadcast audio track, 5.1 sound | ✅ | |
+| Pause and rewind live TV | ✅ | 15 minutes by default; the admin can raise it to 60 |
+| Multiview (up to 4 channels at once) | ✅ | Web app |
+| Sleep timer | ✅ | Every TV and mobile app |
+| SharePlay (watch together) | ✅ | Apple devices |
+| Smooth recovery from weak antenna signal | 🚧 | No jump to the start of the rewind window, no audio drifting out of sync |
+| Pick up at the same moment after a dropout | 🚧 | Not at live, not at the start |
+| Resume a show where you left off | 🚧 | Across devices, while the show is being recorded or watched |
+| Free a tuner sooner when changing channels | 🗓️ | Avoids "All tuners are in use" when flipping quickly |
+| Roku rewind, fast-forward and back to live | 🗓️ | |
+| HEVC with automatic quality | 🗓️ | |
+| AV1 for newer hardware | 🗓️ | Needs an AV1 encoder (e.g. Intel Arc / Core Ultra) and a device that decodes AV1 |
+| Multiview on TVs | 🗓️ | Apple TV and Android TV |
+| Cast from the web app (Chromecast, AirPlay) | 🗓️ | |
+
+### Guide
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Free guide from your HDHomeRun | ✅ | About 2–3 days |
+| XMLTV and Schedules Direct | ✅ | Schedules Direct gives 14 days |
+| Search, favorites, recents | ✅ | |
+| All · Sports · Movies · News · Kids · New filters | ✅ | Every app |
+| Guide from the broadcast signal itself (PSIP/EIT) | 🗓️ | About 12 hours, no account; a last-resort fallback |
+
+### Recording
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Record shows and whole series | ✅ | New episodes only, keep the latest N, start/end padding |
+| Record by time | ✅ | Web app now; 🗓️ TV and mobile apps |
+| Recording quality (720p / up to 1080p) | ✅ | |
+| Find and skip commercials | ✅ | Comskip; Skip ad and auto-skip in every app |
+| Continue watching | ✅ | Every app |
+| Fix a commercial break by hand | 🗓️ | |
+| HEVC recordings | 🗓️ | Roughly half the size |
+
+### Accounts and admin
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Sign a TV in by scanning a QR code | ✅ | Apple TV, Android TV/Fire TV, Roku |
+| Parental controls and per-account stream limits | ✅ | Ratings and blocked channels |
+| Personal M3U/XMLTV feed | ✅ | For Kodi, TiviMate and others |
+| Users, tuners, channels, sessions, storage gauge | ✅ | Admin pages |
+| Notifications (ntfy, Discord, webhook) | ✅ | Failed recordings, disk filling up |
+| Backup and restore | ✅ | |
+| Reminders as phone notifications | 🗓️ | "A show you like starts in 5 minutes" |
+
+### Apps
+
+| Platform | Status | Notes |
+|---|:---:|---|
+| Web app (any modern browser) | ✅ | Installable on phones and computers |
+| iPhone, iPad, Apple TV, Mac | ✅ | See [`ios/README.md`](ios/README.md) |
+| Android, Android TV, Fire TV | ✅ | See [docs/install/android.md](docs/install/android.md) |
+| Roku | ✅ | Sideload for now; see [`roku/README.md`](roku/README.md) |
+| Windows | 🚧 | Built; waiting on a test on a real PC |
+| Xbox | 🚧 | Native app built, untested; Kodi with the M3U/XMLTV feed works today |
+| Samsung / LG TVs | — | No app planned; the web app works in the TV's browser |
+| PlayStation | — | Not possible (no third-party apps) |
+
 ---
 
 ## Install
