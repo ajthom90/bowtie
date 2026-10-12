@@ -1,0 +1,24 @@
+name: long-outage-restart
+duration: 140s
+windowSegments: 8
+timeline:
+  # 65 s without lock: the tuner sends nothing.
+  - {at: 10s, fault: signal, quality: 10, for: 65s}
+bowtie:
+  # Production layout: every rendition must agree on the restart.
+  layout: production
+  # Force the append restart inside the outage: the new FFmpeg run starts
+  # producing when the signal returns, and the 32 s window later slides
+  # past the restart.
+  killTranscoderAt: 30s
+expect:
+  xfail: "FFmpeg serves no DISCONTINUITY-SEQUENCE; Bowtie owns the timeline in Task 10"
+  xfailOn: "discontinuity sequence"
+  minSegmentsAfterFault: 5
+  maxTailGapSeconds: 12
+  sessionSurvives: true
+  sequenceMonotonic: true
+  renditionsMonotonic: true
+  minFfmpegRestarts: 1
+  minDiscontinuitySequence: 1
+  discontinuitySequenceOK: true

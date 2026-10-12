@@ -1754,3 +1754,63 @@ func readyPlaylistIn(dir string) error {
 	}
 	return nil
 }
+
+func TestHLSListSizeOverride(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	im, _ := newManagerIngest(clock, nil)
+	t.Cleanup(im.Shutdown)
+	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond,
+		Cfg:               cfg, Store: st,
+		StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+		Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+		HLSListSize: 8,
+	})
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.LastSpec().HLSListSize; got != 8 {
+		t.Fatalf("HLSListSize=%d, want 8", got)
+	}
+}
+
+func TestForceAdaptiveLaddersSoftware(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	im, _ := newManagerIngest(clock, nil)
+	t.Cleanup(im.Shutdown)
+	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond,
+		Cfg:               cfg, Store: st,
+		StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+		Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+		ForceAdaptive: true,
+	})
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(runner.LastSpec().Layout.Rungs); got < 2 {
+		t.Fatalf("%d rungs with ForceAdaptive and libx264, want a ladder", got)
+	}
+}
+
+func TestNoCaptionsDropsCaptionRendition(t *testing.T) {
+	for _, noCaptions := range []bool{false, true} {
+		st, cfg, clock, runner, chID, user := setupEnv(t)
+		im, _ := newManagerIngest(clock, nil)
+		t.Cleanup(im.Shutdown)
+		m := NewManager(ManagerDeps{
+			TrackProbeTimeout: time.Millisecond,
+			Cfg:               cfg, Store: st,
+			StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+			Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+			Multitrack: true, NoCaptions: noCaptions,
+		})
+		if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+			t.Fatal(err)
+		}
+		l := runner.LastSpec().Layout
+		if l.Captions == noCaptions || !l.AC3Copy {
+			t.Fatalf("NoCaptions=%v: captions=%v ac3Copy=%v, want captions=%v with the AC-3 copy", noCaptions, l.Captions, l.AC3Copy, !noCaptions)
+		}
+	}
+}

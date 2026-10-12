@@ -6,3 +6,5 @@ expect:
   maxGapSeconds: 10
   sessionSurvives: true
   maxFfmpegRestarts: 0
+  maxStartSeconds: 10
+  maxTailGapSeconds: 12

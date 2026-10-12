@@ -68,6 +68,17 @@ type ManagerDeps struct {
 	Multitrack bool
 	// TrackProbeTimeout bounds the wait for the channel's PMT; 0 → 3s.
 	TrackProbeTimeout time.Duration
+	// HLSListSize, when > 0, overrides -hls_list_size for new sessions
+	// (tests that watch a restart slide out of a short window).
+	HLSListSize int
+	// ForceAdaptive (tests) makes every start use the ladder, whatever the
+	// settings and the encoder say: the e2e production layout ladders libx264.
+	ForceAdaptive bool
+	// NoCaptions (tests) leaves the caption rendition out of multitrack
+	// layouts. A live source without CEA-608 never gives the WebVTT stream a
+	// packet, so FFmpeg's HLS muxer writes no playlist at all; e2e runs on
+	// caption-less synthetic sources set it.
+	NoCaptions bool
 	// BlockedFor reports why a user may not keep watching a channel now
 	// (parental controls; "" = allowed). Checked every 30 s; nil = never.
 	BlockedFor func(userID, channelID int64, now time.Time) string
@@ -94,8 +105,13 @@ type Manager struct {
 
 	multitrack bool
 	trackProbe time.Duration
-	onWatched  func(userID, channelID int64, at time.Time)
-	blockedFor func(userID, channelID int64, now time.Time) string
+	// listSizeOverride and forceAdaptive are ManagerDeps.HLSListSize and
+	// ManagerDeps.ForceAdaptive (tests).
+	listSizeOverride int
+	forceAdaptive    bool
+	noCaptions       bool
+	onWatched        func(userID, channelID int64, at time.Time)
+	blockedFor       func(userID, channelID int64, now time.Time) string
 
 	mu              sync.Mutex
 	sessions        map[string]*session       // by session ID
@@ -126,24 +142,27 @@ func NewManager(deps ManagerDeps) *Manager {
 		trackProbe = 3 * time.Second
 	}
 	return &Manager{
-		multitrack: deps.Multitrack,
-		onWatched:  deps.OnWatched,
-		blockedFor: deps.BlockedFor,
-		trackProbe: trackProbe,
-		cfg:        deps.Cfg,
-		store:      deps.Store,
-		tuners:     deps.Tuners,
-		streamURL:  streamURL,
-		caps:       deps.Caps,
-		runner:     deps.Runner,
-		clock:      clock,
-		settings:   deps.Settings,
-		ingest:     deps.Ingest,
-		sessions:   make(map[string]*session),
-		byKey:      make(map[string]*session),
-		viewers:    make(map[string]*Viewer),
-		pending:    make(map[*reservation]struct{}),
-		blocked:    make(map[string]blockedViewer),
+		multitrack:       deps.Multitrack,
+		onWatched:        deps.OnWatched,
+		blockedFor:       deps.BlockedFor,
+		trackProbe:       trackProbe,
+		listSizeOverride: deps.HLSListSize,
+		forceAdaptive:    deps.ForceAdaptive,
+		noCaptions:       deps.NoCaptions,
+		cfg:              deps.Cfg,
+		store:            deps.Store,
+		tuners:           deps.Tuners,
+		streamURL:        streamURL,
+		caps:             deps.Caps,
+		runner:           deps.Runner,
+		clock:            clock,
+		settings:         deps.Settings,
+		ingest:           deps.Ingest,
+		sessions:         make(map[string]*session),
+		byKey:            make(map[string]*session),
+		viewers:          make(map[string]*Viewer),
+		pending:          make(map[*reservation]struct{}),
+		blocked:          make(map[string]blockedViewer),
 	}
 }
 
@@ -177,6 +196,9 @@ func (m *Manager) transcodePrefs() (encoder string, allowHEVC bool, err error) {
 // Derived from streaming.bufferMinutes (segments = minutes*60/4 at 4s segments).
 // Nil provider (fixtures) keeps the historical default of 30.
 func (m *Manager) hlsListSizeForStart() (int, error) {
+	if m.listSizeOverride > 0 {
+		return m.listSizeOverride, nil
+	}
 	if m.settings == nil {
 		return transcode.DefaultHLSListSize, nil
 	}
@@ -923,6 +945,9 @@ func sessionKey(channelID int64, d transcode.Decision, adaptive bool) string {
 // adaptiveForStart reports whether this start uses the shared ladder
 // (admin switch on and a hardware encoder; libx264 never ladders).
 func (m *Manager) adaptiveForStart(d transcode.Decision) (bool, error) {
+	if m.forceAdaptive {
+		return true, nil
+	}
 	if m.settings == nil || d.VideoEncoder == "libx264" {
 		return false, nil
 	}
@@ -960,7 +985,7 @@ func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tra
 		}
 		return l
 	}
-	l.Captions = true
+	l.Captions = !m.noCaptions
 	l.AC3Copy = true
 	return l
 }

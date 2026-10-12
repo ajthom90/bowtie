@@ -45,6 +45,14 @@ type Options struct {
 	FFmpegPath string
 	// PollEvery for players; default 1s.
 	PollEvery time.Duration
+	// HLSListSize overrides the sessions' -hls_list_size (0: default 30).
+	HLSListSize int
+	// Production runs the layout a real server serves: multitrack (AAC per
+	// track, the AC-3 copy, captions) and a ladder even with libx264.
+	Production bool
+	// NoCaptions drops the caption rendition from the production layout:
+	// synthetic sources carry no CEA-608, and FFmpeg then writes no playlist.
+	NoCaptions bool
 }
 
 // Harness is a running Bowtie stack pointed at a fake HDHomeRun.
@@ -112,8 +120,16 @@ func New(t testing.TB, o Options) *Harness {
 		}
 		return body, status, err
 	})
+	probeWait := time.Millisecond // tests: no PMT wait
+	if o.Production {
+		probeWait = 3 * time.Second // the layout needs the PMT's audio tracks
+	}
 	mgr := stream.NewManager(stream.ManagerDeps{
-		TrackProbeTimeout: time.Millisecond, // tests: no PMT wait
+		TrackProbeTimeout: probeWait,
+		HLSListSize:       o.HLSListSize,
+		Multitrack:        o.Production,
+		ForceAdaptive:     o.Production,
+		NoCaptions:        o.NoCaptions,
 		Cfg:               cfg, Store: st, Tuners: tuners, Caps: caps, Runner: o.Runner, Ingest: ingest,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,16 +238,22 @@ func (h *Harness) Player(t testing.TB, guide string) (*testplayer.Player, error)
 	return h.PlayerWith(t, guide, nil)
 }
 
-// PlayerWith starts a viewer using client for HTTP (nil = default).
-func (h *Harness) PlayerWith(t testing.TB, guide string, client *http.Client) (*testplayer.Player, error) {
+// PlayerConfig is the testplayer config for a viewer of a channel (by guide number).
+func (h *Harness) PlayerConfig(t testing.TB, guide string) testplayer.Config {
 	t.Helper()
 	id, ok := h.Channels[guide]
 	if !ok {
 		t.Fatalf("e2e: no channel %s", guide)
 	}
-	return testplayer.Start(context.Background(), testplayer.Config{
-		BaseURL: h.Server.URL, Token: h.AdminToken, ChannelID: id, PollEvery: h.pollEvery, Client: client,
-	})
+	return testplayer.Config{BaseURL: h.Server.URL, Token: h.AdminToken, ChannelID: id, PollEvery: h.pollEvery}
+}
+
+// PlayerWith starts a viewer using client for HTTP (nil = default).
+func (h *Harness) PlayerWith(t testing.TB, guide string, client *http.Client) (*testplayer.Player, error) {
+	t.Helper()
+	cfg := h.PlayerConfig(t, guide)
+	cfg.Client = client
+	return testplayer.Start(context.Background(), cfg)
 }
 
 // Sessions returns the live sessions from the admin API.

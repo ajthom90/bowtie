@@ -1,0 +1,10 @@
+name: stuck-hung
+duration: 100s
+bowtie:
+  # FFmpeg never reads again (a wedged encoder): it must still be restarted.
+  slowConsumer: {at: 10s, for: 75s}
+expect:
+  sessionSurvives: true
+  minFfmpegRestarts: 1
+  minSegmentsAfterFault: 2
+  maxTailGapSeconds: 12

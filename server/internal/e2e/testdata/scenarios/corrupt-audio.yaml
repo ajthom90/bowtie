@@ -1,0 +1,15 @@
+name: corrupt-audio
+duration: 35s
+timeline:
+  - {at: 10s, fault: corrupt, type: tei, rate: 0.01, for: 10s}
+bowtie: {layout: production}  # AAC and the AC-3 copy are both probed
+expect:
+  xfail: "audio holes where TEI packets are discarded (fixed in Task 5)"
+  xfailOn: "audio hole"
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  noFetchErrors: true
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxAudioHoleMs: 50

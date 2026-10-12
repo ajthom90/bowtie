@@ -7,3 +7,6 @@ expect:
   sequenceMonotonic: true
   sessionSurvives: true
   maxGapSeconds: 14
+  renditionsMonotonic: true
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
