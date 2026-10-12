@@ -171,7 +171,8 @@ func (s *stubStreams) SessionMediaOf(viewerID string) (stream.SessionMedia, bool
 
 func (s *stubStreams) RetimePlaylist(viewerID, rendition string, raw []byte) ([]byte, bool) {
 	if s.retime == nil {
-		return nil, false
+		// Tests that don't install a timeline still serve the file they wrote.
+		return raw, true
 	}
 	return s.retime(viewerID, rendition, raw)
 }
@@ -1761,15 +1762,41 @@ func TestBlockedViewerGets403WithReason(t *testing.T) {
 // captions to their rung's stamps and keeps a MEDIA-SEQUENCE floor each).
 func TestMediaPlaylistServedThroughTimeline(t *testing.T) {
 	ss := newStubStreams()
-	var renditions []string
-	ss.retime = func(viewerID, rendition string, raw []byte) ([]byte, bool) {
-		renditions = append(renditions, rendition)
-		return append([]byte("#EXT-X-BOWTIE-TIMELINE\n"), raw...), true
-	}
 	h, st, _ := testAPIWithStreams(t, ss)
 	seedUser(t, st, "alice", "pass", "viewer")
 	dir := filepath.Join(t.TempDir(), "sess1")
 	writeFixtureSession(t, dir)
+	// FFmpeg 5.1 append shape: "." instead of a caption name, plus ENDLIST.
+	// repairCaptionPlaylist rebuilds v7200.vtt and drops ENDLIST. retime has
+	// to see that, with segment names still bare.
+	mangled := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000000,\n.\n#EXT-X-ENDLIST\n"
+	if err := os.WriteFile(filepath.Join(dir, "v720_vtt.m3u8"), []byte(mangled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const repairedVTT = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:4.000000,\nv7200.vtt\n"
+	var renditions []string
+	ss.retime = func(viewerID, rendition string, raw []byte) ([]byte, bool) {
+		renditions = append(renditions, rendition)
+		body := string(raw)
+		if strings.Contains(body, "/api/v1/stream/") {
+			t.Fatalf("retime of %s saw rewritten URLs:\n%s", rendition, body)
+		}
+		switch rendition {
+		case "v720":
+			if !strings.Contains(body, "\nv720_00000.ts\n") {
+				t.Fatalf("retime of v720 missing bare segment name:\n%s", body)
+			}
+		case "aac0":
+			if !strings.Contains(body, "\naac0_00000.ts\n") {
+				t.Fatalf("retime of aac0 missing bare segment name:\n%s", body)
+			}
+		case "v720_vtt":
+			if body != repairedVTT {
+				t.Fatalf("retime of v720_vtt saw:\n%q\nwant repaired:\n%q", body, repairedVTT)
+			}
+		}
+		return append([]byte("#EXT-X-BOWTIE-TIMELINE\n"), raw...), true
+	}
 	ss.register("viewer-a", dir)
 	tok := stream.SignStreamToken([]byte(streamSecret), "viewer-a", time.Now().UTC().Add(time.Hour))
 	for _, name := range []string{"v720.m3u8", "aac0.m3u8", "v720_vtt.m3u8"} {
@@ -1782,5 +1809,29 @@ func TestMediaPlaylistServedThroughTimeline(t *testing.T) {
 	}
 	if got := strings.Join(renditions, ","); got != "v720,aac0,v720_vtt" {
 		t.Fatalf("retimed playlists %s, want v720,aac0,v720_vtt", got)
+	}
+}
+
+// A session removed after the playlist was read (budget teardown, admin
+// terminate) makes RetimePlaylist return false. The handler answers as it
+// does for a gone viewer and does not serve FFmpeg's bytes.
+func TestRetimeMissDoesNotServeRawPlaylist(t *testing.T) {
+	ss := newStubStreams()
+	ss.retime = func(viewerID, rendition string, raw []byte) ([]byte, bool) {
+		return nil, false
+	}
+	h, st, _ := testAPIWithStreams(t, ss)
+	seedUser(t, st, "alice", "pass", "viewer")
+	dir := filepath.Join(t.TempDir(), "sess1")
+	writeFixtureSession(t, dir)
+	ss.register("viewer-a", dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), "viewer-a", time.Now().UTC().Add(time.Hour))
+	rr := doJSON(t, h, "GET", "/api/v1/stream/viewer-a/v720.m3u8?token="+tok, nil, nil)
+	body := rr.Body.String()
+	if rr.Code == http.StatusOK || strings.Contains(body, "#EXTM3U") || strings.Contains(body, "v720_00000.ts") {
+		t.Fatalf("raw playlist served: status %d body:\n%s", rr.Code, body)
+	}
+	if rr.Code != http.StatusNotFound || !strings.Contains(body, "viewer not found") {
+		t.Fatalf("status %d body %s, want 404 viewer not found", rr.Code, body)
 	}
 }

@@ -146,13 +146,13 @@ func (q *subQueue) wroteLocked(n int) {
 }
 
 // wroteFrom is wrote, also counting the bytes as fresh unless they came
-// from a cached copy.
+// from a cached copy. written and fresh move under one hold.
 func (q *subQueue) wroteFrom(n int, cached bool) {
-	q.wrote(n)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.wroteLocked(n)
 	if !cached {
-		q.mu.Lock()
 		q.fresh += uint64(n)
-		q.mu.Unlock()
 	}
 }
 

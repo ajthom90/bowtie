@@ -1063,6 +1063,14 @@ func (r *raceRunner) Starts() int {
 // B must end with a working session (fresh dir + SessionDirOf), not a dead one.
 func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	st, cfg, clock, _, chID, userA := setupEnv(t)
+	var timelineMu sync.Mutex
+	var timelineCtxs []context.Context
+	timelineRunHook = func(ctx context.Context) {
+		timelineMu.Lock()
+		timelineCtxs = append(timelineCtxs, ctx)
+		timelineMu.Unlock()
+	}
+	t.Cleanup(func() { timelineRunHook = nil })
 	runner := newRaceRunner()
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
@@ -1159,6 +1167,20 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	}
 	if sessions[0].Viewers[0].Username != "bob" {
 		t.Errorf("viewer username = %q, want bob", sessions[0].Viewers[0].Username)
+	}
+	// A, then B's abandoned candidate (Run never starts; tlCancel must
+	// still fire), then B's live retry.
+	timelineMu.Lock()
+	got := append([]context.Context(nil), timelineCtxs...)
+	timelineMu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("observer contexts = %d, want 3 (A, abandoned B, B retry)", len(got))
+	}
+	if got[1].Err() == nil {
+		t.Fatal("duplicate-key abandon left the observer context running")
+	}
+	if got[2].Err() != nil {
+		t.Fatal("B's live observer context was cancelled")
 	}
 }
 
@@ -1875,11 +1897,48 @@ func TestSessionTimelineGatesRestartedRuns(t *testing.T) {
 	if _, ok := m.RetimePlaylist("no-such-viewer", top, raw); ok {
 		t.Fatal("unknown viewer retimed")
 	}
+	// The segment after the last explicit Observe is published by Run.
+	raw = g.write(top, 1.4, 5.4, 1.4, 1.4, 5.4, 9.4)
+	published := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		out, ok := m.RetimePlaylist(h.ViewerID, top, raw)
+		if ok && strings.Contains(string(out), top+"_00005.ts") {
+			published = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !published {
+		t.Fatal("background observer did not publish a segment written after the last Observe")
+	}
+	dir := h.SessionDir
 	m.mu.Lock()
 	m.teardownSessionLocked(m.sessions[m.viewers[h.ViewerID].SessionID])
 	m.mu.Unlock()
 	if _, _, _, ok := m.timelineOf(h.ViewerID); ok {
 		t.Fatal("timeline outlived the session")
+	}
+	// A tick already in flight can finish after cancel. Let it land on the
+	// removed dir, then write a segment the stopped observer must not stamp.
+	time.Sleep(2 * timelineObserveEvery)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	late := g.write(top, 1.4, 5.4, 1.4, 1.4, 5.4, 9.4, 13.4)
+	deadline = time.Now().Add(1200 * time.Millisecond)
+	for {
+		s := string(tl.Retime(top, late))
+		if strings.Contains(s, top+"_00006.ts") {
+			t.Fatal("observer stamped a segment after teardown")
+		}
+		if !time.Now().Before(deadline) {
+			if !strings.Contains(s, top+"_00005.ts") {
+				t.Fatal("timeline lost the segment Run published before teardown")
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -1981,6 +2040,7 @@ func TestOpenThenStalledRunsUseUpTheBudget(t *testing.T) {
 func TestOutageAndCachedJoinNeverExpire(t *testing.T) {
 	st, cfg, clock, runner, chID, user := setupEnv(t)
 	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	t.Cleanup(m.shutdownAll)
 	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
 	if err != nil {
 		t.Fatal(err)
@@ -2014,6 +2074,7 @@ func TestOutageAndCachedJoinNeverExpire(t *testing.T) {
 func TestContinuousFeedingResetsTheBudget(t *testing.T) {
 	st, cfg, clock, runner, chID, user := setupEnv(t)
 	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	t.Cleanup(m.shutdownAll)
 	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
 	if err != nil {
 		t.Fatal(err)
@@ -2070,6 +2131,7 @@ func TestNoSignalAttachRetriesDontUseTheBudget(t *testing.T) {
 		return newHangBody(), 200, nil
 	}
 	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, dial)
+	t.Cleanup(m.shutdownAll)
 	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
 	if err != nil {
 		t.Fatal(err)

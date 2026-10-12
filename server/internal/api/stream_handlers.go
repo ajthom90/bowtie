@@ -341,10 +341,14 @@ func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, view
 		}
 	}
 	// Captions keep their own name: the timeline gives them the rung's
-	// stamps and their own MEDIA-SEQUENCE floor.
-	if retimed, ok := s.deps.Streams.RetimePlaylist(viewerID, strings.TrimSuffix(name, ".m3u8"), raw); ok {
-		raw = retimed
+	// stamps and their own MEDIA-SEQUENCE floor. False means the session
+	// was removed after the file was read; FFmpeg's bytes are not served.
+	retimed, ok := s.deps.Streams.RetimePlaylist(viewerID, strings.TrimSuffix(name, ".m3u8"), raw)
+	if !ok {
+		s.viewerGone(w, viewerID)
+		return
 	}
+	raw = retimed
 	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")

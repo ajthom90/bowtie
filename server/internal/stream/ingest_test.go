@@ -1283,14 +1283,25 @@ func TestCachedBytesAreNotFresh(t *testing.T) {
 	clock := func() time.Time { return now }
 	pr, pw := io.Pipe()
 	s := &IngestSub{R: pr, pr: pr, pw: pw, q: newSubQueue(1<<20, clock)}
-	defer func() { _ = s.Close() }()
-	go s.drain(make([]byte, 1<<20))
+	drained := make(chan struct{})
+	go func() {
+		s.drain(make([]byte, 1<<20))
+		close(drained)
+	}()
+	t.Cleanup(func() {
+		s.q.close()
+		_ = s.Close()
+		select {
+		case <-drained:
+		case <-time.After(2 * time.Second):
+			t.Error("drain did not return after the queue closed")
+		}
+	})
 	read := func(n int) {
 		t.Helper()
 		if _, err := io.ReadFull(pr, make([]byte, n)); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(5 * time.Millisecond) // let drain record the slice
 	}
 	for i := 0; i < 16; i++ { // the 1 MiB join, 64 KiB at a time
 		read(64 << 10)
@@ -1298,20 +1309,20 @@ func TestCachedBytesAreNotFresh(t *testing.T) {
 			t.Fatalf("after %d KiB of the join, fresh = %d", (i+1)*64, f)
 		}
 	}
-	if w := s.q.writtenBytes(); w != 1<<20 {
-		t.Fatalf("written = %d, want the whole join", w)
-	}
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == 0 && s.q.writtenBytes() == 1<<20
+	})
 	live := bytes.Repeat([]byte{0x47}, 10*tsPacketSize)
 	s.q.push(live, nil)
 	read(len(live))
-	if f := s.FreshBytes(); f != uint64(len(live)) {
-		t.Fatalf("fresh = %d after a live chunk, want %d", f, len(live))
-	}
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == uint64(len(live)) && s.q.writtenBytes() == uint64(1<<20+len(live))
+	})
 	s.q.reset(bytes.Repeat([]byte{0x47}, 4*tsPacketSize)) // a reset head
 	read(4 * tsPacketSize)
-	if f := s.FreshBytes(); f != uint64(len(live)) {
-		t.Fatalf("a reset head counted as fresh: %d", f)
-	}
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == uint64(len(live)) && s.q.writtenBytes() == uint64(1<<20+len(live)+4*tsPacketSize)
+	})
 	// Overflow on a queue nothing reads: the oldest chunks go (first an
 	// unread reset head) and PAT+PMT is put back at the head, cached; the
 	// live chunks after it are fresh.
