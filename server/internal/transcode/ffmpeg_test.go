@@ -280,8 +280,8 @@ func TestCommandWiresStdin(t *testing.T) {
 	if !containsAdjacent(cmd.Args, "-i", "pipe:0") {
 		t.Fatalf("Command args should include -i pipe:0; got %v", cmd.Args)
 	}
-	if !containsAdjacent(cmd.Args, "-fflags", "+discardcorrupt") {
-		t.Fatalf("Command args should include -fflags +discardcorrupt; got %v", cmd.Args)
+	if !containsAdjacent(cmd.Args, "-fflags", "+discardcorrupt+genpts") {
+		t.Fatalf("Command args should include -fflags +discardcorrupt+genpts; got %v", cmd.Args)
 	}
 	for _, a := range cmd.Args {
 		if a == "http://example/in" {
@@ -291,7 +291,7 @@ func TestCommandWiresStdin(t *testing.T) {
 }
 
 // TestBuildArgsStdinPipeAcrossBackends is Task 3: when Stdin is set, all five
-// backends emit -fflags +discardcorrupt -i pipe:0 (hw flags unchanged; URL absent).
+// backends emit the hardened live input (hw flags unchanged; URL absent).
 func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 	out := "/tmp/out"
 	stdin := nonNilStdin()
@@ -314,7 +314,8 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			},
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
-				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-thread_queue_size", "1024", "-probesize", "20M",
+				"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
 				"-c:v", "libx264", "-profile:v", "high",
@@ -322,6 +323,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
+				"-filter:a:0", "aresample=async=1:min_hard_comp=0.02:first_pts=0",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist+program_date_time",
 				"-hls_segment_type", "mpegts",
@@ -342,7 +344,8 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			},
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
-				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-thread_queue_size", "1024", "-probesize", "20M",
+				"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif=0:-1:0,scale=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
 				"-c:v", "h264_videotoolbox", "-profile:v", "high",
@@ -350,6 +353,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-realtime", "1", "-a53cc", "0",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
+				"-filter:a:0", "aresample=async=1:min_hard_comp=0.02:first_pts=0",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist+program_date_time",
 				"-hls_segment_type", "mpegts",
@@ -371,7 +375,8 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "qsv=hw", "-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mpeg2_qsv",
-				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-thread_queue_size", "1024", "-probesize", "20M",
+				"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0",
 				"-filter_complex", "[0:v]vpp_qsv=deinterlace=2:w=trunc(iw*480/ih/2)*2:h=480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
 				"-c:v", "h264_qsv", "-profile:v", "high",
@@ -379,6 +384,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "veryfast",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
+				"-filter:a:0", "aresample=async=1:min_hard_comp=0.02:first_pts=0",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist+program_date_time",
 				"-hls_segment_type", "mpegts",
@@ -400,13 +406,15 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-init_hw_device", "vaapi=va:/dev/dri/renderD128", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
-				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-thread_queue_size", "1024", "-probesize", "20M",
+				"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0",
 				"-filter_complex", "[0:v]deinterlace_vaapi=rate=frame,scale_vaapi=w=-2:h=720[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
 				"-c:v", "h264_vaapi", "-profile:v", "high",
 				"-b:v:0", "2500k", "-maxrate:v:0", "3000k", "-bufsize:v:0", "5000k",
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k",
+				"-filter:a:0", "aresample=async=1:min_hard_comp=0.02:first_pts=0",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist+program_date_time",
 				"-hls_segment_type", "mpegts",
@@ -428,7 +436,8 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 			want: []string{
 				"-hide_banner", "-loglevel", "warning", "-nostats",
 				"-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
-				"-fflags", "+discardcorrupt", "-i", "pipe:0",
+				"-thread_queue_size", "1024", "-probesize", "20M",
+				"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0",
 				"-filter_complex", "[0:v]yadif_cuda=0:-1:0,scale_cuda=-2:480[v0]",
 				"-map", "[v0]", "-map", "0:a:0",
 				"-c:v", "h264_nvenc", "-profile:v", "high",
@@ -436,6 +445,7 @@ func TestBuildArgsStdinPipeAcrossBackends(t *testing.T) {
 				"-g", "120", "-force_key_frames", "expr:gte(t,n_forced*4)",
 				"-preset", "p4",
 				"-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k",
+				"-filter:a:0", "aresample=async=1:min_hard_comp=0.02:first_pts=0",
 				"-f", "hls", "-hls_time", "4", "-hls_list_size", "30",
 				"-hls_flags", "delete_segments+temp_file+omit_endlist+program_date_time",
 				"-hls_segment_type", "mpegts",
@@ -710,7 +720,8 @@ func TestBuildArgsLadderQSVWithAudioAndCaptions(t *testing.T) {
 		},
 	}
 	got := transcode.BuildArgs(s)
-	mustContainSeq(t, got, "-data_field", "first", "-f", "lavfi", "-i", "movie='pipe\\:3'[out0+subcc]")
+	mustContainSeq(t, got, "-thread_queue_size", "1024", "-data_field", "first", "-f", "lavfi", "-i",
+		"movie='pipe\\:3':format_opts='probesize=20M'[out0+subcc]")
 	mustContainSeq(t, got, "-filter_complex",
 		"[0:v]vpp_qsv=deinterlace=2,split=3[s0][s1][s2];"+
 			"[s0]vpp_qsv=w=trunc(iw*720/ih/2)*2:h=720[v0];"+
@@ -721,7 +732,9 @@ func TestBuildArgsLadderQSVWithAudioAndCaptions(t *testing.T) {
 	mustContainSeq(t, got, "-b:v:2", "700k", "-maxrate:v:2", "840k", "-bufsize:v:2", "1400k")
 	mustContainSeq(t, got, "-forced_idr", "1")
 	mustContainSeq(t, got, "-a53cc", "0")
-	mustContainSeq(t, got, "-c:a:1", "aac", "-ac:a:1", "2", "-b:a:1", "128k", "-c:a:2", "copy", "-c:a:3", "copy")
+	mustContainSeq(t, got, "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k", "-filter:a:0", liveAudio,
+		"-c:a:1", "aac", "-ac:a:1", "2", "-b:a:1", "128k", "-filter:a:1", liveAudio,
+		"-c:a:2", "ac3", "-b:a:2", "384k", "-filter:a:2", liveAudio, "-c:a:3", "ac3", "-b:a:3", "384k", "-filter:a:3", liveAudio)
 	mustContainSeq(t, got, "-c:s", "webvtt")
 	mustContainSeq(t, got, "-var_stream_map", s.Layout.VarStreamMap())
 }
@@ -783,4 +796,37 @@ func TestBuildArgsVOD(t *testing.T) {
 			t.Fatalf("VOD must keep segments and end the playlist: %v", got)
 		}
 	}
+}
+
+const liveAudio = "aresample=async=1:min_hard_comp=0.02:first_pts=0"
+
+// The live pipe is hardened; URL and VOD (concat) inputs keep their flags.
+func TestBuildArgsLiveInputHardening(t *testing.T) {
+	d := transcode.Decision{VideoCodec: "h264", VideoEncoder: "libx264", Backend: transcode.BackendSoftware,
+		Profile: transcode.Profile{Name: "low", Height: 480, VideoKbps: 1500, AudioKbps: 96}}
+	live := transcode.BuildArgs(transcode.JobSpec{Stdin: nonNilStdin(), OutDir: "/tmp/out", D: d})
+	mustContainSeq(t, live, "-thread_queue_size", "1024", "-probesize", "20M",
+		"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err", "-i", "pipe:0")
+	mustContainSeq(t, live, "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k", "-filter:a:0", liveAudio)
+	for _, a := range live {
+		if a == "-analyzeduration" {
+			t.Errorf("live input got -analyzeduration (kept at FFmpeg's default): %q", live)
+		}
+	}
+
+	l := transcode.Layout{Rungs: []transcode.Rung{{Height: 480, VideoKbps: 1500}},
+		Audio: []transcode.AudioTrack{{Lang: "eng", AC3: true}}, AC3Copy: true}
+	ac3 := transcode.BuildArgs(transcode.JobSpec{Stdin: nonNilStdin(), OutDir: "/tmp/out", D: d, Layout: l})
+	mustContainSeq(t, ac3, "-c:a:1", "ac3", "-b:a:1", "384k", "-filter:a:1", liveAudio)
+
+	url := transcode.BuildArgs(transcode.JobSpec{InputURL: "http://hdhr/auto/v7.1", OutDir: "/tmp/out", D: d})
+	vod := transcode.BuildArgs(transcode.JobSpec{InputURL: "/r/parts.txt", VOD: true, OutDir: "/tmp/out", D: d})
+	for name, args := range map[string][]string{"url": url, "vod": vod} {
+		for _, a := range args {
+			if a == "-err_detect" || a == "-thread_queue_size" || a == "-probesize" || strings.HasPrefix(a, "aresample") {
+				t.Errorf("%s input got live-only option %q", name, a)
+			}
+		}
+	}
+	mustContainSeq(t, vod, "-fflags", "+discardcorrupt+genpts", "-f", "concat", "-safe", "0", "-i", "/r/parts.txt")
 }

@@ -48,7 +48,7 @@ type Options struct {
 	// HLSListSize overrides the sessions' -hls_list_size (0: default 30).
 	HLSListSize int
 	// Production runs the layout a real server serves: multitrack (AAC per
-	// track, the AC-3 copy, captions) and a ladder even with libx264.
+	// track, the AC-3 group, captions) and a ladder even with libx264.
 	Production bool
 	// NoCaptions drops the caption rendition from the production layout:
 	// synthetic sources carry no CEA-608, and FFmpeg then writes no playlist.

@@ -7,3 +7,4 @@ expect:
   maxFfmpegRestarts: 0
   maxStartSeconds: 10
   maxTailGapSeconds: 12
+  maxAudioHoleMs: 50

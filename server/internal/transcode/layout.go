@@ -73,7 +73,8 @@ func (l Layout) AACTracks() []AudioTrack {
 	return l.Audio
 }
 
-// AC3Tracks are the broadcast AC-3 tracks copied into the 5.1 group.
+// AC3Tracks are the broadcast AC-3 tracks copied (VOD) or re-encoded (live)
+// into the 5.1 group.
 func (l Layout) AC3Tracks() []AudioTrack {
 	if !l.AC3Copy {
 		return nil

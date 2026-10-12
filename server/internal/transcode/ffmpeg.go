@@ -20,7 +20,8 @@ type JobSpec struct {
 	// Zero means the historical default of 30 (~2 min at 4s segments).
 	HLSListSize int
 	// Stdin, when non-nil, feeds MPEG-TS via pipe:0 instead of InputURL.
-	// BuildArgs emits -fflags +discardcorrupt -i pipe:0; Command wires cmd.Stdin.
+	// BuildArgs emits the hardened live input (liveInputArgs) and -i pipe:0;
+	// Command wires cmd.Stdin.
 	// Used by the per-channel ingest fan-out so FFmpeg does not dial the device.
 	Stdin io.Reader
 	// Append marks a restart into an existing session dir: FFmpeg continues the
@@ -43,6 +44,24 @@ type JobSpec struct {
 // DefaultHLSListSize is used when JobSpec.HLSListSize is 0 (legacy / unset).
 const DefaultHLSListSize = 30
 
+// liveAudioFilter keeps live AAC sample-continuous: it pads holes (discarded
+// packets, re-based timestamps) with silence and trims overlaps, so audio
+// stays on the video's timestamps. Live AC-3 is re-encoded so it can be filtered too.
+const liveAudioFilter = "aresample=async=1:min_hard_comp=0.02:first_pts=0"
+
+// liveInputArgs harden the live pipe (dirty ATSC transport streams): genpts
+// fills missing timestamps, ignore_err keeps decoding past damaged frames,
+// the larger probe still finds every PMT stream when the first seconds are
+// damaged, and the thread queue absorbs the burst after a stall.
+// Deliberate deviation from spec §1.1: analyzeduration stays at FFmpeg's default
+// because the live pipe waits it out in full, so 10M doubled start latency.
+func liveInputArgs() []string {
+	return []string{
+		"-thread_queue_size", "1024", "-probesize", "20M",
+		"-fflags", "+discardcorrupt+genpts", "-err_detect", "ignore_err",
+	}
+}
+
 // BuildArgs returns the full FFmpeg argv for s (excluding the binary path).
 // Argument order is part of the contract; see plan Task 13.
 func BuildArgs(s JobSpec) []string {
@@ -62,8 +81,9 @@ func BuildArgs(s JobSpec) []string {
 
 	args = append(args, inputHWAccel(s.D.Backend)...)
 	if s.Stdin != nil {
-		// Pipe input from ingest fan-out; discardcorrupt hardens dirty ATSC TS.
-		args = append(args, "-fflags", "+discardcorrupt", "-i", "pipe:0")
+		// Pipe input from ingest fan-out.
+		args = append(args, liveInputArgs()...)
+		args = append(args, "-i", "pipe:0")
 	} else if s.VOD {
 		// Capture parts can start mid-GOP and carry gaps; regenerate PTS.
 		args = append(args, "-fflags", "+discardcorrupt+genpts", "-f", "concat", "-safe", "0", "-i", s.InputURL)
@@ -75,7 +95,8 @@ func BuildArgs(s JobSpec) []string {
 	if l.Captions {
 		// Same TS again on fd 3, decoded in software only for CEA-608.
 		// Field 1 carries CC1; "auto" can lock onto field 2 (XDS/program info).
-		args = append(args, "-data_field", "first", "-f", "lavfi", "-i", "movie='pipe\\:3'[out0+subcc]")
+		args = append(args, "-thread_queue_size", "1024", "-data_field", "first", "-f", "lavfi", "-i",
+			"movie='pipe\\:3':format_opts='probesize=20M'[out0+subcc]")
 	}
 	rungs := l.Rungs
 	if len(rungs) == 0 {
@@ -141,10 +162,20 @@ func BuildArgs(s JobSpec) []string {
 			fmt.Sprintf("-ac:a:%d", n), "2",
 			fmt.Sprintf("-b:a:%d", n), fmt.Sprintf("%dk", akbps),
 		)
+		if s.Stdin != nil {
+			args = append(args, fmt.Sprintf("-filter:a:%d", n), liveAudioFilter)
+		}
 		n++
 	}
 	for range l.AC3Indexes() {
-		args = append(args, fmt.Sprintf("-c:a:%d", n), "copy")
+		if s.Stdin != nil {
+			// Live: re-encode so the filter can fill holes (a copy can't be
+			// filtered); same layout, so the 5.1 group stays 5.1.
+			args = append(args, fmt.Sprintf("-c:a:%d", n), "ac3", fmt.Sprintf("-b:a:%d", n), "384k",
+				fmt.Sprintf("-filter:a:%d", n), liveAudioFilter)
+		} else {
+			args = append(args, fmt.Sprintf("-c:a:%d", n), "copy")
+		}
 		n++
 	}
 	if l.Captions {
