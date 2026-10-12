@@ -185,6 +185,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
 	handleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
 	handleFunc("POST /api/v1/sessions/{viewerId}/heartbeat", s.handleHeartbeat)
+	handle("GET /api/v1/sessions/{viewerId}/timeline", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleSessionTimeline)))
 	handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
 	handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
 

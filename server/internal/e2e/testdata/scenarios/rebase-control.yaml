@@ -1,0 +1,11 @@
+name: rebase-control
+duration: 35s
+timeline:
+  # A 15 s step, over FFmpeg's 10 s default threshold: every candidate
+  # re-bases it, so the gate's re-base logging must show it.
+  - {at: 10s, fault: timestamp-jump, by: 15s}
+expect:
+  sessionSurvives: true
+  sequenceMonotonic: true
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12

@@ -1,0 +1,26 @@
+name: faults-production
+duration: 75s
+# Ladder, AAC and the AC-3 output. Synthetic sources carry no CEA-608, so
+# captions are off here (Options.NoCaptions); TestOTAClipsWithFaults runs this
+# file on a real clip with captions and adds the caption checks.
+bowtie: {layout: production}
+timeline:
+  - {at: 10s, fault: pts-jump, by: 3s}
+  - {at: 25s, fault: timestamp-jump, by: 2500ms}
+  - {at: 40s, fault: timestamp-jump, by: -2s}
+  - {at: 55s, fault: pts-jump, by: 9s}
+expect:
+  xfail: "single bad PTS and splices inflate the timeline (fixed in Task 6)"
+  xfailOn: "timeline excess"
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxTimelineExcessSeconds: 2
+  minTimelineExcessSeconds: -2
+  maxAudioHoleMs: 50
+  maxAVStartSkewMs: 100   # aac0 and ac30 against the video
+  pairedAfterEachFault: true
+  minRenditions: 4        # v480, v360, aac0, ac30 (+ v480_vtt on a real clip)
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  noFetchErrors: true

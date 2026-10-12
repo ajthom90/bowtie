@@ -12,7 +12,8 @@ for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
 - Finds your HDHomeRun tuners and streams over-the-air channels to every
   screen as HLS, with hardware transcoding (Quick Sync, NVENC, VAAPI,
-  VideoToolbox) when available, captions, every broadcast audio track and 5.1
+  VideoToolbox) when available, every broadcast audio track and 5.1
+  (live captions are temporarily off)
 - Shows a TV guide — free from your HDHomeRun, or XMLTV / Schedules Direct —
   with search, favorites, recents and **All · Sports · Movies · News · Kids ·
   New** filters
@@ -45,7 +46,8 @@ and [docs/roadmap.md](docs/roadmap.md) for what's next.
 | Choose a quality (Original 1080p, High/Medium 720p, Low 480p) | ✅ | Per viewer; the admin can cap it per account |
 | Automatic quality as the connection changes | ✅ | Admin setting, off by default; hardware encoders only |
 | HEVC for devices that can play it | ✅ | Admin setting, off by default; not with automatic quality yet |
-| Captions, every broadcast audio track, 5.1 sound | ✅ | |
+| Every broadcast audio track, 5.1 sound | ✅ | |
+| Live captions | 🚧 | Off since 0.24.0: they held up the video during caption gaps. Coming back in their own process |
 | Pause and rewind live TV | ✅ | 15 minutes by default; the admin can raise it to 60 |
 | Multiview (up to 4 channels at once) | ✅ | Web app |
 | Sleep timer | ✅ | Every TV and mobile app |

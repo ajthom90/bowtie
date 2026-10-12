@@ -18,10 +18,13 @@ const (
 	Corrupt       Kind = "corrupt"
 	Slow          Kind = "slow"
 	TimestampJump Kind = "timestamp-jump"
-	PIDLoss       Kind = "pid-loss"
-	SourceSwitch  Kind = "source-switch"
-	Busy          Kind = "busy"
-	Hang          Kind = "hang"
+	// PTSJump shifts the PTS/DTS of one video PES per connection by By
+	// (a single corrupt timestamp, as dirty broadcasts carry).
+	PTSJump      Kind = "pts-jump"
+	PIDLoss      Kind = "pid-loss"
+	SourceSwitch Kind = "source-switch"
+	Busy         Kind = "busy"
+	Hang         Kind = "hang"
 )
 
 // Spec describes one fault. JSON/YAML field names are shared by scenario files
@@ -32,13 +35,14 @@ type Spec struct {
 	Strength *int          `yaml:"strength,omitempty" json:"strength,omitempty"`
 	Quality  *int          `yaml:"quality,omitempty" json:"quality,omitempty"`
 	Symbol   *int          `yaml:"symbol,omitempty" json:"symbol,omitempty"`
-	Burst    bool          `yaml:"burst,omitempty" json:"burst,omitempty"` // stall: deliver backlog afterwards
-	Mode     string        `yaml:"mode,omitempty" json:"mode,omitempty"`   // drop: clean|reset
-	Rate     float64       `yaml:"rate,omitempty" json:"rate,omitempty"`   // corrupt probability | slow fraction
-	Type     string        `yaml:"type,omitempty" json:"type,omitempty"`   // corrupt: bitflip|tei|sync
-	By       time.Duration `yaml:"by,omitempty" json:"by,omitempty"`       // timestamp-jump
-	Track    string        `yaml:"track,omitempty" json:"track,omitempty"` // pid-loss: audio|video
-	To       string        `yaml:"to,omitempty" json:"to,omitempty"`       // source-switch: source name
+	Burst    bool          `yaml:"burst,omitempty" json:"burst,omitempty"`     // stall: deliver backlog afterwards
+	Mode     string        `yaml:"mode,omitempty" json:"mode,omitempty"`       // drop: clean|reset
+	Rate     float64       `yaml:"rate,omitempty" json:"rate,omitempty"`       // corrupt probability | slow fraction
+	Type     string        `yaml:"type,omitempty" json:"type,omitempty"`       // corrupt: bitflip|tei|sync
+	By       time.Duration `yaml:"by,omitempty" json:"by,omitempty"`           // timestamp-jump, pts-jump
+	PTSOnly  bool          `yaml:"ptsOnly,omitempty" json:"ptsOnly,omitempty"` // pts-jump: leave the DTS valid
+	Track    string        `yaml:"track,omitempty" json:"track,omitempty"`     // pid-loss: audio|video
+	To       string        `yaml:"to,omitempty" json:"to,omitempty"`           // source-switch: source name
 }
 
 // Scope selects what a fault hits.
@@ -81,6 +85,9 @@ func (s Spec) Validate() error {
 	if s.For < 0 {
 		return fmt.Errorf("faults: negative duration %v", s.For)
 	}
+	if s.PTSOnly && s.Fault != PTSJump {
+		return errors.New("faults: ptsOnly is for pts-jump")
+	}
 	switch s.Fault {
 	case Signal:
 		if s.Strength == nil && s.Quality == nil && s.Symbol == nil {
@@ -116,6 +123,10 @@ func (s Spec) Validate() error {
 	case TimestampJump:
 		if s.By == 0 {
 			return errors.New("faults: timestamp-jump needs a non-zero by")
+		}
+	case PTSJump:
+		if s.By == 0 {
+			return errors.New("faults: pts-jump needs a non-zero by")
 		}
 	case SourceSwitch:
 		if s.To == "" {

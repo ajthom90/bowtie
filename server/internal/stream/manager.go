@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,11 @@ const (
 	playlistPollEvery   = 20 * time.Millisecond
 	startMaxAttempts    = 3
 )
+
+// timelineRunHook, when set, sees the context a session observer runs on.
+// The duplicate-key abandon path cancels that context and never starts Run.
+// Tests set it; production leaves it nil.
+var timelineRunHook atomic.Pointer[func(context.Context)]
 
 // Process is a running transcode job supervised by the manager.
 type Process interface {
@@ -68,6 +74,23 @@ type ManagerDeps struct {
 	Multitrack bool
 	// TrackProbeTimeout bounds the wait for the channel's PMT; 0 → 3s.
 	TrackProbeTimeout time.Duration
+	// HLSListSize, when > 0, overrides -hls_list_size for new sessions
+	// (tests that watch a restart slide out of a short window).
+	HLSListSize int
+	// ForceAdaptive (tests) makes every start use the ladder, whatever the
+	// settings and the encoder say: the e2e production layout ladders libx264.
+	ForceAdaptive bool
+	// LiveCaptions turns the live WebVTT rendition on. Off in production:
+	// FFmpeg serves the output with the lowest timestamp, and the WebVTT
+	// stream only advances on a cue, so during a caption gap it reads only
+	// the fd 3 caption input and video output freezes. Tests set it to
+	// exercise the caption path.
+	LiveCaptions bool
+	// NoCaptions (tests) leaves the caption rendition out even when
+	// LiveCaptions is set. A live source without CEA-608 never gives the
+	// WebVTT stream a packet, so FFmpeg's HLS muxer writes no playlist at
+	// all; e2e runs on caption-less synthetic sources set it.
+	NoCaptions bool
 	// BlockedFor reports why a user may not keep watching a channel now
 	// (parental controls; "" = allowed). Checked every 30 s; nil = never.
 	BlockedFor func(userID, channelID int64, now time.Time) string
@@ -94,8 +117,14 @@ type Manager struct {
 
 	multitrack bool
 	trackProbe time.Duration
-	onWatched  func(userID, channelID int64, at time.Time)
-	blockedFor func(userID, channelID int64, now time.Time) string
+	// listSizeOverride and forceAdaptive are ManagerDeps.HLSListSize and
+	// ManagerDeps.ForceAdaptive (tests).
+	listSizeOverride int
+	forceAdaptive    bool
+	liveCaptions     bool
+	noCaptions       bool
+	onWatched        func(userID, channelID int64, at time.Time)
+	blockedFor       func(userID, channelID int64, now time.Time) string
 
 	mu              sync.Mutex
 	sessions        map[string]*session       // by session ID
@@ -126,24 +155,28 @@ func NewManager(deps ManagerDeps) *Manager {
 		trackProbe = 3 * time.Second
 	}
 	return &Manager{
-		multitrack: deps.Multitrack,
-		onWatched:  deps.OnWatched,
-		blockedFor: deps.BlockedFor,
-		trackProbe: trackProbe,
-		cfg:        deps.Cfg,
-		store:      deps.Store,
-		tuners:     deps.Tuners,
-		streamURL:  streamURL,
-		caps:       deps.Caps,
-		runner:     deps.Runner,
-		clock:      clock,
-		settings:   deps.Settings,
-		ingest:     deps.Ingest,
-		sessions:   make(map[string]*session),
-		byKey:      make(map[string]*session),
-		viewers:    make(map[string]*Viewer),
-		pending:    make(map[*reservation]struct{}),
-		blocked:    make(map[string]blockedViewer),
+		multitrack:       deps.Multitrack,
+		onWatched:        deps.OnWatched,
+		blockedFor:       deps.BlockedFor,
+		trackProbe:       trackProbe,
+		listSizeOverride: deps.HLSListSize,
+		forceAdaptive:    deps.ForceAdaptive,
+		liveCaptions:     deps.LiveCaptions,
+		noCaptions:       deps.NoCaptions,
+		cfg:              deps.Cfg,
+		store:            deps.Store,
+		tuners:           deps.Tuners,
+		streamURL:        streamURL,
+		caps:             deps.Caps,
+		runner:           deps.Runner,
+		clock:            clock,
+		settings:         deps.Settings,
+		ingest:           deps.Ingest,
+		sessions:         make(map[string]*session),
+		byKey:            make(map[string]*session),
+		viewers:          make(map[string]*Viewer),
+		pending:          make(map[*reservation]struct{}),
+		blocked:          make(map[string]blockedViewer),
 	}
 }
 
@@ -177,6 +210,9 @@ func (m *Manager) transcodePrefs() (encoder string, allowHEVC bool, err error) {
 // Derived from streaming.bufferMinutes (segments = minutes*60/4 at 4s segments).
 // Nil provider (fixtures) keeps the historical default of 30.
 func (m *Manager) hlsListSizeForStart() (int, error) {
+	if m.listSizeOverride > 0 {
+		return m.listSizeOverride, nil
+	}
 	if m.settings == nil {
 		return transcode.DefaultHLSListSize, nil
 	}
@@ -352,24 +388,36 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		return ViewerHandle{}, err, false
 	}
 
+	// Real clock: stamps are compared with segment file mtimes. One
+	// synchronous pass so the first playlist request already has stamps.
+	timeline := NewTimeline(dir, layout.Renditions(), time.Now)
+	timeline.Observe()
+	tlCtx, tlCancel := context.WithCancel(context.Background())
+	if h := timelineRunHook.Load(); h != nil {
+		(*h)(tlCtx)
+	}
+
 	now := m.now()
 	sess := &session{
-		id:          sessionID,
-		channelID:   ch.ID,
-		channelName: ch.Name,
-		key:         key,
-		decision:    decision,
-		dir:         dir,
-		startedAt:   now,
-		proc:        proc,
-		procCancel:  procCancel,
-		procStart:   now,
-		inputURL:    inputURL,
-		sub:         sub,
-		capSub:      capSub,
-		layout:      layout,
-		hlsListSize: listSize,
-		viewers:     make(map[string]*Viewer),
+		id:             sessionID,
+		channelID:      ch.ID,
+		channelName:    ch.Name,
+		key:            key,
+		decision:       decision,
+		dir:            dir,
+		startedAt:      now,
+		proc:           proc,
+		procCancel:     procCancel,
+		procStart:      now,
+		inputURL:       inputURL,
+		sub:            sub,
+		capSub:         capSub,
+		layout:         layout,
+		hlsListSize:    listSize,
+		viewers:        make(map[string]*Viewer),
+		timeline:       timeline,
+		timelineCancel: tlCancel,
+		lastTick:       now,
 	}
 
 	m.mu.Lock()
@@ -379,6 +427,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		// Abandon our candidate (Close sub, stop process, remove dir) then join winner.
 		proc.Stop()
 		procCancel()
+		tlCancel()
 		_ = sub.Close()
 		closeSub(capSub)
 		_ = os.RemoveAll(dir)
@@ -404,6 +453,8 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 		m.mu.Unlock()
 		return ViewerHandle{}, err, false
 	}
+
+	go timeline.Run(tlCtx)
 
 	m.wg.Add(1)
 	go m.supervise(sess)
@@ -661,6 +712,12 @@ func (m *Manager) maintain() {
 	}
 
 	var due []*session
+	type captionSweep struct {
+		dir      string
+		layout   transcode.Layout
+		listSize int
+	}
+	var sweeps []captionSweep
 	for _, sess := range sessions {
 		if sess.terminated {
 			continue
@@ -669,6 +726,32 @@ func (m *Manager) maintain() {
 			if now.Sub(sess.emptySince) > sessionEmptyGrace {
 				m.teardownSessionLocked(sess)
 				continue
+			}
+		}
+		if sess.layout.Captions {
+			sweeps = append(sweeps, captionSweep{sess.dir, sess.layout, sess.hlsListSize})
+		}
+		// Gate liveness: a run that publishes nothing for the gate timeout of
+		// fed time is expired and FFmpeg restarted; the third failed run
+		// without a healthy stretch ends the session.
+		if !sess.crashed && !sess.restarting && sess.proc != nil && sess.timeline != nil {
+			var fresh uint64
+			if sess.sub != nil {
+				fresh = sess.sub.FreshBytes()
+			}
+			moved := fresh != sess.lastFresh
+			elapsed := now.Sub(sess.lastTick)
+			sess.lastFresh, sess.lastTick = fresh, now
+			if missing, stalls, expired := sess.timeline.ExpireStalledRun(elapsed, moved); expired {
+				if stalls >= timelineMaxStalls {
+					log.Printf("stream: session %s: %d failed runs in a row (last: no %s); ending the session",
+						sess.id, stalls, strings.Join(missing, ","))
+					m.teardownSessionLocked(sess)
+					continue
+				}
+				log.Printf("stream: session %s: ffmpeg published no %s for %v of fed time; restarting it",
+					sess.id, strings.Join(missing, ","), timelineGateTimeout)
+				sess.proc.Stop()
 			}
 		}
 		if sess.crashed && !sess.restarting && !sess.restartAfter.IsZero() && !now.Before(sess.restartAfter) {
@@ -683,6 +766,13 @@ func (m *Manager) maintain() {
 	// after ~10s), so they run without m.mu; viewers keep being served.
 	for _, sess := range due {
 		m.restartSession(sess)
+	}
+
+	// File work runs without m.mu. Real clock: compared with file mtimes.
+	for _, s := range sweeps {
+		if n := sweepCaptions(s.dir, s.layout, s.listSize, time.Now()); n > 0 {
+			log.Printf("stream: removed %d stale caption segments in %s", n, filepath.Base(s.dir))
+		}
 	}
 }
 
@@ -715,6 +805,21 @@ func (m *Manager) prepareRestartLocked(sess *session) bool {
 // restartSession attaches to the device and starts FFmpeg without m.mu, then
 // commits under m.mu. A session torn down meanwhile discards the new process.
 func (m *Manager) restartSession(sess *session) {
+	// The old process is dead: record everything it wrote (a run that never
+	// opened is discarded) and hold the next run until it is complete. A
+	// run that ended without being expired (a crash) counts toward the
+	// stall budget; a spent budget ends the session instead of restarting.
+	if sess.timeline != nil {
+		if stalls := sess.timeline.MarkRestart(); stalls >= timelineMaxStalls {
+			log.Printf("stream: session %s: %d failed runs in a row; ending the session", sess.id, stalls)
+			m.mu.Lock()
+			sess.restarting = false
+			m.teardownSessionLocked(sess)
+			m.mu.Unlock()
+			return
+		}
+	}
+
 	sub, err := m.ingest.Attach(context.Background(), sess.channelID, sess.inputURL)
 	if err != nil {
 		log.Printf("stream: session %s: re-Attach channel %d for restart: %v", sess.id, sess.channelID, err)
@@ -770,6 +875,10 @@ func (m *Manager) restartSession(sess *session) {
 	sess.proc = proc
 	sess.procCancel = procCancel
 	sess.procStart = m.now()
+	sess.lastFresh, sess.lastTick = 0, sess.procStart // a new sub: its counters start at 0
+	if sess.timeline != nil {
+		sess.timeline.ProcessStarted() // the next MarkRestart ends this process's run
+	}
 	sess.crashed = false
 	sess.restartAfter = time.Time{}
 }
@@ -859,6 +968,9 @@ func (m *Manager) teardownSessionLocked(sess *session) {
 	if sess.procCancel != nil {
 		sess.procCancel()
 	}
+	if sess.timelineCancel != nil {
+		sess.timelineCancel()
+	}
 	// Terminate/teardown Close (A4).
 	sess.closeSubs()
 	delete(m.sessions, sess.id)
@@ -923,6 +1035,9 @@ func sessionKey(channelID int64, d transcode.Decision, adaptive bool) string {
 // adaptiveForStart reports whether this start uses the shared ladder
 // (admin switch on and a hardware encoder; libx264 never ladders).
 func (m *Manager) adaptiveForStart(d transcode.Decision) (bool, error) {
+	if m.forceAdaptive {
+		return true, nil
+	}
 	if m.settings == nil || d.VideoEncoder == "libx264" {
 		return false, nil
 	}
@@ -935,8 +1050,10 @@ func (m *Manager) adaptiveForStart(d transcode.Decision) (bool, error) {
 
 // layoutFor builds the session's output once the video sub is attached. The
 // rungs always follow the broadcast (ladder ≤ source, or one rung capped at
-// the source height); tracks adds every audio track, the AC-3 copies and
-// captions (off with the BOWTIE_MULTITRACK kill switch or in the fallback).
+// the source height); tracks adds every audio track and the AC-3 copies.
+// Captions are on only when LiveCaptions is set and NoCaptions is not
+// (off with the BOWTIE_MULTITRACK kill switch or in the fallback, which
+// pass tracks=false).
 func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tracks bool) transcode.Layout {
 	info, ok := m.ingest.ProgramInfo(channelID, m.trackProbe)
 	src := info.SourceHeight
@@ -960,7 +1077,7 @@ func (m *Manager) layoutFor(channelID int64, d transcode.Decision, adaptive, tra
 		}
 		return l
 	}
-	l.Captions = true
+	l.Captions = m.liveCaptions && !m.noCaptions
 	l.AC3Copy = true
 	return l
 }
@@ -992,4 +1109,52 @@ func (m *Manager) SessionMediaOf(viewerID string) (SessionMedia, bool) {
 		return SessionMedia{}, false
 	}
 	return SessionMedia{Dir: sess.dir, Layout: sess.layout, MaxHeight: v.MaxHeight}, true
+}
+
+// timelineOf returns the viewer's session timeline, its top rendition and
+// the viewer's user.
+func (m *Manager) timelineOf(viewerID string) (tl *Timeline, top string, owner int64, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.viewers[viewerID]
+	if !ok {
+		return nil, "", 0, false
+	}
+	sess, ok := m.sessions[v.SessionID]
+	if !ok || sess.terminated || sess.timeline == nil {
+		return nil, "", 0, false
+	}
+	return sess.timeline, sess.layout.TopName(), v.UserID, true
+}
+
+// RetimePlaylist rewrites one rendition or caption playlist (FFmpeg's
+// bytes, segment names still bare; playlist is its name without .m3u8)
+// from the session observer's snapshot: Bowtie's PDT on every segment,
+// DISCONTINUITY where a new epoch starts, DISCONTINUITY-SEQUENCE, and a
+// MEDIA-SEQUENCE that never goes back. It never reads files. False when
+// the viewer has no session.
+func (m *Manager) RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool) {
+	tl, _, _, ok := m.timelineOf(viewerID)
+	if !ok {
+		return nil, false
+	}
+	return tl.Retime(playlist, raw), true
+}
+
+// ViewerOwner is the viewer's user ID; false when the viewer has no live
+// session. Callers authorize on it before asking for anything else.
+func (m *Manager) ViewerOwner(viewerID string) (int64, bool) {
+	_, _, owner, ok := m.timelineOf(viewerID)
+	return owner, ok
+}
+
+// TimelineOf is the observer's snapshot of the viewer's window (top
+// rendition) on the wall clock. It reads no files. False when the viewer
+// has no session.
+func (m *Manager) TimelineOf(viewerID string) (WindowTimeline, bool) {
+	tl, top, _, ok := m.timelineOf(viewerID)
+	if !ok {
+		return WindowTimeline{}, false
+	}
+	return tl.Window(top), true
 }

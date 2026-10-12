@@ -1,0 +1,35 @@
+#!/bin/bash
+# ffmpeg-soak: FFmpeg for test and soak images only (never production).
+# Raises "-loglevel warning" to level+debug so FFmpeg 5.1's "timestamp
+# discontinuity" lines (debug) and "*** N dup!" bursts (verbose) are logged,
+# and keeps only the lines that the gate and the soak count. With
+# FF51_LOGDIR set, also writes the argv (proof of which candidate ran) and
+# those lines, each prefixed with Unix ms, to $FF51_LOGDIR/ffmpeg-<pid>.log,
+# in the format scripts/ffmpeg51 writes.
+args=()
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-loglevel" ] && [ "$a" = "warning" ]; then
+    a="level+debug"
+  fi
+  args+=("$a")
+  prev=$a
+done
+log=""
+if [ -n "${FF51_LOGDIR:-}" ]; then
+  mkdir -p "$FF51_LOGDIR"
+  log="$FF51_LOGDIR/ffmpeg-$$.log"
+  printf '%s argv: %s\n' "$(date +%s%3N)" "${args[*]}" >>"$log"
+fi
+# keep prints the counted lines to stderr and, with FF51_LOGDIR, to $log.
+keep() {
+  while IFS= read -r line; do
+    case "$line" in
+    *"timestamp discontinuity"* | *"frames duplicated"* | *" dup!"* | *"Invalid frame dimensions"* | *"[warning]"* | *"[error]"* | *"[fatal]"*)
+      printf '%s\n' "$line" >&2
+      if [ -n "$log" ]; then printf '%s %s\n' "$(date +%s%3N)" "$line" >>"$log"; fi
+      ;;
+    esac
+  done
+}
+exec /usr/bin/ffmpeg "${args[@]}" 2> >(keep)

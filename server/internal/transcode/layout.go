@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -10,6 +11,11 @@ const (
 	MaxAudioTracks = 3
 	// UnknownSourceHeight is assumed when the MPEG-2 sequence header was not seen.
 	UnknownSourceHeight = 720
+
+	// aacGroupChannels and ac3GroupChannels are the CHANNELS the master
+	// playlist advertises for each audio group; BuildArgs encodes to match.
+	aacGroupChannels = 2
+	ac3GroupChannels = 6
 )
 
 // Rung is one video rendition of a session's ladder.
@@ -73,7 +79,8 @@ func (l Layout) AACTracks() []AudioTrack {
 	return l.Audio
 }
 
-// AC3Tracks are the broadcast AC-3 tracks copied into the 5.1 group.
+// AC3Tracks are the broadcast AC-3 tracks copied (VOD) or re-encoded (live)
+// into the 5.1 group.
 func (l Layout) AC3Tracks() []AudioTrack {
 	if !l.AC3Copy {
 		return nil
@@ -120,6 +127,23 @@ func (l Layout) ReadyPlaylist() string {
 
 // CaptionPlaylist is FFmpeg's WebVTT playlist name for the top rung.
 func (l Layout) CaptionPlaylist() string { return l.TopName() + "_vtt.m3u8" }
+
+// Renditions are the media playlist names (without .m3u8) FFmpeg writes for
+// l: every rung, then the AAC and AC-3 renditions (VarStreamMap's names).
+// Caption playlists are not renditions; they share their rung's sequence.
+func (l Layout) Renditions() []string {
+	var out []string
+	for _, r := range l.rungs() {
+		out = append(out, rungName(r))
+	}
+	for i := range l.AACTracks() {
+		out = append(out, fmt.Sprintf("aac%d", i))
+	}
+	for i := range l.AC3Tracks() {
+		out = append(out, fmt.Sprintf("ac3%d", i))
+	}
+	return out
+}
 
 // Safe is the fallback: top rung, first audio as AAC, no AC-3, no captions.
 func (l Layout) Safe() Layout {
@@ -230,8 +254,8 @@ func MasterPlaylist(l Layout, ceiling int, query string, captionsReady bool) str
 		}
 	}
 	aac, ac3 := l.AACTracks(), l.AC3Tracks()
-	writeGroup("aac", "2", "aac", aac)
-	writeGroup("ac3", "6", "ac3", ac3)
+	writeGroup("aac", strconv.Itoa(aacGroupChannels), "aac", aac)
+	writeGroup("ac3", strconv.Itoa(ac3GroupChannels), "ac3", ac3)
 	if captionsReady {
 		fmt.Fprintf(&b, `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English CC",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI="%s%s"`+"\n", l.CaptionPlaylist(), query)
 	}

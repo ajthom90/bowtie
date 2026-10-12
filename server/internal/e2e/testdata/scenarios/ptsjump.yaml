@@ -1,0 +1,22 @@
+name: ptsjump
+duration: 45s
+timeline:
+  # One bad video PES timestamp each time (dirty broadcast): no
+  # duplicate-frame storm, no timeline growth, no restart.
+  - {at: 8s, fault: pts-jump, by: 3s}
+  - {at: 18s, fault: pts-jump, by: 6s}
+  - {at: 28s, fault: pts-jump, by: 9s}
+expect:
+  xfail: "duplicate-frame storm on a single bad PTS (fixed in Task 6)"
+  xfailOn: "timeline excess"
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxTimelineExcessSeconds: 2
+  minTimelineExcessSeconds: -2
+  maxAVStartSkewMs: 100
+  pairedAfterEachFault: true
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  # noFetchErrors: true returns in Task 6: before the fix FFmpeg writes
+  # AAC segments without packets (the audio side of the known gap).

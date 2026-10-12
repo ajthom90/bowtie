@@ -53,6 +53,15 @@ type StreamController interface {
 	ChannelReception(channelID int64) (stream.Reception, bool)
 	// SessionMediaOf returns the viewer's session layout and quality ceiling.
 	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
+	// RetimePlaylist rewrites a rendition or caption playlist (name without
+	// .m3u8) from the session timeline (PDT, discontinuities); false when
+	// the viewer has no session.
+	RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool)
+	// ViewerOwner is the viewer's user ID; false when the viewer has no session.
+	ViewerOwner(viewerID string) (int64, bool)
+	// TimelineOf is the viewer's window on the wall clock (the observer's
+	// snapshot); false when the viewer has no session.
+	TimelineOf(viewerID string) (stream.WindowTimeline, bool)
 	// BlockedReason reports why parental controls stopped a viewer.
 	BlockedReason(viewerID string) (string, bool)
 }
@@ -336,6 +345,15 @@ func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, view
 			raw = repairCaptionPlaylist(raw, video, rung)
 		}
 	}
+	// Captions keep their own name: the timeline gives them the rung's
+	// stamps and their own MEDIA-SEQUENCE floor. False means the session
+	// was removed after the file was read; FFmpeg's bytes are not served.
+	retimed, ok := s.deps.Streams.RetimePlaylist(viewerID, strings.TrimSuffix(name, ".m3u8"), raw)
+	if !ok {
+		s.viewerGone(w, viewerID)
+		return
+	}
+	raw = retimed
 	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
@@ -490,6 +508,48 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		sig = &reading
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"signal": sig})
+}
+
+// handleSessionTimeline maps the viewer's current window to wall-clock time
+// for clients that can't read EXT-X-PROGRAM-DATE-TIME (Roku). The route
+// requires a Bearer token (auth.RequireUser); only the user who owns the
+// viewer sees it, and anyone else gets the same 404 as a missing viewer.
+// Authorization runs before any timeline is built.
+func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
+	viewerID := r.PathValue("viewerId")
+	if s.deps.Streams == nil {
+		writeError(w, http.StatusServiceUnavailable, "streaming not available")
+		return
+	}
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	owner, ok := s.deps.Streams.ViewerOwner(viewerID)
+	if !ok || owner != claims.UserID {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	win, ok := s.deps.Streams.TimelineOf(viewerID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	segs := make([][2]any, 0, len(win.Segments))
+	for _, sg := range win.Segments {
+		segs = append(segs, [2]any{sg.Start.UTC().Format(stream.WallClockLayout), sg.Duration})
+	}
+	body := map[string]any{"mediaSequence": win.MediaSequence, "windowStart": nil, "liveEdge": nil, "segments": segs}
+	if len(win.Segments) > 0 {
+		body["windowStart"] = win.WindowStart().UTC().Format(stream.WallClockLayout)
+		// LiveEdge adds a float64 duration via time.Duration, which truncates.
+		// 4.004s becomes 4003999999ns, one nanosecond under the millisecond the
+		// duration already states, so Format prints .007. Round to the
+		// millisecond the segment list advertises.
+		body["liveEdge"] = win.LiveEdge().UTC().Round(time.Millisecond).Format(stream.WallClockLayout)
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // viewerSignal is the reception of the tuner feeding viewerID's channel.

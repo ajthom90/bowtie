@@ -11,10 +11,11 @@ import (
 
 // ProgramInfo is what a session needs to know about a channel's broadcast.
 type ProgramInfo struct {
-	Audio        []transcode.AudioTrack
-	SourceHeight int    // MPEG-2 vertical size; 0 = unknown
-	VideoPID     uint16 // 0 = none
-	VideoMPEG2   bool   // video is MPEG-2 (the only kind whose height is parsed)
+	Audio           []transcode.AudioTrack
+	SourceHeight    int    // MPEG-2 vertical size; 0 = unknown
+	VideoPID        uint16 // 0 = none
+	VideoMPEG2      bool   // video is MPEG-2 (the only kind whose height is parsed)
+	VideoStreamType byte   // PMT stream_type of VideoPID (0x02 MPEG-2, 0x1B H.264, …)
 }
 
 // parsePMT reads a single-packet PMT (ATSC single-program): audio streams in
@@ -47,6 +48,7 @@ func parsePMT(pkt []byte) ProgramInfo {
 			if info.VideoPID == 0 {
 				info.VideoPID = pid
 				info.VideoMPEG2 = st == 0x01 || st == 0x02
+				info.VideoStreamType = st
 			}
 		case isAudioStreamType(st):
 			t := audioTrackFrom(desc)
