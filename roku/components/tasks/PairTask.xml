@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Set up this TV from a phone: a tiny HTTP listener on the LAN for the
+     page behind the Connect screen's QR. Request logic: source/lib/PairHttp.bs. -->
+<component name="PairTask" extends="Task">
+    <interface>
+        <!-- http://<lan ip>:<port>/p?t=<token>; "" while starting and once stopped. -->
+        <field id="pairUrl" type="string" value="" />
+        <!-- A normalized server address the phone typed (Connect probes it). -->
+        <field id="submitted" type="string" alwaysNotify="true" />
+        <!-- Connect couldn't reach this submitted address. -->
+        <field id="connectFailed" type="string" alwaysNotify="true" />
+        <!-- The server's /link?code=… page: where the phone goes next. -->
+        <field id="linkUrl" type="string" alwaysNotify="true" />
+        <field id="stop" type="boolean" alwaysNotify="true" value="false" />
+    </interface>
+    <script type="text/brightscript" uri="PairTask.bs" />
+</component>

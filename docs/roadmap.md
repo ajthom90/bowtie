@@ -15,7 +15,7 @@ requests that come up most in their forums and subreddits.
 | Pause and rewind live TV | Yes, up to 60 minutes |
 | Record shows and whole series | Yes — one-off, series ("new episodes only"), keep latest N, padding |
 | Skip commercials | Yes — Comskip finds the breaks; Skip ad / auto-skip in every app |
-| Easy sign-in on a TV | Yes — scan a QR code with your phone |
+| Easy sign-in on a TV | Yes — scan a QR code with your phone, which also enters the server address |
 | Several games at once | Multiview on the web (up to 4) |
 | Use it in other apps (Kodi, TiviMate, Xbox via Kodi) | Yes — personal M3U + XMLTV feed |
 | Kids' accounts | Yes — parental ratings, blocked channels, per-account stream limits |

@@ -11,6 +11,8 @@
         <field id="signedIn" type="boolean" alwaysNotify="true" value="false" />
         <!-- True when user chooses change-server (registry cleared by this scene). -->
         <field id="changeServer" type="boolean" alwaysNotify="true" value="false" />
+        <!-- PairTask while a phone set this TV up: told where to send the phone next. -->
+        <field id="pairTask" type="node" />
     </interface>
     <script type="text/brightscript" uri="LoginScene.bs" />
     <children>

@@ -22,11 +22,31 @@ curl -F "mysubmit=Install" -F "archive=@bowtie-roku-<version>.zip" \
   "http://rokudev:<password>@<roku-ip>/plugin_install"
 ```
 
+   - Or the deploy script (builds the zip with `npm run package`, then posts `roku/out/bowtie-roku.zip` to the Roku's dev installer):
+
+```bash
+cd roku && ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy
+```
+
 4. Optional pure-logic launch (step 1 below):
 
 ```bash
 curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 ```
+
+---
+
+## Roku — TV setup from your phone
+
+Check after sideloading, with a phone on the same Wi-Fi as the Roku:
+
+- On **Connect**, a QR code shows with the pairing address written under it.
+- Scan it: the phone opens a small page served by the Roku and asks for the server address.
+- Type the server address and submit: the phone lands on the server's own approve page.
+- Approve there: the Roku signs in and moves on, with no typing on the TV.
+- A typo in the address keeps the QR on the TV; fix it on the phone and submit again.
+- The address works with `http://` left off (for example `192.168.1.20:8400`).
+- Typing the address on the TV still works as before.
 
 ---
 
