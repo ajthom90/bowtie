@@ -9,6 +9,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **TV setup from your phone.** Apple TV, Android TV / Fire TV and Roku
+  show a QR code on the Connect screen. Scan it, type your server address
+  on the phone, and sign in on your server's own page — no typing on the
+  TV. The phone and TV need to be on the same Wi-Fi; typing the address on
+  the TV still works. Apple TV may ask for Local Network access the first
+  time Connect shows.
 - **A slow channel start says so.** On Roku, iPhone, iPad, Apple TV, Mac,
   Android phone and TV, and the web player and multiview tiles, when a
   channel is still starting after 5 seconds, "Starting…" changes to "Still
@@ -19,6 +25,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Android apps and in multiview tiles they end when the server has the
   stream ready and the picture starts loading. On Roku, a reconnect's
   "Reconnecting… (n/3)" now also stays up until the picture is back.
+
+### Changed
+
+- **Android TV / Fire TV sign-in opens on "Sign in with your phone"**, as on
+  Apple TV and Roku, and asks for a code by itself; "Use a password
+  instead" switches to the username and password form.
 
 ### Fixed
 

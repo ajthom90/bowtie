@@ -1,0 +1,32 @@
+' Draws the QR code for text. Encoding is costly, so it runs only when
+' text changes (or the module size does), never per frame.
+
+import "pkg:/source/lib/Qr.bs"
+
+sub init()
+    m.top.observeField("text", "redraw")
+    m.top.observeField("moduleSize", "redraw")
+end sub
+
+sub redraw()
+    m.top.removeChildrenIndex(m.top.getChildCount(), 0)
+    m.top.pixelSize = 0
+    text = m.top.text
+    if text = invalid or text = "" then return
+    matrix = bowtie.qr.encode(text)
+    if matrix = invalid then return
+
+    unit = m.top.moduleSize
+    frame = m.top.createChild("Rectangle")
+    frame.width = (matrix.size + 8) * unit
+    frame.height = frame.width
+    frame.color = "0xFFFFFFFF"
+    for each segment in bowtie.qr.runs(matrix)
+        dark = m.top.createChild("Rectangle")
+        dark.translation = [(segment.x + 4) * unit, (segment.y + 4) * unit]
+        dark.width = segment.w * unit
+        dark.height = unit
+        dark.color = "0x000000FF"
+    end for
+    m.top.pixelSize = frame.width
+end sub

@@ -42,6 +42,9 @@ import kotlinx.coroutines.launch
 
 private const val LOGIN_ERROR = "Wrong username or password."
 
+/** Login starts on "Sign in with your phone" whenever the server offers it; the password form otherwise. */
+internal fun opensInPhoneMode(deviceSignInAvailable: Boolean): Boolean = deviceSignInAvailable
+
 @Composable
 fun LoginScreen(
     appViewModel: AppViewModel,
@@ -54,11 +57,13 @@ fun LoginScreen(
     val scope = rememberCoroutineScope()
 
     // "Sign in with your phone": polls in this screen's scope, so leaving stops it.
+    // Login opens on it (as on Apple TV and Roku), so a phone that set this TV up
+    // goes straight on to approve the code; "Use a password" switches to the form.
     val client = appViewModel.client
-    var phoneMode by remember { mutableStateOf(false) }
     val deviceVm = remember(client) {
         client?.let { DeviceSignInViewModel(client = it, deviceName = tvDeviceName(), scope = scope) }
     }
+    var phoneMode by remember(deviceVm) { mutableStateOf(opensInPhoneMode(deviceVm != null)) }
     val deviceState = deviceVm?.state?.collectAsStateWithLifecycle()?.value
     val phoneButtonFocus = remember { FocusRequester() }
 
@@ -67,7 +72,15 @@ fun LoginScreen(
             appViewModel.completeSignIn(deviceState.user)
         }
     }
+    LaunchedEffect(deviceState) {
+        if (client != null && deviceState is DeviceSignInViewModel.State.Waiting) {
+            appViewModel.pairing.codeIssued(client.server.toString().trimEnd('/'), deviceState.userCode)
+        }
+    }
     DisposableEffect(deviceVm) { onDispose { deviceVm?.stop() } }
+    LaunchedEffect(deviceVm) {
+        if (deviceVm != null && phoneMode) deviceVm.start()
+    }
     LaunchedEffect(phoneMode) {
         if (!phoneMode && deviceVm != null) runCatching { phoneButtonFocus.requestFocus() }
     }

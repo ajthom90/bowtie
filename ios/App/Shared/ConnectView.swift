@@ -19,6 +19,18 @@ struct ConnectView: View {
     static let placeholder = "https://tv.example.com or http://192.168.1.50:8400"
 
     var body: some View {
+        #if os(tvOS)
+        HStack(alignment: .center, spacing: 80) {
+            form
+            PairingQRView(url: appModel.pairing.pairURL)
+        }
+        .task { appModel.pairing.start() }
+        #else
+        form
+        #endif
+    }
+
+    private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
@@ -169,7 +181,7 @@ struct ConnectView: View {
         errorMessage = nil
         defer { isValidating = false }
 
-        let ok = await appModel.connect(rawURL: raw)
+        let ok = await appModel.connectTyped(rawURL: raw)
         if !ok {
             errorMessage = Self.unreachableCopy
         }

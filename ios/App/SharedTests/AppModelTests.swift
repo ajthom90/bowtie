@@ -222,4 +222,119 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.savedServers.isEmpty)
         XCTAssertEqual(model.phase, .connect)
     }
+
+    // MARK: - TV pairing
+
+    private func makePairingModel() -> AppModel {
+        AppModel(store: store, urlSession: makeSession(), pairingHost: { "127.0.0.1" })
+    }
+
+    private func startPairing(_ model: AppModel) async throws -> URL {
+        model.pairing.start()
+        for _ in 0..<100 where model.pairing.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        return try XCTUnwrap(model.pairing.pairURL)
+    }
+
+    /// POSTs `server` to the pairing page the way the phone's browser would.
+    private func submitFromPhone(_ pairURL: URL, server: String) async throws {
+        let token = URLComponents(url: pairURL, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "t" }?.value ?? ""
+        var request = URLRequest(url: pairURL.deletingLastPathComponent().appendingPathComponent("p"))
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let form = "t=\(token)&server=" + (server.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")
+        request.httpBody = Data(form.utf8)
+        _ = try await URLSession(configuration: .ephemeral).data(for: request)
+    }
+
+    func testTypedConnectFailureLeavesPairingRunningAndSuccessStopsIt() async throws {
+        StubURLProtocol.handler = { request in
+            (request.url?.host == "test.bowtie.local" ? 200 : 503, Data(), [:])
+        }
+        let model = makePairingModel()
+        let pairURL = try await startPairing(model)
+
+        let bad = await model.connectTyped(rawURL: "nowhere.bowtie.local:8400")
+        XCTAssertFalse(bad)
+        XCTAssertEqual(model.pairing.pairURL, pairURL)
+
+        let good = await model.connectTyped(rawURL: "test.bowtie.local:8400")
+        XCTAssertTrue(good)
+        XCTAssertNil(model.pairing.pairURL)
+    }
+
+    func testSlowPhoneConnectLosesToTypedConnect() async throws {
+        StubURLProtocol.handler = { request in
+            if request.url?.host == "slow.bowtie.local" { Thread.sleep(forTimeInterval: 0.6) }
+            return (200, Data(), [:])
+        }
+        let model = makePairingModel()
+        let pairURL = try await startPairing(model)
+
+        try await submitFromPhone(pairURL, server: "http://slow.bowtie.local:8400")
+        for _ in 0..<100 where !StubURLProtocol.recorded.contains(where: { $0.url?.host == "slow.bowtie.local" }) {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(StubURLProtocol.recorded.contains { $0.url?.host == "slow.bowtie.local" })
+
+        let ok = await model.connectTyped(rawURL: "test.bowtie.local:8400")
+        XCTAssertTrue(ok)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        XCTAssertEqual(model.serverURL, SharedFixtures.baseURL)
+        XCTAssertEqual(model.client?.serverURL, SharedFixtures.baseURL)
+        XCTAssertEqual(model.phase, .login)
+    }
+
+    func testPhoneConnectIgnoredOutsideConnectPhase() async throws {
+        StubURLProtocol.handler = { _ in (200, Data(), [:]) }
+        let model = makePairingModel()
+        let pairURL = try await startPairing(model)
+        store.save(server: SharedFixtures.baseURL, refreshToken: nil)
+        model.selectServer(SharedFixtures.baseURL)   // phase leaves .connect
+
+        try await submitFromPhone(pairURL, server: "http://other.bowtie.local:8400")
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertFalse(StubURLProtocol.recorded.contains { $0.url?.host == "other.bowtie.local" })
+        XCTAssertEqual(model.serverURL, SharedFixtures.baseURL)
+    }
+
+    func testChangeServerStartsAFreshPairingSession() async throws {
+        StubURLProtocol.handler = { _ in (200, Data(), [:]) }
+        let model = makePairingModel()
+        let first = try await startPairing(model)
+        try await submitFromPhone(first, server: "http://test.bowtie.local:8400")
+        for _ in 0..<100 where model.phase != .login { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.phase, .login)
+
+        model.changeServer()
+        XCTAssertNil(model.pairing.pairURL)
+        let second = try await startPairing(model)
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testRemovingTheLastServerStartsAFreshPairingSession() async throws {
+        StubURLProtocol.handler = { _ in (200, Data(), [:]) }
+        let model = makePairingModel()
+        let first = try await startPairing(model)
+        try await submitFromPhone(first, server: "http://test.bowtie.local:8400")
+        for _ in 0..<100 where model.phase != .login { try await Task.sleep(nanoseconds: 20_000_000) }
+        let server = try XCTUnwrap(model.serverURL)
+
+        model.removeServer(server)
+        XCTAssertEqual(model.phase, .connect)
+        XCTAssertNil(model.pairing.pairURL)
+        let second = try await startPairing(model)
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testSignInStopsPairing() async throws {
+        StubURLProtocol.handler = { _ in (200, SharedFixtures.tokenPairJSON(), [:]) }
+        store.save(server: SharedFixtures.baseURL, refreshToken: nil)
+        let model = makePairingModel()
+        _ = try await startPairing(model)
+        try await model.signIn(username: "alice", password: "pw")
+        XCTAssertNil(model.pairing.pairURL)
+    }
 }
