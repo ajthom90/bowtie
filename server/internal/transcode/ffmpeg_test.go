@@ -734,7 +734,8 @@ func TestBuildArgsLadderQSVWithAudioAndCaptions(t *testing.T) {
 	mustContainSeq(t, got, "-a53cc", "0")
 	mustContainSeq(t, got, "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "128k", "-filter:a:0", liveAudio,
 		"-c:a:1", "aac", "-ac:a:1", "2", "-b:a:1", "128k", "-filter:a:1", liveAudio,
-		"-c:a:2", "ac3", "-b:a:2", "384k", "-filter:a:2", liveAudio, "-c:a:3", "ac3", "-b:a:3", "384k", "-filter:a:3", liveAudio)
+		"-c:a:2", "ac3", "-ac:a:2", "6", "-b:a:2", "384k", "-filter:a:2", liveAudio,
+		"-c:a:3", "ac3", "-ac:a:3", "6", "-b:a:3", "384k", "-filter:a:3", liveAudio)
 	mustContainSeq(t, got, "-c:s", "webvtt")
 	mustContainSeq(t, got, "-var_stream_map", s.Layout.VarStreamMap())
 }
@@ -817,7 +818,18 @@ func TestBuildArgsLiveInputHardening(t *testing.T) {
 	l := transcode.Layout{Rungs: []transcode.Rung{{Height: 480, VideoKbps: 1500}},
 		Audio: []transcode.AudioTrack{{Lang: "eng", AC3: true}}, AC3Copy: true}
 	ac3 := transcode.BuildArgs(transcode.JobSpec{Stdin: nonNilStdin(), OutDir: "/tmp/out", D: d, Layout: l})
-	mustContainSeq(t, ac3, "-c:a:1", "ac3", "-b:a:1", "384k", "-filter:a:1", liveAudio)
+	// Each audio output is encoded to the CHANNELS its master group advertises:
+	// the AAC group's "2" stays stereo, the AC-3 group's "6" is pinned to 5.1
+	// (a 2.0 start must not lock the whole session to stereo).
+	master := transcode.MasterPlaylist(l, 0, "", false)
+	if !strings.Contains(master, `GROUP-ID="aac",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2"`) ||
+		!strings.Contains(master, `GROUP-ID="ac3",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="6"`) {
+		t.Fatalf("master advertises unexpected CHANNELS:\n%s", master)
+	}
+	mustContainSeq(t, ac3, "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "96k", "-filter:a:0", liveAudio)
+	mustContainSeq(t, ac3, "-c:a:1", "ac3", "-ac:a:1", "6", "-b:a:1", "384k", "-filter:a:1", liveAudio)
+	// Non-live AC-3 stays a copy (a copy keeps the broadcast's own layout).
+	mustContainSeq(t, transcode.BuildArgs(transcode.JobSpec{InputURL: "http://hdhr/auto/v7.1", OutDir: "/tmp/out", D: d, Layout: l}), "-c:a:1", "copy")
 
 	url := transcode.BuildArgs(transcode.JobSpec{InputURL: "http://hdhr/auto/v7.1", OutDir: "/tmp/out", D: d})
 	vod := transcode.BuildArgs(transcode.JobSpec{InputURL: "/r/parts.txt", VOD: true, OutDir: "/tmp/out", D: d})

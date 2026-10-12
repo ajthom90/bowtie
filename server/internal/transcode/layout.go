@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -10,6 +11,11 @@ const (
 	MaxAudioTracks = 3
 	// UnknownSourceHeight is assumed when the MPEG-2 sequence header was not seen.
 	UnknownSourceHeight = 720
+
+	// aacGroupChannels and ac3GroupChannels are the CHANNELS the master
+	// playlist advertises for each audio group; BuildArgs encodes to match.
+	aacGroupChannels = 2
+	ac3GroupChannels = 6
 )
 
 // Rung is one video rendition of a session's ladder.
@@ -231,8 +237,8 @@ func MasterPlaylist(l Layout, ceiling int, query string, captionsReady bool) str
 		}
 	}
 	aac, ac3 := l.AACTracks(), l.AC3Tracks()
-	writeGroup("aac", "2", "aac", aac)
-	writeGroup("ac3", "6", "ac3", ac3)
+	writeGroup("aac", strconv.Itoa(aacGroupChannels), "aac", aac)
+	writeGroup("ac3", strconv.Itoa(ac3GroupChannels), "ac3", ac3)
 	if captionsReady {
 		fmt.Fprintf(&b, `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English CC",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI="%s%s"`+"\n", l.CaptionPlaylist(), query)
 	}
