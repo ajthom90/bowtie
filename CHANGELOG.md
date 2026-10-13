@@ -27,6 +27,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
   before installing) plus zips that run without installing; see
   `windows/README.md`.
+- **Xbox: weak signal, busy tuners and plain-words errors.** The player
+  keeps "Weak signal (46%) — the picture may break up." in the corner while
+  the antenna reception is poor (Narrator reads it when it appears), and
+  the channel name that any button brings up now shows the latest reading
+  ("Signal quality 46% · strength 96% · error-free 0%"). When every tuner
+  is busy, the channel list shows only the channels you can join, under a
+  note, and checks again every 30 seconds and when you come back to the
+  app, keeping the controller's focus on the same channel (or its
+  neighbor). Player errors are plain words ("The stream stopped. Try
+  again."); the detail goes to the app's log.
 
 ## [0.25.0] — 2026-10-13
 
@@ -292,16 +302,6 @@ After updating, please watch the server log around ad breaks for:
   account, for one) show what Schedules Direct said; "unreachable" now
   means only that the server couldn't reach Schedules Direct, and the
   server log records the underlying error.
-- **Xbox: weak signal, busy tuners and plain-words errors.** The player
-  keeps "Weak signal (46%) — the picture may break up." in the corner while
-  the antenna reception is poor (Narrator reads it when it appears), and
-  the channel name that any button brings up now shows the latest reading
-  ("Signal quality 46% · strength 96% · error-free 0%"). When every tuner
-  is busy, the channel list shows only the channels you can join, under a
-  note, and checks again every 30 seconds and when you come back to the
-  app, keeping the controller's focus on the same channel (or its
-  neighbor). Player errors are plain words ("The stream stopped. Try
-  again."); the detail goes to the app's log.
 
 ## [0.19.1] — 2026-10-04
 
