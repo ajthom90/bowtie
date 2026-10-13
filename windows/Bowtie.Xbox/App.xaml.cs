@@ -48,7 +48,13 @@ namespace BowtieXbox
                 }
                 else
                 {
-                    ApplicationView.PreferredLaunchWindowingMode = ApplicationViewWindowingMode.FullScreen;
+                    // A normal window on a PC: a full-screen frame hides the app's UI
+                    // Automation tree from the desktop (Narrator, Inspect). Only the
+                    // player goes full screen. Set explicitly, because Windows keeps
+                    // the FullScreen preference that earlier builds stored. That stored
+                    // preference already applied to this launch, so leave full screen too.
+                    ApplicationView.PreferredLaunchWindowingMode = ApplicationViewWindowingMode.Auto;
+                    ApplicationView.GetForCurrentView().ExitFullScreenMode();
                 }
 
                 _frame = new Frame { Background = (Windows.UI.Xaml.Media.Brush)Resources["BowtieBackground"] };

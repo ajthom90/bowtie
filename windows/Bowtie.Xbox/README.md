@@ -48,7 +48,8 @@ the bundle you are installing.
    Add-AppxPackage -Path .\bowtie-xbox-<version>.msixbundle -DependencyPath (Get-ChildItem .\Dependencies\x64\*.appx).FullName
    ```
 
-3. Start **Bowtie** from the Start menu. It opens full screen. The keyboard
+3. Start **Bowtie** from the Start menu. It opens in a window, and the
+   player goes full screen while a channel plays. The keyboard
    works without a controller: arrow keys move, Enter watches, **F** adds or
    removes a favorite, and Escape (or Backspace in the player) goes back. An
    Xbox controller connected to the PC works as on the console.

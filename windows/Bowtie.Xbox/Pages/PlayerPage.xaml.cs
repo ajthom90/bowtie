@@ -9,6 +9,7 @@ using Windows.Media.Playback;
 using Windows.Media.Streaming.Adaptive;
 using Windows.System.Display;
 using Windows.UI.Core;
+using Windows.UI.ViewManagement;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Controls;
@@ -82,6 +83,8 @@ namespace BowtieXbox.Pages
             TitleLabel.Text = Describe(channel);
             ShowOverlay(busy: true, title: $"Tuning {Describe(channel)}…", body: null, retry: false);
             KeepScreenOn(true);
+            // On a PC the app runs in a window; video goes full screen while it plays.
+            if (!Tv.IsXbox) ApplicationView.GetForCurrentView().TryEnterFullScreenMode();
             // Any key or button brings the channel name back for a moment. On the
             // window, not the page: while playing nothing in the page has focus,
             // so the page's own key events never fire.
@@ -118,6 +121,7 @@ namespace BowtieXbox.Pages
             if (_leaving) return;
             _leaving = true;
             Window.Current.CoreWindow.KeyDown -= OnWindowKeyDown;
+            if (!Tv.IsXbox) ApplicationView.GetForCurrentView().ExitFullScreenMode();
             _titleTimer.Stop();
             KeepScreenOn(false);
             TearDownMedia();
