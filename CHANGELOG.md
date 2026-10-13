@@ -5,7 +5,7 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [0.25.0] — 2026-10-13
+## [Unreleased]
 
 ### Added
 
@@ -27,6 +27,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
   before installing) plus zips that run without installing; see
   `windows/README.md`.
+
+## [0.25.0] — 2026-10-13
+
+### Added
+
 - **Edit a series recording without starting over.** In Recordings → Shows,
   Edit changes new or all episodes, the channel, and how many to keep, on
   web, Apple, Android, Android TV and Roku. Upcoming recordings update right
