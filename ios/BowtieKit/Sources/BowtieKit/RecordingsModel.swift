@@ -112,8 +112,29 @@ public final class RecordingsModel {
 
     // MARK: - Manage
 
-    /// "Stop Recording This Show": its upcoming recordings are cancelled;
-    /// recorded ones stay.
+    /// Saves settings, then refreshes the Shows and Upcoming lists.
+    public func updateRule(_ rule: RecordingRule, newOnly: Bool, channelId: Int64, keepLatest: Int) async -> Bool {
+        do {
+            _ = try await client.updateRecordingRule(id: rule.id, newOnly: newOnly, channelId: channelId, keepLatest: keepLatest)
+            let upcoming = try await client.recordings(filter: .upcoming)
+            state = upcoming.isEmpty ? .empty : .loaded(upcoming)
+            await load()
+            return true
+        } catch {
+            actionError = RecordingErrorCopy.message(for: error)
+            return false
+        }
+    }
+
+    public func ruleChannels(_ rule: RecordingRule) async -> [Int64: String] {
+        var channels: [Int64: String] = rule.channelId == 0 ? [:] : [rule.channelId: rule.channelName]
+        if let rows = try? await client.recordings(filter: .upcoming) {
+            for row in rows where row.ruleId == rule.id { channels[row.channelId] = row.channelName }
+        }
+        return channels
+    }
+
+    /// "Stop Recording This Show": upcoming recordings are cancelled; recorded ones stay.
     public func deleteRule(_ rule: RecordingRule) async {
         do {
             try await client.deleteRecordingRule(id: rule.id)

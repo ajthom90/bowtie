@@ -78,6 +78,7 @@ fun TvRecordingsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var editingRule by remember { mutableStateOf<RecordingRule?>(null) }
     var panel by remember { mutableStateOf<Panel?>(null) }
     val tabFocus = remember { FocusRequester() }
 
@@ -144,6 +145,10 @@ fun TvRecordingsScreen(
         )
     }
 
+    editingRule?.let { rule ->
+        TvEditRuleDialog(rule, viewModel) { editingRule = null }
+    }
+
     fun openShow(rule: RecordingRule) {
         val stop = if (rule.canManage) {
             listOf(
@@ -153,6 +158,11 @@ fun TvRecordingsScreen(
                     Unit
                 },
             )
+        } else {
+            emptyList()
+        }
+        val edit = if (rule.canManage && rule.editable) {
+            listOf("Edit" to { panel = null; editingRule = rule })
         } else {
             emptyList()
         }
@@ -166,7 +176,7 @@ fun TvRecordingsScreen(
                     "Only the person who set it up or an admin can stop it."
                 },
             ).joinToString("\n"),
-            choices = stop + ("Close" to { panel = null }),
+            choices = edit + stop + ("Close" to { panel = null }),
         )
     }
 

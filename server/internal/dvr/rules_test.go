@@ -78,3 +78,83 @@ func TestKeepLatestPrunesOldRuleRecordings(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileRule(t *testing.T) {
+	e := newEnv(t)
+	for g, c := range e.chans {
+		_ = e.st.UpdateChannel(c.ID, true, "e"+g)
+	}
+	at := func(h int) time.Time { return t0.Add(time.Duration(h) * time.Hour) }
+	_ = e.st.ReplaceEPG("sd", []store.EPGChannel{{ID: "e5.1", Source: "sd"}, {ID: "e9.1", Source: "sd"}}, []store.Program{
+		{EPGChannelID: "e5.1", Start: at(1), Stop: at(2), Title: "Drama", ProgramID: "EP1", SeriesID: "SH1", IsNew: true},
+		{EPGChannelID: "e9.1", Start: at(3), Stop: at(4), Title: "Drama", ProgramID: "EP2", SeriesID: "SH1"},
+		{EPGChannelID: "e5.1", Start: at(5), Stop: at(6), Title: "Drama", ProgramID: "EP2", SeriesID: "SH1"},
+	})
+	rule := store.RecordingRule{UserID: 1, Title: "Drama", SeriesID: "SH1", NewOnly: true, CreatedAt: t0}
+	rule.ID, _ = e.st.CreateRule(rule)
+	if n := e.svc.ApplyRules(); n != 1 {
+		t.Fatalf("new only: %d", n)
+	}
+	rule.NewOnly = false
+	_ = e.st.UpdateRule(rule)
+	if err := e.svc.ReconcileRule(rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := e.st.ListRecordings(store.RecScheduled)
+	if len(rows) != 2 || rows[1].ChannelID != e.chans["9.1"].ID {
+		t.Fatalf("all episodes: %+v", rows)
+	}
+	removedID := rows[1].ID
+	rule.ChannelID = e.chans["5.1"].ID
+	_ = e.st.UpdateRule(rule)
+	if err := e.svc.ReconcileRule(rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = e.st.ListRecordings(store.RecScheduled)
+	if len(rows) != 2 || rows[1].ChannelID != rule.ChannelID || rows[1].ProgramID != "EP2" {
+		t.Fatalf("channel reconcile: %+v", rows)
+	}
+	if _, err := e.st.RecordingByID(removedID); err == nil {
+		t.Fatal("obsolete schedule retained")
+	}
+	if n := e.svc.ApplyRules(); n != 0 {
+		t.Fatalf("duplicates: %d", n)
+	}
+	// Lowering the limit must leave files and every started state untouched.
+	var protectedRows []store.Recording
+	for i, state := range []string{store.RecRecording, store.RecWaiting, store.RecConverting, store.RecReady, store.RecReady} {
+		dir := filepath.Join(e.dir, "preserved", string(rune('a'+i)))
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, "episode.ts"), []byte("capture"), 0o600)
+		id, _ := e.st.CreateRecording(store.Recording{UserID: 1, ChannelID: e.chans["9.1"].ID, Title: "Drama", RuleID: rule.ID, Start: at(-1), Stop: at(1), State: store.RecScheduled, CreatedAt: t0})
+		r, _ := e.st.RecordingByID(id)
+		r.State, r.Dir = state, dir
+		_ = e.st.UpdateRecording(r)
+		protectedRows = append(protectedRows, r)
+	}
+	// Padding can start a capture before its advertised start, even while its row is scheduled.
+	padded := rows[0]
+	e.svc.mu.Lock()
+	e.svc.captures[padded.ID] = &capture{}
+	e.svc.mu.Unlock()
+	rule.ChannelID, rule.KeepLatest = e.chans["9.1"].ID, 1
+	_ = e.st.UpdateRule(rule)
+	if err := e.svc.ReconcileRule(rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.mu.Lock()
+	delete(e.svc.captures, padded.ID)
+	e.svc.mu.Unlock()
+	if _, err := e.st.RecordingByID(padded.ID); err != nil {
+		t.Fatal("active padded capture deleted")
+	}
+	for _, want := range protectedRows {
+		got, err := e.st.RecordingByID(want.ID)
+		if err != nil || got.State != want.State || got.Dir != want.Dir {
+			t.Fatalf("started recording changed: %+v %v", got, err)
+		}
+		if _, err := os.Stat(filepath.Join(want.Dir, "episode.ts")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

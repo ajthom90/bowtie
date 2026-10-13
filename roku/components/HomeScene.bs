@@ -117,6 +117,7 @@ sub init()
     m.dialogMode = ""
     m.menu = []
     m.optionsChannelId = invalid
+    m.optionsGuideRow = invalid
     m.optionsProgram = invalid
     ' In-flight createRecording / createRecordingRule: {id, channelId, program, series}.
     m.pendingRecord = invalid
@@ -245,7 +246,7 @@ sub handleWatchableResponse(resp as object)
     if not bowtie.tuners.applyWatchable(m.channels, resp.data) then return
     focusedId = invalid
     idx = m.channelList.itemFocused
-    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx].id
+    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx]
     renderRail(focusedId)
 end sub
 
@@ -529,6 +530,7 @@ function openChannelOptions() as boolean
     if opts.buttons.count() <= 1 then return false
 
     m.optionsChannelId = ch.id
+    m.optionsGuideRow = ch
     m.optionsProgram = nowProgram
     m.returnFocus = invalid
     m.menu = opts.buttons
@@ -581,7 +583,7 @@ function toggleFavorite(channelId as dynamic) as boolean
     result = bowtie.favorites.toggle(m.fav, channelId)
     if result = invalid then return false
     m.channels = m.fav.channels
-    renderRail(channelId)
+    renderRail(m.optionsGuideRow)
     sendFavorite(channelId, result.on)
     return true
 end function
@@ -763,7 +765,7 @@ sub handleFavoriteResponse(resp as object)
     ' Remember the focused channel; a revert can move it.
     focusedId = invalid
     idx = m.channelList.itemFocused
-    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx].id
+    if idx <> invalid and idx >= 0 and idx < m.railChannels.count() then focusedId = m.railChannels[idx]
     if bowtie.favorites.resolve(m.fav, pending.channelId, pending.on, resp.ok = true)
         m.channels = m.fav.channels
         renderRail(focusedId)
@@ -995,16 +997,17 @@ sub renderContinue(focusIdx as integer)
 end sub
 
 ' Rebuild the rail from m.channels (the joinable ones), the guide filter and
-' the last guide; keep focus on focusChannelId when given (its index changes
-' when favorites re-sort). The Recent row follows the joinable channels.
-sub renderRail(focusChannelId as dynamic)
+' the last guide; keep focus on the same guide copy when given.
+' The Recent row follows the joinable channels.
+sub renderRail(focusedRow as dynamic)
     atIso = isoNow()
     m.joinable = bowtie.tuners.watchableOnly(m.channels)
     updateRecents()
     m.railChannels = bowtie.guideFilter.channelsMatching(m.joinable, m.guideById, m.filter, atIso)
+    m.railChannels = bowtie.favorites.guideChannels(m.railChannels)
     m.channelList.content = buildListContent(m.railChannels, m.guideById, atIso)
-    if focusChannelId <> invalid
-        idx = bowtie.favorites.indexOfChannel(m.railChannels, focusChannelId)
+    if focusedRow <> invalid
+        idx = bowtie.favorites.indexOfGuideRow(m.railChannels, focusedRow)
         if idx >= 0 then m.channelList.jumpToItem = idx
     end if
     updateRows()
@@ -1134,6 +1137,7 @@ function buildListContent(channels as object, guideById as object, atIso as stri
         end if
 
         item = root.createChild("ContentNode")
+        item.id = ch.rowKey
         item.title = ch.name
         item.addFields({
             guideNumber: ch.guideNumber

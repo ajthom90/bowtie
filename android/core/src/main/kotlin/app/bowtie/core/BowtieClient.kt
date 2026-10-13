@@ -336,6 +336,20 @@ class BowtieClient(
         BowtieJson.decodeFromString(body)
     }
 
+    /** Updates a show and reconciles its upcoming recordings. */
+    suspend fun updateRecordingRule(
+        id: Long,
+        newOnly: Boolean,
+        channelId: Long,
+        keepLatest: Int,
+    ): RecordingRule = withContext(Dispatchers.IO) {
+        BowtieJson.decodeFromString(
+            authed("PATCH", "/api/v1/recording-rules/$id",
+                bodyJson = BowtieJson.encodeToString(UpdateRuleRequest(newOnly, channelId, keepLatest)),
+            ),
+        )
+    }
+
     /** Stop recording a show: cancels its upcoming recordings; recorded ones stay. */
     suspend fun deleteRecordingRule(id: Long): Unit = withContext(Dispatchers.IO) {
         authed("DELETE", "/api/v1/recording-rules/$id")

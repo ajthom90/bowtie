@@ -83,6 +83,7 @@ fun RecordingsScreen(
     var refreshing by remember { mutableStateOf(false) }
     var pendingResume by remember { mutableStateOf<RecordingsViewModel.PlayStart?>(null) }
     var confirmDelete by remember { mutableStateOf<Recording?>(null) }
+    var editingRule by remember { mutableStateOf<RecordingRule?>(null) }
     var confirmStopShow by remember { mutableStateOf<RecordingRule?>(null) }
 
     BackHandler { onBack() }
@@ -247,7 +248,7 @@ fun RecordingsScreen(
                                 }
                             }
                             items(load.rules, key = { it.id }) { rule ->
-                                RuleRow(rule = rule, onStop = { confirmStopShow = rule })
+                                RuleRow(rule = rule, onStop = { confirmStopShow = rule }, onEdit = { editingRule = rule })
                                 HorizontalDivider(color = BowtieColors.line)
                             }
                         }
@@ -307,6 +308,10 @@ fun RecordingsScreen(
         )
     }
 
+    editingRule?.let { rule ->
+        EditRuleDialog(rule, viewModel) { editingRule = null }
+    }
+
     confirmStopShow?.let { rule ->
         AlertDialog(
             onDismissRequest = { confirmStopShow = null },
@@ -359,7 +364,7 @@ private fun emptyCopy(tab: RecTab): String = when (tab) {
 
 /** A series rule: the show, where and which episodes, and "Stop recording this show" for its owner. */
 @Composable
-private fun RuleRow(rule: RecordingRule, onStop: () -> Unit) {
+private fun RuleRow(rule: RecordingRule, onStop: () -> Unit, onEdit: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -369,6 +374,7 @@ private fun RuleRow(rule: RecordingRule, onStop: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         Text(RecordingLogic.ruleDetail(rule), style = BowtieType.label, color = BowtieColors.dim)
         if (rule.canManage) {
+            if (rule.editable) { TextButton(onClick = onEdit) { Text("Edit") } }
             TextButton(onClick = onStop) {
                 Text("Stop recording this show", color = BowtieColors.alert)
             }

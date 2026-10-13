@@ -533,6 +533,53 @@ paths:
         schema:
           type: integer
           format: int64
+    patch:
+      summary: Edit a series recording rule
+      description: |
+        The owner or an admin can change any of these settings. Omitted settings
+        remain unchanged. Cancels only unstarted upcoming recordings that no
+        longer match and schedules new matches using normal series deduplication
+        and tuner handling. In-progress and completed recordings stay untouched.
+        Lowering keepLatest deletes nothing now: the existing retention path
+        applies the new limit as new episodes complete (protected recordings stay).
+      operationId: updateRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                newOnly:
+                  type: boolean
+                channelId:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: 0 for any channel; otherwise an existing channel accessible to the caller, as for creation.
+                keepLatest:
+                  type: integer
+                  minimum: 0
+                  description: 0 keeps all episodes.
+      responses:
+        '200':
+          description: Updated rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       summary: Stop recording a show (cancels its upcoming recordings; recorded ones stay)
       operationId: deleteRecordingRule
@@ -2422,6 +2469,9 @@ components:
       type: object
       required: [id, title, seriesId, channelId, channelName, newOnly, keepLatest, scheduledBy, canManage, createdAt]
       properties:
+        editable:
+          type: boolean
+          description: True when this server supports PATCH. Older servers omit it; clients show Edit only when true and canManage is true.
         id:
           type: integer
           format: int64

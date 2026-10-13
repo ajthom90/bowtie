@@ -5,7 +5,7 @@
 '   channels, guide, createSession, deleteSession, heartbeat, setFavorite, recents,
 '   recordings, createRecording, deleteRecording, stopRecording, playRecording,
 '   setRecordingPosition, protectRecording, recordingRules, createRecordingRule,
-'   deleteRecordingRule, deviceStart, deviceToken
+'   updateRecordingRule, deleteRecordingRule, deviceStart, deviceToken
 ' parseResponse: ok/data or ok/error; createSession resolves absolute playlistUrl (A4);
 '   login/refresh surface user with maxQuality (A1).
 ' heartbeat: stream-token query only (no Bearer), ?signal=1; any 2xx success →
@@ -22,6 +22,7 @@
 '   {id, positionSec} → 204; protectRecording {id, keep} → PATCH {protected}.
 ' Series (tag dvr): recordingRules → GET list; createRecordingRule {channelId,
 '   programStart} → 201 {rule, scheduled}; deleteRecordingRule {id} → 204.
+'   updateRecordingRule {id, newOnly, channelId, keepLatest} → PATCH, updated rule.
 ' Quick sign-in (no Bearer): deviceStart {deviceName} → {deviceCode, userCode,
 '   verifyUrl, qrUrl (absolute), expiresIn, interval}; deviceToken {deviceCode}
 '   → 200 TokenPair (as login), 428 kind "pending", 410 kind "expired".
@@ -179,6 +180,12 @@ namespace bowtie.client
                 "channelId": params.channelId
                 "programStart": params.programStart
             })
+
+        else if kind = "updateRecordingRule"
+            url = base + "/api/v1/recording-rules/" + bowtie.client.idString(params.id)
+            method = "PATCH"
+            headers = bowtie.client.jsonAuthHeaders(accessToken)
+            body = FormatJson({ "newOnly": params.newOnly, "channelId": params.channelId, "keepLatest": params.keepLatest })
 
         else if kind = "deleteRecordingRule"
             url = base + "/api/v1/recording-rules/" + bowtie.client.idString(params.id)

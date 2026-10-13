@@ -52,7 +52,7 @@ test('a toggle re-renders in place instead of reloading (no spinner, focus kept)
     assert.match(body, /sendFavorite\(/);
 });
 
-test('the player is handed the sorted rail (joinable channels) for zapping', () => {
+test('the player is handed unique favorites-first channels for zapping', () => {
     assert.match(home, /m\.channels = m\.fav\.channels/);
     assert.match(home, /m\.joinable = bowtie\.tuners\.watchableOnly\(m\.channels\)/);
     assert.match(home, /channels: m\.joinable/);
@@ -85,4 +85,13 @@ test('rail items show a star for favorites', () => {
     assert.match(railXml, /id="favoriteStar"/);
     assert.match(railBs, /m\.favoriteStar\.visible = /);
     assert.match(home, /favorite: ch\.favorite/);
+});
+
+
+test('rail copies have unique content IDs and section-aware focus restoration', () => {
+    assert.match(home, /m\.railChannels = bowtie\.favorites\.guideChannels\(m\.railChannels\)/);
+    assert.match(home, /item\.id = ch\.rowKey/);
+    assert.match(home, /m\.optionsGuideRow = ch/);
+    assert.match(home, /renderRail\(m\.optionsGuideRow\)/);
+    assert.match(home, /indexOfGuideRow\(m\.railChannels, focusedRow\)/);
 });
