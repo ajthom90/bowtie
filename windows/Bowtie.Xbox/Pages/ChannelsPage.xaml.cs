@@ -265,13 +265,14 @@ namespace BowtieXbox.Pages
             if (ChannelList.Items[index] is ChannelItem item) _focusKey = item.Key;
             ChannelList.ScrollIntoView(ChannelList.Items[index]);
             ChannelList.UpdateLayout();
+            // Keyboard, not Programmatic: the row shows its focus visual right away.
             if (ChannelList.ContainerFromIndex(index) is ListViewItem container)
             {
-                container.Focus(FocusState.Programmatic);
+                container.Focus(FocusState.Keyboard);
             }
             else
             {
-                ChannelList.Focus(FocusState.Programmatic);
+                ChannelList.Focus(FocusState.Keyboard);
             }
         }
 
