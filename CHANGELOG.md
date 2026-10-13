@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.1] — 2026-10-13
+
 ### Added
 
 - **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
@@ -33,6 +35,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - **Windows and Xbox no longer fail the first start of a channel.** Live TV
   waits briefly for every quality and audio track to be ready. Tracks that
   take longer are left out until they appear, so playback can still start.
+  The Windows app also retries a stream that fails to open, so it starts
+  on older servers too.
 
 ## [0.25.0] — 2026-10-13
 
