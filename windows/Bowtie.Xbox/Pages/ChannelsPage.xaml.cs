@@ -30,7 +30,10 @@ namespace BowtieXbox.Pages
 
         private readonly DispatcherTimer _pollTimer;
         private ChannelListViewModel? _vm;
+        /// <summary>The row the user means to be on (last moved to, opened or starred).</summary>
         private string? _focusKey;
+        /// <summary>The row focused in its place while it's missing from the list, else null.</summary>
+        private string? _fallbackKey;
         private string? _shown;
         private bool _polling;
 
@@ -195,9 +198,12 @@ namespace BowtieXbox.Pages
             var focusedIndex = FocusedIndex();
             // Focus on Try again (about to hide) or nowhere: give it to the list.
             var focusInStatus = RetryButton.FocusState != FocusState.Unfocused || FocusManager.GetFocusedElement() == null;
-            if (focusedIndex is int index && ChannelList.Items.Count > index && ChannelList.Items[index] is ChannelItem focused)
+            if (focusedIndex is int index && ChannelList.Items.Count > index && ChannelList.Items[index] is ChannelItem focused
+                && focused.Key != _fallbackKey)
             {
+                // The user moved: that row is now the one to keep.
                 _focusKey = focused.Key;
+                _fallbackKey = null;
             }
 
             StatusPanel.Visibility = Visibility.Collapsed;
@@ -261,8 +267,12 @@ namespace BowtieXbox.Pages
                 var found = items.FindIndex(i => i.Key == key);
                 if (found >= 0) index = found;
             }
-            // Remember the fallback too, so later redraws don't jump to a reappearing copy.
-            if (ChannelList.Items[index] is ChannelItem item) _focusKey = item.Key;
+            // A stand-in for a row that's gone for now (a channel still starting is
+            // filtered out): keep _focusKey, so a redraw that brings it back focuses
+            // it again, unless the user has moved off the stand-in by then.
+            var item = ChannelList.Items[index] as ChannelItem;
+            _fallbackKey = item != null && item.Key != _focusKey ? item.Key : null;
+            if (_focusKey == null) _focusKey = item?.Key;
             ChannelList.ScrollIntoView(ChannelList.Items[index]);
             ChannelList.UpdateLayout();
             // Keyboard, not Programmatic: the row shows its focus visual right away.
@@ -283,6 +293,7 @@ namespace BowtieXbox.Pages
             if (e.ClickedItem is ChannelItem item)
             {
                 _focusKey = item.Key;
+                _fallbackKey = null;
                 Frame.Navigate(typeof(PlayerPage), item.Channel);
             }
         }
@@ -294,6 +305,7 @@ namespace BowtieXbox.Pages
             e.Handled = true;
             if (_vm == null || !_vm.FavoritesSupported) return;
             _focusKey = item.Key;
+            _fallbackKey = null;
             await _vm.ToggleFavoriteAsync(item.Channel.Id);
             Render();
             FocusList();
