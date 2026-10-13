@@ -76,10 +76,18 @@ StoreScreenshotUITests (iOS) and TVStoreScreenshotUITests (tvOS) UI tests:
 
 | Folder | Size | Store slot |
 |---|---|---|
-| `iphone/` | 1320 × 2868 | iPhone 6.9″ |
+| `iphone-6.3/` | 1206 × 2622 | iPhone 6.3″ (the required iPhone size) |
+| `iphone-6.9/` | 1320 × 2868 | iPhone 6.9″ (optional) |
 | `ipad/` | 2064 × 2752 | iPad 13″ |
 | `mac/` | 2880 × 1800 | Mac |
 | `tv/` | 1920 × 1080 | Apple TV |
+
+None has an alpha channel (App Store Connect rejects them); the Mac window
+captures were flattened onto the app background.
+
+Not yet made: iPhone Duo (1398 × 2034 outer, 2007 × 2853 inner), required
+from April 2027 for builds with the iOS 27.1 SDK, and the optional iOS 27
+product page header and search results art.
 
 They avoid playing video: App Review can object to recognizable broadcast
 shows in screenshots.

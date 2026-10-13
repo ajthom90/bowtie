@@ -42,6 +42,10 @@ final class StoreScreenshotUITests: XCTestCase {
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5), "no guide search field")
         search.tap()
+        // On a fresh simulator the first tap can land before the field takes focus.
+        for _ in 0..<3 where !app.keyboards.firstMatch.waitForExistence(timeout: 3) {
+            search.tap()
+        }
         // Return submits the search and puts the keyboard away.
         search.typeText((env["BOWTIE_UITEST_SEARCH"] ?? "news") + "\n")
         RunLoop.current.run(until: Date().addingTimeInterval(5))

@@ -147,6 +147,8 @@ final class PlayerModelSignalAndErrorTests: XCTestCase {
         await play(model)
 
         await beat()
+        // The reply can take longer than beat()'s short settle on a busy runner.
+        await waitUntil { model.showsWeakSignalNote }
         XCTAssertTrue(model.showsWeakSignalNote)
         await beat()
         XCTAssertTrue(model.showsWeakSignalNote, "no new reading: keep the last one")
