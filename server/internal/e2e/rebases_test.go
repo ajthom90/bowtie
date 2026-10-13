@@ -103,6 +103,37 @@ func rebasesSince(start, end time.Time) ([]rebase, error) {
 	return log.Rebases, err
 }
 
+// clipFFmpegLog is the FFmpeg log for an OTA clip. A missing directory, an
+// empty directory, or only stale argv is not evidence of zero re-bases:
+// those are the same as the soak's check. Re-base lines are debug-level, so
+// an argv in the window that is not debug or trace is not evidence either.
+func clipFFmpegLog(start, end time.Time) (ffLog, error) {
+	log, err := soakFFmpegLog(start, end)
+	if err != nil {
+		return ffLog{}, err
+	}
+	for _, argv := range log.Argv {
+		if !ffmpegArgvDebug(argv) {
+			return ffLog{}, fmt.Errorf("ffmpeg log: argv in the window is not debug or trace")
+		}
+	}
+	return log, nil
+}
+
+// ffmpegArgvDebug reports whether argv's -loglevel value is debug or trace
+// (including level+debug, the wrapper's FF51_LOGLEVEL).
+func ffmpegArgvDebug(argv string) bool {
+	fields := strings.Fields(argv)
+	for i, f := range fields {
+		if f != "-loglevel" || i+1 >= len(fields) {
+			continue
+		}
+		level := fields[i+1]
+		return strings.Contains(level, "debug") || strings.Contains(level, "trace")
+	}
+	return false
+}
+
 func TestFFLogSince(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FF51_LOGDIR", dir)
@@ -131,5 +162,66 @@ func TestFFLogSince(t *testing.T) {
 	}
 	if len(got.Argv) != 1 || !strings.Contains(got.Argv[0], "-dts_delta_threshold 2.6") {
 		t.Fatalf("argv %q", got.Argv)
+	}
+}
+
+// An OTA clip with no current debug argv must not pass as zero re-bases.
+func TestClipFFmpegLogRequiresCurrentDebugArgv(t *testing.T) {
+	start := time.UnixMilli(1_760_000_000_000)
+	end := start.Add(time.Hour)
+	debugArgv := strconvMS(start.Add(time.Second)) + " argv: -hide_banner -loglevel level+debug -i pipe:0\n"
+	traceArgv := strconvMS(start.Add(time.Second)) + " argv: -loglevel trace -i pipe:0\n"
+	warnArgv := strconvMS(start.Add(time.Second)) + " argv: -loglevel warning -i pipe:0\n"
+	noLevel := strconvMS(start.Add(time.Second)) + " argv: -i pipe:0 -dts_delta_threshold 2.6\n"
+	rebase := strconvMS(start.Add(2*time.Second)) + " [debug] timestamp discontinuity (stream id=0): 270000, new offset= -270000\n"
+	stale := strconvMS(start.Add(-time.Hour)) + " argv: -loglevel level+debug -i pipe:0\n"
+	tests := []struct {
+		name    string
+		body    string
+		missing bool
+		unset   bool
+		wantErr bool
+		rebases int
+	}{
+		{name: "log dir unset", unset: true, wantErr: true},
+		{name: "directory missing", missing: true, wantErr: true},
+		{name: "empty directory", wantErr: true},
+		{name: "stale debug argv only", body: stale, wantErr: true},
+		{name: "warning-level argv", body: warnArgv, wantErr: true},
+		{name: "argv without -loglevel", body: noLevel, wantErr: true},
+		{name: "level+debug argv and a re-base", body: debugArgv + rebase, rebases: 1},
+		{name: "trace argv", body: traceArgv, rebases: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			switch {
+			case tc.unset:
+				t.Setenv("FF51_LOGDIR", "")
+			case tc.missing:
+				t.Setenv("FF51_LOGDIR", filepath.Join(t.TempDir(), "missing"))
+			default:
+				dir := t.TempDir()
+				t.Setenv("FF51_LOGDIR", dir)
+				if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(tc.body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := clipFFmpegLog(start, end)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("err = nil, log %+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Rebases) != tc.rebases {
+				t.Fatalf("rebases %+v, want %d", got.Rebases, tc.rebases)
+			}
+			if len(got.Argv) == 0 {
+				t.Fatal("argv missing")
+			}
+		})
 	}
 }

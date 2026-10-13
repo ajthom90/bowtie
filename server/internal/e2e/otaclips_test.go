@@ -93,10 +93,11 @@ expect:
 				t.Fatal(err)
 			}
 			sourceStart := runScenario(t, sc)
-			rebases, err := rebasesSince(sourceStart, time.Now())
+			log, err := clipFFmpegLog(sourceStart, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
+			rebases := log.Rebases
 			bad := falseRebases(signal, clip, rebases)
 			for _, rb := range rebases {
 				verdict := "true (near a signal dip)"
