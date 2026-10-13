@@ -5,6 +5,14 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Favorites stay in the full channel list.** All clients show favorites at
+  the top and again in their normal place in All channels. Starring either
+  copy updates both; player channel up/down still visits each channel once.
+
 ## [0.24.0] — 2026-10-12
 
 ### Fixed

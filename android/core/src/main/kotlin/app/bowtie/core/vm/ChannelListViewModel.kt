@@ -59,11 +59,16 @@ class ChannelListViewModel(
          * `copy()` keeps it.
          */
         val programBuckets: List<Set<GuideBucket>> = programs.map(GuideFilter::buckets),
+        val serverIndex: Int = 0,
     ) {
         val id: Long get() = channel.id
 
         /** The signed-in user starred this channel. */
         val isFavorite: Boolean get() = channel.favorite == true
+    }
+
+    data class GuideRow(val row: Row, val section: String) {
+        val key: String get() = "$section:${row.id}"
     }
 
     sealed class LoadState {
@@ -75,7 +80,7 @@ class ChannelListViewModel(
             val favoritesSupported: Boolean = false,
         ) : LoadState() {
             val favorites: List<Row> get() = rows.filter { it.isFavorite }
-            val others: List<Row> get() = rows.filterNot { it.isFavorite }
+            val allRows: List<Row> get() = rows.sortedBy { it.serverIndex }
         }
         data class Failed(val message: String) : LoadState()
         data object Empty : LoadState()
@@ -141,7 +146,7 @@ class ChannelListViewModel(
         val noneWatchable: Boolean = false,
     ) {
         val favorites: List<Row> get() = rows.filter { it.isFavorite }
-        val others: List<Row> get() = rows.filterNot { it.isFavorite }
+        val allRows: List<Row> get() = rows.sortedBy { it.serverIndex }
 
         fun highlight(row: Row): GuideFilter.RowHighlight =
             highlights[row.id] ?: GuideFilter.RowHighlight(nowMatches = true, nextMatches = true, later = null)
@@ -210,12 +215,13 @@ class ChannelListViewModel(
             }
 
             val byId = guide.associateBy { it.channelId }
-            val rows = channels.map { channel ->
+            val rows = channels.mapIndexed { index, channel ->
                 val programs = byId[channel.id]?.programs.orEmpty()
                 Row(
                     channel = channel,
                     nowNext = GuideLogic.nowNext(programs = programs, at = at),
                     programs = programs,
+                    serverIndex = index,
                 )
             }
             windowEnd = stop
@@ -489,6 +495,11 @@ class ChannelListViewModel(
             }
             a.compareTo(b)
         }
+
+        /** Favorite shortcuts followed by every channel, with distinct UI keys. */
+        fun guideRows(rows: List<Row>): List<GuideRow> =
+            rows.filter { it.isFavorite }.map { GuideRow(it, "favorites") } +
+                rows.sortedBy { it.serverIndex }.map { GuideRow(it, "all") }
 
         /**
          * Favorites first in guide-number order, then the rest in the order
