@@ -112,9 +112,10 @@ func (r *stubRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 		return p, nil
 	}
 	if r.writeM3U {
-		path := filepath.Join(spec.OutDir, spec.Layout.ReadyPlaylist())
-		if err := os.WriteFile(path, []byte("#EXTM3U\n"), 0o644); err != nil {
-			return nil, err
+		for _, name := range spec.Layout.Renditions() {
+			if err := os.WriteFile(filepath.Join(spec.OutDir, name+".m3u8"), []byte("#EXTM3U\n"), 0o644); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return p, nil
@@ -1035,9 +1036,10 @@ func (r *raceRunner) Start(_ context.Context, spec transcode.JobSpec) (Process, 
 	r.procs = append(r.procs, p)
 	r.mu.Unlock()
 
-	path := filepath.Join(spec.OutDir, spec.Layout.ReadyPlaylist())
-	if err := os.WriteFile(path, []byte("#EXTM3U\n"), 0o644); err != nil {
-		return nil, err
+	for _, name := range spec.Layout.Renditions() {
+		if err := os.WriteFile(filepath.Join(spec.OutDir, name+".m3u8"), []byte("#EXTM3U\n"), 0o644); err != nil {
+			return nil, err
+		}
 	}
 
 	if n == 1 {

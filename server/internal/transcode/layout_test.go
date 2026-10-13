@@ -157,3 +157,64 @@ func TestLayoutRenditions(t *testing.T) {
 		t.Fatalf("single rung Renditions = %s", got)
 	}
 }
+
+func TestMasterPlaylistAvailablePreservesFullFormat(t *testing.T) {
+	l := full()
+	available := map[string]bool{}
+	for _, name := range l.Renditions() {
+		available[name] = true
+	}
+	want := transcode.MasterPlaylist(l, 1080, "?token=T", true)
+	if got := transcode.MasterPlaylistAvailable(l, 1080, "?token=T", true, available); got != want {
+		t.Fatalf("all available changed master:\n%s", got)
+	}
+}
+
+func TestMasterPlaylistAvailableKeepsIndexesAndDefaults(t *testing.T) {
+	l := full()
+	l.Audio[1].Lang = "eng" // Keep the stable duplicate name as well as index.
+	got := transcode.MasterPlaylistAvailable(l, 1080, "?token=T", false,
+		map[string]bool{"v360": true, "aac1": true, "ac31": true})
+	for _, want := range []string{
+		`NAME="English 2",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="aac1.m3u8?token=T"`,
+		`NAME="English 2",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="6",URI="ac31.m3u8?token=T"`,
+		`AUDIO="aac"`, `AUDIO="ac3"`, "\nv360.m3u8?token=T\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"aac0.m3u8", "ac30.m3u8", "v720.m3u8", "v480.m3u8", "SUBTITLES"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("unexpected %s in:\n%s", absent, got)
+		}
+	}
+}
+
+func TestMasterPlaylistAvailableAudioGroups(t *testing.T) {
+	for _, group := range []string{"aac", "ac3", ""} {
+		t.Run("group="+group, func(t *testing.T) {
+			available := map[string]bool{"v360": true}
+			if group != "" {
+				available[group+"0"] = true
+			}
+			got := transcode.MasterPlaylistAvailable(full(), 100, "", false, available)
+			if !strings.Contains(got, "\nv360.m3u8\n") {
+				t.Fatalf("missing lowest video: %s", got)
+			}
+			if group == "" {
+				// No audio at all: everything is listed, as MasterPlaylist does,
+				// rather than a silent video-only master.
+				if got != transcode.MasterPlaylist(full(), 100, "", false) {
+					t.Fatalf("no-audio master differs from the full one: %s", got)
+				}
+				return
+			}
+			for _, g := range []string{"aac", "ac3"} {
+				if strings.Contains(got, `AUDIO="`+g+`"`) != (g == group) || strings.Contains(got, `GROUP-ID="`+g+`"`) != (g == group) {
+					t.Fatalf("incorrect audio group: %s", got)
+				}
+			}
+		})
+	}
+}

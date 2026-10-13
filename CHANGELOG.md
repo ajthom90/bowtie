@@ -5,6 +5,14 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Windows and Xbox no longer fail the first start of a channel.** Live TV
+  waits briefly for every quality and audio track to be ready. Tracks that
+  take longer are left out until they appear, so playback can still start.
+
 ## [0.25.0] — 2026-10-13
 
 ### Added
