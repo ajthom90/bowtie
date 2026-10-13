@@ -116,6 +116,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("DELETE /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(false)))
 	handle("GET /api/v1/recording-rules", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListRules)))
 	handle("POST /api/v1/recording-rules", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateRule)))
+	handle("PATCH /api/v1/recording-rules/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePatchRule)))
 	handle("DELETE /api/v1/recording-rules/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeleteRule)))
 	handle("GET /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListRecordings)))
 	handle("POST /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateRecording)))

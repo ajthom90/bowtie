@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -67,5 +69,61 @@ func TestRecordingRuleAndProgramIDRoundTrip(t *testing.T) {
 	r, _ := s.RecordingByID(id)
 	if r.RuleID != 7 || r.ProgramID != "EP9" {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestUpdateRulePreservesIdentity(t *testing.T) {
+	s := openTestStore(t)
+	original := store.RecordingRule{UserID: 1, Title: "Drama", SeriesID: "SH1", NewOnly: true, KeepLatest: 5, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	id, err := s.CreateRule(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original.ID = id
+	if err := s.UpdateRule(store.RecordingRule{ID: id, ChannelID: 2, KeepLatest: 1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RuleByID(id)
+	original.ChannelID, original.NewOnly, original.KeepLatest = 2, false, 1
+	if err != nil || got != original {
+		t.Fatalf("updated %+v want %+v: %v", got, original, err)
+	}
+	if err := s.UpdateRule(store.RecordingRule{ID: id + 1}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestDeleteRuleScheduleProtectsChangedRows(t *testing.T) {
+	s := openTestStore(t)
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		state   string
+		start   time.Time
+		ruleID  int64
+		removed bool
+	}{
+		{store.RecScheduled, now.Add(time.Hour), 1, true},
+		{store.RecScheduled, now.Add(-time.Hour), 1, false},
+		{store.RecScheduled, now.Add(time.Hour), 2, false},
+		{store.RecRecording, now.Add(time.Hour), 1, false},
+		{store.RecReady, now.Add(time.Hour), 1, false},
+		{store.RecFailed, now.Add(time.Hour), 1, false},
+	} {
+		id, err := s.CreateRecording(store.Recording{UserID: 1, ChannelID: 1, RuleID: tc.ruleID, Title: "Drama", Start: tc.start, Stop: now.Add(2 * time.Hour), State: store.RecScheduled, CreatedAt: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := s.RecordingByID(id)
+		r.State = tc.state
+		if err := s.UpdateRecording(r); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteRuleSchedule(id, 1, now); err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.RecordingByID(id)
+		if errors.Is(err, sql.ErrNoRows) != tc.removed {
+			t.Fatalf("%+v: %v", tc, err)
+		}
 	}
 }

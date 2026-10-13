@@ -2,7 +2,9 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -19,6 +21,7 @@ type ruleJSON struct {
 	NewOnly     bool      `json:"newOnly"`
 	KeepLatest  int       `json:"keepLatest"`
 	ScheduledBy string    `json:"scheduledBy"`
+	Editable    bool      `json:"editable"`
 	CanManage   bool      `json:"canManage"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -32,7 +35,7 @@ func (s *Server) ruleToJSON(r store.RecordingRule, claims auth.Claims, names map
 	}
 	return ruleJSON{ID: r.ID, Title: r.Title, SeriesID: r.SeriesID, ChannelID: r.ChannelID, ChannelName: name,
 		NewOnly: r.NewOnly, KeepLatest: r.KeepLatest, ScheduledBy: names[r.UserID],
-		CanManage: claims.Role == "admin" || claims.UserID == r.UserID, CreatedAt: r.CreatedAt.UTC()}
+		Editable: true, CanManage: claims.Role == "admin" || claims.UserID == r.UserID, CreatedAt: r.CreatedAt.UTC()}
 }
 
 // handleListRules serves GET /api/v1/recording-rules.
@@ -142,4 +145,88 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 		s.deps.DVR.CancelRule(id)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePatchRule serves PATCH /api/v1/recording-rules/{id}.
+func (s *Server) handlePatchRule(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.ClaimsFrom(r.Context())
+	id, err := parsePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid rule id")
+		return
+	}
+	rule, err := s.deps.Store.RuleByID(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "rule not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	if claims.Role != "admin" && claims.UserID != rule.UserID {
+		writeError(w, http.StatusForbidden, "only the person who set it up (or an admin) can edit this rule")
+		return
+	}
+	defer func() { _ = r.Body.Close() }()
+	dec := json.NewDecoder(r.Body)
+	var fields map[string]json.RawMessage
+	if err := dec.Decode(&fields); err != nil || fields == nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	for key, value := range fields {
+		var dst any
+		switch key {
+		case "newOnly":
+			dst = &rule.NewOnly
+		case "channelId":
+			dst = &rule.ChannelID
+		case "keepLatest":
+			dst = &rule.KeepLatest
+		default:
+			writeError(w, http.StatusBadRequest, "unknown rule setting")
+			return
+		}
+		if string(value) == "null" || json.Unmarshal(value, dst) != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+	if rule.KeepLatest < 0 || rule.ChannelID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid rule settings")
+		return
+	}
+	if _, changed := fields["channelId"]; changed && rule.ChannelID != 0 {
+		ch, err := s.deps.Store.ChannelByID(rule.ChannelID)
+		if err != nil || (!ch.Enabled && claims.Role != "admin") {
+			writeError(w, http.StatusBadRequest, "channel not found")
+			return
+		}
+		u, err := s.deps.Store.UserByID(claims.UserID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not found")
+			return
+		}
+		if !policyFor(u).ChannelAllowed(ch.ID) {
+			writeParentalBlock(w, "Blocked by parental controls (this channel isn't allowed)")
+			return
+		}
+	}
+	if err := s.deps.Store.UpdateRule(rule); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update rule")
+		return
+	}
+	if s.deps.DVR != nil {
+		if err := s.deps.DVR.ReconcileRule(id); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reconcile rule")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.ruleToJSON(rule, claims, s.userNames()))
 }

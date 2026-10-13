@@ -5,6 +5,16 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Edit series recording rules from the Shows screen on web, Apple, Android,
+  Android TV and Roku: choose new or all episodes, channel, and how many to keep.
+  Upcoming recordings are reconciled immediately; in-progress and completed
+  recordings stay untouched. Lowering the keep limit takes effect as new episodes
+  complete, without deleting anything when saving. Older servers hide Edit.
+
 ## [0.24.0] — 2026-10-12
 
 ### Fixed

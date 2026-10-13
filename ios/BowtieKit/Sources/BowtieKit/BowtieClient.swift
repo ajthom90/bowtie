@@ -553,6 +553,20 @@ public actor BowtieClient {
         )
     }
 
+    /// Updates a show and reconciles its upcoming recordings.
+    public func updateRecordingRule(id: Int64, newOnly: Bool, channelId: Int64, keepLatest: Int) async throws -> RecordingRule {
+        struct Body: Encodable {
+            let newOnly: Bool
+            let channelId: Int64
+            let keepLatest: Int
+        }
+        return try await send(
+            path: "/api/v1/recording-rules/\(id)", method: "PATCH",
+            body: Body(newOnly: newOnly, channelId: channelId, keepLatest: keepLatest),
+            authorize: true, retryOn401: true
+        )
+    }
+
     /// Stops recording a show: cancels its upcoming recordings; recorded ones stay.
     public func deleteRecordingRule(id: Int64) async throws {
         _ = try await sendRaw(

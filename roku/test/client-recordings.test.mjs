@@ -227,3 +227,18 @@ test('recording rules: 200 list, 201 {rule, scheduled}, 204 delete, 403 surfaces
     assert.equal(out.forbidden.error.message, 'only the person who set it up (or an admin) can remove this rule');
     assert.equal(out.gone.error.code, 404);
 });
+
+
+test('updateRecordingRule sends false and zero settings and parses the updated rule', () => {
+    const out = runBrs(LIB, `
+        ${build('req', 'updateRecordingRule', '{ id: 7, newOnly: false, channelId: 0, keepLatest: 0 }')}
+        out.resp = bowtie_client_parseResponse("updateRecordingRule", 200, ${lit(JSON.stringify({id: 7, editable: true}))})
+        out.error = bowtie_client_parseResponse("updateRecordingRule", 403, ${lit(JSON.stringify({error: 'forbidden'}))})
+    `);
+    assert.equal(out.req.method, 'PATCH');
+    assert.equal(out.req.url, `${API}/recording-rules/7`);
+    assert.equal(out.req.headers.Authorization, 'Bearer tok');
+    assert.deepEqual(out.req.body, {newOnly: false, channelId: 0, keepLatest: 0});
+    assert.equal(out.resp.data.editable, true);
+    assert.equal(out.error.ok, false);
+});

@@ -18,6 +18,10 @@ const ruleHorizon = 14 * 24 * time.Hour
 func (s *Service) ApplyRules() int {
 	s.rulesMu.Lock() // the hourly Tick and a new rule may both apply
 	defer s.rulesMu.Unlock()
+	return s.applyRules()
+}
+
+func (s *Service) applyRules() int {
 	now := s.deps.Clock()
 	rules, err := s.deps.Store.ListRules()
 	if err != nil || len(rules) == 0 {
@@ -70,6 +74,57 @@ func (s *Service) ApplyRules() int {
 		}
 	}
 	return n
+}
+
+// ReconcileRule removes only future, unstarted recordings that no longer match.
+// KeepLatest is deliberately applied only by pruneRule when an episode completes.
+func (s *Service) ReconcileRule(id int64) error {
+	// Tick takes these locks in this order; holding tickMu prevents capture startup.
+	s.tickMu.Lock()
+	defer s.tickMu.Unlock()
+	s.rulesMu.Lock()
+	defer s.rulesMu.Unlock()
+	rule, err := s.deps.Store.RuleByID(id)
+	if err != nil {
+		return err
+	}
+	now := s.deps.Clock()
+	rows, err := s.deps.Store.ListRecordings(store.RecScheduled)
+	if err != nil {
+		return err
+	}
+	to := now.Add(ruleHorizon)
+	for _, r := range rows {
+		if r.RuleID == id && !r.Start.Before(to) {
+			to = r.Start.Add(time.Second)
+		}
+	}
+	hits, err := s.deps.Store.RuleMatches(rule, now, to)
+	if err != nil {
+		return err
+	}
+	type slot struct{ ch, start int64 }
+	matches := map[slot]bool{}
+	for _, h := range hits {
+		matches[slot{h.ChannelID, h.Start.Unix()}] = true
+	}
+	for _, r := range rows {
+		if r.RuleID != id || !r.Start.After(now) || matches[slot{r.ChannelID, r.Start.Unix()}] {
+			continue
+		}
+		s.mu.Lock()
+		active := s.captures[r.ID] != nil
+		s.mu.Unlock()
+		if active {
+			continue
+		}
+		// Remove the schedule without a skipped marker, so later edits can restore it.
+		if err := s.deps.Store.DeleteRuleSchedule(r.ID, id, s.deps.Clock()); err != nil {
+			return err
+		}
+	}
+	s.applyRules()
+	return nil
 }
 
 // pruneRule deletes a rule's oldest ready recordings beyond its KeepLatest

@@ -308,6 +308,7 @@ data class RecordingRule(
     val scheduledBy: String = "",
     /** The caller may delete it (who made it, or an admin). */
     val canManage: Boolean = false,
+    val editable: Boolean = false,
     @Serializable(with = InstantIso8601Serializer::class)
     val createdAt: Instant? = null,
 )
@@ -338,4 +339,11 @@ data class RecordingPlayback(
     val playlistUrl: String,
     val positionSec: Int,
     val durationSec: Int,
+)
+
+@Serializable
+data class UpdateRuleRequest(
+    val newOnly: Boolean,
+    val channelId: Long,
+    val keepLatest: Int,
 )

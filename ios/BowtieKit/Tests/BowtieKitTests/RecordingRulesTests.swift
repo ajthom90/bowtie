@@ -54,6 +54,49 @@ final class RecordingRulesTests: XCTestCase {
         return rules
     }
 
+    func testEditRuleRefreshesRulesAndUpcoming() async throws {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "PATCH" {
+                return (200, Data(Self.ruleJSON().replacingOccurrences(of: "\"id\":4", with: "\"editable\":true,\"id\":4").utf8), [:])
+            }
+            if request.url?.path == "/api/v1/recording-rules" {
+                return (200, Self.list([Self.ruleJSON()]), [:])
+            }
+            return (200, Data("[]".utf8), [:])
+        }
+        let client = await makeClient()
+        let model = RecordingsModel(client: client, tab: .shows)
+        await model.load()
+        let rule = try XCTUnwrap(rules(model).first)
+        XCTAssertNil(rule.editable)
+        let updated = try await client.updateRecordingRule(id: rule.id, newOnly: false, channelId: 0, keepLatest: 0)
+        XCTAssertEqual(updated.editable, true)
+        let success = await model.updateRule(rule, newOnly: false, channelId: 0, keepLatest: 0)
+        XCTAssertTrue(success)
+        let request = try XCTUnwrap(StubURLProtocol.recorded.first { $0.httpMethod == "PATCH" })
+        XCTAssertEqual(request.url?.path, "/api/v1/recording-rules/4")
+        let body = try jsonBody(of: request)
+        XCTAssertEqual(body["newOnly"] as? Bool, false)
+        XCTAssertEqual(body["channelId"] as? Int, 0)
+        XCTAssertEqual(body["keepLatest"] as? Int, 0)
+        XCTAssertTrue(StubURLProtocol.recorded.contains { $0.url?.query == "state=upcoming" })
+        XCTAssertEqual(StubURLProtocol.recorded.filter { $0.httpMethod == "GET" && $0.url?.path == "/api/v1/recording-rules" }.count, 2)
+    }
+
+    func testEditRuleErrorKeepsRules() async throws {
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "PATCH" { return (403, Data(#"{"error":"Cannot edit this rule"}"#.utf8), [:]) }
+            return (200, Self.list([Self.ruleJSON()]), [:])
+        }
+        let model = RecordingsModel(client: await makeClient(), tab: .shows)
+        await model.load()
+        let rule = try XCTUnwrap(rules(model).first)
+        let success = await model.updateRule(rule, newOnly: false, channelId: 0, keepLatest: 0)
+        XCTAssertFalse(success)
+        XCTAssertEqual(rules(model), [rule])
+        XCTAssertNotNil(model.actionError)
+    }
+
     // MARK: - Client
 
     func testListRules() async throws {
