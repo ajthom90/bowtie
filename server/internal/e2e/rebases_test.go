@@ -120,18 +120,86 @@ func clipFFmpegLog(start, end time.Time) (ffLog, error) {
 	return log, nil
 }
 
-// ffmpegArgvDebug reports whether argv's -loglevel value is debug or trace
-// (including level+debug, the wrapper's FF51_LOGLEVEL).
+// ffmpegArgvDebug reports whether argv's -loglevel enables FFmpeg debug
+// output. Debug is 48 and trace is 56. Numeric levels count, including the
+// flag prefixes FFmpeg's -loglevel accepts (repeat, level, time, datetime,
+// each optional + or -). The first -loglevel is the one that applies.
 func ffmpegArgvDebug(argv string) bool {
 	fields := strings.Fields(argv)
 	for i, f := range fields {
 		if f != "-loglevel" || i+1 >= len(fields) {
 			continue
 		}
-		level := fields[i+1]
-		return strings.Contains(level, "debug") || strings.Contains(level, "trace")
+		return loglevelDebug(fields[i+1])
 	}
 	return false
+}
+
+// loglevelDebug parses one -loglevel argument the way FFmpeg's opt_loglevel
+// does: strip flag names, then a level name or an integer.
+func loglevelDebug(s string) bool {
+	for {
+		rest, ok := cutLogFlag(s)
+		if !ok {
+			break
+		}
+		s = strings.TrimPrefix(rest, "+")
+		if s == "" {
+			return false
+		}
+	}
+	switch s {
+	case "debug", "trace":
+		return true
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && n >= 48
+}
+
+func cutLogFlag(s string) (string, bool) {
+	// datetime before time, so a datetime flag is not read as time.
+	for _, flag := range []string{"repeat", "level", "datetime", "time"} {
+		for _, p := range []string{flag, "+" + flag, "-" + flag} {
+			if rest, ok := strings.CutPrefix(s, p); ok {
+				return rest, true
+			}
+		}
+	}
+	return s, false
+}
+
+func TestFFmpegArgvDebug(t *testing.T) {
+	cases := []struct {
+		argv string
+		want bool
+	}{
+		{"-loglevel debug", true},
+		{"-loglevel trace", true},
+		{"-loglevel level+debug", true},
+		{"-loglevel repeat+48", true},
+		{"-loglevel 48", true},
+		{"-loglevel 56", true},
+		{"-loglevel 47", false},
+		{"-loglevel warning", false},
+		{"-loglevel repeat+level+trace", true},
+		{"-loglevel level+48", true},
+		{"-loglevel +48", true},
+		{"-loglevel verbose", false},
+		{"-loglevel 24", false},
+		{"-i pipe:0", false},
+		{"-loglevel repeat", false},
+		{"-loglevel quiet", false},
+		{"-loglevel -8", false},
+		{"-loglevel datetime+debug", true},
+		{"-loglevel time+56", true},
+		{"-loglevel repeat+47", false},
+		{"ffmpeg -hide_banner -loglevel level+debug -i pipe:0", true},
+	}
+	for _, tc := range cases {
+		if got := ffmpegArgvDebug(tc.argv); got != tc.want {
+			t.Errorf("%q = %v, want %v", tc.argv, got, tc.want)
+		}
+	}
 }
 
 func TestFFLogSince(t *testing.T) {
