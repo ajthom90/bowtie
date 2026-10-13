@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-10-13
+
 ### Added
 
 - **Xbox: favorites in place, slow starts and reception notes.** Favorites
@@ -36,6 +38,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   opens in a window, and only the player goes full screen. With the
   Microsoft Store identity set, the Xbox workflow also builds a Store
   upload targeting Xbox for the same Store product as the Windows app.
+
+### Changed
+
+- **Ready for the App Store and Microsoft Store.** The Apple apps carry a
+  privacy manifest (no tracking, no data collected) and explain why they
+  ask for local network access. The Windows app now targets desktop PCs
+  only. Store listing text and screenshots are in `docs/store/`.
+
+### Fixed
+
+- **Apple TV: the Channels buttons show their full names.** On tvOS 27 the
+  Search, Recordings and Settings buttons were cut off ("S…ch"); they now
+  sit in a header row beside the Channels title.
+- **No empty band around Continue watching.** On iPhone, iPad and Mac the
+  shelf above the Recordings list no longer leaves tall blank space around
+  its cards.
 
 ## [0.25.1] — 2026-10-13
 

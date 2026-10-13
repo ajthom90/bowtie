@@ -416,14 +416,60 @@ public class PlayerViewModelTests
     private static readonly TimeSpan Beat = TimeSpan.FromSeconds(15);
 
     /// <summary>Debounce completes at once; heartbeat delays wait for <see cref="Tick"/>.</summary>
+    /// <summary>
+    /// Heartbeat delays finish one per <see cref="Tick"/>. A cancelled wait
+    /// leaves the queue inside Cancel(), so a tick after a zap always reaches
+    /// the new channel's loop (SemaphoreSlim drops a cancelled waiter later,
+    /// and could hand it the tick).
+    /// </summary>
     private sealed class Clock
     {
-        private readonly SemaphoreSlim _ticks = new(0);
+        private readonly object _gate = new();
+        private readonly List<TaskCompletionSource> _waiters = new();
+        private int _pending;
 
-        public Task Delay(TimeSpan ts, CancellationToken ct) =>
-            ts == Beat ? _ticks.WaitAsync(ct) : Task.CompletedTask;
+        public Task Delay(TimeSpan ts, CancellationToken ct)
+        {
+            if (ts != Beat) return Task.CompletedTask;
+            if (ct.IsCancellationRequested) return Task.FromCanceled(ct);
+            var waiter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_gate)
+            {
+                if (_pending > 0)
+                {
+                    _pending--;
+                    return Task.CompletedTask;
+                }
+                _waiters.Add(waiter);
+            }
+            ct.Register(() =>
+            {
+                lock (_gate)
+                {
+                    if (!_waiters.Remove(waiter)) return;
+                }
+                waiter.TrySetCanceled(ct);
+            });
+            return waiter.Task;
+        }
 
-        public void Tick() => _ticks.Release();
+        public void Tick()
+        {
+            TaskCompletionSource? next = null;
+            lock (_gate)
+            {
+                if (_waiters.Count > 0)
+                {
+                    next = _waiters[0];
+                    _waiters.RemoveAt(0);
+                }
+                else
+                {
+                    _pending++;
+                }
+            }
+            next?.TrySetResult();
+        }
     }
 
     private static (PlayerViewModel Vm, FakeServer Server, Clock Clock) Make(string maxQuality = "")

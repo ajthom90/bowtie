@@ -7,6 +7,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Bowtie connects to your Bowtie server, which is often a computer on your home network.</string>
 	<key>NSSupportsGroupActivities</key>
 	<true/>
 </dict>

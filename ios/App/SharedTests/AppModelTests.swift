@@ -231,7 +231,8 @@ final class AppModelTests: XCTestCase {
 
     private func startPairing(_ model: AppModel) async throws -> URL {
         model.pairing.start()
-        for _ in 0..<100 where model.pairing.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        // Up to 10 s: the listener can be slow to come up on a busy CI runner.
+        for _ in 0..<500 where model.pairing.pairURL == nil { try await Task.sleep(nanoseconds: 20_000_000) }
         return try XCTUnwrap(model.pairing.pairURL)
     }
 

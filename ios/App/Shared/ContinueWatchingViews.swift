@@ -58,6 +58,9 @@ struct ContinueWatchingShelf: View {
             #if os(tvOS)
             .scrollClipDisabled()
             #endif
+            // A horizontal ScrollView takes all the height it's offered; above
+            // the Recordings list that left a tall empty band around the cards.
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
