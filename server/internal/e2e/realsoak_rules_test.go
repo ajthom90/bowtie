@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -373,7 +375,6 @@ func TestSoakFFmpegLog(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		huge    bool
 		missing bool
 		wantErr bool
 		rebases int
@@ -381,7 +382,6 @@ func TestSoakFFmpegLog(t *testing.T) {
 		{name: "directory missing", missing: true, wantErr: true},
 		{name: "empty directory", wantErr: true},
 		{name: "stale argv only", body: stale, wantErr: true},
-		{name: "overlong line", huge: true, wantErr: true},
 		{name: "argv and a re-base inside, one after the window", body: argv + inside + after, rebases: 1},
 	}
 	for _, tc := range tests {
@@ -391,11 +391,7 @@ func TestSoakFFmpegLog(t *testing.T) {
 			} else {
 				dir := t.TempDir()
 				t.Setenv("FF51_LOGDIR", dir)
-				body := tc.body
-				if tc.huge {
-					body = strings.Repeat("x", logScanMax+8)
-				}
-				if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(body), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(tc.body), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -421,6 +417,30 @@ func TestSoakFFmpegLog(t *testing.T) {
 
 func strconvMS(t time.Time) string {
 	return fmt.Sprintf("%d", t.UnixMilli())
+}
+
+// TestSoakFFmpegLogScannerError puts a valid argv line ahead of a token the
+// scanner cannot read, with a re-base after it. Dropping sc.Err() would
+// return that argv and look like evidence while losing the re-base.
+func TestSoakFFmpegLogScannerError(t *testing.T) {
+	start := time.UnixMilli(1_760_000_000_000)
+	end := start.Add(time.Hour)
+	dir := t.TempDir()
+	t.Setenv("FF51_LOGDIR", dir)
+	body := strconvMS(start.Add(time.Second)) + " argv: -i pipe:0 -dts_delta_threshold 2.6\n" +
+		strings.Repeat("x", logScanMax+8) +
+		strconvMS(start.Add(2*time.Second)) + " [debug] timestamp discontinuity (stream id=0): 270000, new offset= -270000\n"
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log, err := ffLogSince(start, end)
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("ffLogSince err = %v, log %+v", err, log)
+	}
+	rebases, err := rebasesSince(start, end)
+	if !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("rebasesSince err = %v, rebases %+v", err, rebases)
+	}
 }
 
 func TestSoakServerLogEvidence(t *testing.T) {
