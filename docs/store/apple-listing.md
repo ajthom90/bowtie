@@ -91,7 +91,3 @@ product page header and search results art.
 
 They avoid playing video: App Review can object to recognizable broadcast
 shows in screenshots.
-
-Known issue: on tvOS 27 the Channels toolbar truncates its button titles
-("S…ch", "Re…ings"), which shows in `tv/`. Fix before submitting the tvOS
-platform.

@@ -34,102 +34,73 @@ struct ChannelRailView: View {
 
     var body: some View {
         NavigationStack {
-            content
-                .navigationTitle("Channels")
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showSearch = true
-                        } label: {
-                            Label("Search", systemImage: "magnifyingglass")
-                                .labelStyle(.titleAndIcon)
-                                .foregroundStyle(Theme.amber)
-                        }
-                        .accessibilityLabel("Search")
-                        .accessibilityHint("Search the guide")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showRecordings = true
-                        } label: {
-                            Label("Recordings", systemImage: "recordingtape")
-                                .labelStyle(.titleAndIcon)
-                                .foregroundStyle(Theme.amber)
-                        }
-                        .accessibilityLabel("Recordings")
-                        .accessibilityHint("Open your recordings")
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Label("Settings", systemImage: "gearshape")
-                                .labelStyle(.titleAndIcon)
-                                .foregroundStyle(Theme.amber)
-                        }
-                        .accessibilityLabel("Settings")
-                        .accessibilityHint("Open server and account settings")
-                    }
-                }
-                .navigationDestination(item: $playingChannel) { channel in
-                    if let serverURL = appModel.serverURL {
-                        TVPlayerView(
-                            channel: channel,
-                            serverURL: serverURL,
-                            maxQuality: appModel.user?.maxQuality ?? "",
-                            nowTitle: nowTitle(for: channel),
-                            programEnd: { programEnd(for: $0) },
-                            playerModel: playerModel
-                        )
-                    } else {
-                        VStack(spacing: 20) {
-                            Text("Not connected to a server")
-                                .font(Theme.body(22))
-                                .foregroundStyle(Theme.alert)
-                            Button("Back") { playingChannel = nil }
-                                .foregroundStyle(Theme.amber)
-                        }
-                        .bowtieScreenBackground()
-                    }
-                }
-                .navigationDestination(isPresented: $showRecordings) {
-                    if let client = appModel.client {
-                        TVRecordingsView(client: client, playerModel: playerModel)
-                    }
-                }
-                .navigationDestination(isPresented: $showSearch) {
-                    searchDestination
-                }
-                .navigationDestination(item: $activePlayback) { item in
-                    if let recordingsModel {
-                        TVRecordingPlayerView(playback: item.playback, model: recordingsModel)
-                    }
-                }
-                .alert(
-                    "Something Went Wrong",
-                    isPresented: Binding(
-                        get: { recordingsModel?.actionError != nil },
-                        set: { if !$0 { recordingsModel?.actionError = nil } }
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                content
+            }
+            .bowtieScreenBackground()
+            // tvOS 27 truncates titled toolbar buttons ("S…ch", "Re…ings"),
+            // so the title and buttons are a header row on this screen.
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(item: $playingChannel) { channel in
+                if let serverURL = appModel.serverURL {
+                    TVPlayerView(
+                        channel: channel,
+                        serverURL: serverURL,
+                        maxQuality: appModel.user?.maxQuality ?? "",
+                        nowTitle: nowTitle(for: channel),
+                        programEnd: { programEnd(for: $0) },
+                        playerModel: playerModel
                     )
-                ) {
-                    Button("OK", role: .cancel) {}
-                } message: {
-                    Text(recordingsModel?.actionError ?? "")
-                }
-                .recordFlowAlerts(recordFlow)
-                .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
-                .sheet(isPresented: $showSettings) {
-                    NavigationStack {
-                        SettingsView(appModel: appModel)
-                            .toolbar {
-                                ToolbarItem(placement: .cancellationAction) {
-                                    Button("Done") { showSettings = false }
-                                        .foregroundStyle(Theme.amber)
-                                        .accessibilityLabel("Done")
-                                }
-                            }
+                } else {
+                    VStack(spacing: 20) {
+                        Text("Not connected to a server")
+                            .font(Theme.body(22))
+                            .foregroundStyle(Theme.alert)
+                        Button("Back") { playingChannel = nil }
+                            .foregroundStyle(Theme.amber)
                     }
+                    .bowtieScreenBackground()
                 }
+            }
+            .navigationDestination(isPresented: $showRecordings) {
+                if let client = appModel.client {
+                    TVRecordingsView(client: client, playerModel: playerModel)
+                }
+            }
+            .navigationDestination(isPresented: $showSearch) {
+                searchDestination
+            }
+            .navigationDestination(item: $activePlayback) { item in
+                if let recordingsModel {
+                    TVRecordingPlayerView(playback: item.playback, model: recordingsModel)
+                }
+            }
+            .alert(
+                "Something Went Wrong",
+                isPresented: Binding(
+                    get: { recordingsModel?.actionError != nil },
+                    set: { if !$0 { recordingsModel?.actionError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(recordingsModel?.actionError ?? "")
+            }
+            .recordFlowAlerts(recordFlow)
+            .presentsGroupPlayback(playerModel, playingChannel: $playingChannel)
+            .sheet(isPresented: $showSettings) {
+                NavigationStack {
+                    SettingsView(appModel: appModel)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showSettings = false }
+                                    .foregroundStyle(Theme.amber)
+                                    .accessibilityLabel("Done")
+                            }
+                        }
+                }
+            }
         }
         .preferredColorScheme(.dark)
         .task {
@@ -213,6 +184,44 @@ struct ChannelRailView: View {
     }
 
     // MARK: - Content
+
+    /// "Channels" with Search, Recordings and Settings; its own focus
+    /// section, so Up from the top of the rail reaches the buttons.
+    private var header: some View {
+        HStack(spacing: 24) {
+            Text("Channels")
+                .font(Theme.title(48))
+                .foregroundStyle(Theme.text)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            headerButton("Search", systemImage: "magnifyingglass", hint: "Search the guide") {
+                showSearch = true
+            }
+            headerButton("Recordings", systemImage: "recordingtape", hint: "Open your recordings") {
+                showRecordings = true
+            }
+            headerButton("Settings", systemImage: "gearshape", hint: "Open server and account settings") {
+                showSettings = true
+            }
+        }
+        .padding(.horizontal, 80)
+        .padding(.bottom, 16)
+        .focusSection()
+    }
+
+    private func headerButton(
+        _ title: String, systemImage: String, hint: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+                .font(Theme.label(26))
+                .foregroundStyle(Theme.amber)
+                .fixedSize()
+        }
+        .accessibilityLabel(title)
+        .accessibilityHint(hint)
+    }
 
     @ViewBuilder
     private var content: some View {
