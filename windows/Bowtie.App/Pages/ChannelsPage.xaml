@@ -16,7 +16,7 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                        Padding="12,8" Click="OnChannelClick"
+                        Padding="12,8" Click="OnChannelClick" Tag="Watch"
                         AutomationProperties.Name="{x:Bind AccessibleName}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
@@ -52,7 +52,7 @@
                 </Button>
                 <Button Grid.Column="1" VerticalAlignment="Stretch" Width="48"
                         Visibility="{x:Bind StarVisibility}"
-                        Click="OnStarClick"
+                        Click="OnStarClick" Tag="Star"
                         ToolTipService.ToolTip="{x:Bind StarLabel}"
                         AutomationProperties.Name="{x:Bind StarLabel}">
                     <FontIcon Glyph="{x:Bind StarGlyph}" Foreground="{x:Bind StarBrush}" />

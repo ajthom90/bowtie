@@ -184,6 +184,7 @@ public sealed record Recording
     public const string Failed = "failed";
 
     public long Id { get; init; }
+    public long? RuleId { get; init; }
     public string Title { get; init; } = "";
     public string Subtitle { get; init; } = "";
     public string Description { get; init; } = "";
@@ -235,6 +236,31 @@ public sealed record RecordingPlayback
     public int PositionSec { get; init; }
     public int DurationSec { get; init; }
 }
+
+/// <summary>A series rule; older servers omit Editable.</summary>
+public sealed record RecordingRule
+{
+    public long Id { get; init; }
+    public string Title { get; init; } = "";
+    public string SeriesId { get; init; } = "";
+    public long ChannelId { get; init; }
+    public string ChannelName { get; init; } = "";
+    public bool NewOnly { get; init; }
+    public int KeepLatest { get; init; }
+    public string ScheduledBy { get; init; } = "";
+    public bool CanManage { get; init; }
+    public bool? Editable { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+
+    [JsonIgnore]
+    public bool CanEdit => Editable == true && CanManage;
+}
+
+/// <summary>Omitted fields stay unchanged; zero means any channel / keep all.</summary>
+public sealed record RecordingRulePatch(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NewOnly = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ChannelId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? KeepLatest = null);
 
 // ── Wire envelopes ───────────────────────────────────────────────────────────
 

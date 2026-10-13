@@ -12,16 +12,21 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
   and ARM PCs (Surface Pro X and Copilot+ PCs). Sign in to your server once
   (it's remembered in the Windows Credential Locker), then watch live TV
-  with favorites (shown at the top and in their normal place) and a Recent row, pause and rewind live TV (← and →
-  skip 30 seconds), jump back with **Go Live**, pick quality, audio and
-  captions, change channels with Page Up/Page Down, and go full screen with
-  F11 or a double-click. **Recordings** play with resume and can be kept,
-  stopped or deleted, with **Skip ad** over detected commercial breaks (and
-  **Skip ads automatically** in the account menu). A **sleep timer**, the
-  **All · Sports · Movies · News · Kids · New** guide filters and **Continue
-  watching** work like the other apps, and so do weak-signal notes, busy-tuner channel lists, plain-words errors, the slow-start note and editing a series recording. Each release attaches `bowtie-windows.msixbundle` (and
-  the `.cer` to trust before installing) plus zips that run without
-  installing; see `windows/README.md`.
+  with favorites (shown at the top and in their normal place) and a Recent
+  row, pause and rewind live TV (← and → skip 30 seconds), jump back with
+  **Go Live**, pick quality, audio and captions, change channels with Page
+  Up/Page Down, and go full screen with F11 or a double-click. **Recordings**
+  play with resume and can be kept, stopped or deleted, with **Skip ad**
+  over detected commercial breaks (and **Skip ads automatically** in the
+  account menu). A **sleep timer**, the **All · Sports · Movies · News · Kids
+  · New** guide filters and **Continue watching** work like the other apps,
+  and so do weak-signal notes, busy-tuner channel lists and plain-words
+  errors. Slow starts show a note after five seconds and wait up to 60
+  seconds for the server. **Recordings → Shows → Edit** changes an existing
+  series recording's episodes, channel and keep limit on supported servers.
+  Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
+  before installing) plus zips that run without installing; see
+  `windows/README.md`.
 - **Edit a series recording without starting over.** In Recordings → Shows,
   Edit changes new or all episodes, the channel, and how many to keep, on
   web, Apple, Android, Android TV and Roku. Upcoming recordings update right

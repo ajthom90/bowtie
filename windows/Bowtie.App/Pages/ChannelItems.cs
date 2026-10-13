@@ -15,9 +15,11 @@ public sealed class ChannelItem
     /// <summary>Opacity of a now/next line outside the guide filter.</summary>
     private const double Dimmed = 0.4;
 
-    public ChannelItem(ChannelRow row, Uri? logo, bool favoritesSupported, DateTimeOffset now,
+    public ChannelItem(GuideRow entry, Uri? logo, bool favoritesSupported, DateTimeOffset now,
         GuideFilters.RowHighlight? highlight = null)
     {
+        var row = entry.Row;
+        Key = entry.Key;
         Channel = row.Channel;
         Number = row.Channel.GuideNumber;
         Name = row.Channel.Name;
@@ -58,6 +60,7 @@ public sealed class ChannelItem
             : new SolidColorBrush(Microsoft.UI.Colors.Gray);
 
     public Channel Channel { get; }
+    public string Key { get; }
     public string Number { get; }
     public string Name { get; }
     public string NowTitle { get; }

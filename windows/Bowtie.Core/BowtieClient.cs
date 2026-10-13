@@ -21,17 +21,23 @@ public sealed class BowtieClient
 {
     private const string JsonMedia = "application/json";
 
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(45);
+    // Connect 5 + device answer 12 + probe 3 + playlist 15 + fallback 15 ≈ 50 seconds.
+    public static readonly TimeSpan SessionStartTimeout = TimeSpan.FromSeconds(60);
+
     private readonly ITokenStore _store;
     private readonly HttpClient _http;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private volatile string? _accessToken;
     private volatile User? _currentUser;
 
-    public BowtieClient(Uri server, ITokenStore store, HttpClient? http = null)
+    public BowtieClient(Uri server, ITokenStore store, HttpClient? http = null, TimeProvider? timeProvider = null)
     {
         Server = server;
         _store = store;
         _http = http ?? CreateDefaultHttpClient();
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>Server base URL (normalized).</summary>
@@ -50,8 +56,8 @@ public sealed class BowtieClient
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         })
         {
-            // Tuning a channel can take several seconds; leave room.
-            Timeout = TimeSpan.FromSeconds(45),
+            // Each request gets its own deadline; session starts need longer.
+            Timeout = Timeout.InfiniteTimeSpan,
         };
 
     // ── Auth ────────────────────────────────────────────────────────────────
@@ -147,7 +153,7 @@ public sealed class BowtieClient
     public async Task<CreatedSession> CreateSessionAsync(long channelId, ClientCaps caps, CancellationToken ct = default) =>
         BowtieJson.Deserialize<CreatedSession>(
             await AuthedAsync(HttpMethod.Post, "/api/v1/sessions",
-                BowtieJson.Serialize(new CreateSessionRequest(channelId, caps)), ct).ConfigureAwait(false));
+                BowtieJson.Serialize(new CreateSessionRequest(channelId, caps)), ct, SessionStartTimeout).ConfigureAwait(false));
 
     /// <summary>Best-effort DELETE; never throws.</summary>
     public async Task DeleteSessionAsync(string viewerId, CancellationToken ct = default)
@@ -186,7 +192,7 @@ public sealed class BowtieClient
             {
                 Content = new ByteArrayContent(Array.Empty<byte>()),
             };
-            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            using var response = await SendHttpAsync(request, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return HeartbeatResult.NoAnswer;
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             return new HeartbeatResult(true, TryDeserialize<HeartbeatBody>(body)?.Signal);
@@ -199,6 +205,15 @@ public sealed class BowtieClient
     }
 
     // ── DVR recordings ──────────────────────────────────────────────────────
+
+    public async Task<IReadOnlyList<RecordingRule>> RecordingRulesAsync(CancellationToken ct = default) =>
+        BowtieJson.Deserialize<List<RecordingRule>>(
+            await AuthedAsync(HttpMethod.Get, "/api/v1/recording-rules", null, ct).ConfigureAwait(false));
+
+    public async Task<RecordingRule> UpdateRecordingRuleAsync(long id, RecordingRulePatch patch, CancellationToken ct = default) =>
+        BowtieJson.Deserialize<RecordingRule>(
+            await AuthedAsync(HttpMethod.Patch, $"/api/v1/recording-rules/{Id(id)}",
+                BowtieJson.Serialize(patch), ct).ConfigureAwait(false));
 
     /// <summary>Everyone's recordings; <paramref name="tab"/> filters (null = all).</summary>
     public async Task<IReadOnlyList<Recording>> RecordingsAsync(RecordingTab? tab = null, CancellationToken ct = default)
@@ -300,7 +315,7 @@ public sealed class BowtieClient
         HttpResponseMessage response;
         try
         {
-            response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            response = await SendHttpAsync(request, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (IsTransport(e, ct))
         {
@@ -320,12 +335,19 @@ public sealed class BowtieClient
 
     // ── HTTP helpers ────────────────────────────────────────────────────────
 
+    private async Task<HttpResponseMessage> SendHttpAsync(HttpRequestMessage request, CancellationToken ct, TimeSpan? timeout = null)
+    {
+        using var deadline = new CancellationTokenSource(timeout ?? RequestTimeout, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        return await _http.SendAsync(request, linked.Token).ConfigureAwait(false);
+    }
+
     private async Task<string> SendUnauthedAsync(HttpMethod method, string path, string? json, CancellationToken ct)
     {
         using var request = JsonRequest(method, path, json);
         try
         {
-            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            using var response = await SendHttpAsync(request, ct).ConfigureAwait(false);
             return await HandleBodyAsync(response, path, ct).ConfigureAwait(false);
         }
         catch (Exception e) when (IsTransport(e, ct))
@@ -335,7 +357,7 @@ public sealed class BowtieClient
     }
 
     /// <summary>Authenticated request. On 401: single-flight refresh, then one retry.</summary>
-    private async Task<string> AuthedAsync(HttpMethod method, string path, string? json, CancellationToken ct)
+    private async Task<string> AuthedAsync(HttpMethod method, string path, string? json, CancellationToken ct, TimeSpan? timeout = null)
     {
         var attachAuth = !IsStreamPath(path);
         try
@@ -344,7 +366,7 @@ public sealed class BowtieClient
             // it before this request's late 401 is handled.
             var tokenUsed = _accessToken;
             using (var firstRequest = Build(tokenUsed))
-            using (var first = await _http.SendAsync(firstRequest, ct).ConfigureAwait(false))
+            using (var first = await SendHttpAsync(firstRequest, ct, timeout).ConfigureAwait(false))
             {
                 if (first.StatusCode != HttpStatusCode.Unauthorized || !attachAuth)
                 {
@@ -355,7 +377,7 @@ public sealed class BowtieClient
             await SingleFlightRefreshAsync(tokenUsed, ct).ConfigureAwait(false);
 
             using var retryRequest = Build(_accessToken);
-            using var retry = await _http.SendAsync(retryRequest, ct).ConfigureAwait(false);
+            using var retry = await SendHttpAsync(retryRequest, ct, timeout).ConfigureAwait(false);
             if (retry.StatusCode == HttpStatusCode.Unauthorized)
             {
                 EndSession();
