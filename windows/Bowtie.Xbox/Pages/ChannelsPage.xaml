@@ -1,0 +1,120 @@
+<Page
+    x:Class="BowtieXbox.Pages.ChannelsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BowtieXbox.Pages">
+    <Page.Resources>
+        <CollectionViewSource x:Key="ChannelGroups" IsSourceGrouped="True" />
+    </Page.Resources>
+    <Grid Margin="{StaticResource SafeMargin}" XYFocusKeyboardNavigation="Enabled">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Live TV" Style="{StaticResource TitleText}" />
+                <TextBlock x:Name="UserLabel" Style="{StaticResource BodyText}" FontSize="20" Foreground="{StaticResource BowtieMuted}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                <Button x:Name="RefreshButton" Content="Refresh" Style="{StaticResource TvButton}" Click="OnRefresh" />
+                <Button x:Name="SignOutButton" Content="Sign out" Style="{StaticResource TvButton}" Click="OnSignOut" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock Grid.Row="1" x:Name="HintLabel" Style="{StaticResource BodyText}" FontSize="18"
+                   Foreground="{StaticResource BowtieMuted}" Margin="0,0,0,8"
+                   Text="A / Enter to watch · Y / F favorite · B / Esc back" />
+
+        <!-- Every tuner is busy: only channels that can start are listed. -->
+        <TextBlock Grid.Row="2" x:Name="TunersLabel" Style="{StaticResource BodyText}" FontSize="22"
+                   Foreground="#FFB74D" Margin="0,0,0,8" Visibility="Collapsed"
+                   AutomationProperties.LiveSetting="Polite" />
+
+        <!-- Clipped to its own area: scrolled rows mustn't draw under the header and hint. -->
+        <Grid Grid.Row="3" x:Name="ListArea" SizeChanged="OnListAreaSizeChanged">
+            <ListView x:Name="ChannelList"
+                      SelectionMode="None"
+                      IsItemClickEnabled="True"
+                      ItemClick="OnChannelClick"
+                      PreviewKeyDown="OnListKeyDown"
+                      XYFocusUp="{x:Bind RefreshButton}"
+                      TabIndex="0">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="16,10" />
+                        <Setter Property="Margin" Value="0,2" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <!-- Section headers ("Favorites", "All channels") are group headers:
+                     their own non-focusable elements, so D-pad skips them. -->
+                <ListView.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderContainerStyle>
+                            <Style TargetType="ListViewHeaderItem">
+                                <Setter Property="IsTabStop" Value="False" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewHeaderItem">
+                                            <!-- Opaque: the header sticks while its rows scroll under it. -->
+                                            <ContentPresenter Content="{TemplateBinding Content}"
+                                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                              Background="{StaticResource BowtieBackground}"
+                                                              Padding="16,16,16,4" />
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </GroupStyle.HeaderContainerStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate x:DataType="local:ChannelGroup">
+                                <TextBlock Text="{x:Bind Header}" FontSize="22" FontWeight="SemiBold"
+                                           Foreground="{StaticResource BowtieMuted}" />
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </ListView.GroupStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="local:ChannelItem">
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="320" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Star}" FontSize="26" Foreground="#FFD54F" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Number}" FontSize="28" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind Name}" FontSize="26" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="No signal" FontSize="18" Foreground="#FF8A80" Visibility="{x:Bind NoSignalVisibility}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="{x:Bind Now}" FontSize="22" TextTrimming="CharacterEllipsis" />
+                                <ProgressBar Value="{x:Bind Progress}" Maximum="100" Height="4" MaxWidth="480"
+                                             HorizontalAlignment="Left" Width="480" Visibility="{x:Bind ProgressVisibility}" />
+                                <TextBlock Text="{x:Bind Next}" FontSize="18" Foreground="{StaticResource BowtieMuted}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <StackPanel x:Name="StatusPanel" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16">
+                <ProgressRing x:Name="Spinner" Width="64" Height="64" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource BodyText}" TextAlignment="Center"
+                           AutomationProperties.LiveSetting="Polite" />
+                <Button x:Name="RetryButton" Content="Try again" Style="{StaticResource TvButton}"
+                        HorizontalAlignment="Center" Click="OnRefresh" Visibility="Collapsed" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Page>

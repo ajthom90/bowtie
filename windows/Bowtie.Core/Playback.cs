@@ -111,8 +111,8 @@ public static class TrackChoices
     /// <summary>Label first, then the language's English name, then "Audio N".</summary>
     public static string TrackLabel(string? language, string? label, int ordinal, string fallback)
     {
-        if (!string.IsNullOrWhiteSpace(label)) return label.Trim();
-        if (!string.IsNullOrWhiteSpace(language)) return LanguageName(language);
+        if (!string.IsNullOrWhiteSpace(label)) return label!.Trim();
+        if (!string.IsNullOrWhiteSpace(language)) return LanguageName(language!);
         return $"{fallback} {ordinal + 1}";
     }
 

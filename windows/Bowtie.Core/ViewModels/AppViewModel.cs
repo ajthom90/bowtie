@@ -162,6 +162,19 @@ public sealed class AppViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// A quick sign-in (<see cref="QuickSignInViewModel"/>) was approved: the
+    /// client already holds the session, so move to Ready as a password sign-in does.
+    /// </summary>
+    public void CompleteQuickSignIn(User user)
+    {
+        if (Client == null) return;
+        AttachClient(Client);
+        StartupError = null;
+        User = user;
+        Phase = AppPhase.Ready;
+    }
+
     /// <summary>Sign out and keep the server.</summary>
     public async Task SignOutAsync()
     {

@@ -22,7 +22,7 @@ public enum GuideFilter { All, Sports, Movies, News, Kids, New }
 public static class GuideFilters
 {
     /// <summary>Chip order.</summary>
-    public static readonly IReadOnlyList<GuideFilter> Chips = Enum.GetValues<GuideFilter>();
+    public static readonly IReadOnlyList<GuideFilter> Chips = Shim.EnumValues<GuideFilter>();
 
     /// <summary>Sport words / phrases matched as whole words ("Sports talk", "College football").</summary>
     private static readonly string[] SportsPhrases =
@@ -111,7 +111,7 @@ public static class GuideFilters
     }
 
     /// <summary>Every bucket <paramref name="program"/> belongs to (may be several, or none).</summary>
-    public static IReadOnlySet<GuideBucket> Buckets(GuideProgram program)
+    public static IReadOnlyCollection<GuideBucket> Buckets(GuideProgram program)
     {
         var output = new HashSet<GuideBucket>();
         foreach (var piece in (program.Category ?? "").Split(',', ';', '|'))

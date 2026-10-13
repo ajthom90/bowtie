@@ -21,6 +21,8 @@ public sealed class BowtieClient
 {
     private const string JsonMedia = "application/json";
 
+    /// <summary>HttpMethod.Patch is missing from .NET Standard 2.0; equal to it on .NET 8.</summary>
+    private static readonly HttpMethod Patch = new("PATCH");
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(45);
     // Connect 5 + device answer 12 + probe 3 + playlist 15 + fallback 15 ≈ 50 seconds.
     public static readonly TimeSpan SessionStartTimeout = TimeSpan.FromSeconds(60);
@@ -50,11 +52,16 @@ public sealed class BowtieClient
     public event EventHandler? SessionEnded;
 
     public static HttpClient CreateDefaultHttpClient() =>
+#if NETSTANDARD2_0
+        // UWP: the platform handler (no SocketsHttpHandler on .NET Standard 2.0).
+        new()
+#else
         new(new SocketsHttpHandler
         {
             ConnectTimeout = TimeSpan.FromSeconds(10),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         })
+#endif
         {
             // Each request gets its own deadline; session starts need longer.
             Timeout = Timeout.InfiniteTimeSpan,
@@ -71,6 +78,50 @@ public sealed class BowtieClient
         ApplyTokens(pair);
         return pair.User;
     }
+
+    // ── Quick sign-in (TV apps) ─────────────────────────────────────────────
+
+    /// <summary>Start a quick sign-in: a code and QR for a signed-in phone to approve.</summary>
+    public async Task<DeviceSignIn> StartDeviceSignInAsync(string deviceName, CancellationToken ct = default) =>
+        BowtieJson.Deserialize<DeviceSignIn>(await SendUnauthedAsync(
+            HttpMethod.Post, "/api/v1/auth/device",
+            BowtieJson.Serialize(new DeviceStartRequest(deviceName)), ct).ConfigureAwait(false));
+
+    /// <summary>
+    /// Poll a quick sign-in. On approval the tokens are applied exactly as
+    /// <see cref="LoginAsync"/> does (refresh token saved, user published).
+    /// </summary>
+    public async Task<DevicePoll> PollDeviceSignInAsync(string deviceCode, CancellationToken ct = default)
+    {
+        const string path = "/api/v1/auth/device/token";
+        using var request = JsonRequest(HttpMethod.Post, path, BowtieJson.Serialize(new DeviceTokenRequest(deviceCode)));
+        try
+        {
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            switch ((int)response.StatusCode)
+            {
+                case 200:
+                    var pair = BowtieJson.Deserialize<TokenPair>(body);
+                    ApplyTokens(pair);
+                    return new DevicePoll.SignedIn(pair.User);
+                case 428:
+                    return new DevicePoll.Pending();
+                case 410:
+                    return new DevicePoll.Expired();
+                default:
+                    throw MapHttpError((int)response.StatusCode, body, path);
+            }
+        }
+        catch (Exception e) when (IsTransport(e, ct))
+        {
+            throw new NetworkException(e);
+        }
+    }
+
+    /// <summary>Absolute URL of the sign-in's QR code PNG (no auth needed); null when the server sent none.</summary>
+    public Uri? DeviceQrUri(DeviceSignIn signIn) =>
+        string.IsNullOrEmpty(signIn.QrUrl) ? null : ServerUrl.Resolve(signIn.QrUrl, Server);
 
     /// <summary>
     /// Rotate the stored refresh token into a live session. Throws
@@ -212,7 +263,7 @@ public sealed class BowtieClient
 
     public async Task<RecordingRule> UpdateRecordingRuleAsync(long id, RecordingRulePatch patch, CancellationToken ct = default) =>
         BowtieJson.Deserialize<RecordingRule>(
-            await AuthedAsync(HttpMethod.Patch, $"/api/v1/recording-rules/{Id(id)}",
+            await AuthedAsync(Patch, $"/api/v1/recording-rules/{Id(id)}",
                 BowtieJson.Serialize(patch), ct).ConfigureAwait(false));
 
     /// <summary>Everyone's recordings; <paramref name="tab"/> filters (null = all).</summary>
@@ -243,7 +294,7 @@ public sealed class BowtieClient
     /// <summary>Keep a recording from automatic deletion, or stop keeping it.</summary>
     public async Task<Recording> SetRecordingProtectedAsync(long id, bool isProtected, CancellationToken ct = default) =>
         BowtieJson.Deserialize<Recording>(
-            await AuthedAsync(HttpMethod.Patch, $"/api/v1/recordings/{Id(id)}",
+            await AuthedAsync(Patch, $"/api/v1/recordings/{Id(id)}",
                 BowtieJson.Serialize(new ProtectRequest(isProtected)), ct).ConfigureAwait(false));
 
     // ── Single-flight refresh ───────────────────────────────────────────────
@@ -337,7 +388,11 @@ public sealed class BowtieClient
 
     private async Task<HttpResponseMessage> SendHttpAsync(HttpRequestMessage request, CancellationToken ct, TimeSpan? timeout = null)
     {
+#if NET8_0_OR_GREATER
         using var deadline = new CancellationTokenSource(timeout ?? RequestTimeout, _timeProvider);
+#else
+        using var deadline = _timeProvider.CreateCancellationTokenSource(timeout ?? RequestTimeout);
+#endif
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         return await _http.SendAsync(request, linked.Token).ConfigureAwait(false);
     }
@@ -408,7 +463,7 @@ public sealed class BowtieClient
         {
             request.Content = new StringContent(json, Encoding.UTF8, JsonMedia);
         }
-        else if (method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch)
+        else if (method == HttpMethod.Post || method == HttpMethod.Put || method == Patch)
         {
             request.Content = new StringContent("", Encoding.UTF8, JsonMedia);
         }

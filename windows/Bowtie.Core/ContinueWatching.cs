@@ -48,7 +48,7 @@ public static class ContinueWatching
 
     /// <summary>0…1 watched, for the card's progress bar.</summary>
     public static double Progress(Recording r) =>
-        r.DurationSec <= 0 ? 0 : Math.Clamp((double)r.PositionSec / r.DurationSec, 0, 1);
+        r.DurationSec <= 0 ? 0 : Shim.Clamp((double)r.PositionSec / r.DurationSec, 0, 1);
 
     /// <summary>Accessible name for a card: "Resume Title: Subtitle, 23 min left".</summary>
     public static string ResumeLabel(Recording r) => $"Resume {Name(r)}, {RemainingText(r)}";

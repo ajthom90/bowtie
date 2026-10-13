@@ -1,0 +1,161 @@
+name: Xbox
+
+# Bowtie for Xbox: the UWP app in windows/Bowtie.Xbox (also runs on Windows
+# PCs). Classic UWP compiled with .NET Native, so it needs Visual Studio's
+# msbuild with the UWP workload; windows-2025 ships VS 2022 with
+# Microsoft.VisualStudio.Workload.Universal and the Windows SDK 10.0.26100.
+# Kept apart from windows.yml so desktop builds and releases aren't slowed
+# by the (long) .NET Native compile.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/Bowtie.Core/**"
+      - "windows/Bowtie.Xbox/**"
+      - "windows/Bowtie.App/Assets/**"
+      - "windows/scripts/package-xbox.ps1"
+      - ".github/workflows/xbox.yml"
+  pull_request:
+    paths:
+      - "windows/Bowtie.Core/**"
+      - "windows/Bowtie.Xbox/**"
+      - "windows/Bowtie.App/Assets/**"
+      - "windows/scripts/package-xbox.ps1"
+      - ".github/workflows/xbox.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  xbox:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # Fast failure: Bowtie.Core's .NET Standard 2.0 build (what UWP consumes).
+      - name: Build Bowtie.Core for .NET Standard 2.0
+        working-directory: windows
+        run: dotnet build Bowtie.Core/Bowtie.Core.csproj -c Release -f netstandard2.0
+
+      # Fast failure for C# / XAML errors before the long .NET Native compile.
+      - name: Compile the app (Debug, no .NET Native)
+        working-directory: windows
+        run: msbuild Bowtie.Xbox/Bowtie.Xbox.csproj /restore /m /v:minimal /nologo /p:Configuration=Debug /p:Platform=x64 /p:AppxPackageSigningEnabled=false
+
+      - name: Version
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          $ref = $env:REF_NAME
+          if ($env:REF_TYPE -eq "tag" -and $ref -match '^v(\d+)\.(\d+)\.(\d+)([-+][0-9A-Za-z.-]+)?$') {
+            $version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+            $label = $ref.Substring(1)
+          } else {
+            $version = "0.0.$env:RUN_NUMBER"
+            $label = "dev.$env:RUN_NUMBER"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "LABEL=$label" >> $env:GITHUB_ENV
+          Write-Host "Version $version, files labelled $label"
+
+      # Release (.NET Native) build, bundled and signed. Signs with the
+      # WINDOWS_PFX_B64 / WINDOWS_PFX_PASSWORD secrets when set, otherwise
+      # with a self-signed CN=Bowtie certificate made for this build. With the
+      # Store identity variables set, also builds the unsigned Xbox Store
+      # upload (see package-xbox.ps1 for its version offset).
+      - name: Build, package and sign
+        shell: pwsh
+        env:
+          WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          WINDOWS_STORE_IDENTITY_NAME: ${{ vars.WINDOWS_STORE_IDENTITY_NAME }}
+          WINDOWS_STORE_PUBLISHER: ${{ vars.WINDOWS_STORE_PUBLISHER }}
+          WINDOWS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.WINDOWS_STORE_PUBLISHER_DISPLAY_NAME }}
+          XBOX_STORE_IDENTITY_NAME: ${{ vars.XBOX_STORE_IDENTITY_NAME }}
+        run: ./windows/scripts/package-xbox.ps1 -Version $env:VERSION -Label $env:LABEL
+
+      - name: Check the package
+        shell: pwsh
+        run: |
+          $dist = "windows/out-xbox/dist"
+          $bundle = Get-ChildItem $dist -Filter "bowtie-xbox-$env:LABEL.*bundle" | Select-Object -First 1
+          if (-not $bundle) { throw "no bundle in $dist" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($bundle.FullName)
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            $names | Write-Host
+            if (-not ($names | Where-Object { $_ -match '_x64\.(msix|appx)$' })) { throw "bundle is missing the x64 package" }
+          } finally { $zip.Dispose() }
+          $deps = Get-ChildItem "$dist/Dependencies/x64" -Filter *.appx -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }
+          $deps | Write-Host
+          foreach ($want in @("Microsoft.NET.Native.Framework", "Microsoft.NET.Native.Runtime", "Microsoft.VCLibs")) {
+            if (-not ($deps | Where-Object { $_ -like "$want*" })) { throw "Dependencies/x64 is missing $want" }
+          }
+          # Informational: a self-signed certificate isn't trusted on the runner.
+          $sig = Get-AuthenticodeSignature $bundle.FullName
+          Write-Host "Signature: $($sig.Status) $($sig.StatusMessage)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bowtie-xbox
+          path: windows/out-xbox/dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Check the Store upload
+        if: ${{ hashFiles('windows/out-xbox/store/*upload') != '' }}
+        shell: pwsh
+        run: |
+          $upload = Get-ChildItem windows/out-xbox/store -File | Select-Object -First 1
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($upload.FullName)
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            $names | Write-Host
+            if (-not ($names | Where-Object { $_ -match '\.(msix|appx)bundle$' })) { throw "Store upload has no bundle" }
+            $bundleEntry = $zip.Entries | Where-Object { $_.FullName -match '\.(msix|appx)bundle$' } | Select-Object -First 1
+            $tmp = Join-Path $env:RUNNER_TEMP "store-bundle"
+            New-Item -ItemType Directory -Force $tmp | Out-Null
+            $bundlePath = Join-Path $tmp $bundleEntry.Name
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($bundleEntry, $bundlePath, $true)
+          } finally { $zip.Dispose() }
+          # The x64 package inside must target Xbox only, with the Store identity.
+          $bundle = [IO.Compression.ZipFile]::OpenRead($bundlePath)
+          try {
+            $pkg = $bundle.Entries | Where-Object { $_.FullName -match '_x64\.(msix|appx)$' } | Select-Object -First 1
+            if (-not $pkg) { throw "Store bundle is missing the x64 package" }
+            $pkgPath = Join-Path $tmp $pkg.Name
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($pkg, $pkgPath, $true)
+          } finally { $bundle.Dispose() }
+          $inner = [IO.Compression.ZipFile]::OpenRead($pkgPath)
+          try {
+            $entry = $inner.Entries | Where-Object { $_.FullName -eq 'AppxManifest.xml' }
+            $reader = New-Object IO.StreamReader($entry.Open())
+            [xml]$m = $reader.ReadToEnd()
+            $reader.Dispose()
+          } finally { $inner.Dispose() }
+          $families = @($m.Package.Dependencies.TargetDeviceFamily | ForEach-Object { $_.Name })
+          Write-Host "Identity: $($m.Package.Identity.Name) $($m.Package.Identity.Version); families: $($families -join ', ')"
+          if ($families.Count -ne 1 -or $families[0] -ne 'Windows.Xbox') { throw "Store package must target Windows.Xbox only" }
+          if ($m.Package.Identity.Name -eq 'Bowtie.Xbox') { throw "Store package still has the sideload identity" }
+
+      - name: Upload Store package
+        if: ${{ hashFiles('windows/out-xbox/store/*upload') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bowtie-xbox-store
+          path: windows/out-xbox/store/
+          if-no-files-found: ignore
+          retention-days: 14
