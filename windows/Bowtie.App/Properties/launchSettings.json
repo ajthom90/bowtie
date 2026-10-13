@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Bowtie (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Bowtie (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
