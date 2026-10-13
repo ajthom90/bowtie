@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="BowtieApp.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BowtieApp"
+    RequestedTheme="Dark">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Brand: the bowtie's amber on near-black (see the app icon). -->
+            <Color x:Key="BowtieAmberColor">#F0A62B</Color>
+            <SolidColorBrush x:Key="BowtieAmberBrush" Color="{StaticResource BowtieAmberColor}" />
+            <SolidColorBrush x:Key="BowtieLiveBrush" Color="#E5484D" />
+            <SolidColorBrush x:Key="BowtieOverlayBrush" Color="#CC101418" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
