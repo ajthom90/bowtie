@@ -16,14 +16,19 @@ version="${version#v}"
 if [ -z "$version" ]; then
   version=$(sed -nE 's/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p' "$repo/CHANGELOG.md" | head -n 1)
 fi
-case "$version" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *) echo "ci_post_clone: no release version found (got '$version')" >&2; exit 1 ;;
-esac
-echo "ci_post_clone: MARKETING_VERSION $version, build ${CI_BUILD_NUMBER:-1}"
+if ! printf '%s\n' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+  echo "ci_post_clone: no release version found (got '$version')" >&2
+  exit 1
+fi
+build="${CI_BUILD_NUMBER:-1}"
+if ! printf '%s\n' "$build" | grep -Eqx '[0-9]+'; then
+  echo "ci_post_clone: bad build number '$build'" >&2
+  exit 1
+fi
+echo "ci_post_clone: MARKETING_VERSION $version, build $build"
 sed -i '' -E \
   -e "s/^( *MARKETING_VERSION:).*/\1 \"$version\"/" \
-  -e "s/^( *CURRENT_PROJECT_VERSION:).*/\1 \"${CI_BUILD_NUMBER:-1}\"/" \
+  -e "s/^( *CURRENT_PROJECT_VERSION:).*/\1 \"$build\"/" \
   "$repo/ios/project.yml"
 
 brew install xcodegen

@@ -238,7 +238,9 @@ jobs:
           set -euo pipefail
           unzip -l out/bowtie-roku.zip | grep -E "manifest$"
           v="${GITHUB_REF_NAME#v}"
+          minor="${v#*.}"
           unzip -p out/bowtie-roku.zip manifest | grep -qx "major_version=${v%%.*}"
+          unzip -p out/bowtie-roku.zip manifest | grep -qx "minor_version=${minor%%.*}"
           unzip -p out/bowtie-roku.zip manifest | grep -qx "build_version=${v##*.}"
           if unzip -l out/bowtie-roku.zip | grep -E "\.bs$|node_modules"; then
             echo "zip must not contain .bs sources or node_modules" >&2
