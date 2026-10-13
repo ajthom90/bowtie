@@ -84,7 +84,8 @@ targets:
     dependencies:
       - package: BowtieKit
     scheme:
-      testTargets: []
+      testTargets:
+        - BowtieTVUITests
 
   BowtieMac:
     type: application
@@ -153,5 +154,23 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.bowtie.UITests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Bowtie
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: LL334G7KP2
+
+  # Apple TV App Store screenshots against a live server; skipped unless
+  # TEST_RUNNER_BOWTIE_UITEST_URL is set (see TVStoreScreenshotUITests.swift).
+  BowtieTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App/TVUITests
+    dependencies:
+      - target: BowtieTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.bowtie.TVUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: BowtieTV
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: LL334G7KP2
