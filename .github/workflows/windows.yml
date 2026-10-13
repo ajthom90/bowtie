@@ -90,6 +90,9 @@ jobs:
         env:
           WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          WINDOWS_STORE_IDENTITY_NAME: ${{ vars.WINDOWS_STORE_IDENTITY_NAME }}
+          WINDOWS_STORE_PUBLISHER: ${{ vars.WINDOWS_STORE_PUBLISHER }}
+          WINDOWS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.WINDOWS_STORE_PUBLISHER_DISPLAY_NAME }}
         run: ./windows/scripts/package.ps1 -Version $env:VERSION -Label $env:LABEL
 
       - name: Check the bundle
@@ -112,6 +115,18 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: bowtie-windows
-          path: windows/out/dist/*
+          path: |
+            windows/out/dist/*.msixbundle
+            windows/out/dist/*.cer
+            windows/out/dist/*.zip
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Store package
+        if: ${{ hashFiles('windows/out/dist/*.msixupload') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bowtie-windows-store
+          path: windows/out/dist/*.msixupload
+          if-no-files-found: ignore
           retention-days: 14

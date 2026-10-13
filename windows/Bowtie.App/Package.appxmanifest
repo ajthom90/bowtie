@@ -21,6 +21,7 @@
 
   <Properties>
     <DisplayName>Bowtie</DisplayName>
+    <Description>Watch live TV and DVR recordings from your Bowtie server.</Description>
     <PublisherDisplayName>Bowtie</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -40,7 +41,7 @@
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
         DisplayName="Bowtie"
-        Description="Live TV from your HDHomeRun antenna, served by your Bowtie server."
+        Description="Watch live TV and DVR recordings from your Bowtie server."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">
@@ -50,8 +51,10 @@
     </Application>
   </Applications>
 
-  <!-- Full-trust desktop app: not network-isolated, so no network capabilities are needed. -->
+  <!-- Desktop execution and access to remote or local-network Bowtie servers. -->
   <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
     <rescap:Capability Name="runFullTrust" />
   </Capabilities>
 </Package>

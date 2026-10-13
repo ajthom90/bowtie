@@ -182,6 +182,50 @@ subject (MSIX requires them to match).
   A certificate from a CA trusted by Windows (or Microsoft Store
   distribution) would remove the trust step entirely.
 
+## Microsoft Store
+
+One-time setup:
+
+1. Create an **individual** Microsoft Store developer account in
+   [Partner Center](https://partner.microsoft.com/dashboard), create the app
+   and reserve its name.
+2. Under the app's **Product identity**, copy the three values into GitHub
+   **Settings → Secrets and variables → Actions → Variables** as repository
+   variables (not secrets):
+
+   | Product identity value | Repository variable |
+   |---|---|
+   | `Package/Identity/Name` | `WINDOWS_STORE_IDENTITY_NAME` |
+   | `Package/Identity/Publisher` (including `CN=`) | `WINDOWS_STORE_PUBLISHER` |
+   | `Package/Properties/PublisherDisplayName` | `WINDOWS_STORE_PUBLISHER_DISPLAY_NAME` |
+
+With all three set, packaging also produces
+`bowtie-windows-<label>.msixupload`: an unsigned x64 + ARM64 bundle with
+symbols when available. Microsoft signs the Store packages. The script also
+accepts `-StoreIdentityName`, `-StorePublisher` and
+`-StorePublisherDisplayName` locally (or the same environment variables).
+Missing values skip Store packaging; sideload identities, signing and outputs
+stay the same. Both passes use `X.Y.Z.0` for a `vX.Y.Z` tag; the fourth part
+stays `0`. Non-tag CI builds use `0.0.<run>.0` and are for testing.
+
+For each release:
+
+1. Download **bowtie-windows-store** from the tag's **Release** workflow run
+   (or the **Windows** workflow). Extract the artifact to get the
+   `.msixupload`; it is not attached to the GitHub Release.
+2. Create a submission in Partner Center and upload the `.msixupload` on
+   **Packages**. Fill in the listing using
+   [docs/store/windows-listing.md](../docs/store/windows-listing.md), including
+   its `runFullTrust` justification for this WinUI desktop app. Use
+   <https://github.com/ajthom90/bowtie/blob/main/docs/privacy.md> as the privacy
+   policy URL.
+3. Set pricing and availability, then submit for certification.
+   **Hidden / link-only** visibility is an option if you want people to
+   install through a direct link without appearing in Store search.
+
+See Microsoft's [Product identity guidance](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
+and [Store upload format](https://learn.microsoft.com/en-us/windows/msix/package/packaging-uwp-apps).
+
 ## CI
 
 `.github/workflows/windows.yml` runs on changes under `windows/`: it builds
