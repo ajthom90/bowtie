@@ -87,6 +87,11 @@ type Timeline struct {
 
 	obsMu sync.Mutex // serializes Observe and MarkRestart (file reads included)
 
+	// segmentRead, when non-nil, replaces the stat and first-PTS read of a
+	// segment file. Tests stall it. Production leaves it nil. Observe calls
+	// it without holding t.mu.
+	segmentRead func(path string, dur float64, now time.Time) (obs time.Time, file bool, pts int64, hasPTS bool)
+
 	mu       sync.Mutex
 	cur      *tlRun
 	runs     int             // runs started so far (run ids, for logs)
@@ -496,6 +501,22 @@ func (t *Timeline) rendLocked(name string) *tlRend {
 	return r
 }
 
+// segRead is one segment-file read done outside t.mu. retry reads only the
+// PTS; a new segment also stats the file.
+type segRead struct {
+	retry bool
+	path  string
+	dur   float64
+}
+
+// segFile is the result of one segRead.
+type segFile struct {
+	obs    time.Time
+	file   bool
+	raw    int64
+	hasPTS bool
+}
+
 func (t *Timeline) observe() {
 	lists := map[string]MediaPlaylist{}
 	for _, name := range t.renditions {
@@ -506,17 +527,88 @@ func (t *Timeline) observe() {
 		lists[name] = ParseMediaPlaylist(raw)
 	}
 	capMseq := int64(-1)
+	capOK := false
 	if t.caption != "" {
 		if raw, err := os.ReadFile(filepath.Join(t.dir, t.caption+".m3u8")); err == nil {
 			capMseq = ParseMediaPlaylist(raw).MediaSequence
+			capOK = true
 		}
 	}
+	// Which files to read is decided under t.mu. The reads themselves are
+	// not: ExpireStalledRun and ProcessStarted take t.mu while the manager
+	// holds its own lock, so a slow disk here would stall every session.
+	// obsMu still keeps Observe and MarkRestart from interleaving.
+	t.mu.Lock()
+	now := t.now()
+	jobs := t.planReadsLocked(lists)
+	t.mu.Unlock()
+
+	got := make([]segFile, len(jobs))
+	for i, j := range jobs {
+		if j.retry {
+			got[i].raw, got[i].hasPTS = t.readSegmentPTS(j.path)
+			continue
+		}
+		got[i].obs, got[i].file, got[i].raw, got[i].hasPTS = t.readSegmentStart(j.path, j.dur, now)
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := t.now()
+	t.commitObservationLocked(lists, capOK, capMseq, got)
+}
+
+// planReadsLocked lists the segment files this pass will stat or read.
+// It does not modify the timeline. Only observe changes the fields it
+// reads, and observe holds obsMu, so the list is still the one
+// commitObservationLocked consumes.
+func (t *Timeline) planReadsLocked(lists map[string]MediaPlaylist) []segRead {
+	var jobs []segRead
+	for _, name := range t.renditions {
+		r := t.rends[name]
+		if r != nil {
+			for _, it := range r.pending {
+				if !it.hasPTS && (it.first || it.reads < timelinePTSReads) {
+					jobs = append(jobs, segRead{retry: true, path: it.path})
+				}
+			}
+		}
+		p, ok := lists[name]
+		if !ok {
+			continue
+		}
+		if r != nil && p.MediaSequence < r.ffMseq {
+			continue // a stale read: never go back
+		}
+		last := int64(-1)
+		if r != nil {
+			last = r.lastSeq
+		}
+		for i, sg := range p.Segments {
+			seq := p.MediaSequence + int64(i)
+			if seq <= last {
+				continue
+			}
+			last = seq
+			jobs = append(jobs, segRead{path: filepath.Join(t.dir, sg.URI), dur: sg.Duration})
+		}
+	}
+	return jobs
+}
+
+// commitObservationLocked records got, in plan order, and publishes.
+func (t *Timeline) commitObservationLocked(lists map[string]MediaPlaylist, capOK bool, capMseq int64, got []segFile) {
 	run := t.cur
-	if capMseq > t.capMseq {
+	if capOK && capMseq > t.capMseq {
 		t.capMseq = capMseq
+	}
+	n := 0
+	take := func() segFile {
+		if n >= len(got) {
+			return segFile{}
+		}
+		f := got[n]
+		n++
+		return f
 	}
 	for _, name := range t.renditions {
 		r := t.rends[name]
@@ -525,7 +617,8 @@ func (t *Timeline) observe() {
 			// complete or readable yet.
 			for _, it := range r.pending {
 				if !it.hasPTS && (it.first || it.reads < timelinePTSReads) {
-					it.raw, it.hasPTS = segmentFirstPTS(it.path)
+					f := take()
+					it.raw, it.hasPTS = f.raw, f.hasPTS
 					it.reads++
 				}
 			}
@@ -550,9 +643,9 @@ func (t *Timeline) observe() {
 			path := filepath.Join(t.dir, sg.URI)
 			first := !run.seen[name] || r.nextFirst
 			r.nextFirst = false
+			f := take()
 			it := &tlItem{seq: seq, dur: sg.Duration, path: path, first: first, reads: 1}
-			it.obs, it.file = t.observedStart(path, sg.Duration, now)
-			it.raw, it.hasPTS = segmentFirstPTS(path)
+			it.obs, it.file, it.raw, it.hasPTS = f.obs, f.file, f.raw, f.hasPTS
 			run.seen[name] = true
 			r.pending = append(r.pending, it)
 		}
@@ -817,6 +910,26 @@ func (t *Timeline) stampLocked(run *tlRun, name string, r *tlRend, it *tlItem, s
 	if end.After(t.maxEnd) {
 		t.maxEnd = end
 	}
+}
+
+// readSegmentStart stats path and reads its first PTS. A test hook, when
+// set, does both.
+func (t *Timeline) readSegmentStart(path string, dur float64, now time.Time) (time.Time, bool, int64, bool) {
+	if t.segmentRead != nil {
+		return t.segmentRead(path, dur, now)
+	}
+	obs, file := t.observedStart(path, dur, now)
+	raw, has := segmentFirstPTS(path)
+	return obs, file, raw, has
+}
+
+// readSegmentPTS reads a segment's first PTS, through the same test hook.
+func (t *Timeline) readSegmentPTS(path string) (int64, bool) {
+	if t.segmentRead != nil {
+		_, _, raw, has := t.segmentRead(path, 0, time.Time{})
+		return raw, has
+	}
+	return segmentFirstPTS(path)
 }
 
 // observedStart is when the segment's file says it started: its mtime (the
