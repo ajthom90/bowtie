@@ -43,6 +43,9 @@ public sealed partial class PlayerPage : Page
     private MediaPlaybackItem? _item;
     private Uri? _loadedUri;
     private int _loadGeneration;
+
+    private const int OpenAttempts = 3;
+    private static readonly TimeSpan OpenRetryDelay = TimeSpan.FromSeconds(1.5);
     private bool _opened;
     private bool _leaving;
     private bool _updatingQuality;
@@ -272,27 +275,37 @@ public sealed partial class PlayerPage : Page
         TearDownMedia();
         _loadedUri = uri;
 
-        AdaptiveMediaSourceCreationResult result;
-        try
+        // A just-started stream can briefly list a playlist that isn't written
+        // yet (older servers), which fails the whole open; try a few times.
+        AdaptiveMediaSourceCreationResult? result = null;
+        for (var attempt = 1; ; attempt++)
         {
-            result = await AdaptiveMediaSource.CreateFromUriAsync(uri);
-        }
-        catch (Exception ex)
-        {
-            if (generation == _loadGeneration && !_leaving) Fail($"couldn't open the stream: {ex}");
-            return;
-        }
-        if (generation != _loadGeneration || _leaving) return;
+            try
+            {
+                result = await AdaptiveMediaSource.CreateFromUriAsync(uri);
+            }
+            catch (Exception ex)
+            {
+                if (generation == _loadGeneration && !_leaving) Fail($"couldn't open the stream: {ex}");
+                return;
+            }
+            if (generation != _loadGeneration || _leaving) return;
+            if (result.Status == AdaptiveMediaSourceCreationStatus.Success && result.MediaSource != null) break;
 
-        if (result.Status != AdaptiveMediaSourceCreationStatus.Success || result.MediaSource == null)
-        {
             if (result.HttpResponseMessage?.StatusCode == Windows.Web.Http.HttpStatusCode.Forbidden)
             {
                 AuthFailed();
                 return;
             }
-            Fail($"couldn't open the stream: {result.Status} 0x{result.ExtendedError?.HResult:X8}");
-            return;
+            var detail = $"couldn't open the stream: {result.Status} 0x{result.ExtendedError?.HResult:X8}";
+            if (attempt >= OpenAttempts)
+            {
+                Fail(detail);
+                return;
+            }
+            Trace.WriteLine($"Bowtie player: {detail} (attempt {attempt}, retrying)");
+            await Task.Delay(OpenRetryDelay);
+            if (generation != _loadGeneration || _leaving) return;
         }
 
         _ams = result.MediaSource;

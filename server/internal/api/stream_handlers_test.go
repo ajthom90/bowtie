@@ -877,19 +877,20 @@ func (r *e2eStubRunner) Start(_ context.Context, spec transcode.JobSpec) (stream
 	if spec.Stdin != nil {
 		go func() { _, _ = io.Copy(io.Discard, spec.Stdin) }()
 	}
-	// Realistic ready playlist with EXTINF + segment files. Each file starts
+	// Realistic rendition playlists with EXTINF + segment files. Each file starts
 	// with a TS packet that carries a PTS: the session timeline publishes a
 	// segment only once that PTS is read, and an unpublished segment is left
 	// out of the served playlist. The FAKE-TS marker stays so the lifecycle
 	// test can still read the file back.
-	rung := strings.TrimSuffix(spec.Layout.ReadyPlaylist(), ".m3u8")
-	m3u := mediaPlaylist(rung, "ts")
-	if err := os.WriteFile(filepath.Join(spec.OutDir, rung+".m3u8"), []byte(m3u), 0o644); err != nil {
-		return nil, err
-	}
-	for i, name := range []string{rung + "_00000.ts", rung + "_00001.ts"} {
-		if err := os.WriteFile(filepath.Join(spec.OutDir, name), segmentWithPTS(name, 1.4+4*float64(i)), 0o644); err != nil {
+	for _, name := range spec.Layout.Renditions() {
+		m3u := mediaPlaylist(name, "ts")
+		if err := os.WriteFile(filepath.Join(spec.OutDir, name+".m3u8"), []byte(m3u), 0o644); err != nil {
 			return nil, err
+		}
+		for i, seg := range []string{name + "_00000.ts", name + "_00001.ts"} {
+			if err := os.WriteFile(filepath.Join(spec.OutDir, seg), segmentWithPTS(seg, 1.4+4*float64(i)), 0o644); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return newE2EProc(), nil
@@ -1974,5 +1975,59 @@ func TestSessionTimelineEmptyWindowAndSubMillisecondStart(t *testing.T) {
 	if body.WindowStart != "2026-10-11T20:00:00.001Z" || body.LiveEdge != "2026-10-11T20:00:04.005Z" ||
 		len(body.Segments) != 1 || body.Segments[0][0] != "2026-10-11T20:00:00.001Z" || body.Segments[0][1] != 4.004 {
 		t.Fatalf("sub-ms window: %+v", body)
+	}
+}
+
+func TestIndexOmitsMissingRenditions(t *testing.T) {
+	ss := newStubStreams()
+	h, _, _ := testAPIWithStreams(t, ss)
+	dir := t.TempDir()
+	writeFixtureSession(t, dir)
+	viewer := "aabbccddeeff00112233445566778899"
+	ss.register(viewer, dir)
+	tok := stream.SignStreamToken([]byte(streamSecret), viewer, time.Now().UTC().Add(time.Hour))
+	get := func() *httptest.ResponseRecorder {
+		return doJSON(t, h, "GET", "/api/v1/stream/"+viewer+"/index.m3u8?token="+tok, nil, nil)
+	}
+	// Remove the first AAC track and the entire AC-3 group; a later AAC track
+	// must retain its URI/index and become default, without dangling groups.
+	for _, name := range []string{"aac0", "ac30", "v720"} {
+		if err := os.Remove(filepath.Join(dir, name+".m3u8")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rr := get()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, absent := range []string{"aac0.m3u8", "ac30.m3u8", `AUDIO="ac3"`, "\nv720.m3u8"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("unexpected %s in %s", absent, body)
+		}
+	}
+	if !strings.Contains(body, `DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="aac1.m3u8?token=`) {
+		t.Fatalf("remaining AAC not default: %s", body)
+	}
+	if err := os.Remove(filepath.Join(dir, "aac1.m3u8")); err != nil {
+		t.Fatal(err)
+	}
+	rr = get()
+	// No audio at all: list everything rather than a silent video-only master.
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "aac0.m3u8") || !strings.Contains(rr.Body.String(), "\nv360.m3u8") {
+		t.Fatalf("no-audio master: %d %s", rr.Code, rr.Body.String())
+	}
+	// A later request picks up tracks once FFmpeg publishes them.
+	writeFixtureSession(t, dir)
+	rr = get()
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "aac0.m3u8") || !strings.Contains(rr.Body.String(), `AUDIO="ac3"`) {
+		t.Fatalf("recovered master: %d %s", rr.Code, rr.Body.String())
+	}
+	if err := os.Remove(filepath.Join(dir, fixtureLayout().ReadyPlaylist())); err != nil {
+		t.Fatal(err)
+	}
+	rr = get()
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "playlist not ready") {
+		t.Fatalf("missing lowest video: %d %s", rr.Code, rr.Body.String())
 	}
 }

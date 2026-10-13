@@ -279,7 +279,7 @@ func filterSessionsEnabledOnly(sessions []stream.SessionInfo, enabledIDs map[int
 
 // handlePlaylist serves index.m3u8: the viewer's master playlist, rebuilt on
 // every fetch (rungs above the viewer's ceiling are left out; captions appear
-// once their playlist exists).
+// once their playlist exists; missing renditions are omitted).
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	viewerID := r.PathValue("viewerId")
 	if err := s.verifyStreamAccess(viewerID, r); err != nil {
@@ -305,7 +305,11 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	captionsReady := media.Layout.Captions && fileExists(filepath.Join(media.Dir, media.Layout.CaptionPlaylist()))
 	query := "?token=" + url.QueryEscape(r.URL.Query().Get("token"))
-	body := transcode.MasterPlaylist(media.Layout, media.MaxHeight, query, captionsReady)
+	available := make(map[string]bool)
+	for _, name := range media.Layout.Renditions() {
+		available[name] = fileExists(filepath.Join(media.Dir, name+".m3u8"))
+	}
+	body := transcode.MasterPlaylistAvailable(media.Layout, media.MaxHeight, query, captionsReady, available)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
