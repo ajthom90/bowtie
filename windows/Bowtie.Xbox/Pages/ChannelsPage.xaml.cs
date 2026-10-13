@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Bowtie.Core;
 using Bowtie.Core.ViewModels;
 using BowtieXbox.Services;
+using Windows.Foundation;
 using Windows.System;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
@@ -13,6 +14,7 @@ using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Data;
 using Windows.UI.Xaml.Input;
+using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Navigation;
 
 namespace BowtieXbox.Pages
@@ -245,6 +247,9 @@ namespace BowtieXbox.Pages
             // Only on appearing (or when the list that held focus went away): re-checks mustn't steal focus.
             if (retry && (!hadRetry || focusInList)) RetryButton.Focus(FocusState.Programmatic);
         }
+
+        private void OnListAreaSizeChanged(object sender, SizeChangedEventArgs e) =>
+            ListArea.Clip = new RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
 
         private async void ShowMessage()
         {
