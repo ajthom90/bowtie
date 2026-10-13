@@ -71,9 +71,6 @@ namespace BowtieXbox.Pages
                     TitleBar.Visibility = Visibility.Collapsed;
                 }
             };
-
-            // Any button brings the channel name back for a moment.
-            PreviewKeyDown += (_, __) => ShowTitle();
         }
 
         // ── Lifecycle ───────────────────────────────────────────────────────
@@ -85,6 +82,10 @@ namespace BowtieXbox.Pages
             TitleLabel.Text = Describe(channel);
             ShowOverlay(busy: true, title: $"Tuning {Describe(channel)}…", body: null, retry: false);
             KeepScreenOn(true);
+            // Any key or button brings the channel name back for a moment. On the
+            // window, not the page: while playing nothing in the page has focus,
+            // so the page's own key events never fire.
+            Window.Current.CoreWindow.KeyDown += OnWindowKeyDown;
 
             var caps = await DeviceCaps.CurrentAsync();
             if (_leaving) return;
@@ -116,6 +117,7 @@ namespace BowtieXbox.Pages
         {
             if (_leaving) return;
             _leaving = true;
+            Window.Current.CoreWindow.KeyDown -= OnWindowKeyDown;
             _titleTimer.Stop();
             KeepScreenOn(false);
             TearDownMedia();
@@ -268,6 +270,8 @@ namespace BowtieXbox.Pages
             Spinner.IsActive = false;
             ShowTitle();
         }
+
+        private void OnWindowKeyDown(CoreWindow sender, KeyEventArgs e) => ShowTitle();
 
         private void ShowTitle()
         {
