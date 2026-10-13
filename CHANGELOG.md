@@ -27,7 +27,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
   before installing) plus zips that run without installing; see
   `windows/README.md`.
-- **Xbox: weak signal, busy tuners and plain-words errors.** The player
+- **Xbox: favorites in place, slow starts and reception notes.** Favorites
+  appear at the top and again in server order under All channels, with
+  section headers only when there are favorites. Pressing Y on either copy
+  updates both and keeps focus on that copy, or its All channels copy when
+  the favorite shortcut disappears. Returning from the player remembers
+  the copy you opened. After five seconds of starting, the player explains
+  that the stream is still buffering and may take a little while. It
   keeps "Weak signal (46%) — the picture may break up." in the corner while
   the antenna reception is poor (Narrator reads it when it appears), and
   the channel name that any button brings up now shows the latest reading

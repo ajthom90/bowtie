@@ -93,16 +93,21 @@ reachable `https://` address).
   on a phone that's already signed in to Bowtie and approve the TV, or enter
   a username and password. The session is remembered in the Windows
   Credential Locker; there's a **Change server** button on this screen.
-- **Channels:** favorites first, then everything else, with what's on now and
-  next. D-pad to move, **A** to watch, **Y** to add or remove a favorite.
+- **Channels:** favorites first, then every channel in server order, with
+  what's on now and next. **Favorites** and **All channels** headers appear
+  when there are favorites. D-pad to move, **A** to watch, **Y** to add or
+  remove a favorite from either copy. Focus stays on that copy, or moves to
+  its All channels copy when the favorite shortcut disappears. Coming back
+  from the player remembers the copy you opened.
   **Refresh** and **Sign out** are above the list. When every tuner is busy,
   only the channels you can join are listed, under a note; the list checks
   again every 30 seconds and when you come back to the app.
 - **Watching:** live video full screen. **B** goes back to the channels and
   frees the tuner. If every tuner is busy, the channel has no signal or
   parental controls block it, the player says so and offers **Try again**.
-  Suspending the app (Home button, or the console sleeping) also stops the
-  stream. Press any button to see the channel and its signal ("Signal
+  After five seconds of starting, a note explains that the stream is still
+  buffering. Suspending the app (Home button, or the console sleeping) also
+  stops the stream. Press any button to see the channel and its signal ("Signal
   quality 46% · strength 96% · error-free 0%"); when reception is poor, a
   "Weak signal (46%) — the picture may break up." note stays in the corner.
 
@@ -129,8 +134,9 @@ source-generated (no reflection), which keeps it working under .NET Native.
 ## What's in this first slice, and what's next
 
 In this slice: connect, quick sign-in (code + QR) and password sign-in,
-favorites-first channel list with now/next, live playback with session
-heartbeats and clean teardown, and an installable signed package from CI.
+channel list with favorites at the top and in All channels, now/next, live
+playback with a slow-start note, session heartbeats and clean teardown, and
+an installable signed package from CI.
 
 Next:
 

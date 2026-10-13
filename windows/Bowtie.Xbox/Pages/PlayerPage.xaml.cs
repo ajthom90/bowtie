@@ -174,6 +174,7 @@ namespace BowtieXbox.Pages
                     OnUi(RenderSignal);
                     break;
                 default:
+                    // Includes StartingText when Core's five-second slow-start flag flips.
                     OnUi(Render);
                     break;
             }
@@ -189,7 +190,7 @@ namespace BowtieXbox.Pages
             {
                 case PlayerState.Starting _:
                     StopMedia();
-                    ShowOverlay(busy: true, title: $"Tuning {TitleLabel.Text}…", body: null, retry: false);
+                    ShowOverlay(busy: true, title: _live.StartingText, body: null, retry: false);
                     break;
                 case PlayerState.Playing _:
                     if (_live.PlaylistUri is Uri uri && uri != _loadedUri)

@@ -5,11 +5,15 @@ using Windows.UI.Xaml;
 
 namespace BowtieXbox.Pages
 {
-    /// <summary>One channel row as the list shows it: number, name, now/next, favorite star.</summary>
+    /// <summary>One guide copy: section key, optional header, number, name, now/next, favorite star.</summary>
     public sealed class ChannelItem
     {
-        public ChannelItem(ChannelRow row, DateTimeOffset at)
+        public ChannelItem(GuideRow entry, DateTimeOffset at, string? sectionHeader = null)
         {
+            Entry = entry;
+            SectionHeader = sectionHeader ?? "";
+            SectionHeaderVisibility = sectionHeader == null ? Visibility.Collapsed : Visibility.Visible;
+            var row = entry.Row;
             Channel = row.Channel;
             Number = row.Channel.GuideNumber;
             Name = row.Channel.Name;
@@ -23,6 +27,10 @@ namespace BowtieXbox.Pages
             ProgressVisibility = now == null ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        public GuideRow Entry { get; }
+        public string Key => Entry.Key;
+        public string SectionHeader { get; }
+        public Visibility SectionHeaderVisibility { get; }
         public Channel Channel { get; }
         public string Number { get; }
         public string Name { get; }

@@ -17,12 +17,12 @@ using Windows.UI.Xaml.Navigation;
 namespace BowtieXbox.Pages
 {
     /// <summary>
-    /// The channel list: favorites first, then the rest, each with now/next
+    /// The channel list: favorites first, then all channels, each with now/next
     /// from the guide. D-pad moves, A watches, Y stars or unstars.
     /// Channels that can't start because every tuner is busy are left out
     /// under a note; the list re-checks every 30 seconds while on screen and
-    /// when the app comes back, keeping D-pad focus on the same channel (or
-    /// its neighbor when that one drops out).
+    /// when the app comes back, keeping D-pad focus on the same copy (or
+    /// its All channels copy, then its neighbor when the channel drops out).
     /// </summary>
     public sealed partial class ChannelsPage : Page
     {
@@ -30,7 +30,7 @@ namespace BowtieXbox.Pages
 
         private readonly DispatcherTimer _pollTimer;
         private ChannelListViewModel? _vm;
-        private long? _focusChannelId;
+        private string? _focusKey;
         private string? _shown;
         private bool _polling;
 
@@ -62,8 +62,8 @@ namespace BowtieXbox.Pages
             Window.Current.VisibilityChanged += OnVisibilityChanged;
             Render();
             // Where the channel just watched sits now, in case the re-check drops it.
-            var shownIndex = _focusChannelId is long id && ChannelList.ItemsSource is List<ChannelItem> shown
-                ? Math.Max(0, shown.FindIndex(i => i.Channel.Id == id))
+            var shownIndex = _focusKey != null && ChannelList.ItemsSource is List<ChannelItem> shown
+                ? Math.Max(0, shown.FindIndex(i => i.Key == _focusKey))
                 : 0;
             // Back from the player a tuner just freed up: re-check now.
             await PollAsync();
@@ -144,7 +144,19 @@ namespace BowtieXbox.Pages
                         note = null;
                         break;
                     }
-                    ShowList(vm.VisibleRows(vm.Rows, now).Select(r => new ChannelItem(r, now)).ToList());
+                    var guide = vm.GuideRows(vm.VisibleRows(vm.Rows, now));
+                    var hasFavorites = guide.Any(r => r.Section == "favorites");
+                    var items = new List<ChannelItem>();
+                    string? previousSection = null;
+                    foreach (var entry in guide)
+                    {
+                        var header = hasFavorites && entry.Section != previousSection
+                            ? (entry.Section == "favorites" ? "Favorites" : "All channels")
+                            : null;
+                        items.Add(new ChannelItem(entry, now, header));
+                        previousSection = entry.Section;
+                    }
+                    ShowList(items);
                     break;
             }
             ShowTunersNote(note);
@@ -171,12 +183,12 @@ namespace BowtieXbox.Pages
         /// <summary>
         /// Shows <paramref name="items"/>, skipping identical redraws (the
         /// 30-second re-check usually changes nothing). When focus was in
-        /// the list, it stays on the same channel, or moves to the one that
-        /// took its place when that channel dropped out.
+        /// the list, it stays on the same copy, falls back to All channels,
+        /// or moves to the neighbor when that channel dropped out.
         /// </summary>
         private void ShowList(List<ChannelItem> items)
         {
-            var shown = string.Join("\n", items.Select(i => $"{i.Channel.Id}|{i.Star}|{i.Now}|{i.Next}|{i.NoSignalVisibility}"));
+            var shown = string.Join("\n", items.Select(i => $"{i.Key}|{i.SectionHeader}|{i.Star}|{i.Now}|{i.Next}|{i.NoSignalVisibility}"));
             var wasVisible = ChannelList.Visibility == Visibility.Visible;
             if (wasVisible && shown == _shown) return;
 
@@ -185,7 +197,7 @@ namespace BowtieXbox.Pages
             var focusInStatus = RetryButton.FocusState != FocusState.Unfocused || FocusManager.GetFocusedElement() == null;
             if (focusedIndex is int index && ChannelList.Items.Count > index && ChannelList.Items[index] is ChannelItem focused)
             {
-                _focusChannelId = focused.Channel.Id;
+                _focusKey = focused.Key;
             }
 
             StatusPanel.Visibility = Visibility.Collapsed;
@@ -234,8 +246,8 @@ namespace BowtieXbox.Pages
         }
 
         /// <summary>
-        /// Focus the remembered channel (after a star toggle reorders the list
-        /// or a re-check drops channels), else the row at <paramref name="fallbackIndex"/>
+        /// Focus the remembered copy (after a star toggle or a re-check),
+        /// then its All channels copy, else the row at <paramref name="fallbackIndex"/>
         /// (clamped, so a shorter list keeps focus near where it was).
         /// </summary>
         private void FocusList(int fallbackIndex = 0)
@@ -243,11 +255,14 @@ namespace BowtieXbox.Pages
             if (ChannelList.Visibility != Visibility.Visible || ChannelList.Items.Count == 0) return;
             var items = ChannelList.ItemsSource as List<ChannelItem>;
             var index = Math.Max(0, Math.Min(fallbackIndex, ChannelList.Items.Count - 1));
-            if (_focusChannelId is long id && items != null)
+            if (_focusKey != null && items != null)
             {
-                var found = items.FindIndex(i => i.Channel.Id == id);
+                var key = GuideRow.RestoreKey(_focusKey, items.Select(i => i.Entry).ToList());
+                var found = items.FindIndex(i => i.Key == key);
                 if (found >= 0) index = found;
             }
+            // Remember the fallback too, so later redraws don't jump to a reappearing copy.
+            if (ChannelList.Items[index] is ChannelItem item) _focusKey = item.Key;
             ChannelList.ScrollIntoView(ChannelList.Items[index]);
             ChannelList.UpdateLayout();
             if (ChannelList.ContainerFromIndex(index) is ListViewItem container)
@@ -266,7 +281,7 @@ namespace BowtieXbox.Pages
         {
             if (e.ClickedItem is ChannelItem item)
             {
-                _focusChannelId = item.Channel.Id;
+                _focusKey = item.Key;
                 Frame.Navigate(typeof(PlayerPage), item.Channel);
             }
         }
@@ -277,7 +292,7 @@ namespace BowtieXbox.Pages
             if (!(e.OriginalSource is ListViewItem container) || !(container.Content is ChannelItem item)) return;
             e.Handled = true;
             if (_vm == null || !_vm.FavoritesSupported) return;
-            _focusChannelId = item.Channel.Id;
+            _focusKey = item.Key;
             await _vm.ToggleFavoriteAsync(item.Channel.Id);
             Render();
             FocusList();

@@ -53,19 +53,27 @@
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:ChannelItem">
                         <Grid ColumnSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="32" />
                                 <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="320" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="{x:Bind Star}" FontSize="26" Foreground="#FFD54F" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind Number}" FontSize="28" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                            <!-- Headers share the first channel's container, so D-pad never stops on a header. -->
+                            <TextBlock Grid.ColumnSpan="4" Text="{x:Bind SectionHeader}"
+                                       Visibility="{x:Bind SectionHeaderVisibility}" Margin="0,0,0,12"
+                                       FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource BowtieMuted}" />
+                            <TextBlock Grid.Row="1" Text="{x:Bind Star}" FontSize="26" Foreground="#FFD54F" VerticalAlignment="Center" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind Number}" FontSize="28" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <StackPanel Grid.Row="1" Grid.Column="2" VerticalAlignment="Center">
                                 <TextBlock Text="{x:Bind Name}" FontSize="26" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Text="No signal" FontSize="18" Foreground="#FF8A80" Visibility="{x:Bind NoSignalVisibility}" />
                             </StackPanel>
-                            <StackPanel Grid.Column="3" VerticalAlignment="Center" Spacing="2">
+                            <StackPanel Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" Spacing="2">
                                 <TextBlock Text="{x:Bind Now}" FontSize="22" TextTrimming="CharacterEllipsis" />
                                 <ProgressBar Value="{x:Bind Progress}" Maximum="100" Height="4" MaxWidth="480"
                                              HorizontalAlignment="Left" Width="480" Visibility="{x:Bind ProgressVisibility}" />
