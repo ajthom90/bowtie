@@ -31,7 +31,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   F adds or removes a favorite, and Escape or Backspace leaves the player.
   A stream that fails to open is tried again twice before giving up.
   Player errors are plain words ("The stream stopped. Try again."); the
-  detail goes to the app's log.
+  detail goes to the app's log. Narrator reads each channel row ("9.1 FOX
+  9, favorite, now …, next …") and section header by name. On a PC the app
+  opens in a window, and only the player goes full screen. With the
+  Microsoft Store identity set, the Xbox workflow also builds a Store
+  upload targeting Xbox for the same Store product as the Windows app.
 
 ## [0.25.1] — 2026-10-13
 

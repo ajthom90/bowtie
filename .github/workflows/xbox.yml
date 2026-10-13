@@ -8,7 +8,7 @@ name: Xbox
 # by the (long) .NET Native compile.
 on:
   push:
-    branches: [main, feat/xbox]
+    branches: [main]
     paths:
       - "windows/Bowtie.Core/**"
       - "windows/Bowtie.Xbox/**"
