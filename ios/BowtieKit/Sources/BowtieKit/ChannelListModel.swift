@@ -197,8 +197,24 @@ public final class ChannelListModel {
     /// Starred channels in guide-number order.
     public var favoriteRows: [Row] { rows.filter { $0.channel.isFavorite } }
 
-    /// Everything else, in server order.
-    public var otherRows: [Row] { rows.filter { !$0.channel.isFavorite } }
+    /// Every channel in server order, including favorites.
+    public var allRows: [Row] { inServerOrder(rows) }
+
+    public struct GuideRow: Identifiable, Equatable {
+        public let row: Row
+        public let section: String
+        public var id: String { "\(section):\(row.id)" }
+    }
+
+    /// Separate identities for the favorite shortcut and its full-list copy.
+    public func guideRows(_ visible: [Row]) -> [GuideRow] {
+        visible.filter { $0.channel.isFavorite }.map { GuideRow(row: $0, section: "favorites") }
+            + inServerOrder(visible).map { GuideRow(row: $0, section: "all") }
+    }
+
+    public func inServerOrder(_ rows: [Row]) -> [Row] {
+        rows.sorted { (serverOrder[$0.id] ?? Int.max) < (serverOrder[$1.id] ?? Int.max) }
+    }
 
     /// Last favorite / recents action that failed, for a toast. Cleared by
     /// `dismissActionError()`.

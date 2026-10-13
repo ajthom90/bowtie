@@ -120,9 +120,10 @@ a note.
 | OK on a Continue watching item | Resume the recording at its saved position (no Resume / Start over question); Back or the end returns here |
 | `*` (Options) on a Continue watching item | **Remove from Continue watching** (sets the saved position back to 0), **Cancel** |
 
-**Favorite** stars the channel: starred channels move to the top
-(guide-number order) with a ★; the change is sent to the server and undone if
-it fails. Favorite is left out on a server without favorites.
+**Favorite** stars the channel: starred channels appear at the top in
+guide-number order and again in their normal place in the full list, with a ★.
+The change updates both copies and is undone if the server refuses it.
+Favorite is left out on a server without favorites.
 
 **Record this program** schedules the current program by its guide start
 (`POST /api/v1/recordings`; capture starts 1 min early and ends 3 min late).
@@ -162,7 +163,7 @@ R, NC-17, X) kept out of Kids, and New for new episodes. The chip is kept on
 this device (registry section `bowtie`, key `guideFilter`) and survives
 sign-out and change server. Logic: `source/lib/GuideFilter.bs`.
 
-Up/down zapping in the player follows rail order, so it cycles favorites
+Up/down zapping in the player visits each channel once, cycling favorites
 first; it goes through every channel, whatever the filter.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.

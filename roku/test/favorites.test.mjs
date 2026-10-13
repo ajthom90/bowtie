@@ -162,3 +162,46 @@ test('parseRecents keeps well-formed entries newest first', () => {
     assert.deepEqual(out.bad, []);
     assert.deepEqual(out.none, []);
 });
+
+
+test('guide favorites also appear in server order with distinct keys; zap order stays unique', () => {
+    const out = runBrs(['source/lib/Favorites.brs'], `
+        st = bowtie_favorites_newState(${bs(SERVER)})
+        out.zap = snapshot(st.channels)
+        out.guide = snapshot(bowtie_favorites_guideChannels(st.channels))
+    `);
+    const favorites = out.zap.filter((ch) => ch.favorite);
+    assert.deepEqual(out.guide.map((ch) => ch.id), [...favorites, ...SERVER].map((ch) => ch.id));
+    assert.equal(new Set(out.guide.map((ch) => ch.rowkey)).size, out.guide.length);
+    assert.equal(new Set(out.zap.map((ch) => ch.id)).size, SERVER.length);
+});
+
+test('guide toggles update both copies and focus stays on its section through rollback', () => {
+    const out = runBrs(['source/lib/Favorites.brs'], `
+        st = bowtie_favorites_newState(${bs(SERVER)})
+        bowtie_favorites_toggle(st, 2)
+        guide = bowtie_favorites_guideChannels(st.channels)
+        out.starred = snapshot(guide)
+        out.allFocus = bowtie_favorites_indexOfGuideRow(guide, {id: 2, rowKey: "all:2"})
+        out.favFocus = bowtie_favorites_indexOfGuideRow(guide, {id: 2, rowKey: "favorites:2"})
+        bowtie_favorites_resolve(st, 2, true, false)
+        guide = bowtie_favorites_guideChannels(st.channels)
+        out.reverted = snapshot(guide)
+        out.fallback = bowtie_favorites_indexOfGuideRow(guide, {id: 2, rowKey: "favorites:2"})
+    `);
+    assert.equal(out.starred.filter((ch) => ch.id === 2).length, 2);
+    assert.ok(out.starred.filter((ch) => ch.id === 2).every((ch) => ch.favorite));
+    assert.equal(out.starred[out.allfocus].rowkey, 'all:2');
+    assert.equal(out.starred[out.favfocus].rowkey, 'favorites:2');
+    assert.equal(out.reverted[out.fallback].rowkey, 'all:2');
+    assert.equal(out.reverted.filter((ch) => ch.id === 2).length, 1);
+});
+
+test('guide on an older server is a single list in server order', () => {
+    const old = SERVER.map(({ favorite, ...ch }) => ch);
+    const out = runBrs(['source/lib/Favorites.brs'], `
+        st = bowtie_favorites_newState(${bs(old)})
+        out.guide = snapshot(bowtie_favorites_guideChannels(st.channels))
+    `);
+    assert.deepEqual(out.guide.map((ch) => ch.id), old.map((ch) => ch.id));
+});

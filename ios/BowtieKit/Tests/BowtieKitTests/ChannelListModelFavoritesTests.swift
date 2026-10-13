@@ -72,8 +72,27 @@ final class ChannelListModelFavoritesTests: XCTestCase {
         // Favorites 9.1, 11.1 (numeric), then the rest as the server sent them.
         XCTAssertEqual(loadedIDs(model), [4, 1, 2, 3])
         XCTAssertEqual(model.favoriteRows.map(\.channel.id), [4, 1])
-        XCTAssertEqual(model.otherRows.map(\.channel.id), [2, 3])
+        XCTAssertEqual(model.allRows.map(\.channel.id), [1, 2, 3, 4])
         XCTAssertTrue(model.supportsFavorites)
+    }
+
+    func testGuideCopiesHaveUniqueStableIDsAndZapRowsStayUnique() async {
+        let model = await makeModel(channels: TestFixtures.favoriteChannelJSON(lineup))
+        await model.load()
+
+        let guide = model.guideRows(model.filteredRows(at: clock))
+        XCTAssertEqual(guide.map(\.row.id), [4, 1, 1, 2, 3, 4])
+        XCTAssertEqual(Set(guide.map(\.id)).count, guide.count)
+        XCTAssertEqual(Set(model.rows.map(\.id)).count, lineup.count)
+        XCTAssertEqual(model.rows.map(\.id), [4, 1, 2, 3])
+        XCTAssertEqual(model.guideRows(model.rows.filter { $0.id == 4 }).map(\.id), ["favorites:4", "all:4"])
+
+        await model.toggleFavorite(channelId: 2)
+        let copies = model.guideRows(model.rows).filter { $0.row.id == 2 }
+        XCTAssertEqual(copies.map(\.id), ["favorites:2", "all:2"])
+        XCTAssertTrue(copies.allSatisfy { $0.row.channel.isFavorite })
+        await model.toggleFavorite(channelId: 2)
+        XCTAssertEqual(model.guideRows(model.rows), guide)
     }
 
     func testGuideNumberOrderIsNumeric() {
@@ -95,6 +114,7 @@ final class ChannelListModelFavoritesTests: XCTestCase {
         XCTAssertFalse(model.supportsFavorites)
         XCTAssertEqual(loadedIDs(model), [1, 2])
         XCTAssertTrue(model.favoriteRows.isEmpty)
+        XCTAssertEqual(model.guideRows(model.rows).map(\.id), ["all:1", "all:2"])
         XCTAssertFalse(model.showsRecents)
     }
 
@@ -132,9 +152,9 @@ final class ChannelListModelFavoritesTests: XCTestCase {
 
         XCTAssertEqual(requests("DELETE", "/api/v1/me/favorites/1").count, 1)
         XCTAssertEqual(model.favoriteRows.map(\.channel.id), [4])
-        // 11.1 goes back to its server position, ahead of 2.1.
-        XCTAssertEqual(model.otherRows.map(\.channel.id), [1, 2, 3])
-        XCTAssertEqual(model.otherRows.first?.channel.favorite, false)
+        // The full list keeps every channel in its server position.
+        XCTAssertEqual(model.allRows.map(\.channel.id), [1, 2, 3, 4])
+        XCTAssertEqual(model.allRows.first?.channel.favorite, false)
     }
 
     func testToggleFailureRevertsAndReportsError() async {
@@ -147,7 +167,7 @@ final class ChannelListModelFavoritesTests: XCTestCase {
         await model.toggleFavorite(channelId: 2)
 
         XCTAssertEqual(loadedIDs(model), [4, 1, 2, 3], "reverted to the original order")
-        XCTAssertEqual(model.otherRows.first?.channel.favorite, false)
+        XCTAssertEqual(model.allRows.first(where: { $0.id == 2 })?.channel.favorite, false)
         XCTAssertNotNil(model.actionError)
 
         model.dismissActionError()

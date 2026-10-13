@@ -261,7 +261,7 @@ class ChannelListViewModelTest {
         val sports = vm.filtered(rows, app.bowtie.core.GuideFilter.SPORTS, clock)
         assertEquals(listOf(1L), sports.rows.map { it.id })
         assertEquals(h, sports.highlight(rows[0]))
-        assertEquals(listOf(1L), sports.others.map { it.id })
+        assertEquals(listOf(1L), sports.allRows.map { it.id })
         assertEquals(emptyList<Long>(), sports.favorites.map { it.id })
     }
 
@@ -432,9 +432,33 @@ class ChannelListViewModelTest {
             l.rows.map { it.channel.guideNumber },
         )
         assertEquals(listOf(2L, 4L, 3L), l.favorites.map { it.id })
-        assertEquals(listOf(1L, 5L, 6L), l.others.map { it.id })
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L), l.allRows.map { it.id })
         assertTrue(l.rows[0].isFavorite)
         assertFalse(l.rows[3].isFavorite)
+    }
+
+    @Test
+    fun guideCopiesHaveUniqueStableKeysAndZapOrderStaysUnique() = runTest {
+        channelsBody = channelsJson(ch(1, "11.1", true), ch(2, "2.1", false), ch(3, "9.1", true))
+        val vm = makeVm(authedClient())
+        vm.refresh()
+        val rows = loaded(vm).rows
+        val guide = ChannelListViewModel.guideRows(rows)
+        assertEquals(listOf(3L, 1L, 1L, 2L, 3L), guide.map { it.row.id })
+        assertEquals(listOf("favorites:3", "favorites:1", "all:1", "all:2", "all:3"), guide.map { it.key })
+        assertEquals(guide.size, guide.map { it.key }.toSet().size)
+        assertEquals(listOf(3L, 1L, 2L), rows.map { it.id })
+        assertEquals(rows.size, rows.map { it.id }.toSet().size)
+
+        vm.setFavorite(2, true)
+        val copies = ChannelListViewModel.guideRows(loaded(vm).rows).filter { it.row.id == 2L }
+        assertEquals(listOf("favorites:2", "all:2"), copies.map { it.key })
+        assertTrue(copies.all { it.row.isFavorite })
+        vm.setFavorite(2, false)
+        assertEquals(guide, ChannelListViewModel.guideRows(loaded(vm).rows))
+        favoriteCode = 500
+        vm.setFavorite(2, true)
+        assertEquals(guide, ChannelListViewModel.guideRows(loaded(vm).rows))
     }
 
     @Test
@@ -605,7 +629,7 @@ class ChannelListViewModelTest {
             favoriteRequests.toList(),
         )
         assertEquals(listOf(1L), loaded(vm).favorites.map { it.id })
-        assertEquals(listOf(2L), loaded(vm).others.map { it.id })
+        assertEquals(listOf(1L, 2L), loaded(vm).allRows.map { it.id })
     }
 
     // ── All tuners busy (`watchable: false`) ─────────────────────────────────
@@ -683,10 +707,11 @@ class ChannelListViewModelTest {
 
         val all = vm.filtered(loaded(vm).rows, GuideFilter.ALL, clock)
         assertEquals(listOf(2L), all.favorites.map { it.id })
-        assertEquals(listOf(4L), all.others.map { it.id })
+        assertEquals(listOf(2L, 4L), all.allRows.map { it.id })
 
         val news = vm.filtered(loaded(vm).rows, GuideFilter.NEWS, clock)
         assertEquals("news on a watchable channel only", listOf(2L), news.rows.map { it.id })
+        assertEquals(listOf("favorites:2", "all:2"), ChannelListViewModel.guideRows(news.rows).map { it.key })
         assertTrue(news.tunersBusy)
         assertFalse("other channels are still watchable", news.noneWatchable)
     }

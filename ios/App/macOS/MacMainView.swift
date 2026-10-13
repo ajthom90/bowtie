@@ -223,22 +223,25 @@ struct MacMainView: View {
             // The selected channel stays listed (dimmed) under a filter it
             // doesn't match: dropping its row would clear the selection and stop playback.
             let shown = model.filteredRows(at: now, keeping: keptChannelID)
-            let favorites = shown.rows.filter { $0.channel.isFavorite }
+            let guide = model.guideRows(shown.rows)
+            let favorites = guide.filter { $0.section == "favorites" }
             if !favorites.isEmpty {
                 Section("Favorites") {
-                    ForEach(favorites) { row in
+                    ForEach(favorites) { entry in
+                        let row = entry.row
                         rowWithMenu(row, section: .favorites, model: model, dimmed: row.id == shown.keptId)
                     }
                 }
             }
 
-            Section("Channels") {
+            Section(model.supportsFavorites ? "All channels" : "Channels") {
                 if case .empty = model.state {
                     Text(Self.emptyCopy)
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.dim)
                 } else {
-                    ForEach(shown.rows.filter { !$0.channel.isFavorite }) { row in
+                    ForEach(guide.filter { $0.section == "all" }) { entry in
+                        let row = entry.row
                         rowWithMenu(row, section: .all, model: model, dimmed: row.id == shown.keptId)
                     }
                     if shown.hasNoMatches, model.filter != .all, !model.allTunersBusy, case .loaded = model.state {
@@ -327,6 +330,9 @@ struct MacMainView: View {
             .contextMenu {
                 if model.supportsFavorites {
                     Button {
+                        if row.channel.isFavorite, selection == .channel(row.id, .favorites) {
+                            selection = .channel(row.id, .all)
+                        }
                         Task { await model.toggleFavorite(channelId: row.channel.id) }
                     } label: {
                         if row.channel.isFavorite {
@@ -516,7 +522,7 @@ struct MacMainView: View {
         return playerModel.currentChannel?.id
     }
 
-    /// Next / previous in the sidebar's order (favorites, then the rest), wrapping.
+    /// Next / previous in unique zap order (favorites, then non-favorites), wrapping.
     /// Under a category filter it steps through the channels the sidebar shows.
     private func stepChannel(by delta: Int) {
         guard let model = listModel else { return }

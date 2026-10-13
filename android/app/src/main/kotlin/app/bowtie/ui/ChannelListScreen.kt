@@ -314,8 +314,9 @@ fun ChannelListScreen(
                             channelListViewModel.filtered(s.rows, filter, Instant.now())
                         }
                         val visible = filtered.rows
-                        val favorites = remember(filtered) { filtered.favorites }
-                        val others = remember(filtered) { filtered.others }
+                        val guide = remember(filtered) { ChannelListViewModel.guideRows(filtered.rows) }
+                        val favorites = guide.filter { it.section == "favorites" }
+                        val all = guide.filter { it.section == "all" }
                         // Recent leaves out channels nobody can start right now, too.
                         val shownRecents = remember(recents, s.rows) {
                             channelListViewModel.visibleRecents(recents)
@@ -363,14 +364,14 @@ fun ChannelListScreen(
                                 stickyHeader(key = "header-favorites") {
                                     SectionHeader("Favorites")
                                 }
-                                items(favorites, key = { it.id }) { channelRow(it) }
-                                if (others.isNotEmpty()) {
+                                items(favorites, key = { it.key }) { channelRow(it.row) }
+                                if (all.isNotEmpty()) {
                                     stickyHeader(key = "header-channels") {
-                                        SectionHeader("Channels")
+                                        SectionHeader("All channels")
                                     }
                                 }
                             }
-                            items(others, key = { it.id }) { channelRow(it) }
+                            items(all, key = { it.key }) { channelRow(it.row) }
                             if (filtered.noneWatchable) {
                                 item(key = "none-watchable") {
                                     NoneWatchable()
@@ -537,7 +538,7 @@ private fun SheetItem(text: String, detail: String? = null, onClick: (() -> Unit
     }
 }
 
-/** Pinned section label ("Favorites", "Channels"); opaque so rows scroll under it. */
+/** Pinned section label ("Favorites", "All channels"); opaque so rows scroll under it. */
 /** Category chips: All · Sports · Movies · News · Kids · New (toggle semantics). */
 @Composable
 private fun GuideFilterChips(selected: GuideFilter, onSelect: (GuideFilter) -> Unit) {
