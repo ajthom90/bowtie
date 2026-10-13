@@ -25,7 +25,7 @@ import {
   receptionNote,
   selectGuidePageState,
   shiftWindow,
-  sortFavoritesFirst,
+  guideRows,
   supportsFavorites,
   withFavorite,
   type GuideProgram,
@@ -146,18 +146,26 @@ export function Guide({
   }, [client, start, stop])
 
   const favoritesOn = useMemo(() => (channels ? supportsFavorites(channels) : false), [channels])
-  const rows = useMemo(() => (channels ? sortFavoritesFirst(channels) : null), [channels])
+  const rows = channels
   /** Rows with something matching the chip in the visible window. */
   const visibleRows = useMemo(
     () => rows?.filter((ch) => channelMatchesFilter(ch, filter, start, stop)) ?? null,
     [rows, filter, start, stop],
   )
 
-  async function toggleFavorite(channel: GuideChannel) {
+  async function toggleFavorite(channel: GuideChannel, key: string) {
     const id = channel.channelId
     const on = channel.favorite !== true
     setActionError(null)
+    const opener = document.activeElement
     setChannels((cs) => cs && withFavorite(cs, id, on))
+    if (!on && key.startsWith('favorites:')) {
+      requestAnimationFrame(() => {
+        if (opener && !opener.isConnected) {
+          document.querySelector<HTMLButtonElement>(`[data-guide-star="all:${id}"]`)?.focus()
+        }
+      })
+    }
     try {
       await (on ? client.addFavorite(id) : client.removeFavorite(id))
     } catch (err) {
@@ -530,15 +538,16 @@ export function Guide({
               </div>
             </div>
 
-            {visibleRows.map((ch) => {
+            {guideRows(visibleRows).map(({ key, channel: ch }) => {
               const cells = layoutRow(ch.programs, start, stop)
               const hasPrograms = ch.programs.length > 0
 
               return (
                 <ChannelRow
-                  key={ch.channelId}
+                  key={key}
                   channel={ch}
-                  onToggleFavorite={favoritesOn ? () => void toggleFavorite(ch) : undefined}
+                  rowKey={key}
+                  onToggleFavorite={favoritesOn ? () => void toggleFavorite(ch, key) : undefined}
                   cells={cells}
                   hasPrograms={hasPrograms}
                   nowPct={nowPct}
@@ -598,6 +607,7 @@ export function Guide({
 }
 
 function ChannelRow({
+  rowKey,
   channel,
   cells,
   hasPrograms,
@@ -612,6 +622,7 @@ function ChannelRow({
   onSelect,
 }: {
   channel: GuideChannel
+  rowKey: string
   /** Absent when the server predates favorites (no star shown). */
   onToggleFavorite?: () => void
   cells: ReturnType<typeof layoutRow>
@@ -676,6 +687,7 @@ function ChannelRow({
             className={`${styles.star}${fav ? ` ${styles.starOn}` : ''}`}
             aria-pressed={fav}
             aria-label={`Favorite ${channel.name}`}
+            data-guide-star={rowKey}
             onClick={(e) => {
               e.stopPropagation()
               onToggleFavorite()

@@ -426,15 +426,15 @@ fun ChannelRailScreen(
                     val filtered = remember(s.rows, filter) {
                         channelListViewModel.filtered(s.rows, filter, Instant.now())
                     }
-                    val visible = filtered.rows
+                    val visible = remember(filtered) { ChannelListViewModel.guideRows(filtered.rows) }
                     val listState = rememberLazyListState()
                     // "Show all channels" leaves the screen; focus lands on All, not the top bar.
                     val allChipFocus = remember { FocusRequester() }
-                    // A toggled row moves (favorites first); keep it on screen and focused.
-                    var refocusId by remember { mutableStateOf<Long?>(null) }
+                    // Keep focus on the same copy, or All channels when its shortcut disappears.
+                    var refocusId by remember { mutableStateOf<String?>(null) }
                     LaunchedEffect(visible, refocusId) {
                         val id = refocusId ?: return@LaunchedEffect
-                        val index = visible.indexOfFirst { it.id == id }
+                        val index = visible.indexOfFirst { it.key == id }
                         if (index < 0) {
                             refocusId = null
                         } else if (listState.layoutInfo.visibleItemsInfo.none { it.key == id }) {
@@ -501,17 +501,18 @@ fun ChannelRailScreen(
                             .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(visible, key = { it.id }) { row ->
+                        items(visible, key = { it.key }) { entry ->
+                            val row = entry.row
                             val focusRequester = remember { FocusRequester() }
-                            LaunchedEffect(refocusId == row.id) {
-                                if (refocusId != row.id) return@LaunchedEffect
+                            LaunchedEffect(refocusId == entry.key) {
+                                if (refocusId != entry.key) return@LaunchedEffect
                                 withFrameNanos { }
                                 runCatching { focusRequester.requestFocus() }
                                 refocusId = null
                             }
                             val toggle: (() -> Unit)? = if (supported) {
                                 {
-                                    refocusId = row.id
+                                    refocusId = if (entry.section == "favorites") "all:${row.id}" else entry.key
                                     channelListViewModel.toggleFavorite(row.id)
                                 }
                             } else {

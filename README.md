@@ -68,7 +68,7 @@ and [docs/roadmap.md](docs/roadmap.md) for what's next.
 |---|:---:|---|
 | Free guide from your HDHomeRun | ✅ | About 2–3 days |
 | XMLTV and Schedules Direct | ✅ | Schedules Direct gives 14 days |
-| Search, favorites, recents | ✅ | |
+| Search, favorites, recents | ✅ | Favorites appear at the top and in their normal place in All channels. |
 | All · Sports · Movies · News · Kids · New filters | ✅ | Every app |
 | Guide from the broadcast signal itself (PSIP/EIT) | 🗓️ | About 12 hours, no account; a last-resort fallback |
 

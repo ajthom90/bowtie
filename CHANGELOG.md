@@ -9,11 +9,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Edit series recording rules from the Shows screen on web, Apple, Android,
-  Android TV and Roku: choose new or all episodes, channel, and how many to keep.
-  Upcoming recordings are reconciled immediately; in-progress and completed
-  recordings stay untouched. Lowering the keep limit takes effect as new episodes
-  complete, without deleting anything when saving. Older servers hide Edit.
+- **Edit a series recording without starting over.** In Recordings → Shows,
+  Edit changes new or all episodes, the channel, and how many to keep, on
+  web, Apple, Android, Android TV and Roku. Upcoming recordings update right
+  away; recordings in progress or finished stay as they are. A lower keep
+  count applies as new episodes finish, so saving never deletes anything.
+
+### Changed
+
+- **Favorites stay in the full channel list.** All clients show favorites at
+  the top and again in their normal place in All channels. Starring either
+  copy updates both; player channel up/down still visits each channel once.
 
 ## [0.24.0] — 2026-10-12
 

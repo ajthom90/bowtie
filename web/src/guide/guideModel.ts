@@ -272,6 +272,17 @@ export function sortFavoritesFirst<T extends { guideNumber: string; favorite?: b
   return [...favs, ...channels.filter((c) => c.favorite !== true)]
 }
 
+/** Guide copies have section-specific keys; picker and zap lists stay unique. */
+export function guideRows<T extends { channelId: number; guideNumber: string; favorite?: boolean }>(
+  channels: T[],
+): { key: string; channel: T }[] {
+  const favorites = sortFavoritesFirst(channels).filter((ch) => ch.favorite === true)
+  return [
+    ...favorites.map((channel) => ({ key: `favorites:${channel.channelId}`, channel })),
+    ...channels.map((channel) => ({ key: `all:${channel.channelId}`, channel })),
+  ]
+}
+
 /** The server sends `favorite`; older servers omit it (hide star and Recent row). */
 export function supportsFavorites(channels: { favorite?: boolean }[]): boolean {
   return channels.some((c) => typeof c.favorite === 'boolean')

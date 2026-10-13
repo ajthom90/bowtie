@@ -330,8 +330,9 @@ struct ChannelListView: View {
                 }
             }
 
-            let favorites = visible.filter { $0.channel.isFavorite }
-            let others = visible.filter { !$0.channel.isFavorite }
+            let guide = model.guideRows(visible)
+            let favorites = guide.filter { $0.section == "favorites" }
+            let all = guide.filter { $0.section == "all" }
             if model.allTunersBusy {
                 // The note above says it all.
                 EmptyView()
@@ -339,26 +340,22 @@ struct ChannelListView: View {
                 GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     .listRowBackground(Theme.bg)
                     .listRowSeparator(.hidden)
-            } else if favorites.isEmpty {
-                ForEach(visible) { row in
-                    channelRow(row, model: model)
-                }
             } else {
-                Section {
-                    ForEach(favorites) { row in
-                        channelRow(row, model: model)
-                    }
-                } header: {
-                    sectionHeader("Favorites")
-                }
-                if !others.isEmpty {
+                if !favorites.isEmpty {
                     Section {
-                        ForEach(others) { row in
-                            channelRow(row, model: model)
+                        ForEach(favorites) { entry in
+                            channelRow(entry.row, model: model)
                         }
                     } header: {
-                        sectionHeader("Channels")
+                        sectionHeader("Favorites")
                     }
+                }
+                Section {
+                    ForEach(all) { entry in
+                        channelRow(entry.row, model: model)
+                    }
+                } header: {
+                    if !favorites.isEmpty { sectionHeader("All channels") }
                 }
             }
         }
