@@ -307,7 +307,11 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
     {
         try
         {
+#if NET8_0_OR_GREATER
             await Task.Delay(SlowStartAfter, _timeProvider, ct);
+#else
+            await _timeProvider.Delay(SlowStartAfter, ct);
+#endif
             if (!ct.IsCancellationRequested && IsCurrent(gen) && State is PlayerState.Starting) IsSlowStart = true;
         }
         catch (OperationCanceledException)

@@ -7,6 +7,36 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Xbox: favorites in place, slow starts and reception notes.** Favorites
+  appear at the top and again in server order under All channels, with
+  section headers only when there are favorites. The headers sit above
+  their rows (the D-pad skips them), and rows scrolling up no longer slide
+  under the page title. The first channel shows its focus box as soon as
+  the list appears. Pressing Y on either copy updates both and keeps focus
+  on that copy, or its All channels copy when the favorite shortcut
+  disappears. Returning from the player remembers the copy you opened,
+  and goes back to it once it reappears if the list left it out while it
+  was still starting. After five seconds of starting, the player explains
+  that the stream is still buffering and may take a little while. It
+  keeps "Weak signal (46%) — the picture may break up." in the corner while
+  the antenna reception is poor (Narrator reads it when it appears), and
+  the channel name that any button or key brings up now shows the latest
+  reading ("Signal quality 46% · strength 96% · error-free 0%"). When every
+  tuner is busy, the channel list shows only the channels you can join,
+  under a note, and checks again every 30 seconds and when you come back
+  to the app, keeping the controller's focus on the same channel (or its
+  neighbor). On a PC without a controller, arrow keys move, Enter watches,
+  F adds or removes a favorite, and Escape or Backspace leaves the player.
+  A stream that fails to open is tried again twice before giving up.
+  Player errors are plain words ("The stream stopped. Try again."); the
+  detail goes to the app's log. Narrator reads each channel row ("9.1 FOX
+  9, favorite, now …, next …") and section header by name. On a PC the app
+  opens in a window, and only the player goes full screen. With the
+  Microsoft Store identity set, the Xbox workflow also builds a Store
+  upload targeting Xbox for the same Store product as the Windows app.
+
 ## [0.25.1] — 2026-10-13
 
 ### Added

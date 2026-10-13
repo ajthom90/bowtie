@@ -1,0 +1,20 @@
+<Page
+    x:Class="BowtieXbox.Pages.ConnectPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="{StaticResource SafeMargin}" XYFocusKeyboardNavigation="Enabled">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20" MaxWidth="900">
+            <TextBlock Text="Connect to your Bowtie server" Style="{StaticResource TitleText}" />
+            <TextBlock Style="{StaticResource BodyText}" Foreground="{StaticResource BowtieMuted}"
+                       Text="Enter the address of the Bowtie server on your network, like 192.168.1.20:8400 or https://tv.example.com." />
+            <TextBox x:Name="ServerBox" Style="{StaticResource TvTextBox}" Header="Server address"
+                     PlaceholderText="192.168.1.20:8400" InputScope="Url" IsSpellCheckEnabled="False"
+                     KeyDown="OnServerKeyDown" />
+            <StackPanel Orientation="Horizontal" Spacing="16">
+                <Button x:Name="ConnectButton" Content="Connect" Style="{StaticResource TvButton}" Click="OnConnect" />
+                <ProgressRing x:Name="Spinner" Width="40" Height="40" />
+            </StackPanel>
+            <TextBlock x:Name="ErrorLabel" Style="{StaticResource ErrorText}" Visibility="Collapsed" />
+        </StackPanel>
+    </Grid>
+</Page>

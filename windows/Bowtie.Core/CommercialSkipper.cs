@@ -42,7 +42,7 @@ public sealed class CommercialSkipper
 
     private int? IndexAt(double timeSec)
     {
-        if (!double.IsFinite(timeSec)) return null;
+        if (!Shim.IsFinite(timeSec)) return null;
         for (var i = 0; i < Segments.Count; i++)
         {
             if (Segments[i].Start <= timeSec && timeSec < Segments[i].End) return i;
@@ -57,7 +57,7 @@ public sealed class CommercialSkipper
     public static IReadOnlyList<Commercial> Normalize(IEnumerable<Commercial>? commercials)
     {
         var clean = (commercials ?? Array.Empty<Commercial>())
-            .Where(c => c != null && double.IsFinite(c.Start) && double.IsFinite(c.End))
+            .Where(c => c != null && Shim.IsFinite(c.Start) && Shim.IsFinite(c.End))
             .Select(c => new Commercial(Math.Max(0, c.Start), c.End))
             .Where(c => c.End > c.Start)
             .OrderBy(c => c.Start)

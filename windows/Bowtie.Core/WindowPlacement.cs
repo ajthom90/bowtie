@@ -66,8 +66,8 @@ public static class WindowPlacement
 
         var width = Math.Min(s.Width, workArea.Width);
         var height = Math.Min(s.Height, workArea.Height);
-        var x = Math.Clamp(s.X, workArea.X, workArea.X + workArea.Width - width);
-        var y = Math.Clamp(s.Y, workArea.Y, workArea.Y + workArea.Height - height);
+        var x = Shim.Clamp(s.X, workArea.X, workArea.X + workArea.Width - width);
+        var y = Shim.Clamp(s.Y, workArea.Y, workArea.Y + workArea.Height - height);
         return new PixelRect(x, y, width, height);
     }
 }

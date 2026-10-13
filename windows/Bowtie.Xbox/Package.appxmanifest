@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  Bowtie for Xbox (UWP). Its own identity, so it installs next to the
+  desktop app (Bowtie.LiveTV). Identity Version and Publisher are stamped by
+  windows/scripts/package-xbox.ps1: Publisher must equal the signing
+  certificate's subject exactly.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  IgnorableNamespaces="uap mp">
+
+  <Identity
+    Name="Bowtie.Xbox"
+    Publisher="CN=Bowtie"
+    Version="0.0.1.0" />
+
+  <mp:PhoneIdentity PhoneProductId="4b9915c9-d90e-441f-ad80-dd09e6004a49" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>Bowtie</DisplayName>
+    <PublisherDisplayName>Bowtie</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="BowtieXbox.App">
+      <uap:VisualElements
+        DisplayName="Bowtie"
+        Description="Live TV from your HDHomeRun antenna, served by your Bowtie server."
+        BackgroundColor="#101418"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#101418" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <!--
+    UWP apps are network-isolated: internetClient for servers on the
+    internet, privateNetworkClientServer for a Bowtie server on the home
+    network (the usual case).
+  -->
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+</Package>

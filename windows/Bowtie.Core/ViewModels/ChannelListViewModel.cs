@@ -20,7 +20,7 @@ public sealed record GuideRow(ChannelRow Row, string Section)
     public static string? RestoreKey(string key, IReadOnlyList<GuideRow> rows)
     {
         if (rows.Any(r => r.Key == key)) return key;
-        var allKey = key.Replace("favorites:", "all:", StringComparison.Ordinal);
+        var allKey = key.Replace("favorites:", "all:");
         return rows.Any(r => r.Key == allKey) ? allKey : null;
     }
 }
@@ -166,7 +166,7 @@ public sealed class ChannelListViewModel : ObservableObject
     /// <summary>Favorite shortcuts, then every visible channel in its server position. Rows stays unique for zapping.</summary>
     public IReadOnlyList<GuideRow> GuideRows(IReadOnlyList<ChannelRow> visible) =>
         visible.Where(r => r.IsFavorite).Select(r => new GuideRow(r, "favorites"))
-            .Concat(visible.OrderBy(r => _serverOrder.GetValueOrDefault(r.Id, int.MaxValue))
+            .Concat(visible.OrderBy(r => (_serverOrder.TryGetValue(r.Id, out var order) ? order : int.MaxValue))
                 .Select(r => new GuideRow(r, "all"))).ToList();
 
     /// <summary>Recently watched channels, newest first; empty when none or unsupported.</summary>

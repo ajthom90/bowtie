@@ -1,0 +1,11 @@
+<!--
+  .NET Native runtime directives. Bowtie.Core's JSON is source-generated
+  (no reflection), so these are a safety net: keep metadata for the app and
+  for Bowtie.Core (enum reflection, data binding to its types).
+-->
+<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="*Application*" Dynamic="Required All" />
+    <Assembly Name="Bowtie.Core" Dynamic="Required All" />
+  </Application>
+</Directives>
