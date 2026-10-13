@@ -137,6 +137,27 @@ needs the UWP tools.
 Release builds use .NET Native and take several minutes. Bowtie.Core's JSON is
 source-generated (no reflection), which keeps it working under .NET Native.
 
+## Microsoft Store
+
+The Xbox app ships in the same Store product as the Windows desktop app: PCs
+get the desktop package, consoles get this one. With the three
+`WINDOWS_STORE_*` repository variables set (see
+[the Windows README](../README.md#microsoft-store)), the **Xbox** workflow
+also uploads a **bowtie-xbox-store** artifact holding an unsigned
+`.appxupload` (or `.msixupload`). It's built with the Store identity and
+targets `Windows.Xbox` only; the sideload package keeps its own identity and
+`Windows.Universal`, so it still installs on PCs for testing.
+
+Package versions: two packages in one product can't share name, version and
+architecture, and both apps are x64. So the Xbox upload adds 1000 to the third
+part of the version: `v0.26.0` ships as `0.26.1000.0`. To publish it as a
+separate Store product instead, set `XBOX_STORE_IDENTITY_NAME` to that
+product's identity name; the offset is then dropped.
+
+To publish: open the product in Partner Center, start a new submission
+(**Update**), add the Xbox upload on **Packages** next to the desktop package
+and tick **Xbox**, add Xbox screenshots under **Store listings**, then submit.
+
 ## What's in this first slice, and what's next
 
 In this slice: connect, quick sign-in (code + QR) and password sign-in,
