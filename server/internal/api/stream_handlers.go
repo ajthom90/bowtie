@@ -538,16 +538,12 @@ func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	segs := make([][2]any, 0, len(win.Segments))
 	for _, sg := range win.Segments {
-		segs = append(segs, [2]any{sg.Start.UTC().Format(stream.WallClockLayout), sg.Duration})
+		segs = append(segs, [2]any{stream.FormatWallClock(sg.Start), sg.Duration})
 	}
 	body := map[string]any{"mediaSequence": win.MediaSequence, "windowStart": nil, "liveEdge": nil, "segments": segs}
 	if len(win.Segments) > 0 {
-		body["windowStart"] = win.WindowStart().UTC().Format(stream.WallClockLayout)
-		// LiveEdge adds a float64 duration via time.Duration, which truncates.
-		// 4.004s becomes 4003999999ns, one nanosecond under the millisecond the
-		// duration already states, so Format prints .007. Round to the
-		// millisecond the segment list advertises.
-		body["liveEdge"] = win.LiveEdge().UTC().Round(time.Millisecond).Format(stream.WallClockLayout)
+		body["windowStart"] = stream.FormatWallClock(win.WindowStart())
+		body["liveEdge"] = stream.FormatWallClock(win.LiveEdge())
 	}
 	writeJSON(w, http.StatusOK, body)
 }

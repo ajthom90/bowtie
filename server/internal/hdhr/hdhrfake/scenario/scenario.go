@@ -79,10 +79,14 @@ type Expect struct {
 	// Σ EXTINF minus wall time, in seconds (negative: an outage was skipped).
 	MaxTimelineExcessSeconds *float64 `yaml:"maxTimelineExcessSeconds"`
 	MinTimelineExcessSeconds *float64 `yaml:"minTimelineExcessSeconds"`
-	// ffprobe checks; a run that probed no audio violates them.
-	MaxAudioHoleMs    *float64 `yaml:"maxAudioHoleMs"`
-	MaxAVStartSkewMs  *float64 `yaml:"maxAVStartSkewMs"`
-	MinFfmpegRestarts *int     `yaml:"minFfmpegRestarts"`
+	// ffprobe checks; a run that probed no audio violates them. The start
+	// offset also requires a probed video segment. Each discontinuity seen
+	// on only one side is a violation, and so is probed audio and video
+	// with no measured run.
+	MaxAudioHoleMs     *float64 `yaml:"maxAudioHoleMs"`
+	MaxAVStartSkewMs   *float64 `yaml:"maxAVStartSkewMs"`
+	MaxStartAVOffsetMs *float64 `yaml:"maxStartAVOffsetMs"`
+	MinFfmpegRestarts  *int     `yaml:"minFfmpegRestarts"`
 	// XFailOn is the violation text an xfail run must show; other
 	// violations fail it (a dead session can't pass for the known gap).
 	XFailOn string `yaml:"xfailOn"`
@@ -217,7 +221,7 @@ func (e *Expect) empty() bool {
 		e.RenditionsMonotonic == nil && e.DiscontinuitiesAligned == nil && e.DiscontinuitySequenceOK == nil &&
 		e.MinDiscontinuitySequence == nil && e.PDTMonotonic == nil && e.PDTAligned == nil &&
 		e.MaxTimelineExcessSeconds == nil && e.MinTimelineExcessSeconds == nil &&
-		e.MaxAudioHoleMs == nil && e.MaxAVStartSkewMs == nil && e.MinFfmpegRestarts == nil &&
+		e.MaxAudioHoleMs == nil && e.MaxAVStartSkewMs == nil && e.MaxStartAVOffsetMs == nil && e.MinFfmpegRestarts == nil &&
 		e.MinSegmentsAfterFault == nil && e.NoFetchErrors == nil && e.MinRenditions == nil && e.MaxStartSeconds == nil &&
 		e.PairedAfterEachFault == nil && e.MaxTailGapSeconds == nil && e.CaptionsTimed == nil
 }

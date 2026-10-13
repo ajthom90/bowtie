@@ -1924,3 +1924,55 @@ func TestSessionTimelineOwnerOnly(t *testing.T) {
 		t.Fatalf("body %+v", body)
 	}
 }
+
+// An empty window is null bounds and an empty segments array. A start 900 µs
+// past the second rounds to the next millisecond, and the live edge is that
+// start plus 4.004 s, not a millisecond off from truncating the duration.
+func TestSessionTimelineEmptyWindowAndSubMillisecondStart(t *testing.T) {
+	ss := newStubStreams()
+	h, st, _ := testAPIWithStreams(t, ss)
+	alice := seedUser(t, st, "alice", "pass-a", "viewer")
+	start := time.Date(2026, 10, 11, 20, 0, 0, 900_000, time.UTC)
+	ss.timelines = map[string]timelineStub{
+		"viewer-empty": {owner: alice.ID, win: stream.WindowTimeline{MediaSequence: 3}},
+		"viewer-subms": {owner: alice.ID, win: stream.WindowTimeline{
+			MediaSequence: 1,
+			Segments:      []stream.TimelineSegment{{Start: start, Duration: 4.004}},
+		}},
+	}
+	rr := doJSON(t, h, "POST", "/api/v1/auth/login", map[string]string{"username": "alice", "password": "pass-a"}, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login: %d", rr.Code)
+	}
+	hdr := map[string]string{"Authorization": "Bearer " + decodeLogin(t, rr).AccessToken}
+
+	empty := doJSON(t, h, "GET", "/api/v1/sessions/viewer-empty/timeline", nil, hdr)
+	if empty.Code != http.StatusOK {
+		t.Fatalf("empty: status %d body %s", empty.Code, empty.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(empty.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw["mediaSequence"]) != "3" || string(raw["windowStart"]) != "null" ||
+		string(raw["liveEdge"]) != "null" || string(raw["segments"]) != "[]" {
+		t.Fatalf("empty window: %s", empty.Body.String())
+	}
+
+	sub := doJSON(t, h, "GET", "/api/v1/sessions/viewer-subms/timeline", nil, hdr)
+	if sub.Code != http.StatusOK {
+		t.Fatalf("sub-ms: status %d body %s", sub.Code, sub.Body.String())
+	}
+	var body struct {
+		WindowStart string  `json:"windowStart"`
+		LiveEdge    string  `json:"liveEdge"`
+		Segments    [][]any `json:"segments"`
+	}
+	if err := json.Unmarshal(sub.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.WindowStart != "2026-10-11T20:00:00.001Z" || body.LiveEdge != "2026-10-11T20:00:04.005Z" ||
+		len(body.Segments) != 1 || body.Segments[0][0] != "2026-10-11T20:00:00.001Z" || body.Segments[0][1] != 4.004 {
+		t.Fatalf("sub-ms window: %+v", body)
+	}
+}

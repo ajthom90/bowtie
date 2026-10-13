@@ -47,6 +47,11 @@ requests that come up most in their forums and subreddits.
 - **Smooth recovery from weak signal** (in progress): no jump to the start
   of the rewind window and no A/V drift after a dropout; pick up at the same
   moment; resume a show where you left off while it is recorded or watched.
+- **Newer FFmpeg in the Docker image** (after 0.24.1): move the image from
+  Debian 12 (FFmpeg 5.1) to Debian 13 (FFmpeg 7.1, newer Intel drivers),
+  then check Quick Sync on a real Intel server before release.
+- **Live captions back**, run in their own FFmpeg process so a caption gap
+  can't hold up the video.
 - **Free a tuner sooner when changing channels**, so flipping quickly
   doesn't hit "All tuners are in use".
 - **Roku rewind, fast-forward and back to live.**

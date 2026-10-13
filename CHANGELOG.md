@@ -5,7 +5,7 @@ All notable changes to Bowtie are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.25.0] — 2026-10-13
 
 ### Added
 
@@ -20,6 +20,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - **Favorites stay in the full channel list.** All clients show favorites at
   the top and again in their normal place in All channels. Starring either
   copy updates both; player channel up/down still visits each channel once.
+- **App versions match the release.** TestFlight builds of the Apple apps
+  and the Roku channel now carry the release version (0.25.0) instead of a
+  fixed placeholder.
+
+### Fixed
+
+- **One slow channel no longer holds up the others.** When the disk was
+  slow, Bowtie could stall every live stream while it read one stream's
+  files. It now reads them without blocking the others.
+- **Timestamps in the stream timeline are rounded to the nearest
+  millisecond** instead of cut off.
 
 ## [0.24.0] — 2026-10-12
 

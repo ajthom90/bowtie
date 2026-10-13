@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,14 +52,17 @@ type SegmentProbe func(ctx context.Context, seg []byte) ([]Packet, error)
 
 // SegmentEvent is one probed segment, for time-local analysis (the soak).
 type SegmentEvent struct {
-	At             time.Time
-	Rendition      string
-	Seq            int64
-	DNum           int64
-	AudioHole      time.Duration // largest hole in/before this audio segment
-	AVSkew         time.Duration // skew against the PDT-paired segment of the other kind
-	Paired         bool          // a segment of the other kind was paired with this one
-	TimelineExcess float64       // the primary's running excess at this moment
+	At        time.Time
+	Rendition string
+	Seq       int64
+	DNum      int64
+	AudioHole time.Duration // largest hole in/before this audio segment
+	AVSkew    time.Duration // skew against the PDT-paired segment of the other kind
+	Paired    bool          // a segment of the other kind was paired with this one
+	// TimelineExcess is the primary's running excess at this moment, anchored
+	// the same way as Report.TimelineExcess: durations after the reference
+	// segment minus wall time since the poll that observed it.
+	TimelineExcess float64
 }
 
 // CoverageWindow is what each rendition delivered between two Marks. Window
@@ -108,10 +112,18 @@ type Report struct {
 
 	// Renditions are the media playlists followed, primary first.
 	Renditions []string
-	// TimelineExcess is Σ EXTINF of the primary rendition's segments that
-	// appeared after the first poll, minus the wall time they took to
-	// appear (seconds). ≈0 on a clean stream; negative by the length of an
-	// outage the transcoder skipped.
+	// TimelineExcess is how far the primary rendition's media runs ahead of
+	// the wall clock, in seconds. The newest segment of the first poll that
+	// listed any is the base and is not part of the measurement. The clock
+	// starts at the first later poll that observes a segment after the base.
+	// The newest segment of that poll is the reference, and no segment in
+	// that poll is counted, so a delayed poll cannot book a batch at zero
+	// wall time. From there TimelineExcess is Σ EXTINF of every newer
+	// primary segment, minus the wall time from the reference poll to the
+	// last poll that found a new segment. A stream that keeps real time
+	// reads ≈0 ± one segment's poll jitter, however long the wait before
+	// the reference. Media that arrives ahead of the clock reads positive;
+	// an outage the transcoder skipped reads negative by the media it skipped.
 	TimelineExcess float64
 	// MaxAudioHole is the largest gap between consecutive audio packets;
 	// AudioHoleBy is the same per audio rendition (aac0, ac30, …).
@@ -120,9 +132,22 @@ type Report struct {
 	// MaxAVStartSkew is the largest |(ptsA − ptsV) − (pdtA − pdtV)| over
 	// audio and video segments paired by PDT overlap (PairByPDT) with the
 	// same discontinuity number. AVPairs counts those comparisons.
-	MaxAVStartSkew           time.Duration
-	AVPairs                  int
-	ProbedAudio, ProbedVideo int
+	MaxAVStartSkew time.Duration
+	AVPairs        int
+	// MaxStartAVOffset is the largest |first audio PTS − first video PTS|
+	// at the start of the stream and at each discontinuity. Each side is
+	// the first probed segment of that run (the same discontinuity
+	// number): video from the primary rendition, audio from aac0, or from
+	// the first audio rendition when the master has no aac0. The segments
+	// need not overlap in PDT. The difference uses the probed PTS values,
+	// unwrapped across the 33-bit MPEG-TS period.
+	// StartAVRuns counts discontinuities seen on either of those sides;
+	// StartAVMeasured counts the runs where both sides were probed.
+	// UnmeasuredStartAV lists the rest, ascending.
+	MaxStartAVOffset             time.Duration
+	StartAVRuns, StartAVMeasured int
+	UnmeasuredStartAV            []int64
+	ProbedAudio, ProbedVideo     int
 	// Consistency checks every polled media playlist (CheckConsistency).
 	Consistency Consistency
 	// FetchErrors counts every failed fetch: PlaylistErrors (any rendition,
@@ -176,6 +201,9 @@ type Player struct {
 	excessAnchor  int64     // newest segment of that poll; nothing in the poll is counted
 	excessLast    time.Time // last poll that found a segment after the reference
 	excessSum     float64   // Σ EXTINF of primary segments after the reference
+	// starts is the first probed primary-video segment and the first probed
+	// preferred-audio segment of each discontinuity number.
+	starts map[int64]*startRun
 }
 
 // Start creates a session for cfg.ChannelID.
@@ -331,9 +359,8 @@ func (p *Player) Report() Report {
 		}
 		r.AudioHoleBy = m
 	}
-	if !p.excessLast.IsZero() {
-		r.TimelineExcess = p.excessSum - p.excessLast.Sub(p.excessFirst).Seconds()
-	}
+	r.TimelineExcess = p.timelineExcessLocked()
+	r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV = p.startCoverageLocked()
 	r.FetchErrors = r.PlaylistErrors + r.SegmentErrors + r.ProbeErrors
 	r.Consistency = p.cons.result()
 	return r
@@ -613,9 +640,7 @@ func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int,
 	}()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !p.excessLast.IsZero() {
-		ev.TimelineExcess = p.excessSum - p.excessLast.Sub(p.excessFirst).Seconds()
-	}
+	ev.TimelineExcess = p.timelineExcessLocked()
 	audio := isAudioRendition(r.name)
 	if audio {
 		p.report.ProbedAudio++
@@ -645,11 +670,96 @@ func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int,
 	}
 	last := pk[len(pk)-1]
 	rec := &probed{seg: PDTSeg{Start: g.PDT, Dur: g.Duration, DNum: g.DNum}, pts: pk[0].PTS, end: last.PTS + last.Dur, win: win}
-	if g.PDT.IsZero() {
-		return // no wall-clock place: cannot be paired (Consistency flags it)
+	// Pairing needs a wall-clock place. The start offset needs only the PTS
+	// and the discontinuity number, so a segment with no PDT is still recorded.
+	if !g.PDT.IsZero() {
+		r.addProbed(rec)
+		ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
 	}
-	r.addProbed(rec)
-	ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
+	p.noteStartLocked(r, rec)
+}
+
+// startRun is one discontinuity's first probed video and audio segments.
+type startRun struct {
+	video, audio *probed
+	measured     bool
+}
+
+// noteStartLocked records |first audio PTS − first video PTS| for rec's
+// discontinuity once both sides of that run have been probed. The two
+// segments are each side's first probe of this discontinuity number; they
+// are the run's starts whether or not they carry a PDT. Video is the
+// primary rendition. Audio is aac0, or the first audio rendition when
+// the master lists no aac0. Later segments of the run are not part of the
+// offset. A run seen on only one side stays unmeasured.
+func (p *Player) noteStartLocked(r *rendition, rec *probed) {
+	audioRend := p.startAudioLocked()
+	video := r == p.primary && !isAudioRendition(r.name)
+	audio := audioRend != nil && r == audioRend
+	if !video && !audio {
+		return
+	}
+	if p.starts == nil {
+		p.starts = map[int64]*startRun{}
+	}
+	st := p.starts[rec.seg.DNum]
+	if st == nil {
+		st = &startRun{}
+		p.starts[rec.seg.DNum] = st
+	}
+	if video && st.video == nil {
+		st.video = rec
+	}
+	if audio && st.audio == nil {
+		st.audio = rec
+	}
+	if st.video == nil || st.audio == nil || st.measured {
+		return
+	}
+	if off := absSeconds(ptsDiff(st.audio.pts, st.video.pts)); off > p.report.MaxStartAVOffset {
+		p.report.MaxStartAVOffset = off
+	}
+	st.measured = true
+}
+
+// startCoverageLocked summarizes which discontinuities had a start pair.
+func (p *Player) startCoverageLocked() (runs, measured int, missing []int64) {
+	if len(p.starts) == 0 {
+		return 0, 0, nil
+	}
+	dnums := make([]int64, 0, len(p.starts))
+	for d := range p.starts {
+		dnums = append(dnums, d)
+	}
+	sort.Slice(dnums, func(i, j int) bool { return dnums[i] < dnums[j] })
+	for _, d := range dnums {
+		st := p.starts[d]
+		runs++
+		if st.measured && st.video != nil && st.audio != nil {
+			measured++
+			continue
+		}
+		missing = append(missing, d)
+	}
+	return runs, measured, missing
+}
+
+// startAudioLocked is aac0 when the master lists it, otherwise the first
+// audio rendition.
+func (p *Player) startAudioLocked() *rendition {
+	var first *rendition
+	for _, o := range append([]*rendition{p.primary}, p.others...) {
+		if !isAudioRendition(o.name) {
+			continue
+		}
+		if o.name == "aac0" {
+			return o
+		}
+		if first == nil {
+			first = o
+		}
+	}
+	return first
 }
 
 // pairLocked pairs rec (of rendition r) with the PDT-overlapping probed
@@ -850,6 +960,17 @@ func vttSeconds(v string) float64 {
 		sec = sec*60 + f
 	}
 	return sec
+}
+
+// timelineExcessLocked is Σ EXTINF of primary segments after the reference
+// minus the wall time from the poll that observed the reference to the last
+// poll that found a new segment. It is zero until a segment after the
+// reference has been observed.
+func (p *Player) timelineExcessLocked() float64 {
+	if p.excessLast.IsZero() {
+		return 0
+	}
+	return p.excessSum - p.excessLast.Sub(p.excessFirst).Seconds()
 }
 
 // ptsPeriod is the 33-bit MPEG-TS clock's wrap, in seconds.

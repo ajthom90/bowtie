@@ -134,7 +134,10 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 	cfg.Probe = FFprobe(ffprobePath())
 	startAt := time.Now()
 	defer func() {
-		ff := ffLogSince(t, startAt)
+		ff, err := ffLogSince(startAt, time.Now())
+		if err != nil {
+			t.Errorf("ffmpeg log: %v", err)
+		}
 		t.Logf("ff: rebases=%d dupFrames=%d maxDupBurst=%d dupWarnings=%d", len(ff.Rebases), ff.DupFrames, ff.MaxDupBurst, ff.DupWarnings)
 		for _, rb := range ff.Rebases {
 			t.Logf("rebase at +%v: %s", rb.At.Round(100*time.Millisecond), rb.Line)
@@ -220,6 +223,9 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 		obs.TimelineExcess = r.TimelineExcess
 		obs.MaxAudioHole = r.MaxAudioHole
 		obs.MaxAVStartSkew = r.MaxAVStartSkew
+		obs.MaxStartAVOffset = r.MaxStartAVOffset
+		obs.StartAVRuns, obs.StartAVMeasured = r.StartAVRuns, r.StartAVMeasured
+		obs.UnmeasuredStartAV = append([]int64(nil), r.UnmeasuredStartAV...)
 		obs.ProbedAudio, obs.ProbedVideo = r.ProbedAudio, r.ProbedVideo
 		obs.FetchErrors = r.FetchErrors
 		obs.AVPairs = r.AVPairs
@@ -250,8 +256,8 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 		for _, pr := range c.Problems {
 			t.Logf("consistency: %s", pr)
 		}
-		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v over %d pairs probed=%d/%d cues=%d (%d timed, %d mistimed or unmatched)",
-			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CuesTimed, r.CueErrors)
+		t.Logf("player: renditions=%v excess=%.2fs audioHole=%v avSkew=%v startAV=%v runs=%d/%d missing=%v over %d pairs probed=%d/%d cues=%d (%d timed, %d mistimed or unmatched)",
+			r.Renditions, r.TimelineExcess, r.MaxAudioHole, r.MaxAVStartSkew, r.MaxStartAVOffset, r.StartAVMeasured, r.StartAVRuns, r.UnmeasuredStartAV, r.AVPairs, r.ProbedAudio, r.ProbedVideo, r.Cues, r.CuesTimed, r.CueErrors)
 		t.Logf("player: polls=%d segments=%d segErrors=%d backward=%d discontinuities=%d maxGap=%v gone=%v newest=%v errors=%v",
 			r.Polls, r.SegmentsFetched, r.SegmentErrors, r.BackwardJumps, r.Discontinuities, r.MaxGap.Round(100*time.Millisecond), r.SessionGone, r.Newest, r.Errors)
 		p.Stop(context.Background())
