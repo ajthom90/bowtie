@@ -29,6 +29,7 @@ func TestFalseRebase(t *testing.T) {
 	tests := []struct {
 		name   string
 		events []testplayer.SegmentEvent
+		until  time.Time
 		want   string
 	}{
 		{name: "clean splice", events: clean, want: ""},
@@ -105,11 +106,57 @@ func TestFalseRebase(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "no excess at the re-base",
+			name: "no baseline is unmeasured",
 			events: []testplayer.SegmentEvent{
-				ev(8*time.Second, 0, 0, 5),
+				ev(8*time.Second, 0, 0, 1.6),
 			},
-			want: "",
+			want: "unmeasured: no timeline excess before the re-base",
+		},
+		{
+			name: "aftermath not observed",
+			events: []testplayer.SegmentEvent{
+				ev(-4*time.Second, 0, 0, 0.2),
+				ev(10*time.Second, 0, 0, 0.3),
+			},
+			until: t0.Add(10 * time.Second),
+			want:  "unmeasured: 60s aftermath not observed",
+		},
+		{
+			name: "aftermath one nanosecond short",
+			events: []testplayer.SegmentEvent{
+				ev(-4*time.Second, 0, 0, 0.2),
+				ev(10*time.Second, 0, 0, 0.3),
+			},
+			until: t0.Add(time.Minute - time.Nanosecond),
+			want:  "unmeasured: 60s aftermath not observed",
+		},
+		{
+			name: "full minute of clean aftermath",
+			events: []testplayer.SegmentEvent{
+				ev(-4*time.Second, 0, 0, 0.2),
+				ev(10*time.Second, 0, 0, 0.3),
+			},
+			until: t0.Add(time.Minute),
+			want:  "",
+		},
+		{
+			name: "a seen hole fails even when the aftermath is short",
+			events: []testplayer.SegmentEvent{
+				ev(-4*time.Second, 0, 0, 0),
+				ev(8*time.Second, 80*time.Millisecond, 0, 0),
+			},
+			until: t0.Add(10 * time.Second),
+			want:  "aac0 segment 7: audio hole 80ms",
+		},
+		{
+			name: "late excess counts once the minute is observed",
+			events: []testplayer.SegmentEvent{
+				ev(-4*time.Second, 0, 0, 0),
+				ev(10*time.Second, 0, 0, 0.2),
+				ev(20*time.Second, 0, 0, 1.8),
+			},
+			until: t0.Add(time.Minute),
+			want:  "timeline excess 0.00s → 1.80s",
 		},
 		{
 			name: "hole wins over skew on the same segment",
@@ -129,7 +176,11 @@ func TestFalseRebase(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := falseRebase(t0, tc.events); got != tc.want {
+			until := tc.until
+			if until.IsZero() {
+				until = t0.Add(2 * time.Minute)
+			}
+			if got := falseRebase(t0, tc.events, until); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -278,8 +329,146 @@ func TestServerLogHits(t *testing.T) {
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hits := serverLogHits(t, path, start, end, soakFaultNeedles)
+	hits, err := serverLogHits(t, path, start, end, soakFaultNeedles)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(hits) != 1 || hits[0].Needle != "restarting ffmpeg" || !strings.Contains(hits[0].Line, "restarting ffmpeg") {
 		t.Fatalf("hits %+v", hits)
+	}
+}
+
+func TestSoakExtraPlay(t *testing.T) {
+	origin := time.Unix(1_760_000_000, 0).UTC()
+	nominal := origin.Add(time.Hour)
+	rb := func(d time.Duration) rebase { return rebase{At: d, Line: "timestamp discontinuity, new offset"} }
+	tests := []struct {
+		name string
+		rbs  []rebase
+		want time.Duration
+	}{
+		{name: "late re-base", rbs: []rebase{rb(59*time.Minute + 50*time.Second)}, want: 50 * time.Second},
+		{name: "early re-base", rbs: []rebase{rb(10 * time.Minute)}, want: 0},
+		{name: "at the nominal end", rbs: []rebase{rb(time.Hour)}, want: time.Minute},
+		{name: "none", want: 0},
+		{name: "after the nominal window", rbs: []rebase{rb(time.Hour + 10*time.Second)}, want: 0},
+		{name: "the later one wins", rbs: []rebase{rb(50 * time.Minute), rb(59*time.Minute + 40*time.Second)}, want: 40 * time.Second},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := soakExtraPlay(origin, nominal, tc.rbs); got != tc.want {
+				t.Fatalf("extra %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSoakFFmpegLog(t *testing.T) {
+	start := time.UnixMilli(1_760_000_000_000)
+	end := start.Add(time.Hour)
+	argv := strconvMS(start.Add(time.Second)) + " argv: -i pipe:0 -dts_delta_threshold 2.6\n"
+	inside := strconvMS(start.Add(2*time.Second)) + " [debug] timestamp discontinuity (stream id=0): 270000, new offset= -270000\n"
+	after := strconvMS(end.Add(time.Second)) + " [debug] timestamp discontinuity (stream id=0): 1, new offset= 0\n"
+	stale := strconvMS(start.Add(-time.Hour)) + " argv: -i pipe:0\n"
+	tests := []struct {
+		name    string
+		body    string
+		huge    bool
+		missing bool
+		wantErr bool
+		rebases int
+	}{
+		{name: "directory missing", missing: true, wantErr: true},
+		{name: "empty directory", wantErr: true},
+		{name: "stale argv only", body: stale, wantErr: true},
+		{name: "overlong line", huge: true, wantErr: true},
+		{name: "argv and a re-base inside, one after the window", body: argv + inside + after, rebases: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.missing {
+				t.Setenv("FF51_LOGDIR", filepath.Join(t.TempDir(), "missing"))
+			} else {
+				dir := t.TempDir()
+				t.Setenv("FF51_LOGDIR", dir)
+				body := tc.body
+				if tc.huge {
+					body = strings.Repeat("x", logScanMax+8)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := soakFFmpegLog(start, end)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("err = nil, log %+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Rebases) != tc.rebases {
+				t.Fatalf("rebases %+v, want %d", got.Rebases, tc.rebases)
+			}
+			if len(got.Argv) == 0 {
+				t.Fatal("argv missing")
+			}
+		})
+	}
+}
+
+func strconvMS(t time.Time) string {
+	return fmt.Sprintf("%d", t.UnixMilli())
+}
+
+func TestSoakServerLogEvidence(t *testing.T) {
+	start := time.Date(2026, 10, 12, 15, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	stamp := func(at time.Time) string { return at.Format(time.RFC3339Nano) }
+	tests := []struct {
+		name    string
+		lines   []string
+		wantErr bool
+		hits    int
+	}{
+		{
+			name:    "go log without docker timestamps",
+			lines:   []string{"2026/10/12 15:01:00 stream: session abc: restarting ffmpeg (append to playlist)"},
+			wantErr: true,
+		},
+		{
+			name:    "only stale lines",
+			lines:   []string{stamp(start.Add(-time.Hour)) + " bowtie listening"},
+			wantErr: true,
+		},
+		{name: "empty", wantErr: true},
+		{
+			name:  "session start inside the window",
+			lines: []string{stamp(start.Add(time.Second)) + " bowtie listening"},
+		},
+		{
+			name:  "fault inside the window",
+			lines: []string{stamp(start) + " stream: session s: restarting ffmpeg (append to playlist)"},
+			hits:  1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hits, err := assessServerLog(tc.lines, start, end, soakFaultNeedles)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("err = nil, hits %+v", hits)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(hits) != tc.hits {
+				t.Fatalf("hits %+v, want %d", hits, tc.hits)
+			}
+		})
 	}
 }

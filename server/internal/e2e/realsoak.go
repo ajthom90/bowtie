@@ -105,32 +105,37 @@ func dockerLogHits(lines []string, start, end time.Time, needles []string) []log
 }
 
 // serverLogHits is dockerLogHits over a log file `docker logs -t` is writing.
-func serverLogHits(t testing.TB, path string, start, end time.Time, needles []string) []logHit {
+func serverLogHits(t testing.TB, path string, start, end time.Time, needles []string) ([]logHit, error) {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("server log: %v", err)
+		return nil, fmt.Errorf("server log: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	var lines []string
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), logScanMax)
 	for sc.Scan() {
 		lines = append(lines, sc.Text())
 	}
 	if err := sc.Err(); err != nil {
-		t.Fatalf("server log: %v", err)
+		return nil, fmt.Errorf("server log: %w", err)
 	}
-	return dockerLogHits(lines, start, end, needles)
+	return assessServerLog(lines, start, end, needles)
 }
 
-// falseRebase says why a re-base at `at` was harmful ("" when it wasn't):
-// within the next 60 s, a probed segment with an audio hole over 50 ms, an
-// A/V skew over 100 ms, or a timeline excess more than 1 s from its value
-// at the re-base. events are in time order, as OnSegment records them.
-// A hole or skew of exactly the limit, and an excess move of exactly 1 s,
-// are a true splice re-base.
-func falseRebase(at time.Time, events []testplayer.SegmentEvent) string {
+// rebaseAftermath is how long after a re-base the soak must keep watching.
+const rebaseAftermath = time.Minute
+
+// falseRebase says why a re-base at `at` was harmful. "" means the next
+// rebaseAftermath was observed and clean: no audio hole over 50 ms, no A/V
+// skew over 100 ms, and timeline excess within 1 s of its value at the
+// re-base. events are in time order, as OnSegment records them. A hole or
+// skew of exactly the limit, and an excess move of exactly 1 s, are a true
+// splice re-base. No event at or before `at`, or an observation that ends
+// before the aftermath does, is unmeasured. A hole, skew, or excess move is
+// reported ahead of either of those.
+func falseRebase(at time.Time, events []testplayer.SegmentEvent, observedUntil time.Time) string {
 	excessAt, haveExcess := 0.0, false
 	for _, e := range events {
 		if e.At.After(at) {
@@ -138,7 +143,7 @@ func falseRebase(at time.Time, events []testplayer.SegmentEvent) string {
 		}
 		excessAt, haveExcess = e.TimelineExcess, true
 	}
-	limit := at.Add(time.Minute)
+	limit := at.Add(rebaseAftermath)
 	for _, e := range events {
 		if e.At.Before(at) || e.At.After(limit) {
 			continue
@@ -152,5 +157,80 @@ func falseRebase(at time.Time, events []testplayer.SegmentEvent) string {
 			return fmt.Sprintf("timeline excess %.2fs → %.2fs", excessAt, e.TimelineExcess)
 		}
 	}
+	if !haveExcess {
+		return "unmeasured: no timeline excess before the re-base"
+	}
+	if observedUntil.Before(at.Add(rebaseAftermath)) {
+		return "unmeasured: 60s aftermath not observed"
+	}
 	return ""
+}
+
+// soakExtraPlay is how much longer than nominalEnd the player must run so
+// every re-base in [origin, nominalEnd] is followed by rebaseAftermath of
+// playback. A re-base after nominalEnd adds nothing. The result is in
+// [0, rebaseAftermath].
+func soakExtraPlay(origin, nominalEnd time.Time, rebases []rebase) time.Duration {
+	var extra time.Duration
+	for _, rb := range rebases {
+		at := origin.Add(rb.At)
+		if at.After(nominalEnd) {
+			continue
+		}
+		need := at.Add(rebaseAftermath).Sub(nominalEnd)
+		if need > extra {
+			extra = need
+		}
+	}
+	if extra > rebaseAftermath {
+		extra = rebaseAftermath
+	}
+	if extra < 0 {
+		return 0
+	}
+	return extra
+}
+
+// requireFFmpegLog reports whether log shows this soak's FFmpeg actually
+// started. An empty log, or argv lines from an earlier run, is not evidence.
+func requireFFmpegLog(log ffLog) error {
+	if len(log.Argv) == 0 {
+		return fmt.Errorf("ffmpeg log: no argv line in the soak window")
+	}
+	return nil
+}
+
+// soakFFmpegLog is ffLogSince for the soak window, refused when the wrapper
+// left no argv line there. A read error drops any partial log.
+func soakFFmpegLog(start, end time.Time) (ffLog, error) {
+	log, err := ffLogSince(start, end)
+	if err != nil {
+		return ffLog{}, err
+	}
+	if err := requireFFmpegLog(log); err != nil {
+		return ffLog{}, err
+	}
+	return log, nil
+}
+
+// soakMinServerLines is the least `docker logs -t` lines a soak window must
+// contain. The server logs the session start, so zero means the file is the
+// wrong stream.
+const soakMinServerLines = 1
+
+// assessServerLog is dockerLogHits after requiring parseable timestamps
+// inside the window. A Go log prefix, an empty file, or only stale lines
+// fails; the fault needles stay a separate count.
+func assessServerLog(lines []string, start, end time.Time, needles []string) ([]logHit, error) {
+	stamped := 0
+	for _, line := range lines {
+		at, _, ok := parseDockerLogLine(line)
+		if ok && !at.Before(start) && !at.After(end) {
+			stamped++
+		}
+	}
+	if stamped < soakMinServerLines {
+		return nil, fmt.Errorf("server log: %d timestamped lines in the soak window, want at least %d", stamped, soakMinServerLines)
+	}
+	return dockerLogHits(lines, start, end, needles), nil
 }

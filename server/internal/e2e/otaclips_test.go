@@ -93,7 +93,10 @@ expect:
 				t.Fatal(err)
 			}
 			sourceStart := runScenario(t, sc)
-			rebases := rebasesSince(t, sourceStart)
+			rebases, err := rebasesSince(sourceStart, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
 			bad := falseRebases(signal, clip, rebases)
 			for _, rb := range rebases {
 				verdict := "true (near a signal dip)"

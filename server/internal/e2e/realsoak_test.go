@@ -106,10 +106,13 @@ func TestRealSoak(t *testing.T) {
 	// soakWindowPeriod, except a tick that would leave a stub shorter than
 	// soakMinWindow.
 	p.Mark()
-	ctx, cancel := context.WithTimeout(context.Background(), dur)
+	// dur starts once the player is up. A re-base near the end keeps the
+	// player going for up to one more minute so its aftermath is real.
+	nominalEnd := time.Now().Add(dur)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		tick := time.NewTicker(soakWindowPeriod)
@@ -119,7 +122,7 @@ func TestRealSoak(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case now := <-tick.C:
-				if dl, ok := ctx.Deadline(); ok && markSoakWindow(time.Until(dl)) {
+				if markSoakWindow(time.Until(nominalEnd)) {
 					p.Mark()
 				}
 				r := p.Report()
@@ -130,8 +133,41 @@ func TestRealSoak(t *testing.T) {
 			}
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		timer := time.NewTimer(time.Until(nominalEnd))
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		// Lines written after this read are outside the soak window. Missing
+		// one there can only make a late re-base look unmeasured.
+		rebases, err := rebasesSince(start, nominalEnd)
+		if err != nil {
+			t.Logf("ffmpeg log: %v", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		extra := soakExtraPlay(start, nominalEnd, rebases)
+		if extra <= 0 {
+			return
+		}
+		t.Logf("watching %s more so each re-base gets 60s of aftermath", extra.Round(time.Millisecond))
+		extraTimer := time.NewTimer(extra)
+		select {
+		case <-ctx.Done():
+			extraTimer.Stop()
+		case <-extraTimer.C:
+		}
+	}()
 	p.Run(ctx)
+	cancel()
 	wg.Wait()
+	observedUntil := time.Now()
 	r := p.Report()
 	p.Stop(context.Background())
 	end := time.Now()
@@ -184,19 +220,27 @@ func TestRealSoak(t *testing.T) {
 		t.Errorf("coverage: %s", u)
 	}
 
-	for _, hit := range serverLogHits(t, serverLog, start, end, soakFaultNeedles) {
+	hits, err := serverLogHits(t, serverLog, start, end, soakFaultNeedles)
+	if err != nil {
+		t.Error(err)
+	}
+	for _, hit := range hits {
 		t.Errorf("server log: %s", hit.Line)
 	}
 
-	rebases := rebasesSince(t, start)
-	t.Logf("re-bases: %d (%.2f per minute)", len(rebases), float64(len(rebases))/dur.Minutes())
-	mu.Lock()
-	defer mu.Unlock()
-	for _, rb := range rebases {
-		if why := falseRebase(start.Add(rb.At), events); why != "" {
-			t.Errorf("false re-base at +%v (%s): %s", rb.At.Round(time.Second), why, rb.Line)
-		} else {
-			t.Logf("true re-base at +%v: %s", rb.At.Round(time.Second), rb.Line)
+	ff, err := soakFFmpegLog(start, nominalEnd)
+	if err != nil {
+		t.Error(err)
+	} else {
+		t.Logf("re-bases: %d (%.2f per minute)", len(ff.Rebases), float64(len(ff.Rebases))/dur.Minutes())
+		mu.Lock()
+		defer mu.Unlock()
+		for _, rb := range ff.Rebases {
+			if why := falseRebase(start.Add(rb.At), events, observedUntil); why != "" {
+				t.Errorf("false re-base at +%v (%s): %s", rb.At.Round(time.Second), why, rb.Line)
+			} else {
+				t.Logf("true re-base at +%v: %s", rb.At.Round(time.Second), rb.Line)
+			}
 		}
 	}
 }
