@@ -319,6 +319,17 @@ func TestKeyJoinHEVCDoesNotScan(t *testing.T) {
 	}
 }
 
+// A restart drops the bytes but keeps the scan buffers' capacity.
+func TestRestartJoinKeepsScanCapacity(t *testing.T) {
+	c := newChannelIngest(nil, 1)
+	c.pesScan = make([]byte, 8, 64)
+	c.pesHdr = make([]byte, 4, 32)
+	c.restartJoinLocked()
+	if len(c.pesScan) != 0 || cap(c.pesScan) < 64 || len(c.pesHdr) != 0 || cap(c.pesHdr) < 32 {
+		t.Fatalf("pesScan len=%d cap=%d, pesHdr len=%d cap=%d", len(c.pesScan), cap(c.pesScan), len(c.pesHdr), cap(c.pesHdr))
+	}
+}
+
 func TestScanVideoKey(t *testing.T) {
 	cases := []struct {
 		name string

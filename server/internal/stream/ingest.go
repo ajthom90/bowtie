@@ -1021,7 +1021,8 @@ func (c *channelIngest) restartJoinOnPATLocked() {
 func (c *channelIngest) restartJoinLocked() {
 	c.sinceJoin = c.sinceJoin[:0]
 	c.pesOff, c.paramOff, c.ppsSeen = -1, -1, false
-	c.pesScan, c.pesHdr = nil, nil
+	// Keep the backing arrays. A nil slice would be reallocated on the next scan.
+	c.pesScan, c.pesHdr = c.pesScan[:0], c.pesHdr[:0]
 	c.pesHdrDone, c.pesDone, c.pesPromoted = false, false, false
 	c.videoCC, c.videoPay = -1, nil
 	c.joinValid = false

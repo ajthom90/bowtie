@@ -69,6 +69,9 @@ func TestRealSoak(t *testing.T) {
 		// may already be in the lineup.
 		c.do(http.MethodPost, "/api/v1/admin/devices", map[string]string{"ip": dev}, nil, true)
 	}
+	// A fresh server has devices but no lineup until it syncs. Enabling
+	// the channel below does not discover it.
+	c.do(http.MethodPost, "/api/v1/admin/channels/sync", nil, nil, false)
 	var chans []struct {
 		ID          int64  `json:"id"`
 		GuideNumber string `json:"guideNumber"`

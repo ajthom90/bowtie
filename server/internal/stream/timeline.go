@@ -223,7 +223,19 @@ type tlSeg struct {
 	tag   bool // first segment of a new epoch (#EXT-X-DISCONTINUITY)
 }
 
-func seconds(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
+// seconds converts a float duration in seconds to the nearest nanosecond.
+// Truncating 4.004 * Second yields 4003999999ns, one nanosecond under the
+// millisecond the duration already states.
+func seconds(f float64) time.Duration {
+	return time.Duration(math.Round(f * float64(time.Second)))
+}
+
+// FormatWallClock writes t in WallClockLayout, rounded to the nearest
+// millisecond. Playlist PDT and the timeline endpoint both use it, so a
+// segment start and the live edge derived from it agree.
+func FormatWallClock(t time.Time) string {
+	return t.UTC().Round(time.Millisecond).Format(WallClockLayout)
+}
 
 // NewTimeline returns the timeline of the session in dir. renditions are
 // the media playlists (without .m3u8) to observe, reference (top rung)
@@ -1085,7 +1097,7 @@ func (t *Timeline) Retime(playlist string, raw []byte) []byte {
 		if s.st.tag {
 			b.WriteString("#EXT-X-DISCONTINUITY\n")
 		}
-		b.WriteString("#EXT-X-PROGRAM-DATE-TIME:" + s.st.start.UTC().Format(WallClockLayout) + "\n")
+		b.WriteString("#EXT-X-PROGRAM-DATE-TIME:" + FormatWallClock(s.st.start) + "\n")
 		for _, tag := range s.Tags {
 			b.WriteString(tag)
 			b.WriteByte('\n')

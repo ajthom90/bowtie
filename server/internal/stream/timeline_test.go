@@ -1267,6 +1267,24 @@ func TestTimelineCaptionSkipsSurviveALaggingPlaylist(t *testing.T) {
 	}
 }
 
+// 4.004 s is not an exact binary fraction. Truncating the product lands one
+// nanosecond under 4004 ms, and a timestamp formatted from that is a
+// millisecond early. Serialization rounds to the millisecond the duration
+// already states, the same way on a playlist and on the timeline endpoint.
+func TestSecondsAndWallClockRound(t *testing.T) {
+	if got := seconds(4.004); got != 4004*time.Millisecond {
+		t.Fatalf("seconds(4.004) = %d, want %d", got, 4004*time.Millisecond)
+	}
+	start := time.Date(2026, 10, 11, 20, 0, 0, 900_000, time.UTC)
+	if got := FormatWallClock(start); got != "2026-10-11T20:00:00.001Z" {
+		t.Fatalf("start %s, want .001Z", got)
+	}
+	edge := start.Add(seconds(4.004))
+	if got := FormatWallClock(edge); got != "2026-10-11T20:00:04.005Z" {
+		t.Fatalf("live edge %s, want .005Z (start .001 plus 4.004)", got)
+	}
+}
+
 // A stalled segment read on one session must not hold the timeline lock
 // across the manager lock. maintain takes the manager lock and then the
 // timeline lock (ExpireStalledRun); another session's Touch takes the
