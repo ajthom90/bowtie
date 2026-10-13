@@ -79,11 +79,14 @@ Answer as a media player that shows content from the user's own source:
 
 ## Screenshots (at least one; 1366×768 or larger, PNG)
 
-1. Live TV list with Favorites and All channels
-2. Player with live TV and the controls showing
-3. Recordings → Recorded
-4. Recordings → Shows → Edit dialog
-5. Sign-in screen
+In `docs/store/screenshots/windows/` (1920×1080; server address and
+username hidden):
+
+1. `01-live-tv.png`: Live TV with Favorites and All channels
+2. `02-player.png`: live TV playing with the controls showing
+3. `04-recordings.png`: Recordings → Recorded
+4. `05-edit-series.png`: Recordings → Shows → Edit dialog
+5. `06-sleep-timer-or-menu.png`: the sleep timer menu in the player
 
 ## Store logos
 
