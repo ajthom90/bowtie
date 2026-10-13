@@ -134,7 +134,10 @@ func runScenario(t *testing.T, sc *scenario.Scenario) time.Time {
 	cfg.Probe = FFprobe(ffprobePath())
 	startAt := time.Now()
 	defer func() {
-		ff := ffLogSince(t, startAt)
+		ff, err := ffLogSince(startAt, time.Now())
+		if err != nil {
+			t.Errorf("ffmpeg log: %v", err)
+		}
 		t.Logf("ff: rebases=%d dupFrames=%d maxDupBurst=%d dupWarnings=%d", len(ff.Rebases), ff.DupFrames, ff.MaxDupBurst, ff.DupWarnings)
 		for _, rb := range ff.Rebases {
 			t.Logf("rebase at +%v: %s", rb.At.Round(100*time.Millisecond), rb.Line)

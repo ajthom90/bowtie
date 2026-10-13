@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,31 +34,39 @@ type ffLog struct {
 
 var dupRe = regexp.MustCompile(`\*\*\* (\d+) dup!`)
 
-// ffLogSince reads FF51_LOGDIR for lines logged at or after start. The
-// zero ffLog when FF51_LOGDIR is unset.
-func ffLogSince(t testing.TB, start time.Time) ffLog {
-	t.Helper()
+// logScanMax is the longest line a soak log reader accepts. A longer token
+// is a read error, not a short log.
+const logScanMax = 1024 * 1024
+
+// ffLogSince reads FF51_LOGDIR for lines logged in [start, end], inclusive.
+// FF51_LOGDIR unset is the zero ffLog and a nil error: the ordinary suites
+// have no wrapper log. A missing directory is an empty log, not an error.
+// An open, glob, or scanner failure is returned with no partial result.
+func ffLogSince(start, end time.Time) (ffLog, error) {
 	var out ffLog
 	dir := os.Getenv("FF51_LOGDIR")
 	if dir == "" {
-		return out
+		return out, nil
 	}
-	files, _ := filepath.Glob(filepath.Join(dir, "ffmpeg-*.log"))
-	for _, f := range files {
-		fh, err := os.Open(f)
+	files, err := filepath.Glob(filepath.Join(dir, "ffmpeg-*.log"))
+	if err != nil {
+		return ffLog{}, fmt.Errorf("ffmpeg log: %w", err)
+	}
+	for _, path := range files {
+		fh, err := os.Open(path)
 		if err != nil {
-			t.Fatal(err)
+			return ffLog{}, fmt.Errorf("ffmpeg log: %w", err)
 		}
 		sc := bufio.NewScanner(fh)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		sc.Buffer(make([]byte, 0, 64*1024), logScanMax)
 		for sc.Scan() {
 			ms, rest, ok := strings.Cut(sc.Text(), " ")
-			v, err := strconv.ParseInt(ms, 10, 64)
-			if !ok || err != nil {
+			v, convErr := strconv.ParseInt(ms, 10, 64)
+			if !ok || convErr != nil {
 				continue
 			}
 			at := time.UnixMilli(v)
-			if at.Before(start) {
+			if at.Before(start) || at.After(end) {
 				continue
 			}
 			switch {
@@ -79,15 +88,19 @@ func ffLogSince(t testing.TB, start time.Time) ffLog {
 				}
 			}
 		}
+		scanErr := sc.Err()
 		_ = fh.Close()
+		if scanErr != nil {
+			return ffLog{}, fmt.Errorf("ffmpeg log %s: %w", path, scanErr)
+		}
 	}
-	return out
+	return out, nil
 }
 
-// rebasesSince is the re-bases of ffLogSince.
-func rebasesSince(t testing.TB, start time.Time) []rebase {
-	t.Helper()
-	return ffLogSince(t, start).Rebases
+// rebasesSince is the re-bases of ffLogSince in [start, end].
+func rebasesSince(start, end time.Time) ([]rebase, error) {
+	log, err := ffLogSince(start, end)
+	return log.Rebases, err
 }
 
 func TestFFLogSince(t *testing.T) {
@@ -106,7 +119,10 @@ func TestFFLogSince(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "ffmpeg-1.log"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := ffLogSince(t, start)
+	got, err := ffLogSince(start, start.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got.Rebases) != 2 || got.Rebases[0].At != 2500*time.Millisecond || got.Rebases[1].At != 2600*time.Millisecond {
 		t.Fatalf("rebases %+v", got.Rebases)
 	}
