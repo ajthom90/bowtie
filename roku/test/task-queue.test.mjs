@@ -14,5 +14,8 @@ test('ApiTask reads each request from its own field event', () => {
     const loop = src.slice(src.indexOf('sub taskRun()'), src.indexOf('end sub', src.indexOf('sub taskRun()')));
     assert.match(loop, /observeField\("request", m\.port\)/);
     assert.doesNotMatch(loop, /=\s*m\.top\.request\b/, 'reads the live field instead of the event payload');
-    assert.match(loop, /msg\.getData\(\)/);
+    assert.match(loop, /onTaskEvent\(msg\)/);
+    const ev = src.slice(src.indexOf('sub onTaskEvent('), src.indexOf('end sub', src.indexOf('sub onTaskEvent(')));
+    assert.match(ev, /msg\.getData\(\)/);
+    assert.doesNotMatch(ev, /=\s*m\.top\.request\b/);
 });

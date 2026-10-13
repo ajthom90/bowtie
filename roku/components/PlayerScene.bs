@@ -10,11 +10,24 @@
 ' A5: 503 tuners-busy copy+list+retry; 422 Auto-retry once then device-can't-play;
 '   404 channelsStale + inform; mid-play allowlist EMPTY (keyed on Video
 '   errorCode/errorMsg) → else bounded retry 1s/2s/4s ×3 without new sessions.
+'   Error screens use plain words; Video errorCode/errorMsg go to the log
+'   (and the info-key debug overlay), never the error text.
+' Weak signal: each heartbeat (?signal=1) says whether the antenna's signal is
+'   weak (bowtie.tuners.showWeakSignal); the note under the top bar ("Weak
+'   signal (46%) — …") follows the latest one, the top bar and info overlay
+'   show its percentages (quality first), and both go with the channel
+'   (zap, leave, error screens).
+' Slow start: the spinner stays up until the first frame plays (the Video
+'   node's "buffering" before it counts as starting). After
+'   bowtie.client.slowStartSeconds() of that, "Starting…" becomes the
+'   slow-start note; every zap / new start resets it, and a reconnect's
+'   "Reconnecting… (n/3)" is never replaced.
 
 import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Caps.bs"
 import "pkg:/source/lib/GuideLogic.bs"
 import "pkg:/source/lib/SleepTimer.bs"
+import "pkg:/source/lib/Tuners.bs"
 
 ' Mid-play auth allowlist: seeded EMPTY (A5). Token-kill capture populates real
 ' Video errorCode/errorMsg entries: { code as integer|invalid, msgContains as string }.
@@ -23,7 +36,6 @@ import "pkg:/source/lib/SleepTimer.bs"
 const TUNERS_BUSY_COPY = "All tuners are in use — someone else is watching. Try again in a few minutes."
 const DEVICE_CANT_PLAY = "This device can't play this channel at that quality"
 const CHANNEL_NOT_FOUND = "Channel not found"
-const PLAYBACK_AUTH_FAILED = "Playback authorization failed"
 const PLAYBACK_FAILED = "Playback failed. Try again or pick a lower quality."
 const PARENTAL_BLOCKED = "Blocked by parental controls"
 const PARENTAL_DETAIL = "Parental controls on your account block this channel or the program on now. Pick another channel."
@@ -57,8 +69,16 @@ sub init()
     m.chromeTimer = m.top.findNode("chromeTimer")
     m.heartbeatTimer = m.top.findNode("heartbeatTimer")
     m.sleepTimer = m.top.findNode("sleepTimer")
+    m.slowStartTimer = m.top.findNode("slowStartTimer")
     m.sleepWarning = m.top.findNode("sleepWarning")
     m.sleepWarningLabel = m.top.findNode("sleepWarningLabel")
+    m.signalNote = m.top.findNode("signalNote")
+    m.signalNoteLabel = m.top.findNode("signalNoteLabel")
+    m.signalLabel = m.top.findNode("signalLabel")
+    ' The latest reading as text for the info bar and overlay ("" unknown).
+    m.signalStats = ""
+    ' Audio Guide (created when the note first needs announcing).
+    m.audioGuide = invalid
 
     m.observing = false
     m.gen = 0
@@ -82,6 +102,8 @@ sub init()
     m.lastErrorCode = 0
     m.lastErrorMsg = ""
     m.lastVideoState = ""
+    ' Playback was handed to the Video node and no frame has played yet.
+    m.awaitingFirstFrame = false
     m.sleep = bowtie.sleep.newState()
     ' Options offered by the open Sleep timer dialog (button index → option).
     m.sleepOptions = []
@@ -93,6 +115,8 @@ sub init()
     m.chromeTimer.observeField("fire", "onChromeTimerFire")
     m.heartbeatTimer.observeField("fire", "onHeartbeatFire")
     m.sleepTimer.observeField("fire", "onSleepTick")
+    m.slowStartTimer.duration = bowtie.client.slowStartSeconds()
+    m.slowStartTimer.observeField("fire", "onSlowStartFire")
     m.video.observeField("state", "onVideoState")
     m.video.observeField("errorCode", "onVideoErrorFields")
     m.video.observeField("errorMsg", "onVideoErrorFields")
@@ -195,12 +219,15 @@ end function
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
 
 sub scheduleReplace()
+    ' A start still in flight is for the old channel: hang it up (no viewer).
+    cancelPendingCreate()
     m.gen = m.gen + 1
     gen = m.gen
     m.is422Retry = false
     m.retryAttempt = 0
     m.retryTimer.control = "stop"
     stopHeartbeat()
+    clearSignal()
 
     ' (2) DELETE current viewer immediately.
     if m.activeViewerId <> invalid and m.activeViewerId <> ""
@@ -211,7 +238,9 @@ sub scheduleReplace()
     stopVideo()
 
     m.uiPhase = "starting"
+    m.awaitingFirstFrame = false
     showStarting("Starting…")
+    restartSlowStartTimer()
     updateChromeLabels()
     showChrome()
 
@@ -253,6 +282,16 @@ sub enqueueCreate(gen as integer, is422Retry as boolean)
     }
 end sub
 
+' Ask ApiTask to drop / hang up the create still waiting for an answer.
+' Its "superseded" answer then fails the gen check and is ignored.
+sub cancelPendingCreate()
+    if m.pendingCreateId = invalid then return
+    if m.pendingCreateId = "" then return
+    task = m.top.apiTask
+    if task = invalid then return
+    task.cancel = m.pendingCreateId
+end sub
+
 sub enqueueDelete(viewerId as string)
     if viewerId = invalid or viewerId = "" then return
     task = m.top.apiTask
@@ -272,7 +311,11 @@ sub teardownSession(markClosed as boolean)
     m.debounceTimer.control = "stop"
     m.retryTimer.control = "stop"
     m.chromeTimer.control = "stop"
+    stopSlowStartTimer()
+    m.awaitingFirstFrame = false
     stopHeartbeat()
+    clearSignal()
+    cancelPendingCreate()
     m.pendingCreateId = ""
     if m.activeViewerId <> invalid and m.activeViewerId <> ""
         enqueueDelete(m.activeViewerId)
@@ -299,16 +342,35 @@ sub onApiResponse()
         return
     end if
     if Left(rid, Len(m.pendingHeartbeatPrefix)) = m.pendingHeartbeatPrefix
-        ' A viewer stopped later by parental controls (the program changed)
-        ' gets 403 {"code": "parental"} from its heartbeat.
-        if resp.ok <> true and rid = m.lastHeartbeatId and bowtie.client.isParental(resp.error)
-            handleParentalStop(resp.error)
+        ' Only the latest heartbeat counts. Its reply says whether the
+        ' signal is weak; a viewer stopped later by parental controls (the
+        ' program changed) gets 403 {"code": "parental"} instead.
+        if rid = m.lastHeartbeatId
+            if resp.ok = true
+                updateSignal(resp.data)
+            else if bowtie.client.isParental(resp.error)
+                handleParentalStop(resp.error)
+            end if
         end if
         return
     end if
 
-    if rid <> m.pendingCreateId then return
+    if rid <> m.pendingCreateId
+        ' A create overtaken by a zap (it can take up to a minute): a viewer
+        ' it opened is nobody's, so stop it (no orphan against the limit).
+        if Left(rid, Len("player-create-")) = "player-create-" then discardStaleCreate(resp)
+        return
+    end if
     handleCreateResponse(resp)
+end sub
+
+sub discardStaleCreate(resp as object)
+    if resp.ok <> true then return
+    data = resp.data
+    if data = invalid then return
+    if data.viewerId = invalid then return
+    if data.viewerId = m.activeViewerId then return
+    enqueueDelete(data.viewerId)
 end sub
 
 sub handleCreateResponse(resp as object)
@@ -395,14 +457,22 @@ sub handleCreateError(resp as object)
         return
     end if
 
-    msg = PLAYBACK_FAILED
-    if err <> invalid and err.message <> invalid and err.message <> ""
-        msg = err.message
-    end if
+    ' The server's words as-is; no answer → can't reach the server.
+    logError("start failed", err)
+    msg = bowtie.client.viewerMessage(err, PLAYBACK_FAILED)
     if code = 401
         msg = "Signed out"
     end if
     showFailed(msg, "")
+end sub
+
+' Technical detail for the log, never the screen.
+sub logError(what as string, err as dynamic)
+    if err = invalid or Type(err) <> "roAssociativeArray"
+        print "[player] " + what
+        return
+    end if
+    print "[player] " + what + ": code="; err.code; " kind="; err.kind; " message="; err.message
 end sub
 
 ' ── Heartbeat (spec C / A6 / A7) ─────────────────────────────────────────────
@@ -454,10 +524,45 @@ sub handleParentalStop(err as object)
     if m.activeViewerId = invalid or m.activeViewerId = "" then return
     if m.lastHeartbeatViewerId <> m.activeViewerId then return
     stopHeartbeat()
+    clearSignal()
     ' Already gone on the server: nothing to DELETE.
     m.activeViewerId = ""
     m.playlistUrl = ""
     showFailed(parentalTitle(err), PARENTAL_DETAIL)
+end sub
+
+' The latest heartbeat's reception (bowtie.client.parseSignal). The server
+' already needs two bad readings before it says weak, so no smoothing here.
+' The percentages go in the top bar ("Signal quality 46% · …") and the info
+' overlay; the weak note leads with the quality percent.
+sub updateSignal(data as dynamic)
+    ' A zap since it was sent: that reading was for the old channel.
+    if m.activeViewerId = invalid or m.activeViewerId = "" or m.lastHeartbeatViewerId <> m.activeViewerId then data = invalid
+    ' This player is live only (recordings play in RecordingsScene).
+    m.signalNoteLabel.text = bowtie.tuners.weakSignalText(data)
+    setWeakSignal(bowtie.tuners.showWeakSignal(data, false))
+    m.signalStats = bowtie.tuners.signalStatsText(data, false)
+    m.signalLabel.text = m.signalStats
+    m.signalLabel.visible = (m.signalStats <> "")
+    updateDebugOverlay()
+end sub
+
+' No reading (zap, leave, error screens): note and percentages go.
+sub clearSignal()
+    updateSignal(invalid)
+end sub
+
+sub setWeakSignal(show as boolean)
+    if m.signalNote.visible = show then return
+    m.signalNote.visible = show
+    if show then announce(m.signalNoteLabel.text)
+end sub
+
+' Audio Guide reads only what has focus; say the note when it appears.
+' Silent unless Audio Guide is on.
+sub announce(text as string)
+    if m.audioGuide = invalid then m.audioGuide = CreateObject("roAudioGuide")
+    if m.audioGuide <> invalid then m.audioGuide.Say(text, false, true)
 end sub
 
 ' The server's message ("Blocked by parental controls (rated TV-MA)").
@@ -481,7 +586,8 @@ end function
 
 sub startPlayback(playlistUrl as string)
     if playlistUrl = invalid or playlistUrl = ""
-        showFailed(PLAYBACK_FAILED, "Missing playlist URL")
+        print "[player] session has no playlist URL"
+        showFailed(bowtie.client.somethingWrongText(), "")
         return
     end if
 
@@ -495,8 +601,10 @@ sub startPlayback(playlistUrl as string)
     m.video.control = "play"
     m.uiPhase = "playing"
     hideErrorOverlays()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    ' The spinner (and its text) stays up until the first frame plays.
+    m.awaitingFirstFrame = true
+    m.loadingGroup.visible = true
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "start"
     showChrome()
     updateDebugOverlay()
     m.top.setFocus(true)
@@ -520,18 +628,47 @@ sub onVideoState()
 
     if st = "error"
         handleVideoError()
-    else if st = "playing" or st = "buffering"
-        if m.uiPhase = "starting"
+    else if st = "playing"
+        ' First frame (or recovered from a reconnect): the spinner goes.
+        if m.uiPhase = "starting" or m.awaitingFirstFrame = true
             m.uiPhase = "playing"
             hideErrorOverlays()
-            m.loadingGroup.visible = false
-            if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+            hideLoading()
         end if
         ' Successful frame → reset mid-play retry counter.
-        if st = "playing"
-            m.retryAttempt = 0
-        end if
+        m.retryAttempt = 0
     end if
+    ' "buffering" before the first frame keeps the spinner (and the
+    ' slow-start note) up; mid-play the Video node shows its own.
+end sub
+
+' Spinner and its text off; the slow-start note is done with.
+sub hideLoading()
+    m.awaitingFirstFrame = false
+    stopSlowStartTimer()
+    m.loadingGroup.visible = false
+    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+end sub
+
+' ── Slow start note ─────────────────────────────────────────────────────────
+
+sub restartSlowStartTimer()
+    if m.slowStartTimer = invalid then return
+    m.slowStartTimer.control = "stop"
+    m.slowStartTimer.control = "start"
+end sub
+
+sub stopSlowStartTimer()
+    if m.slowStartTimer = invalid then return
+    m.slowStartTimer.control = "stop"
+end sub
+
+sub onSlowStartFire()
+    if m.top.visible <> true then return
+    if m.loadingGroup.visible <> true then return
+    if not bowtie.client.showsSlowStartNote(m.uiPhase, m.awaitingFirstFrame, m.retryAttempt) then return
+    if m.loadingLabel <> invalid then m.loadingLabel.text = bowtie.client.slowStartText()
+    announce(bowtie.client.slowStartText())
 end sub
 
 sub onVideoErrorFields()
@@ -558,7 +695,8 @@ sub handleVideoError()
     ' Auth allowlist → one silent session recreate; else bounded retry, no new session.
     if matchesAuthAllowlist(code, msg)
         if m.authRetried = true
-            showFailed(PLAYBACK_AUTH_FAILED, "errorCode=" + code.toStr() + " errorMsg=" + msg)
+            print "[player] stream refused after a new session: errorCode=" + code.toStr() + " errorMsg=" + msg
+            showFailed(bowtie.client.streamStoppedText(), "")
             return
         end if
         m.authRetried = true
@@ -592,7 +730,8 @@ end function
 ' Bounded retry 1s / 2s / 4s ×3 WITHOUT new sessions (same playlist URL).
 sub startBoundedRetry()
     if m.retryAttempt >= 3
-        showFailed(PLAYBACK_FAILED, "errorCode=" + m.lastErrorCode.toStr() + " errorMsg=" + m.lastErrorMsg)
+        print "[player] stream stopped after 3 retries: errorCode=" + m.lastErrorCode.toStr() + " errorMsg=" + m.lastErrorMsg
+        showFailed(bowtie.client.streamStoppedText(), "")
         return
     end if
 
@@ -600,6 +739,7 @@ sub startBoundedRetry()
     delaySec = delays[m.retryAttempt]
     m.retryAttempt = m.retryAttempt + 1
     m.uiPhase = "starting"
+    stopSlowStartTimer()
     showStarting("Reconnecting… (" + m.retryAttempt.toStr() + "/3)")
     m.retryTimer.duration = delaySec
     m.retryTimer.control = "stop"
@@ -629,9 +769,9 @@ end sub
 
 sub showFailed(title as string, detail as string)
     m.uiPhase = "failed"
+    clearSignal()
     stopVideo()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.tunersGroup.visible = false
     m.errorGroup.visible = true
     m.errorTitle.text = title
@@ -642,9 +782,9 @@ end sub
 
 sub showTunersBusy(sessions as object)
     m.uiPhase = "tunersBusy"
+    clearSignal()
     stopVideo()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.errorGroup.visible = false
     m.tunersGroup.visible = true
     m.tunersTitle.text = TUNERS_BUSY_COPY
@@ -700,9 +840,9 @@ end sub
 
 sub hideAllOverlays()
     hideErrorOverlays()
-    m.loadingGroup.visible = false
-    if m.loadingSpinner <> invalid then m.loadingSpinner.control = "stop"
+    hideLoading()
     m.chromeGroup.visible = false
+    clearSignal()
 end sub
 
 sub onRetryButton()
@@ -747,7 +887,10 @@ sub updateDebugOverlay()
     end if
     vid = m.activeViewerId
     if vid = invalid then vid = ""
-    m.debugLabel.text = "Video state=" + st.toStr() + " errorCode=" + code.toStr() + " errorMsg=" + msg.toStr() + Chr(10) + "viewerId=" + vid + " gen=" + m.gen.toStr() + " phase=" + m.uiPhase
+    text = "Video state=" + st.toStr() + " errorCode=" + code.toStr() + " errorMsg=" + msg.toStr() + Chr(10) + "viewerId=" + vid + " gen=" + m.gen.toStr() + " phase=" + m.uiPhase
+    ' The latest reception reading, when the server reports one.
+    if m.signalStats <> "" then text = text + Chr(10) + m.signalStats
+    m.debugLabel.text = text
 end sub
 
 ' ── Quality dialog ───────────────────────────────────────────────────────────

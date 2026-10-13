@@ -34,9 +34,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -55,6 +59,7 @@ import app.bowtie.core.GuideProgram
 import app.bowtie.core.RecentChannel
 import app.bowtie.core.Recording
 import app.bowtie.core.RecordingLogic
+import app.bowtie.core.TunersBusyCopy
 import app.bowtie.core.User
 import app.bowtie.core.vm.ChannelListViewModel
 import app.bowtie.core.vm.ContinueWatchingViewModel
@@ -67,7 +72,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
-import kotlin.time.Duration.Companion.minutes
 
 private const val EMPTY_COPY = "No channels yet. Ask your admin to enable some."
 
@@ -133,13 +137,14 @@ fun ChannelRailScreen(
         channelListViewModel.consumeMessage()
     }
 
-    // Foreground + 5-minute refresh while STARTED (identical to phone).
+    // Foreground + every 30 s while STARTED (identical to phone): which channels
+    // can be started (tuners taken / freed), and the 5-minute reload when due.
     LaunchedEffect(channelListViewModel, lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            channelListViewModel.refreshIfStale()
+            channelListViewModel.recheck()
             while (isActive) {
-                delay(5.minutes)
-                channelListViewModel.refreshIfStale()
+                delay(ChannelListViewModel.RECHECK_INTERVAL.toMillis())
+                channelListViewModel.recheck()
             }
         }
     }
@@ -421,15 +426,15 @@ fun ChannelRailScreen(
                     val filtered = remember(s.rows, filter) {
                         channelListViewModel.filtered(s.rows, filter, Instant.now())
                     }
-                    val visible = filtered.rows
+                    val visible = remember(filtered) { ChannelListViewModel.guideRows(filtered.rows) }
                     val listState = rememberLazyListState()
                     // "Show all channels" leaves the screen; focus lands on All, not the top bar.
                     val allChipFocus = remember { FocusRequester() }
-                    // A toggled row moves (favorites first); keep it on screen and focused.
-                    var refocusId by remember { mutableStateOf<Long?>(null) }
+                    // Keep focus on the same copy, or All channels when its shortcut disappears.
+                    var refocusId by remember { mutableStateOf<String?>(null) }
                     LaunchedEffect(visible, refocusId) {
                         val id = refocusId ?: return@LaunchedEffect
-                        val index = visible.indexOfFirst { it.id == id }
+                        val index = visible.indexOfFirst { it.key == id }
                         if (index < 0) {
                             refocusId = null
                         } else if (listState.layoutInfo.visibleItemsInfo.none { it.key == id }) {
@@ -453,9 +458,13 @@ fun ChannelRailScreen(
                             onOptions = ::openContinueMenu,
                         )
                     }
-                    if (supported && recents.isNotEmpty()) {
+                    // Recent leaves out channels nobody can start right now, too.
+                    val shownRecents = remember(recents, s.rows) {
+                        channelListViewModel.visibleRecents(recents)
+                    }
+                    if (supported && shownRecents.isNotEmpty()) {
                         RecentRail(
-                            recents = recents,
+                            recents = shownRecents,
                             onOpen = { onOpenChannel(channelListViewModel.channelFor(it)) },
                         )
                     }
@@ -465,7 +474,20 @@ fun ChannelRailScreen(
                         onSelect = channelListViewModel::setFilter,
                         allFocusRequester = allChipFocus,
                     )
-                    if (visible.isEmpty() && filter != GuideFilter.ALL) {
+                    if (filtered.noneWatchable) {
+                        BusyText(
+                            text = TunersBusyCopy.NONE_WATCHABLE,
+                            style = BowtieType.body,
+                            color = BowtieColors.dim,
+                        )
+                    } else if (filtered.tunersBusy) {
+                        BusyText(
+                            text = TunersBusyCopy.LIST_NOTE,
+                            style = BowtieType.label,
+                            color = BowtieColors.amber,
+                        )
+                    }
+                    if (visible.isEmpty() && filter != GuideFilter.ALL && !filtered.noneWatchable) {
                         FilterEmpty(filter = filter, onShowAll = {
                             // Move focus while the button still exists, then drop it.
                             runCatching { allChipFocus.requestFocus() }
@@ -479,17 +501,18 @@ fun ChannelRailScreen(
                             .padding(horizontal = BowtieDimens.screenPadding, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(visible, key = { it.id }) { row ->
+                        items(visible, key = { it.key }) { entry ->
+                            val row = entry.row
                             val focusRequester = remember { FocusRequester() }
-                            LaunchedEffect(refocusId == row.id) {
-                                if (refocusId != row.id) return@LaunchedEffect
+                            LaunchedEffect(refocusId == entry.key) {
+                                if (refocusId != entry.key) return@LaunchedEffect
                                 withFrameNanos { }
                                 runCatching { focusRequester.requestFocus() }
                                 refocusId = null
                             }
                             val toggle: (() -> Unit)? = if (supported) {
                                 {
-                                    refocusId = row.id
+                                    refocusId = if (entry.section == "favorites") "all:${row.id}" else entry.key
                                     channelListViewModel.toggleFavorite(row.id)
                                 }
                             } else {
@@ -561,6 +584,23 @@ private fun GuideFilterChips(
             }
         }
     }
+}
+
+/**
+ * All-tuners-busy copy above the rail (not focusable; the 30 s re-check
+ * brings channels back). Announced when it appears.
+ */
+@Composable
+private fun BusyText(text: String, style: TextStyle, color: Color) {
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .padding(horizontal = BowtieDimens.screenPadding, vertical = 8.dp),
+    )
 }
 
 /** "No sports on in this time window" with a focusable way back. */

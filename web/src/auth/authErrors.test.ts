@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
+import { CANT_REACH_SERVER } from '../api/errorText'
 import { linkErrorText, loginErrorText } from './authErrors'
 
 describe('loginErrorText', () => {
@@ -15,8 +16,13 @@ describe('loginErrorText', () => {
   })
 
   it('falls back for empty or non-API errors', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(loginErrorText(new ApiError(500, ''))).toBe('Login failed')
-    expect(loginErrorText(new TypeError('Failed to fetch'))).toBe('Login failed')
+  })
+
+  it("says the server can't be reached when the network fails", () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(loginErrorText(new TypeError('Failed to fetch'))).toBe(CANT_REACH_SERVER)
   })
 })
 

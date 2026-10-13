@@ -49,6 +49,19 @@ class BowtieClientRulesTest {
     }
 
     @Test
+    fun updateRule_sendsFalseAndZeros_andDetectsSupport() = runBlocking {
+        val c = loggedIn()
+        assertFalse(BowtieJson.decodeFromString<RecordingRule>(ruleJson()).editable)
+        server.enqueue(MockResponse().setBody(ruleJson().replace("\"id\":4", "\"editable\":true,\"id\":4")))
+        val result = c.updateRecordingRule(4, false, 0, 0)
+        assertTrue(result.editable)
+        val req = take("/api/v1/recording-rules/4")
+        assertEquals("PATCH", req.method)
+        assertEquals("Bearer access-1", req.getHeader("Authorization"))
+        assertEquals("""{"newOnly":false,"channelId":0,"keepLatest":0}""", req.body.readUtf8())
+    }
+
+    @Test
     fun rules_decodeWireShape() = runBlocking {
         val c = loggedIn()
         server.enqueue(MockResponse().setBody("[${ruleJson()}]"))

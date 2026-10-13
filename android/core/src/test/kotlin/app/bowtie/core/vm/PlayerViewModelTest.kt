@@ -21,6 +21,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,6 +64,14 @@ class PlayerViewModelTest {
     private var createStatusCodes: List<Int> = emptyList()
     private var createBodies: List<String> = emptyList()
 
+    /** Session POSTs get no answer (a slow start still in progress). */
+    @Volatile
+    private var createHangs = false
+
+    /** When set, session POSTs wait for it before answering (a start in progress). */
+    @Volatile
+    private var createGate: java.util.concurrent.CountDownLatch? = null
+
     /** Heartbeat answer (status, body). */
     @Volatile
     private var heartbeatResponse: Pair<Int, String> = 204 to ""
@@ -77,6 +86,8 @@ class PlayerViewModelTest {
         createStatusCodes = emptyList()
         createBodies = emptyList()
         heartbeatResponse = 204 to ""
+        createHangs = false
+        createGate = null
 
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -94,6 +105,10 @@ class PlayerViewModelTest {
                     return MockResponse().setBody(tokenPairJson())
                 }
                 if (method == "POST" && path == "/api/v1/sessions") {
+                    if (createHangs) {
+                        return MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE)
+                    }
+                    createGate?.await(10, java.util.concurrent.TimeUnit.SECONDS)
                     val n = createSeq.incrementAndGet()
                     val code = createStatusCodes.getOrElse(n - 1) { 200 }
                     if (code != 200) {
@@ -206,7 +221,7 @@ class PlayerViewModelTest {
      */
     private fun TestScope.advanceDebounceAndPump(
         debounceMs: Long = 400,
-        timeoutMs: Long = 5_000,
+        timeoutMs: Long = 20_000,
         condition: () -> Boolean = { true },
     ) {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
@@ -266,6 +281,67 @@ class PlayerViewModelTest {
 
         val body = sessionCreates().single().body
         assertTrue("body=$body", body.contains("\"channelId\":3"))
+    }
+
+    // ── Slow start note ─────────────────────────────────────────────────────
+
+    @Test
+    fun slowStartNoteAfterFiveSecondsResetOnZap() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        createHangs = true
+
+        vm.play(ch1)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertFalse("not before 5 s", vm.slowStart.value)
+        assertEquals("Starting…", PlayerViewModel.startingText(vm.slowStart.value))
+
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("after 5 s still starting", vm.slowStart.value)
+        assertEquals(
+            "Still starting — the stream is buffering. This can take a little while.",
+            PlayerViewModel.startingText(vm.slowStart.value),
+        )
+
+        // A zap is a new start: back to "Starting…" and a fresh 5 s.
+        vm.play(ch2)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(4_900)
+        runCurrent()
+        assertFalse(vm.slowStart.value)
+        advanceTimeBy(200)
+        runCurrent()
+        assertTrue(vm.slowStart.value)
+
+        vm.stop()
+        assertFalse("leaving clears it", vm.slowStart.value)
+    }
+
+    @Test
+    fun slowStartNoteGoesWhenTheServerAnswers() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        createGate = gate
+
+        vm.play(ch1)
+        advanceTimeBy(5_100)
+        runCurrent()
+        assertTrue(vm.state.value is PlayerViewModel.State.Starting)
+        assertTrue("the note is up", vm.slowStart.value)
+
+        // The server answers: the start is over, and so is the note.
+        gate.countDown()
+        advanceDebounceAndPump { vm.state.value is PlayerViewModel.State.Playing }
+        assertFalse("note cleared once playing", vm.slowStart.value)
+        vm.stop()
     }
 
     // ── Zap: delete old then create new ─────────────────────────────────────
@@ -660,6 +736,140 @@ class PlayerViewModelTest {
             "Jumped to live — paused longer than the buffer",
             PlayerViewModel.OUT_OF_WINDOW_NOTICE,
         )
+    }
+
+    // ── Weak signal (heartbeat ?signal=1) ───────────────────────────────────
+
+    private fun signalBody(weak: Boolean) =
+        """{"signal":{"strength":96,"quality":46,"symbolQuality":0,"weak":$weak}}"""
+
+    private fun TestScope.beatOnce(vm: PlayerViewModel, expectBeats: Int) {
+        advanceTimeBy(PlayerViewModel.HEARTBEAT_INTERVAL_MS)
+        advanceDebounceAndPump(debounceMs = 0) { heartbeats().size >= expectBeats }
+        // Let the beat's result land back on the test scheduler.
+        Thread.sleep(50)
+        runCurrent()
+    }
+
+    @Test
+    fun weakSignalFollowsTheLatestHeartbeat() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        assertFalse("unknown until the first beat", vm.weakSignal.value)
+
+        heartbeatResponse = 200 to signalBody(weak = true)
+        beatOnce(vm, 1)
+        assertTrue(vm.weakSignal.value)
+        assertTrue(heartbeats()[0].path!!.contains("signal=1"))
+
+        heartbeatResponse = 200 to signalBody(weak = false)
+        beatOnce(vm, 2)
+        assertFalse(vm.weakSignal.value)
+
+        heartbeatResponse = 200 to signalBody(weak = true)
+        beatOnce(vm, 3)
+        assertTrue(vm.weakSignal.value)
+
+        heartbeatResponse = 200 to """{"signal":null}"""
+        beatOnce(vm, 4)
+        assertFalse("null means unknown: hide", vm.weakSignal.value)
+
+        heartbeatResponse = 200 to signalBody(weak = true)
+        beatOnce(vm, 5)
+        heartbeatResponse = 204 to ""
+        beatOnce(vm, 6)
+        assertFalse("older server: hide", vm.weakSignal.value)
+        assertTrue(vm.state.value is PlayerViewModel.State.Playing)
+        vm.stop()
+        runCurrent()
+    }
+
+    @Test
+    fun weakSignalClearsOnZapAndStop() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        heartbeatResponse = 200 to signalBody(weak = true)
+        beatOnce(vm, 1)
+        assertTrue(vm.weakSignal.value)
+
+        vm.play(ch2)
+        assertFalse("a new channel starts unknown", vm.weakSignal.value)
+        advanceDebounceAndPump { vm.state.value is PlayerViewModel.State.Playing }
+        beatOnce(vm, 2)
+        assertTrue(vm.weakSignal.value)
+
+        vm.stop()
+        assertFalse(vm.weakSignal.value)
+        runCurrent()
+    }
+
+    // ── Plain-words errors ──────────────────────────────────────────────────
+
+    @Test
+    fun unreachableServerOnStartSaysSoInPlainWords() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this)
+        server.shutdown()
+
+        vm.play(ch1)
+        advanceDebounceAndPump { vm.state.value is PlayerViewModel.State.Failed }
+
+        assertEquals(
+            PlayerViewModel.State.Failed(
+                "Can't reach your Bowtie server. Check your connection and try again.",
+            ),
+            vm.state.value,
+        )
+    }
+
+    @Test
+    fun undecodableStartResponseSaysSomethingWentWrong() = runTest {
+        installMain()
+        createBodies = listOf("not json")
+        val client = authedClient()
+        val vm = makeVm(client, this)
+
+        playThroughDebounce(vm, ch1)
+        assertEquals(PlayerViewModel.State.Failed("Something went wrong. Try again."), vm.state.value)
+    }
+
+    @Test
+    fun serverStartMessageIsShownAsIs() = runTest {
+        installMain()
+        createStatusCodes = listOf(500)
+        val client = authedClient()
+        val vm = makeVm(client, this)
+
+        playThroughDebounce(vm, ch1)
+        assertEquals(PlayerViewModel.State.Failed("fail"), vm.state.value)
+    }
+
+    @Test
+    fun signalExposesTheLatestReading() = runTest {
+        installMain()
+        val client = authedClient()
+        val vm = makeVm(client, this, enableHeartbeat = true)
+
+        playThroughDebounce(vm, ch1)
+        assertNull(vm.signal.value)
+        heartbeatResponse = 200 to signalBody(weak = true)
+        beatOnce(vm, 1)
+        assertEquals(
+            app.bowtie.core.SignalReading(strength = 96, quality = 46, symbolQuality = 0, weak = true),
+            vm.signal.value,
+        )
+        heartbeatResponse = 204 to ""
+        beatOnce(vm, 2)
+        assertNull(vm.signal.value)
+        vm.stop()
+        runCurrent()
     }
 
     private companion object {

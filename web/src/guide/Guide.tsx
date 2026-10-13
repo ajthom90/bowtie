@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, type GuideChannel, type RecentChannel, type Recording } from '../api/client'
+import { type GuideChannel, type RecentChannel, type Recording } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { guideMarkText, guideRecLabel } from '../recordings/recordingsModel'
 import { ContinueWatching } from '../recordings/ContinueWatching'
@@ -24,7 +25,7 @@ import {
   receptionNote,
   selectGuidePageState,
   shiftWindow,
-  sortFavoritesFirst,
+  guideRows,
   supportsFavorites,
   withFavorite,
   type GuideProgram,
@@ -40,6 +41,13 @@ import {
   type GuideFilter,
 } from './guideFilterModel'
 import { GuideSearch } from './GuideSearch'
+import {
+  busyNote,
+  createRecheckController,
+  isWatchable,
+  watchableRecents,
+  withWatchable,
+} from './watchableModel'
 import { ProgramSheet, type SheetChannel, type SheetConflict } from './ProgramSheet'
 import { lockText } from './searchModel'
 import { BowtieMark } from '../BowtieMark'
@@ -129,11 +137,7 @@ export function Guide({
         setRecents([])
       }
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message || 'Failed to load guide')
-      } else {
-        setError('Failed to load guide')
-      }
+      setError(viewerErrorText(err, "Couldn't load the guide. Try again."))
       setChannels(null)
       setRecents([])
     } finally {
@@ -142,24 +146,32 @@ export function Guide({
   }, [client, start, stop])
 
   const favoritesOn = useMemo(() => (channels ? supportsFavorites(channels) : false), [channels])
-  const rows = useMemo(() => (channels ? sortFavoritesFirst(channels) : null), [channels])
+  const rows = channels
   /** Rows with something matching the chip in the visible window. */
   const visibleRows = useMemo(
     () => rows?.filter((ch) => channelMatchesFilter(ch, filter, start, stop)) ?? null,
     [rows, filter, start, stop],
   )
 
-  async function toggleFavorite(channel: GuideChannel) {
+  async function toggleFavorite(channel: GuideChannel, key: string) {
     const id = channel.channelId
     const on = channel.favorite !== true
     setActionError(null)
+    const opener = document.activeElement
     setChannels((cs) => cs && withFavorite(cs, id, on))
+    if (!on && key.startsWith('favorites:')) {
+      requestAnimationFrame(() => {
+        if (opener && !opener.isConnected) {
+          document.querySelector<HTMLButtonElement>(`[data-guide-star="all:${id}"]`)?.focus()
+        }
+      })
+    }
     try {
       await (on ? client.addFavorite(id) : client.removeFavorite(id))
     } catch (err) {
       setChannels((cs) => cs && withFavorite(cs, id, !on))
       setActionError(
-        err instanceof ApiError && err.message ? err.message : 'Could not update favorite',
+        viewerErrorText(err, 'Could not update favorite'),
       )
     }
   }
@@ -173,7 +185,7 @@ export function Guide({
     } catch (err) {
       setRecents(prev)
       setActionError(
-        err instanceof ApiError && err.message ? err.message : 'Could not clear recents',
+        viewerErrorText(err, 'Could not clear recents'),
       )
     }
   }
@@ -191,6 +203,31 @@ export function Guide({
   useEffect(() => {
     void load()
   }, [load])
+
+  // All tuners busy: ask which channels can start every 30 s (and on return
+  // to the tab), so busy rows come back as soon as a tuner frees up. Only the
+  // light channel list; failures keep the last answer.
+  useEffect(() => {
+    let cancelled = false
+    const ctrl = createRecheckController({
+      check: () => {
+        client.getChannels().then(
+          (list) => {
+            if (!cancelled) setChannels((cs) => cs && withWatchable(cs, list))
+          },
+          () => {},
+        )
+      },
+    })
+    ctrl.start()
+    const onVis = () => ctrl.handleVisibilityChange(document.visibilityState)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVis)
+      ctrl.stop()
+    }
+  }, [client])
 
   // Continue watching: best effort (older servers / no DVR just get no row).
   const canResume = onResumeRecording !== undefined
@@ -227,9 +264,7 @@ export function Guide({
       setRecorded((rs) => rs.map((r) => (r.id === rec.id ? withPositionReset(r) : r)))
     } catch (err) {
       setActionError(
-        err instanceof ApiError && err.message
-          ? err.message
-          : 'Could not remove it from Continue watching',
+        viewerErrorText(err, 'Could not remove it from Continue watching'),
       )
     } finally {
       setContinueBusy(null)
@@ -255,6 +290,16 @@ export function Guide({
       }),
     [channels, loading, error, user?.role],
   )
+
+  const tunersNote = useMemo(() => (channels ? busyNote(channels) : null), [channels])
+  /** Recent chips start a channel straight away: only ones that can start. */
+  const shownRecents = useMemo(
+    () => (channels ? watchableRecents(recents, channels) : recents),
+    [recents, channels],
+  )
+  const selectedWatchable = selected
+    ? isWatchable(channels?.find((c) => c.channelId === selected.channel.channelId) ?? {})
+    : true
 
   const noDataHint = useMemo(
     () => (rows ? noGuideDataHint(rows, user?.role === 'admin' ? 'admin' : 'viewer') : null),
@@ -406,11 +451,17 @@ export function Guide({
         />
       ) : null}
 
-      {pageState.kind === 'ready' && recents.length > 0 ? (
+      {pageState.kind === 'ready' && tunersNote ? (
+        <p className={styles.tunersNote} role="status">
+          {tunersNote}
+        </p>
+      ) : null}
+
+      {pageState.kind === 'ready' && shownRecents.length > 0 ? (
         <nav className={styles.recents} aria-label="Recently watched">
           <span className={styles.recentsLabel}>Recent</span>
           <div className={styles.recentChips}>
-            {recents.map((r) => (
+            {shownRecents.map((r) => (
               <button
                 key={r.channelId}
                 type="button"
@@ -487,15 +538,16 @@ export function Guide({
               </div>
             </div>
 
-            {visibleRows.map((ch) => {
+            {guideRows(visibleRows).map(({ key, channel: ch }) => {
               const cells = layoutRow(ch.programs, start, stop)
               const hasPrograms = ch.programs.length > 0
 
               return (
                 <ChannelRow
-                  key={ch.channelId}
+                  key={key}
                   channel={ch}
-                  onToggleFavorite={favoritesOn ? () => void toggleFavorite(ch) : undefined}
+                  rowKey={key}
+                  onToggleFavorite={favoritesOn ? () => void toggleFavorite(ch, key) : undefined}
                   cells={cells}
                   hasPrograms={hasPrograms}
                   nowPct={nowPct}
@@ -526,6 +578,7 @@ export function Guide({
           initialView={selected.initialView}
           initialConflict={selected.initialConflict}
           now={new Date()}
+          watchable={selectedWatchable}
           onClose={() => setSelected(null)}
           onWatch={() => {
             const { channel, program } = selected
@@ -554,6 +607,7 @@ export function Guide({
 }
 
 function ChannelRow({
+  rowKey,
   channel,
   cells,
   hasPrograms,
@@ -568,6 +622,7 @@ function ChannelRow({
   onSelect,
 }: {
   channel: GuideChannel
+  rowKey: string
   /** Absent when the server predates favorites (no star shown). */
   onToggleFavorite?: () => void
   cells: ReturnType<typeof layoutRow>
@@ -595,15 +650,23 @@ function ChannelRow({
   const currentTitle = currentProgramTitle(channel.programs, now)
   const rxNote = receptionNote(channel.reception)
   const fav = channel.favorite === true
+  // Every tuner is busy elsewhere: the row stays (to browse and record) but
+  // dims, and its Watch actions are off until a tuner frees up.
+  const busy = !isWatchable(channel)
 
   return (
     <>
-      <div className={styles.channelCell}>
+      <div className={`${styles.channelCell}${busy ? ` ${styles.rowBusy}` : ''}`}>
         <button
           type="button"
           className={`${styles.channelWatch} ${rxNote ? styles.noSignal : ''}`}
-          onClick={() => watch(currentTitle)}
-          aria-label={`Watch channel ${channel.guideNumber} ${channel.name}${rxNote ? `, ${rxNote.toLowerCase()} last time` : ''}`}
+          onClick={busy ? undefined : () => watch(currentTitle)}
+          aria-disabled={busy || undefined}
+          aria-label={
+            busy
+              ? `Channel ${channel.guideNumber} ${channel.name}, ${GUIDE_COPY.tunersBusy.toLowerCase()}`
+              : `Watch channel ${channel.guideNumber} ${channel.name}${rxNote ? `, ${rxNote.toLowerCase()} last time` : ''}`
+          }
         >
           <span className={styles.channelNum}>{channel.guideNumber}</span>
           {channel.logoUrl ? (
@@ -611,7 +674,11 @@ function ChannelRow({
           ) : null}
           <span className={styles.channelMeta}>
             <span className={styles.callSign}>{channel.name}</span>
-            {rxNote ? <span className={styles.rxBadge}>{rxNote}</span> : null}
+            {busy ? (
+              <span className={styles.busyBadge}>{GUIDE_COPY.tunersBusy}</span>
+            ) : rxNote ? (
+              <span className={styles.rxBadge}>{rxNote}</span>
+            ) : null}
           </span>
         </button>
         {onToggleFavorite ? (
@@ -620,6 +687,7 @@ function ChannelRow({
             className={`${styles.star}${fav ? ` ${styles.starOn}` : ''}`}
             aria-pressed={fav}
             aria-label={`Favorite ${channel.name}`}
+            data-guide-star={rowKey}
             onClick={(e) => {
               e.stopPropagation()
               onToggleFavorite()
@@ -630,7 +698,7 @@ function ChannelRow({
         ) : null}
       </div>
 
-      <div className={styles.rowPrograms}>
+      <div className={`${styles.rowPrograms}${busy ? ` ${styles.rowBusy}` : ''}`}>
         <div className={styles.gridlines} aria-hidden>
           {ticks.map((t) => {
             const pct = nowLinePct(t, windowStart, windowStop)
@@ -643,14 +711,18 @@ function ChannelRow({
         ) : null}
 
         {!hasPrograms ? (
-          <button
-            type="button"
-            className={styles.cellEmpty}
-            onClick={() => watch()}
-            aria-label={`Watch channel ${channel.guideNumber}, no guide data — press to watch`}
-          >
-            {GUIDE_COPY.noGuideData}
-          </button>
+          busy ? (
+            <span className={styles.cellEmpty}>No guide data</span>
+          ) : (
+            <button
+              type="button"
+              className={styles.cellEmpty}
+              onClick={() => watch()}
+              aria-label={`Watch channel ${channel.guideNumber}, no guide data — press to watch`}
+            >
+              {GUIDE_COPY.noGuideData}
+            </button>
+          )
         ) : (
           <div className={styles.cells}>
             {cells.map((cell, i) => {
@@ -661,6 +733,7 @@ function ChannelRow({
                     type="button"
                     className={`${styles.cell} ${styles.cellGap}`}
                     style={{ left: `${cell.leftPct}%`, width: `${cell.widthPct}%` }}
+                    disabled={busy}
                     onClick={() => watch(currentTitle)}
                     aria-label={`Watch channel ${channel.guideNumber}`}
                   />

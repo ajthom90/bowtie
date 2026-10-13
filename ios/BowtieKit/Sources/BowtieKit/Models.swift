@@ -42,6 +42,10 @@ public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// The signed-in user starred this channel. `nil` means the server predates
     /// favorites, so clients hide stars and the Recent row.
     public var favorite: Bool?
+    /// False when every tuner that could carry it is busy with other channels
+    /// and nobody in Bowtie is on this one, so starting it would fail. Absent
+    /// from older servers.
+    public let watchable: Bool?
 
     public init(
         id: Int64,
@@ -49,7 +53,8 @@ public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
         name: String,
         logoUrl: String,
         reception: String? = nil,
-        favorite: Bool? = nil
+        favorite: Bool? = nil,
+        watchable: Bool? = nil
     ) {
         self.id = id
         self.guideNumber = guideNumber
@@ -57,10 +62,14 @@ public struct Channel: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.logoUrl = logoUrl
         self.reception = reception
         self.favorite = favorite
+        self.watchable = watchable
     }
 
     /// Starred by the signed-in user (false on servers without favorites).
     public var isFavorite: Bool { favorite == true }
+
+    /// It can start right now (true on servers that don't say).
+    public var isWatchable: Bool { watchable != false }
 
     /// The antenna got no signal the last time this channel was tuned.
     public var hasNoSignal: Bool { reception == "noSignal" }
@@ -126,6 +135,8 @@ public struct GuideChannel: Codable, Equatable, Sendable {
     /// Starred by the signed-in user; `nil` from servers without favorites.
     public let favorite: Bool?
     public let programs: [GuideProgram]
+    /// Same as `Channel.watchable`; absent from older servers.
+    public let watchable: Bool?
 
     public init(
         channelId: Int64,
@@ -133,7 +144,8 @@ public struct GuideChannel: Codable, Equatable, Sendable {
         name: String,
         logoUrl: String,
         favorite: Bool? = nil,
-        programs: [GuideProgram]
+        programs: [GuideProgram],
+        watchable: Bool? = nil
     ) {
         self.channelId = channelId
         self.guideNumber = guideNumber
@@ -141,7 +153,11 @@ public struct GuideChannel: Codable, Equatable, Sendable {
         self.logoUrl = logoUrl
         self.favorite = favorite
         self.programs = programs
+        self.watchable = watchable
     }
+
+    /// It can start right now (true on servers that don't say).
+    public var isWatchable: Bool { watchable != false }
 }
 
 /// A channel the signed-in user recently watched (`RecentChannel` in OpenAPI),
@@ -242,6 +258,37 @@ public struct CreatedSession: Codable, Sendable {
         self.viewerId = viewerId
         self.playlistUrl = playlistUrl
         self.session = session
+    }
+}
+
+/// Antenna reception on the tuner feeding a viewer's channel, from the
+/// heartbeat (`?signal=1`). `weak` needs two bad readings in a row on the server.
+public struct SessionSignal: Codable, Equatable, Sendable {
+    public let strength: Int
+    public let quality: Int
+    public let symbolQuality: Int
+    public let weak: Bool
+
+    public init(strength: Int, quality: Int, symbolQuality: Int, weak: Bool) {
+        self.strength = strength
+        self.quality = quality
+        self.symbolQuality = symbolQuality
+        self.weak = weak
+    }
+
+    /// Stats panel line. Quality leads: strength can read 96% while the
+    /// picture breaks up. Error-free is `symbolQuality`.
+    public var statsLine: String {
+        "Signal quality \(Self.percent(quality)) · strength \(Self.percent(strength)) · error-free \(Self.percent(symbolQuality))"
+    }
+
+    /// The player's note while `weak`.
+    public var weakNote: String {
+        "Weak signal (\(Self.percent(quality))) — the picture may break up."
+    }
+
+    private static func percent(_ value: Int) -> String {
+        "\(min(max(value, 0), 100))%"
     }
 }
 

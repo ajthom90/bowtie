@@ -68,6 +68,10 @@ private struct CreateRuleBody: Encodable {
     let keepLatest: Int
 }
 
+private struct HeartbeatReply: Decodable {
+    let signal: SessionSignal?
+}
+
 private struct TunersBusyBody: Decodable {
     let error: String
     let sessions: [ActiveSessionSummary]
@@ -88,6 +92,8 @@ public actor BowtieClient {
     public nonisolated var serverURL: URL { server }
     private let store: SessionStore
     private let urlSession: URLSession
+    /// How long `createSession` waits (see `sessionStartTimeout`).
+    private let sessionStartWait: TimeInterval
 
     public private(set) var currentUser: User?
     private var accessToken: String?
@@ -135,10 +141,18 @@ public actor BowtieClient {
         return f
     }()
 
-    public init(server: URL, store: SessionStore, urlSession: URLSession = .shared) {
+    /// - Parameter sessionStartWait: how long `createSession` waits; tests
+    ///   pass another value to prove it is set on that request.
+    public init(
+        server: URL,
+        store: SessionStore,
+        urlSession: URLSession = .shared,
+        sessionStartWait: TimeInterval = BowtieClient.sessionStartTimeout
+    ) {
         self.server = server
         self.store = store
         self.urlSession = urlSession
+        self.sessionStartWait = sessionStartWait
     }
 
     // MARK: - Viewer allowlist
@@ -223,6 +237,12 @@ public actor BowtieClient {
         )
     }
 
+    /// How long `createSession` waits for the server. The server answers once
+    /// the stream is ready: device connect 5 s + answer 12 s + track probe
+    /// 3 s + first playlist 15 s + one simpler layout 15 s ≈ 50 s. Waiting
+    /// less would turn a slow start into "can't reach".
+    public static let sessionStartTimeout: TimeInterval = 60
+
     /// - Parameter joinSessionId: SharePlay — join this server session (the
     ///   sharer's `session.id`); the server starts a normal session if it can't.
     public func createSession(
@@ -235,7 +255,8 @@ public actor BowtieClient {
             method: "POST",
             body: CreateSessionBody(channelId: channelId, caps: caps, joinSessionId: joinSessionId),
             authorize: true,
-            retryOn401: true
+            retryOn401: true,
+            timeout: sessionStartWait
         )
     }
 
@@ -253,31 +274,38 @@ public actor BowtieClient {
 
     /// Session liveness beat (spec C). Auth is the stream token query param only —
     /// never Bearer (avoids racing access-token refresh mid-session). Best-effort:
-    /// never throws, but returns why the server refused the beat (nil on success)
-    /// so the player can end on `.parental`.
+    /// never throws. Success carries the antenna reading (`?signal=1`; nil when
+    /// unknown or the server is older and answers an empty 204); failure says
+    /// why the server refused the beat, so the player can end on `.parental`.
     @discardableResult
-    public func heartbeat(viewerId: String, token: String) async -> BowtieError? {
+    public func heartbeat(viewerId: String, token: String) async -> Result<SessionSignal?, BowtieError> {
         let encoded = viewerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? viewerId
         var components = URLComponents(
             url: ServerURL.resolve(path: "/api/v1/sessions/\(encoded)/heartbeat", against: server),
             resolvingAgainstBaseURL: false
         )!
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
-        guard let url = components.url else { return .invalidServerURL }
+        components.queryItems = [
+            URLQueryItem(name: "signal", value: "1"),
+            URLQueryItem(name: "token", value: token),
+        ]
+        guard let url = components.url else { return .failure(.invalidServerURL) }
+        let data: Data
         do {
-            _ = try await sendRawURL(
+            data = try await sendRawURL(
                 url: url,
                 method: "POST",
                 body: nil as EmptyBody?,
                 authorize: false,
                 retryOn401: false
             )
-            return nil
         } catch let error as BowtieError {
-            return error
+            return .failure(error)
         } catch {
-            return .network(error.localizedDescription)
+            return .failure(.network(error.localizedDescription))
         }
+        // Any 2xx is a good beat; a body we can't read just means "unknown".
+        let reply = try? decoder.decode(HeartbeatReply.self, from: data)
+        return .success(reply?.signal)
     }
 
     // MARK: - Favorites / recents
@@ -454,7 +482,7 @@ public actor BowtieClient {
             do {
                 pair = try decoder.decode(TokenPair.self, from: body)
             } catch {
-                throw BowtieError.network("decode failed: \(error.localizedDescription)")
+                throw BowtieError.badResponse("decode failed: \(error.localizedDescription)")
             }
             applyTokens(pair)
             return .approved(pair.user)
@@ -525,6 +553,20 @@ public actor BowtieClient {
         )
     }
 
+    /// Updates a show and reconciles its upcoming recordings.
+    public func updateRecordingRule(id: Int64, newOnly: Bool, channelId: Int64, keepLatest: Int) async throws -> RecordingRule {
+        struct Body: Encodable {
+            let newOnly: Bool
+            let channelId: Int64
+            let keepLatest: Int
+        }
+        return try await send(
+            path: "/api/v1/recording-rules/\(id)", method: "PATCH",
+            body: Body(newOnly: newOnly, channelId: channelId, keepLatest: keepLatest),
+            authorize: true, retryOn401: true
+        )
+    }
+
     /// Stops recording a show: cancels its upcoming recordings; recorded ones stay.
     public func deleteRecordingRule(id: Int64) async throws {
         _ = try await sendRaw(
@@ -547,7 +589,7 @@ public actor BowtieClient {
         do {
             return try decoder.decode(ServerVersion.self, from: body)
         } catch {
-            throw BowtieError.network("decode failed: \(error.localizedDescription)")
+            throw BowtieError.badResponse("decode failed: \(error.localizedDescription)")
         }
     }
 
@@ -651,19 +693,21 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
         let data = try await sendRaw(
             path: path,
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw BowtieError.network("decode failed: \(error.localizedDescription)")
+            throw BowtieError.badResponse("decode failed: \(error.localizedDescription)")
         }
     }
 
@@ -684,7 +728,7 @@ public actor BowtieClient {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw BowtieError.network("decode failed: \(error.localizedDescription)")
+            throw BowtieError.badResponse("decode failed: \(error.localizedDescription)")
         }
     }
 
@@ -693,7 +737,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = ServerURL.resolve(path: path, against: server)
         return try await sendRawURL(
@@ -701,7 +746,8 @@ public actor BowtieClient {
             method: method,
             body: body,
             authorize: authorize,
-            retryOn401: retryOn401
+            retryOn401: retryOn401,
+            timeout: timeout
         )
     }
 
@@ -710,7 +756,8 @@ public actor BowtieClient {
         method: String,
         body: B?,
         authorize: Bool,
-        retryOn401: Bool
+        retryOn401: Bool,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let bodyData: Data?
         if let body {
@@ -719,12 +766,12 @@ public actor BowtieClient {
             bodyData = nil
         }
 
-        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+        let request = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
         let (data, response) = try await perform(request)
 
         if let http = response as? HTTPURLResponse, http.statusCode == 401, retryOn401 {
             try await refreshSingleFlight()
-            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize)
+            let retry = makeRequest(url: url, method: method, bodyData: bodyData, authorize: authorize, timeout: timeout)
             let (data2, response2) = try await perform(retry)
             return try mapSuccess(data: data2, response: response2)
         }
@@ -736,10 +783,14 @@ public actor BowtieClient {
         url: URL,
         method: String,
         bodyData: Data?,
-        authorize: Bool
+        authorize: Bool,
+        timeout: TimeInterval? = nil
     ) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         if let bodyData {
             request.httpBody = bodyData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -768,7 +819,7 @@ public actor BowtieClient {
 
     private func mapSuccess(data: Data, response: URLResponse) throws -> Data {
         guard let http = response as? HTTPURLResponse else {
-            throw BowtieError.network("non-HTTP response")
+            throw BowtieError.badResponse("non-HTTP response")
         }
         let status = http.statusCode
         switch status {
@@ -778,7 +829,7 @@ public actor BowtieClient {
             throw BowtieError.unauthorized
         case 403:
             let body = try? decoder.decode(ErrorBody.self, from: data)
-            let message = body?.error ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            let message = body?.error ?? ""
             if body?.code == "parental" {
                 throw BowtieError.parental(message)
             }
@@ -793,21 +844,19 @@ public actor BowtieClient {
                     message: conflict.error
                 )
             }
-            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error
-                ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? ""
             throw BowtieError.server(status: status, message: message)
         case 422:
-            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? "negotiation failed"
+            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? ""
             throw BowtieError.negotiationFailed(message)
         case 503:
             if let busy = try? decoder.decode(TunersBusyBody.self, from: data) {
                 throw BowtieError.tunersBusy(busy.sessions, otherInUse: busy.otherInUse ?? 0)
             }
-            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? "service unavailable"
+            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? ""
             throw BowtieError.server(status: status, message: message)
         default:
-            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error
-                ?? HTTPURLResponse.localizedString(forStatusCode: status)
+            let message = (try? decoder.decode(ErrorBody.self, from: data))?.error ?? ""
             throw BowtieError.server(status: status, message: message)
         }
     }

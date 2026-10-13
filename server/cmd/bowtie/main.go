@@ -139,6 +139,10 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 
 	// EPG supervisor always-on; sources/intervals from settingsProv (live, no restart).
 	epgSvc := epg.NewService(st, settingsProv)
+	if cfg.DisableHDHomeRunGuide {
+		epgSvc.DisableHDHomeRunGuide()
+		log.Printf("epg: HDHomeRun guide downloads are off on this server (BOWTIE_HDHOMERUN_GUIDE)")
+	}
 	epgSvc.SetNotifier(notifier)
 	go epgSvc.Run(rootCtx)
 
@@ -157,8 +161,9 @@ func run(ctx context.Context, cfg config.Config) (addr string, shutdown func(), 
 		Runner:   &stream.FFmpegRunner{Path: cfg.FFmpegPath},
 		Settings: settingsProv,
 		Ingest:   ingest,
-		// Captions, every broadcast audio track and the 5.1 copy, unless the
-		// BOWTIE_MULTITRACK kill switch is set.
+		// Every broadcast audio track and the 5.1 copy, unless the
+		// BOWTIE_MULTITRACK kill switch is set. LiveCaptions stays false:
+		// the fd 3 caption input freezes video during a cue gap.
 		Multitrack: !cfg.DisableMultitrack,
 		// Parental controls: stop a viewer when a blocked program comes on.
 		BlockedFor: api.ParentalBlocker(st, epgSvc),

@@ -14,6 +14,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import app.bowtie.core.ServerUrl
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -296,7 +297,8 @@ class PlayerEngine(
             val attempt = networkAttempt
             if (attempt >= NETWORK_BACKOFF_MS.size) {
                 networkAttempt = 0
-                listener.onFailed(PLAYBACK_FAILED_COPY)
+                ViewerErrors.log(error)
+                listener.onFailed(ViewerErrors.STREAM_STOPPED)
                 return
             }
             val delayMs = NETWORK_BACKOFF_MS[attempt]
@@ -307,14 +309,17 @@ class PlayerEngine(
                     player.seekToDefaultPosition()
                     player.prepare()
                     player.playWhenReady = true
-                } catch (_: Exception) {
-                    listener.onFailed(PLAYBACK_FAILED_COPY)
+                } catch (e: Exception) {
+                    ViewerErrors.log(e)
+                    listener.onFailed(ViewerErrors.STREAM_STOPPED)
                 }
             }
             return
         }
 
-        listener.onFailed(error.message ?: PLAYBACK_FAILED_COPY)
+        // Media3's message ("Source error", decoder names, codes) is for the log only.
+        ViewerErrors.log(error)
+        listener.onFailed(PLAYBACK_FAILED_COPY)
     }
 
     companion object {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, type GuideChannel, type RecordingConflict } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import {
   conflictHeading,
@@ -17,6 +18,7 @@ import {
 } from '../recordings/seriesModel'
 import type { GuideProgram } from './guideModel'
 import { lockText } from './searchModel'
+import { ALL_TUNERS_BUSY } from './watchableModel'
 import styles from './ProgramSheet.module.css'
 
 /** The channel fields the sheet needs (a guide row or a search result). */
@@ -31,6 +33,8 @@ type Props = {
   program: GuideProgram
   now: Date
   onWatch: () => void
+  /** False while every tuner is busy: no Watch (recording still works). */
+  watchable?: boolean
   onClose: () => void
   /** A recording or series rule was saved, cancelled or stopped; warning text when the server sent one. */
   onChanged: (warning?: string) => void
@@ -56,6 +60,7 @@ export function ProgramSheet({
   program,
   now,
   onWatch,
+  watchable = true,
   onClose,
   onChanged,
   onRecordings,
@@ -101,7 +106,7 @@ export function ProgramSheet({
       if (err instanceof ApiError && err.status === 409 && isConflict(err.body)) {
         setConflict({ tunerCount: err.body.tunerCount, conflicts: err.body.conflicts })
       } else {
-        setError(err instanceof ApiError && err.message ? err.message : 'Something went wrong. Try again.')
+        setError(viewerErrorText(err, 'Something went wrong. Try again.'))
       }
     } finally {
       setBusy(false)
@@ -150,7 +155,7 @@ export function ProgramSheet({
       setScheduled(res.scheduled)
       setView('seriesDone')
     } catch (err) {
-      setError(err instanceof ApiError && err.message ? err.message : 'Could not record this show. Try again.')
+      setError(viewerErrorText(err, 'Could not record this show. Try again.'))
     } finally {
       setBusy(false)
     }
@@ -324,15 +329,22 @@ export function ProgramSheet({
           <p className={styles.desc}>{program.description}</p>
         ) : null}
         {error ? <p className={styles.error}>{error}</p> : null}
+        {watchable ? null : (
+          <p className={styles.busy} role="status">
+            {ALL_TUNERS_BUSY}
+          </p>
+        )}
         <div className={styles.actions}>
-          <button
-            ref={firstBtnRef}
-            type="button"
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            onClick={onWatch}
-          >
-            Watch {channel.guideNumber}
-          </button>
+          {watchable ? (
+            <button
+              ref={firstBtnRef}
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              onClick={onWatch}
+            >
+              Watch {channel.guideNumber}
+            </button>
+          ) : null}
           {action === 'record' ? (
             <button
               type="button"
@@ -371,7 +383,12 @@ export function ProgramSheet({
               Open Recordings
             </button>
           ) : null}
-          <button type="button" className={styles.btn} onClick={onClose}>
+          <button
+            ref={watchable ? undefined : firstBtnRef}
+            type="button"
+            className={styles.btn}
+            onClick={onClose}
+          >
             Close
           </button>
         </div>

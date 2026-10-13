@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -24,9 +25,12 @@ type Scenario struct {
 	Duration  time.Duration `yaml:"duration"`
 	Soak      bool          `yaml:"soak"`
 	PTSWrapIn time.Duration `yaml:"ptsWrapIn"` // > 0: start the channel clock this long before the 33-bit wrap
-	Timeline  []Step        `yaml:"timeline"`
-	Bowtie    *BowtieSpec   `yaml:"bowtie"`
-	Expect    *Expect       `yaml:"expect"`
+	// WindowSegments is the session's -hls_list_size (0: Bowtie's default).
+	// Small windows let a run watch a restart slide out of the playlist.
+	WindowSegments int         `yaml:"windowSegments"`
+	Timeline       []Step      `yaml:"timeline"`
+	Bowtie         *BowtieSpec `yaml:"bowtie"`
+	Expect         *Expect     `yaml:"expect"`
 }
 
 // Step fires a fault At after the scenario starts.
@@ -46,6 +50,10 @@ type BowtieSpec struct {
 	// CloseTranscoderInputAt ends FFmpeg's input (EOF) at this point, as the
 	// ingest does when it gives up on a transcoder; FFmpeg exits gracefully.
 	CloseTranscoderInputAt time.Duration `yaml:"closeTranscoderInputAt"`
+	// Layout: "" (one rung, first audio as AAC) or "production" (ladder even
+	// with libx264, every audio track, the AC-3 group). Live captions are
+	// not part of the layout; the harness turns them on for captionsTimed.
+	Layout string `yaml:"layout"`
 }
 
 // Window is a span of scenario time.
@@ -61,6 +69,31 @@ type Expect struct {
 	SessionSurvives   *bool    `yaml:"sessionSurvives"`
 	MaxFfmpegRestarts *int     `yaml:"maxFfmpegRestarts"`
 	TunersBusy        *bool    `yaml:"tunersBusy"`
+	// Timeline and rendition checks (testplayer.Consistency).
+	RenditionsMonotonic      *bool  `yaml:"renditionsMonotonic"`
+	DiscontinuitiesAligned   *bool  `yaml:"discontinuitiesAligned"`
+	DiscontinuitySequenceOK  *bool  `yaml:"discontinuitySequenceOK"`
+	MinDiscontinuitySequence *int64 `yaml:"minDiscontinuitySequence"`
+	PDTMonotonic             *bool  `yaml:"pdtMonotonic"`
+	PDTAligned               *bool  `yaml:"pdtAligned"`
+	// Σ EXTINF minus wall time, in seconds (negative: an outage was skipped).
+	MaxTimelineExcessSeconds *float64 `yaml:"maxTimelineExcessSeconds"`
+	MinTimelineExcessSeconds *float64 `yaml:"minTimelineExcessSeconds"`
+	// ffprobe checks; a run that probed no audio violates them.
+	MaxAudioHoleMs    *float64 `yaml:"maxAudioHoleMs"`
+	MaxAVStartSkewMs  *float64 `yaml:"maxAVStartSkewMs"`
+	MinFfmpegRestarts *int     `yaml:"minFfmpegRestarts"`
+	// XFailOn is the violation text an xfail run must show; other
+	// violations fail it (a dead session can't pass for the known gap).
+	XFailOn string `yaml:"xfailOn"`
+	// Progress and coverage after the faults (every followed rendition).
+	MinSegmentsAfterFault *int     `yaml:"minSegmentsAfterFault"`
+	PairedAfterEachFault  *bool    `yaml:"pairedAfterEachFault"`
+	MaxTailGapSeconds     *float64 `yaml:"maxTailGapSeconds"`
+	CaptionsTimed         *bool    `yaml:"captionsTimed"`
+	NoFetchErrors         *bool    `yaml:"noFetchErrors"`
+	MinRenditions         *int     `yaml:"minRenditions"`
+	MaxStartSeconds       *float64 `yaml:"maxStartSeconds"`
 	// XFail marks expectations known to fail today; the test then requires
 	// them to still fail, so a fix forces removing the marker.
 	XFail string `yaml:"xfail"`
@@ -109,6 +142,12 @@ func (s *Scenario) validate() error {
 	if s.Duration <= 0 {
 		return fmt.Errorf("scenario %s: duration must be > 0", s.Name)
 	}
+	if s.WindowSegments < 0 || (s.WindowSegments > 0 && s.WindowSegments < 3) {
+		return fmt.Errorf("scenario %s: windowSegments %d (want 0 or ≥ 3)", s.Name, s.WindowSegments)
+	}
+	if s.Bowtie != nil && s.Bowtie.Layout != "" && s.Bowtie.Layout != "production" {
+		return fmt.Errorf("scenario %s: layout %q (want production or empty)", s.Name, s.Bowtie.Layout)
+	}
 	for i, st := range s.Timeline {
 		if st.At < 0 || st.At > s.Duration {
 			return fmt.Errorf("scenario %s: step %d at %v outside 0..%v", s.Name, i, st.At, s.Duration)
@@ -148,14 +187,17 @@ func (s *Scenario) validate() error {
 		if (e.XFail != "" || e.Flaky != "") && e.empty() {
 			return fmt.Errorf("scenario %s: xfail/flaky needs at least one expectation", s.Name)
 		}
+		if e.XFail != "" && e.XFailOn == "" {
+			return fmt.Errorf("scenario %s: xfail needs xfailOn (the violation that must occur)", s.Name)
+		}
 	}
 	return nil
 }
 
 // overlaps reports same-kind, same-scope steps whose active windows intersect.
-// One-shot kinds (drop and timeline faults) never overlap.
+// One-shot kinds (drop, pts-jump and timeline faults) never overlap.
 func overlaps(a, b Step, end time.Duration) bool {
-	if a.Fault != b.Fault || a.Scope != b.Scope || a.Fault == faults.Drop || a.Fault.IsTimeline() {
+	if a.Fault != b.Fault || a.Scope != b.Scope || a.Fault == faults.Drop || a.Fault == faults.PTSJump || a.Fault.IsTimeline() {
 		return false
 	}
 	window := func(s Step) (time.Duration, time.Duration) {
@@ -171,5 +213,85 @@ func overlaps(a, b Step, end time.Duration) bool {
 
 func (e *Expect) empty() bool {
 	return e.SequenceMonotonic == nil && e.MaxGapSeconds == nil && e.SessionSurvives == nil &&
-		e.MaxFfmpegRestarts == nil && e.TunersBusy == nil
+		e.MaxFfmpegRestarts == nil && e.TunersBusy == nil &&
+		e.RenditionsMonotonic == nil && e.DiscontinuitiesAligned == nil && e.DiscontinuitySequenceOK == nil &&
+		e.MinDiscontinuitySequence == nil && e.PDTMonotonic == nil && e.PDTAligned == nil &&
+		e.MaxTimelineExcessSeconds == nil && e.MinTimelineExcessSeconds == nil &&
+		e.MaxAudioHoleMs == nil && e.MaxAVStartSkewMs == nil && e.MinFfmpegRestarts == nil &&
+		e.MinSegmentsAfterFault == nil && e.NoFetchErrors == nil && e.MinRenditions == nil && e.MaxStartSeconds == nil &&
+		e.PairedAfterEachFault == nil && e.MaxTailGapSeconds == nil && e.CaptionsTimed == nil
+}
+
+// FaultClusterGap: fault ends closer together than this form one cluster,
+// with one coverage window after the cluster's last end.
+const FaultClusterGap = 8 * time.Second
+
+// blocksDelivery reports whether a fault kind stops segments from arriving
+// while it lasts (an outage), as opposed to damaging what arrives.
+func blocksDelivery(k faults.Kind) bool {
+	switch k {
+	case faults.Signal, faults.Stall, faults.Hang, faults.PIDLoss:
+		return true
+	}
+	return false
+}
+
+// FaultEnds lists where the e2e runner opens a coverage window: the end of
+// each fault cluster, ascending. A fault ends at a timeline step's at + for,
+// the slow-consumer window's end, or the kill or close time. Ends closer
+// together than FaultClusterGap form one cluster, whose window opens at
+// its last end and must show coverage for all of them. An end strictly
+// inside a delivery-blocking fault (an outage, a stall, a hung tuner, a
+// lost PID, FFmpeg not reading) opens no window: nothing can arrive until
+// that fault is over, and its own end opens one. Corruption and timestamp
+// faults never suppress another fault's window.
+func (s *Scenario) FaultEnds() []time.Duration {
+	type span struct {
+		from, to time.Duration
+		blocks   bool
+	}
+	var spans []span
+	for _, st := range s.Timeline {
+		spans = append(spans, span{st.At, st.At + st.For, blocksDelivery(st.Fault)})
+	}
+	if b := s.Bowtie; b != nil {
+		if w := b.SlowConsumer; w != nil {
+			spans = append(spans, span{w.At, w.At + w.For, true})
+		}
+		for _, t := range []time.Duration{b.KillTranscoderAt, b.CloseTranscoderInputAt} {
+			if t > 0 {
+				spans = append(spans, span{t, t, true})
+			}
+		}
+	}
+	var ends []time.Duration
+	for _, a := range spans {
+		inside := false
+		for _, b := range spans {
+			if b.blocks && b.from < a.to && a.to < b.to {
+				inside = true
+			}
+		}
+		if !inside {
+			ends = append(ends, a.to)
+		}
+	}
+	sort.Slice(ends, func(i, j int) bool { return ends[i] < ends[j] })
+	var out []time.Duration
+	for i, e := range ends {
+		if i+1 < len(ends) && ends[i+1]-e < FaultClusterGap {
+			continue // the cluster goes on: its window opens at a later end
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// LastFaultEnd is when the last fault of the run is over (0: no faults).
+func (s *Scenario) LastFaultEnd() time.Duration {
+	ends := s.FaultEnds()
+	if len(ends) == 0 {
+		return 0
+	}
+	return ends[len(ends)-1]
 }

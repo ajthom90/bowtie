@@ -1,0 +1,19 @@
+name: threshold-dropout
+duration: 70s
+timeline:
+  # Around the ingest's 8 s idle timeout (it reconnects; FFmpeg keeps running).
+  - {at: 10s, fault: stall, for: 9s}
+  - {at: 35s, fault: stall, for: 12s}
+expect:
+  xfail: "the holes are filled with duplicated frames instead of skipped (fixed in Task 6)"
+  xfailOn: "timeline excess"
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  # noFetchErrors: true returns in Task 6: before the fix FFmpeg writes
+  # AAC segments without packets (the audio side of the known gap).
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxTimelineExcessSeconds: -15
+  minTimelineExcessSeconds: -30
+  maxAudioHoleMs: 50

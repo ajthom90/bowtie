@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { ApiError, type FeedResponse } from '../api/client'
+import { type FeedResponse } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { BowtieMark } from '../BowtieMark'
 import { FEED_APPS, FEED_COPY, feedButtons } from './feedModel'
@@ -12,10 +13,6 @@ type Props = {
   onAdmin?: () => void
   /** Opens /link to approve a TV's quick sign-in. */
   onLink: () => void
-}
-
-function errorText(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.message ? err.message : fallback
 }
 
 /** The signed-in user's page: TV sign-in and links for other apps. */
@@ -37,7 +34,7 @@ export function Account({ onGuide, onRecordings, onMultiview, onAdmin, onLink }:
       setFeed(await client.createFeed())
       setMessage(rotate ? 'New links made. The old ones no longer work.' : null)
     } catch (err) {
-      setError(errorText(err, 'Could not make the links. Try again.'))
+      setError(viewerErrorText(err, 'Could not make the links. Try again.'))
     } finally {
       setBusy(false)
     }
@@ -53,7 +50,7 @@ export function Account({ onGuide, onRecordings, onMultiview, onAdmin, onLink }:
       setFeed(null)
       setMessage('Links turned off.')
     } catch (err) {
-      setError(errorText(err, 'Could not turn the links off. Try again.'))
+      setError(viewerErrorText(err, 'Could not turn the links off. Try again.'))
     } finally {
       setBusy(false)
     }

@@ -156,7 +156,7 @@ fun SearchScreen(
                                 SearchRow(
                                     result = r,
                                     onNow = onNow,
-                                    onWatch = if (onNow) {
+                                    onWatch = if (viewModel.canWatch(r)) {
                                         { onWatch(viewModel.channelFor(r), r.title) }
                                     } else {
                                         null

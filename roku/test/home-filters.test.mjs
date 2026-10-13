@@ -99,13 +99,13 @@ test('the chosen chip is read from and saved to the registry', () => {
 
 test('the rail shows only the channels the filter keeps; selections index that list', () => {
     const render = body(home, 'sub renderRail(');
-    assert.match(render, /m\.railChannels = bowtie\.guideFilter\.channelsMatching\(m\.channels, m\.guideById, m\.filter, atIso\)/);
+    assert.match(render, /m\.railChannels = bowtie\.guideFilter\.channelsMatching\(m\.joinable, m\.guideById, m\.filter, atIso\)/);
     assert.match(render, /buildListContent\(m\.railChannels,/);
-    assert.match(render, /indexOfChannel\(m\.railChannels, focusChannelId\)/);
-    // OK plays from the full rail so zapping is unchanged.
-    assert.match(body(home, 'sub onItemSelected('), /indexOfChannel\(m\.channels, m\.railChannels\[idx\]\.id\)/);
+    assert.match(render, /indexOfGuideRow\(m\.railChannels, focusedRow\)/);
+    // OK plays from every joinable channel so zapping ignores the filter.
+    assert.match(body(home, 'sub onItemSelected('), /indexOfChannel\(m\.joinable, m\.railChannels\[idx\]\.id\)/);
     assert.match(body(home, 'function openChannelOptions('), /ch = m\.railChannels\[idx\]/);
-    assert.match(body(home, 'sub handleFavoriteResponse('), /focusedId = m\.railChannels\[idx\]\.id/);
+    assert.match(body(home, 'sub handleFavoriteResponse('), /focusedId = m\.railChannels\[idx\]/);
     assert.doesNotMatch(home, /m\.channels\[m\.channelList\./);
 });
 

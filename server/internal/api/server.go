@@ -9,6 +9,7 @@ import (
 	"github.com/ajthom90/bowtie/server/internal/config"
 	"github.com/ajthom90/bowtie/server/internal/dvr"
 	"github.com/ajthom90/bowtie/server/internal/epg"
+	"github.com/ajthom90/bowtie/server/internal/hdhr"
 	"github.com/ajthom90/bowtie/server/internal/notify"
 	"github.com/ajthom90/bowtie/server/internal/settings"
 	"github.com/ajthom90/bowtie/server/internal/store"
@@ -47,23 +48,27 @@ type Deps struct {
 	// Notifications sends the admin's test notification (nil: a default
 	// client with notify.SendTimeout).
 	Notifications NotificationSender
+	// SignalFetch reads an HDHomeRun's status.json for the weak-signal note
+	// (tests); nil uses hdhr.FetchStatus.
+	SignalFetch func(ctx context.Context, baseURL string) ([]hdhr.TunerStatus, error)
 }
 
 // NotificationSender delivers one notification now (*notify.Service).
 type NotificationSender interface {
-	Send(ctx context.Context, rawURL string, ev notify.Event) notify.Result
+	Send(ctx context.Context, dest notify.Destination, ev notify.Event) notify.Result
 }
 
 // Server is the HTTP API surface.
 type Server struct {
 	deps    Deps
-	devices *deviceAuths // quick sign-in (device_auth.go)
-	iptv    *iptvViewers // IPTV feed viewers per account (iptv_handlers.go)
+	devices *deviceAuths   // quick sign-in (device_auth.go)
+	iptv    *iptvViewers   // IPTV feed viewers per account (iptv_handlers.go)
+	signal  *signalMonitor // tuner reception for the players' weak-signal note (signal.go)
 }
 
 // New builds the API handler (stdlib ServeMux with Go 1.22 method patterns).
 func New(deps Deps) http.Handler {
-	s := &Server{deps: deps, devices: newDeviceAuths(), iptv: &iptvViewers{}}
+	s := &Server{deps: deps, devices: newDeviceAuths(), iptv: &iptvViewers{}, signal: newSignalMonitor(deps.SignalFetch, nil)}
 	mux := http.NewServeMux()
 	s.mountAPI(mux)
 	// Short APK download links for sideloading (docs/install/android.md).
@@ -111,6 +116,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("DELETE /api/v1/me/favorites/{channelId}", auth.RequireUser(s.deps.Auth)(s.handleSetFavorite(false)))
 	handle("GET /api/v1/recording-rules", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListRules)))
 	handle("POST /api/v1/recording-rules", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateRule)))
+	handle("PATCH /api/v1/recording-rules/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handlePatchRule)))
 	handle("DELETE /api/v1/recording-rules/{id}", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleDeleteRule)))
 	handle("GET /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleListRecordings)))
 	handle("POST /api/v1/recordings", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleCreateRecording)))
@@ -156,6 +162,8 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handle("POST /api/v1/admin/epg/refresh", admin(http.HandlerFunc(s.handleAdminEPGRefresh)))
 	handle("GET /api/v1/admin/epg/channels", admin(http.HandlerFunc(s.handleAdminEPGChannels)))
 	handle("GET /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGLineups)))
+	handle("POST /api/v1/admin/epg/lineups", admin(http.HandlerFunc(s.handleAdminEPGAddLineup)))
+	handle("GET /api/v1/admin/epg/headends", admin(http.HandlerFunc(s.handleAdminEPGHeadends)))
 
 	handle("GET /api/v1/admin/backup", admin(http.HandlerFunc(s.handleAdminBackup)))
 
@@ -178,6 +186,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) []string {
 	handleFunc("GET /api/v1/stream/{viewerId}/{segment}", s.handleSegment)
 	handleFunc("DELETE /api/v1/sessions/{viewerId}", s.handleDeleteSession)
 	handleFunc("POST /api/v1/sessions/{viewerId}/heartbeat", s.handleHeartbeat)
+	handle("GET /api/v1/sessions/{viewerId}/timeline", auth.RequireUser(s.deps.Auth)(http.HandlerFunc(s.handleSessionTimeline)))
 	handle("GET /api/v1/admin/sessions", admin(http.HandlerFunc(s.handleAdminListSessions)))
 	handle("DELETE /api/v1/admin/sessions/{sessionId}", admin(http.HandlerFunc(s.handleAdminTerminateSession)))
 

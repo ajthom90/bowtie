@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -705,5 +706,55 @@ func TestAutoMapOnlyFillsNeverMapped(t *testing.T) {
 	got, _ := s.ChannelByID(a.ID)
 	if got.EPGChannelID != "hd:1" || got.Enabled {
 		t.Fatalf("a=%+v (Enabled must be untouched)", got)
+	}
+}
+
+// Channels come back in channel-number order (5.1 before 11.1, 5.2 before
+// 5.10), across tuners, not in text order.
+func TestListChannelsNumericOrder(t *testing.T) {
+	s := openTestStore(t)
+	for _, id := range []string{"AAAA0001", "BBBB0002"} {
+		if err := s.UpsertDevice(store.Device{DeviceID: id, IP: "192.168.1.5" + id[7:], TunerCount: 2,
+			LastSeen: time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SyncLineup("AAAA0001", []store.Channel{
+		{GuideNumber: "11.1", Name: "KARE"}, {GuideNumber: "5.10", Name: "X"},
+		{GuideNumber: "5.2", Name: "KSTC"}, {GuideNumber: "9.1", Name: "KMSP"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SyncLineup("BBBB0002", []store.Channel{
+		{GuideNumber: "5.1", Name: "WCCO"}, {GuideNumber: "23.1", Name: "WUCW"}, {GuideNumber: "9.1", Name: "KMSP"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chans, err := s.ListChannels(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range chans {
+		got = append(got, c.GuideNumber+"@"+c.DeviceID[:4])
+	}
+	want := []string{"5.1@BBBB", "5.2@AAAA", "5.10@AAAA", "9.1@AAAA", "9.1@BBBB", "11.1@AAAA", "23.1@BBBB"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("order = %v\nwant    %v", got, want)
+	}
+}
+
+func TestCompareGuideNumbers(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want int
+	}{
+		{"5.1", "11.1", -1}, {"5.10", "5.2", 1}, {"5", "5.1", -1}, {"4.1", "4.1", 0},
+		{"9.1", "A1", -1}, // non-numeric numbers sort after numeric ones
+	} {
+		got := store.CompareGuideNumbers(c.a, c.b)
+		if (got < 0) != (c.want < 0) || (got > 0) != (c.want > 0) {
+			t.Errorf("CompareGuideNumbers(%q, %q) = %d, want sign %d", c.a, c.b, got, c.want)
+		}
 	}
 }

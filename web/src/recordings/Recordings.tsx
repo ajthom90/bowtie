@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, type Recording, type RecordingRule } from '../api/client'
+import { type Recording, type RecordingRule } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { lockText } from '../guide/searchModel'
 import {
@@ -19,6 +20,7 @@ import {
   type RecordingListTab,
   type RecordingsTab,
 } from './recordingsModel'
+import { EditRuleDialog } from './EditRuleDialog'
 import { ruleSummary, stopShowConfirmText } from './seriesModel'
 import { ContinueWatching } from './ContinueWatching'
 import { ManualRecordDialog } from './ManualRecordDialog'
@@ -38,10 +40,6 @@ type Props = {
   onPlay: (rec: Recording) => void
   /** Plays from the saved position without asking (Continue watching). */
   onResume?: (rec: Recording) => void
-}
-
-function errorText(err: unknown, fallback: string): string {
-  return err instanceof ApiError && err.message ? err.message : fallback
 }
 
 export function Recordings({
@@ -152,7 +150,7 @@ function RecordingList({
       } catch (err) {
         if (!opts?.quiet) {
           setRows(null)
-          setError(errorText(err, 'Failed to load recordings'))
+          setError(viewerErrorText(err, 'Failed to load recordings'))
         }
       } finally {
         if (!opts?.quiet) setLoading(false)
@@ -180,7 +178,7 @@ function RecordingList({
     try {
       await fn()
     } catch (err) {
-      setActionError(errorText(err, fallback))
+      setActionError(viewerErrorText(err, fallback))
     } finally {
       setBusyId(null)
     }
@@ -315,6 +313,7 @@ function RecordingList({
 /** Series rules: every show being recorded. */
 function ShowsList() {
   const { client } = useAuth()
+  const [editing, setEditing] = useState<RecordingRule | null>(null)
   const [rules, setRules] = useState<RecordingRule[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -328,7 +327,7 @@ function ShowsList() {
       setRules(await client.listRecordingRules())
     } catch (err) {
       setRules(null)
-      setError(errorText(err, 'Failed to load shows'))
+      setError(viewerErrorText(err, 'Failed to load shows'))
     } finally {
       setLoading(false)
     }
@@ -346,7 +345,7 @@ function ShowsList() {
       await client.deleteRecordingRule(rule.id)
       setRules((rs) => rs?.filter((r) => r.id !== rule.id) ?? rs)
     } catch (err) {
-      setActionError(errorText(err, 'Could not stop recording this show.'))
+      setActionError(viewerErrorText(err, 'Could not stop recording this show.'))
     } finally {
       setBusyId(null)
     }
@@ -354,6 +353,16 @@ function ShowsList() {
 
   return (
     <>
+      {editing ? (
+        <EditRuleDialog
+          rule={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            await load()
+            setEditing(null)
+          }}
+        />
+      ) : null}
       {actionError ? (
         <p className={styles.statusError} role="alert">
           {actionError}
@@ -384,6 +393,16 @@ function ShowsList() {
               </div>
               {rule.canManage ? (
                 <div className={styles.rowActions}>
+                  {rule.editable === true ? (
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      disabled={busyId === rule.id}
+                      onClick={() => setEditing(rule)}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className={`${styles.btn} ${styles.btnDanger}`}

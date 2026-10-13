@@ -50,12 +50,15 @@ func newProbeManager(t *testing.T, adaptive, multitrack bool) (*Manager, *Ingest
 		StreamURL: func(ch store.Channel) (string, error) {
 			return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
 		},
-		Caps:              vtCaps(),
-		Runner:            runner,
-		Clock:             clock.Now,
-		Settings:          prov,
-		Ingest:            im,
-		Multitrack:        multitrack,
+		Caps:       vtCaps(),
+		Runner:     runner,
+		Clock:      clock.Now,
+		Settings:   prov,
+		Ingest:     im,
+		Multitrack: multitrack,
+		// The helper covers the caption tap. Multitrack false (the kill
+		// switch) still leaves captions out, because tracks is false.
+		LiveCaptions:      true,
 		TrackProbeTimeout: time.Second,
 	})
 	t.Cleanup(im.Shutdown)

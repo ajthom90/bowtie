@@ -108,6 +108,7 @@
             visible="false"
         />
 
+        <!-- Shows uses the same remote options dialog for Edit and Stop. -->
         <Label
             id="hintLabel"
             translation="[80, 960]"

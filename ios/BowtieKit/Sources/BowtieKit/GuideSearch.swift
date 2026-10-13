@@ -20,6 +20,8 @@ public struct GuideSearchResult: Codable, Equatable, Hashable, Identifiable, Sen
     public let locked: Bool?
     /// Present when it is scheduled or recorded.
     public let recording: RecordingMark?
+    /// False when every tuner its channel needs is busy (absent on older servers).
+    public let watchable: Bool?
 
     public init(
         channelId: Int64,
@@ -34,7 +36,8 @@ public struct GuideSearchResult: Codable, Equatable, Hashable, Identifiable, Sen
         category: String = "",
         rating: String? = nil,
         locked: Bool? = nil,
-        recording: RecordingMark? = nil
+        recording: RecordingMark? = nil,
+        watchable: Bool? = nil
     ) {
         self.channelId = channelId
         self.guideNumber = guideNumber
@@ -49,6 +52,7 @@ public struct GuideSearchResult: Codable, Equatable, Hashable, Identifiable, Sen
         self.rating = rating
         self.locked = locked
         self.recording = recording
+        self.watchable = watchable
     }
 
     /// A channel and its start time identify one airing.
@@ -59,6 +63,12 @@ public struct GuideSearchResult: Codable, Equatable, Hashable, Identifiable, Sen
     /// On the air at `date` (start inclusive, stop exclusive).
     public func isOnNow(at date: Date) -> Bool {
         start <= date && date < stop
+    }
+
+    /// Offer "Watch": on the air at `date` and its channel can start
+    /// (not every tuner busy; older servers don't say, so yes).
+    public func canWatch(at date: Date) -> Bool {
+        isOnNow(at: date) && watchable != false
     }
 
     /// The channel to play for "Watch".

@@ -15,6 +15,7 @@ struct MacRecordingsView: View {
     @State private var continueModel: ContinueWatchingModel?
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
+    @State private var editingRule: RecordingRule?
     @State private var confirmStopRule: RecordingRule?
 
     /// Upcoming states move on their own (recording → finishing up → recorded).
@@ -228,6 +229,9 @@ struct MacRecordingsView: View {
                     ruleRow(rule)
                 }
             }
+            .sheet(item: $editingRule) { rule in
+                EditRecordingRuleView(rule: rule, model: model)
+            }
             .scrollContentBackground(.hidden)
             .stopShowDialog(rule: $confirmStopRule) { rule in
                 Task { await model.deleteRule(rule) }
@@ -242,6 +246,9 @@ struct MacRecordingsView: View {
             .accessibilityLabel(rowView.accessibilityText)
             .contextMenu {
                 if rule.canManage {
+                    if rule.editable == true {
+                        Button("Edit") { editingRule = rule }
+                    }
                     Button(role: .destructive) {
                         confirmStopRule = rule
                     } label: {

@@ -255,8 +255,8 @@ struct SettingsView: View {
             switch error {
             case .unauthorized:
                 passwordMessage = "Wrong username or password."
-            case .server(_, let message), .network(let message), .negotiationFailed(let message):
-                passwordMessage = message
+            case .server, .network, .badResponse, .negotiationFailed:
+                passwordMessage = ViewerErrorCopy.message(for: error)
             default:
                 passwordMessage = "Couldn't change password."
             }

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# ffmpeg51: FFmpeg 5.1 from Debian bookworm (the production image's FFmpeg),
+# run in Docker as a drop-in BOWTIE_FFMPEG_PATH for e2e tests on a Mac:
+#
+#   BOWTIE_FFMPEG_PATH=$PWD/scripts/ffmpeg51 go test -tags ffmpeg ./internal/e2e/
+#
+# Env:
+#   FF51_LOGLEVEL    replaces the value after -loglevel (e.g. level+debug)
+#   FF51_LOGDIR      append the argv, then re-base/dup/warning lines, each
+#                    prefixed with Unix ms, to $FF51_LOGDIR/ffmpeg-<pid>.log
+#                    (stderr still passes through)
+#
+# Candidates are never injected here: each gate candidate is a scratch
+# branch whose BuildArgs emits its options, and the logged argv proves it.
+#
+# $TMPDIR, the synthetic-source cache and $PWD are mounted at the same paths,
+# so absolute paths work. Bowtie stops FFmpeg with SIGKILL, which kills this
+# script but not the container, so a watchdog kills the container when this
+# script dies. The caption input (fd 3) can't cross into the container: the
+# production layout runs on 5.1 inside the image instead (see the docs).
+set -u
+image=bowtie-ff51:bookworm
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  printf 'FROM debian:bookworm-slim\nRUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*\n' |
+    docker build -q -t "$image" - >/dev/null || exit 1
+fi
+
+args=()
+prev=""
+for a in "$@"; do
+  case "$a" in
+  *'pipe\:3'*)
+    echo "ffmpeg51: the caption input on fd 3 can't run through Docker" >&2
+    exit 2
+    ;;
+  esac
+  if [ "$prev" = "-loglevel" ] && [ -n "${FF51_LOGLEVEL:-}" ]; then
+    a=$FF51_LOGLEVEL
+  fi
+  args+=("$a")
+  prev=$a
+done
+
+mounts=()
+for d in "${TMPDIR:-/tmp}" "$HOME/Library/Caches/bowtie-fakehdhr" "$PWD"; do
+  if [ -d "$d" ]; then
+    mounts+=(-v "$d:$d")
+  fi
+done
+
+name="ffmpeg51-$$-$RANDOM"
+if [ -n "${FF51_LOGDIR:-}" ]; then
+  mkdir -p "$FF51_LOGDIR"
+  log="$FF51_LOGDIR/ffmpeg-$$.log"
+  perl -MTime::HiRes=time -e 'printf "%d argv: %s\n", time() * 1000, join(" ", @ARGV)' -- ${args[@]+"${args[@]}"} >>"$log"
+  exec 8> >(perl -MTime::HiRes=time -ne '
+    BEGIN { $| = 1; open(L, ">>", shift @ARGV) or die "ffmpeg51: log: $!"; select((select(L), $| = 1)[0]) }
+    print STDERR $_;
+    printf L "%d %s", time() * 1000, $_ if /timestamp discontinuity|frames duplicated| dup!|Invalid frame dimensions|\[(warning|error|fatal)\]/;
+  ' "$log")
+else
+  exec 8>&2
+fi
+# A background job's stdin is /dev/null unless redirected explicitly.
+exec 9<&0
+docker run --rm -i --init --network none --name "$name" -w "$PWD" \
+  ${mounts[@]+"${mounts[@]}"} "$image" ffmpeg ${args[@]+"${args[@]}"} <&9 2>&8 &
+child=$!
+exec 9<&-
+self=$$
+(
+  while kill -0 "$self" 2>/dev/null; do sleep 0.2; done
+  docker kill "$name" >/dev/null 2>&1
+) </dev/null >/dev/null 2>&1 &
+wait "$child"

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,5 +64,78 @@ func TestSeriesRulesAPI(t *testing.T) {
 	}, e.alice)
 	if json.Unmarshal(rr.Body.Bytes(), &created) != nil || created.Scheduled != 3 || created.Rule.ChannelID != 0 {
 		t.Fatalf("any channel %s", rr.Body.String())
+	}
+}
+
+func TestPatchRule(t *testing.T) {
+	e := newDVREnv(t)
+	id, err := e.st.CreateRule(store.RecordingRule{UserID: e.aliceID, Title: "Drama", NewOnly: true, KeepLatest: 5, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/v1/recording-rules/%d", id)
+	for _, tc := range []struct {
+		name, path string
+		token      map[string]string
+		body       any
+		status     int
+	}{
+		{"unauthenticated", path, nil, map[string]any{}, 401},
+		{"other owner", path, e.bob, map[string]any{}, 403},
+		{"missing", "/api/v1/recording-rules/99999", e.alice, map[string]any{}, 404},
+		{"bad id", "/api/v1/recording-rules/no", e.alice, map[string]any{}, 400},
+		{"negative keep", path, e.alice, map[string]any{"keepLatest": -1}, 400},
+		{"fraction", path, e.alice, map[string]any{"keepLatest": 1.5}, 400},
+		{"bad bool", path, e.alice, map[string]any{"newOnly": "false"}, 400},
+		{"null", path, e.alice, map[string]any{"newOnly": nil}, 400},
+		{"unknown field", path, e.alice, map[string]any{"title": "Other"}, 400},
+		{"missing channel", path, e.alice, map[string]any{"channelId": 99999}, 400},
+		{"negative channel", path, e.alice, map[string]any{"channelId": -1}, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := doJSON(t, e.h, "PATCH", tc.path, tc.body, tc.token)
+			if rr.Code != tc.status {
+				t.Fatalf("%d %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+	for _, body := range []string{`null`, `[]`, `{"newOnly":false} {}`, `{"newOnly":false}junk`, `{"newOnly":`} {
+		req := httptest.NewRequest("PATCH", path, strings.NewReader(body))
+		for k, v := range e.alice {
+			req.Header.Set(k, v)
+		}
+		rr := httptest.NewRecorder()
+		e.h.ServeHTTP(rr, req)
+		if rr.Code != 400 {
+			t.Fatalf("body %q: %d %s", body, rr.Code, rr.Body.String())
+		}
+	}
+	disabledID := e.ids["5.1"]
+	if err := e.st.UpdateChannel(disabledID, false, "epg-5.1"); err != nil {
+		t.Fatal(err)
+	}
+	if rr := doJSON(t, e.h, "PATCH", path, map[string]any{"channelId": disabledID}, e.alice); rr.Code != 400 {
+		t.Fatalf("disabled channel: %d", rr.Code)
+	}
+	if rr := doJSON(t, e.h, "PATCH", path, map[string]any{"channelId": disabledID}, e.admin); rr.Code != 200 {
+		t.Fatalf("admin disabled channel: %d", rr.Code)
+	}
+	if err := e.st.UpdateChannel(disabledID, true, "epg-5.1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []map[string]any{{"newOnly": false}, {"channelId": e.ids["5.1"], "keepLatest": 0}} {
+		rr := doJSON(t, e.h, "PATCH", path, body, e.alice)
+		var rule struct {
+			Editable, CanManage, NewOnly bool
+			KeepLatest                   int
+			ChannelID                    int64
+		}
+		if rr.Code != 200 || json.Unmarshal(rr.Body.Bytes(), &rule) != nil || !rule.Editable || !rule.CanManage || rule.NewOnly {
+			t.Fatalf("patch %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	rr := doJSON(t, e.h, "PATCH", path, map[string]any{"channelId": 0}, e.admin)
+	if rr.Code != 200 {
+		t.Fatalf("admin %d %s", rr.Code, rr.Body.String())
 	}
 }

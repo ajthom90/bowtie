@@ -153,8 +153,8 @@ func (s *Service) Run(ctx context.Context) {
 
 // Send delivers ev to rawURL now, once, with the Service's client (the admin
 // "Send test" button). It ignores the event choices and the rate limit.
-func (s *Service) Send(ctx context.Context, rawURL string, ev Event) Result {
-	return Send(ctx, s.client, rawURL, ev)
+func (s *Service) Send(ctx context.Context, dest Destination, ev Event) Result {
+	return SendTo(ctx, s.client, dest, ev)
 }
 
 func (s *Service) handle(ctx context.Context, j job) {
@@ -174,7 +174,7 @@ func (s *Service) handle(ctx context.Context, j job) {
 	if (!j.retry || j.settingsRetry) && (!enabled(cfg.Events, j.ev.Kind) || !s.allow(j.ev)) {
 		return
 	}
-	res := s.Send(ctx, cfg.URL, j.ev)
+	res := s.Send(ctx, Destination{URL: cfg.URL, Username: cfg.Username, Password: cfg.Password}, j.ev)
 	if res.OK {
 		return
 	}

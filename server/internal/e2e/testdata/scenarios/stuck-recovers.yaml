@@ -1,0 +1,11 @@
+name: stuck-recovers
+duration: 80s
+bowtie:
+  # FFmpeg reads nothing for 40 s, then resumes: drained at 30 s, never killed.
+  slowConsumer: {at: 10s, for: 40s}
+expect:
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0

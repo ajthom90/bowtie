@@ -1,6 +1,9 @@
 package app.bowtie.core.vm
 
 import app.bowtie.core.BowtieClient
+import app.bowtie.core.BowtieClientRulesTest.Companion.ruleJson
+import app.bowtie.core.BowtieJson
+import app.bowtie.core.RecordingRule
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.TOKEN_PAIR
 import app.bowtie.core.BowtieClientRecordingsTest.Companion.recordingJson
 import app.bowtie.core.InMemoryTokenStore
@@ -71,6 +74,10 @@ class RecordingsViewModelTest {
                         MockResponse().setResponseCode(204)
                     }
                     r.method == "POST" && p.endsWith("/play") -> MockResponse().setBody(playBody)
+                    r.method == "GET" && p == "/api/v1/recording-rules" -> MockResponse().setBody("[${ruleJson()}]")
+                    r.method == "PATCH" && p.startsWith("/api/v1/recording-rules/") ->
+                        MockResponse().setResponseCode(if (actionCode == 204) 200 else actionCode)
+                            .setBody(if (actionCode == 204) ruleJson() else """{"error":"forbidden"}""")
                     r.method == "PATCH" -> MockResponse().setResponseCode(if (actionCode == 204) 200 else actionCode)
                         .setBody(if (actionCode == 204) recordingJson(id = 2, state = "ready") else """{"error":"forbidden"}""")
                     r.method == "DELETE" || p.endsWith("/stop") ->
@@ -93,6 +100,23 @@ class RecordingsViewModelTest {
         val client = BowtieClient(server.url("/"), InMemoryTokenStore())
         client.login("alice", "secret")
         return RecordingsViewModel(client = client, scope = workScope)
+    }
+
+    @Test
+    fun editRule_refreshesUpcomingAndRules_andReportsFailure() = runBlocking {
+        val model = vm()
+        model.selectTab(Tab.Shows)
+        val rule = BowtieJson.decodeFromString<RecordingRule>(ruleJson())
+        requests.clear()
+        assertTrue(model.updateRule(rule, false, 0, 0))
+        assertEquals(listOf("/api/v1/recording-rules/4", "/api/v1/recordings?state=upcoming", "/api/v1/recording-rules"), requests.map { it.path })
+        assertTrue(model.state.value.load is RecordingsViewModel.Load.Shows)
+        actionCode = 403
+        requests.clear()
+        assertFalse(model.updateRule(rule, false, 0, 0))
+        assertEquals(1, requests.size)
+        assertNotNull(model.state.value.message)
+        assertTrue(model.state.value.load is RecordingsViewModel.Load.Shows)
     }
 
     private fun lastList(): String = requests.last { it.method == "GET" }.path

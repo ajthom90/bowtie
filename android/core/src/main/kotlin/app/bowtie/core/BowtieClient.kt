@@ -20,6 +20,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.time.Instant
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -38,6 +39,17 @@ class BowtieClient(
     private val store: TokenStore,
     private val okHttp: OkHttpClient = OkHttpClient(),
 ) {
+    /**
+     * The same client with a longer read timeout, for [createSession]: the
+     * server answers once the stream is ready, which can take ~50 s
+     * (OkHttp's default 10 s gave up and said "can't reach").
+     */
+    private val sessionStartHttp: OkHttpClient by lazy {
+        okHttp.newBuilder()
+            .readTimeout(SESSION_START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
@@ -212,6 +224,7 @@ class BowtieClient(
                 bodyJson = BowtieJson.encodeToString(
                     CreateSessionRequest(channelId = channelId, caps = caps),
                 ),
+                http = sessionStartHttp,
             )
             BowtieJson.decodeFromString(body)
         }
@@ -230,24 +243,32 @@ class BowtieClient(
      * never Bearer (avoids racing access-token refresh mid-session). Best-effort,
      * except that a viewer stopped by parental controls throws
      * [BowtieError.Parental] so the player can say why.
+     *
+     * Asks for antenna reception (`signal=1`): returns the reading, or null when
+     * unknown (older servers answer an empty 204; errors are swallowed).
      */
-    suspend fun heartbeat(viewerId: String, token: String): Unit = withContext(Dispatchers.IO) {
+    suspend fun heartbeat(viewerId: String, token: String): SignalReading? = withContext(Dispatchers.IO) {
         var parental: BowtieError.Parental? = null
+        var signal: SignalReading? = null
         try {
-            val path = "/api/v1/sessions/$viewerId/heartbeat?token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
+            val path = "/api/v1/sessions/$viewerId/heartbeat?signal=1&token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
             val request = Request.Builder()
                 .url(apiUrl(path))
                 .post("".toRequestBody(null))
                 .build()
             okHttp.newCall(request).execute().use { response ->
-                // 204 success; every other status is swallowed (best-effort) except parental.
+                // Any 2xx is success; every other status is swallowed (best-effort) except parental.
                 val body = response.body?.string().orEmpty()
                 if (response.code == 403) parental = parentalError(body)
+                if (response.isSuccessful && body.isNotBlank()) {
+                    signal = BowtieJson.decodeFromString<HeartbeatResponse>(body).signal
+                }
             }
         } catch (_: Exception) {
             // swallow
         }
         parental?.let { throw it }
+        signal
     }
 
     suspend fun me(): User = withContext(Dispatchers.IO) {
@@ -313,6 +334,20 @@ class BowtieClient(
             ),
         )
         BowtieJson.decodeFromString(body)
+    }
+
+    /** Updates a show and reconciles its upcoming recordings. */
+    suspend fun updateRecordingRule(
+        id: Long,
+        newOnly: Boolean,
+        channelId: Long,
+        keepLatest: Int,
+    ): RecordingRule = withContext(Dispatchers.IO) {
+        BowtieJson.decodeFromString(
+            authed("PATCH", "/api/v1/recording-rules/$id",
+                bodyJson = BowtieJson.encodeToString(UpdateRuleRequest(newOnly, channelId, keepLatest)),
+            ),
+        )
     }
 
     /** Stop recording a show: cancels its upcoming recordings; recorded ones stay. */
@@ -483,6 +518,7 @@ class BowtieClient(
         path: String,
         bodyJson: String? = null,
         retryOn401: Boolean = true,
+        http: OkHttpClient = okHttp,
     ): String {
         val attachAuth = !isStreamPath(path)
 
@@ -508,12 +544,12 @@ class BowtieClient(
             // Snapshot the token actually sent — concurrent refresh may rotate
             // accessToken before we process a late 401 for the old token.
             val tokenUsed = accessToken
-            val first = okHttp.newCall(build(tokenUsed)).await()
+            val first = http.newCall(build(tokenUsed)).await()
             try {
                 if (first.code == 401 && retryOn401 && attachAuth) {
                     first.close()
                     singleFlightRefresh(failedAccessToken = tokenUsed)
-                    okHttp.newCall(build(accessToken)).await().use { retry ->
+                    http.newCall(build(accessToken)).await().use { retry ->
                         if (retry.code == 401) {
                             clearSessionKeepServer()
                             throw BowtieError.Unauthorized
@@ -567,7 +603,7 @@ class BowtieClient(
         return when (code) {
             401 -> BowtieError.Unauthorized
             403 -> parentalError(body)
-                ?: BowtieError.Server(403, extractErrorMessage(body) ?: body.ifEmpty { "HTTP 403" })
+                ?: serverError(403, body)
             404 -> BowtieError.NotFound
             409 -> {
                 // Only a schedule conflict carries `conflicts`; /play's 409 is a plain error.
@@ -575,7 +611,7 @@ class BowtieClient(
                     val payload = BowtieJson.decodeFromString<RecordingConflictPayload>(body)
                     BowtieError.RecordingConflict(payload.error, payload.tunerCount, payload.conflicts)
                 } catch (_: Exception) {
-                    BowtieError.Server(409, extractErrorMessage(body) ?: body.ifEmpty { "HTTP 409" })
+                    serverError(409, body)
                 }
             }
             422 -> BowtieError.NegotiationFailed(
@@ -584,20 +620,28 @@ class BowtieClient(
             503 -> {
                 // A recordings 503 means the DVR is off, not that tuners are busy.
                 if (path.startsWith("/api/v1/recordings") || path.startsWith("/api/v1/recording-rules")) {
-                    return BowtieError.Server(503, extractErrorMessage(body) ?: "HTTP 503")
+                    return serverError(503, body)
                 }
                 try {
                     val payload = BowtieJson.decodeFromString<TunersBusyPayload>(body)
                     BowtieError.TunersBusy(payload.sessions, payload.otherInUse)
                 } catch (_: Exception) {
-                    BowtieError.Server(503, extractErrorMessage(body) ?: body)
+                    serverError(503, body)
                 }
             }
-            else -> BowtieError.Server(
-                code,
-                extractErrorMessage(body) ?: body.ifEmpty { "HTTP $code" },
-            )
+            else -> serverError(code, body)
         }
+    }
+
+    /**
+     * The server's plain-words `error`, or a blank message when the body has
+     * none (a proxy's HTML page, an empty body): viewers then get generic copy
+     * ([ViewerErrors]) and the raw body goes to the log only.
+     */
+    private fun serverError(code: Int, body: String): BowtieError.Server {
+        val message = extractErrorMessage(body)
+        if (message == null) ViewerErrors.logDetail("HTTP $code: ${body.take(500)}")
+        return BowtieError.Server(code, message.orEmpty())
     }
 
     /** A 403 body with `code: "parental"`, else null. */
@@ -635,6 +679,14 @@ class BowtieClient(
     private fun jsonBody(json: String) = json.toRequestBody(JSON_MEDIA_TYPE)
 
     companion object {
+        /**
+         * How long [createSession] waits for the server. Above the server's
+         * own bound on a start (device connect 5 s + answer 12 s + track
+         * probe 3 s + first playlist 15 s + one simpler layout 15 s ≈ 50 s),
+         * so a slow start isn't "can't reach".
+         */
+        const val SESSION_START_TIMEOUT_SECONDS = 60L
+
         private const val JSON_MEDIA = "application/json"
         private val JSON_MEDIA_TYPE = JSON_MEDIA.toMediaType()
 

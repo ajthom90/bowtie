@@ -40,11 +40,14 @@ GitHub Releases attach `bowtie-roku-<version>.zip` (release workflow job `roku`,
 1. Enable developer mode (Home ×3, Up ×2, Right, Left, Right, Left, Right).
 2. Note the device IP and set a password when prompted.
 3. Open `http://<roku-ip>` in a browser, sign in, upload `out/bowtie-roku.zip`.
-4. Or use `curl`:
+4. Or build and upload in one step: `npm run deploy` builds
+   `out/bowtie-roku.zip` and posts it with `scripts/deploy.sh` (digest auth as
+   the Roku's web installer expects; prints `Install Success`, `Identical to
+   previous version` or the failure):
 
 ```bash
-curl -F "mysubmit=Install" -F "archive=@out/bowtie-roku.zip" \
-  "http://rokudev:<password>@<roku-ip>/plugin_install"
+cd roku
+ROKU_IP=<roku-ip> ROKU_DEV_PASSWORD=<password> npm run deploy
 ```
 
 Full adversarial checklist: [`docs/deploy/roku-testing.md`](../docs/deploy/roku-testing.md).
@@ -59,6 +62,25 @@ curl "http://<roku-ip>:8060/launch/dev?selftest=1"
 ```
 
 (`supports_input_launch=1` is set in the channel manifest.)
+
+## Set up from a phone
+
+Connect opens on a QR (left) with **Scan with your phone to set up this TV**
+and **Or open `http://<roku-ip>:<port>/p?t=…` on your phone**; **Type the
+address instead** (focused) opens the keyboard as before. The QR leads to a
+page the Roku serves itself (`components/tasks/PairTask`, request logic in
+`source/lib/PairHttp.bs`, the QR drawn by `QrCode` from `source/lib/Qr.bs`):
+the phone types the server address, the Roku probes `/healthz`, and once it
+has a sign-in code the phone is sent to `<that server>/link?code=…` to approve
+it. No cloud and no fixed host: the phone only ever goes to the address it
+typed.
+
+The listener binds the Roku's LAN IPv4 on a random port 49153–65152 with a
+24-hex-character token in the URL, serves up to 4 connections at once (5 s per
+request), and stops when the TV is signed in, after 15 minutes, when an
+address typed on the TV connects, or after 20 wrong tokens; the QR hides then,
+and the next visit to Connect starts over with a new token. An address the
+Roku can't reach shows the error on both screens, and the phone can try again.
 
 ## Sign in
 
@@ -98,9 +120,10 @@ a note.
 | OK on a Continue watching item | Resume the recording at its saved position (no Resume / Start over question); Back or the end returns here |
 | `*` (Options) on a Continue watching item | **Remove from Continue watching** (sets the saved position back to 0), **Cancel** |
 
-**Favorite** stars the channel: starred channels move to the top
-(guide-number order) with a ★; the change is sent to the server and undone if
-it fails. Favorite is left out on a server without favorites.
+**Favorite** stars the channel: starred channels appear at the top in
+guide-number order and again in their normal place in the full list, with a ★.
+The change updates both copies and is undone if the server refuses it.
+Favorite is left out on a server without favorites.
 
 **Record this program** schedules the current program by its guide start
 (`POST /api/v1/recordings`; capture starts 1 min early and ends 3 min late).
@@ -140,7 +163,7 @@ R, NC-17, X) kept out of Kids, and New for new episodes. The chip is kept on
 this device (registry section `bowtie`, key `guideFilter`) and survives
 sign-out and change server. Logic: `source/lib/GuideFilter.bs`.
 
-Up/down zapping in the player follows rail order, so it cycles favorites
+Up/down zapping in the player visits each channel once, cycling favorites
 first; it goes through every channel, whatever the filter.
 The Recent row lists the last 8 channels watched for 30 s or more (any device,
 same account) and is hidden when empty or on a server without favorites.
@@ -222,6 +245,23 @@ freed) and the rail comes back. It survives zapping, resets when the player is
 left, and is never saved. Logic: `source/lib/SleepTimer.bs` (clock injected,
 tested under brs).
 
+### Signal and busy tuners
+
+The 15 s heartbeat asks for the antenna's reception (`?signal=1`). The top
+bar shows the latest reading — **Signal quality 46% · strength 96% ·
+error-free 0%** (quality first: strength can read high while the picture
+breaks up) — and so does the debug overlay. When the server says the signal
+is weak, **Weak signal (46%) — the picture may break up.** stays under the
+top bar (read out by Audio Guide when it appears). An older server (empty
+204) or no reading shows neither.
+
+Channels the server marks `watchable: false` (every tuner they need is busy)
+leave the rail, the Recent row and Up/Down zapping, with **All tuners are in
+use — showing channels you can join.** right of the filter chips; with none
+left, **All tuners are in use. Try again in a few minutes.** and **Try again**
+take the rail's place. The rail re-checks every 30 s while shown. Logic:
+`source/lib/Tuners.bs` (tested under brs).
+
 ### Session lifecycle (A3)
 
 On zap or quality change: bump generation → **DELETE** current viewer → debounce
@@ -237,6 +277,7 @@ Amber strip at the bottom (off by default; set `showDebug` to `true` in `compone
 ```text
 Video state=… errorCode=… errorMsg=…
 viewerId=… gen=… phase=…
+Signal quality …% · strength …% · error-free …%   (when the server reports one)
 ```
 
 Use step 7 of the validation gate to capture real `errorCode`/`errorMsg` after
@@ -250,7 +291,9 @@ admin token-kill — those values extend the mid-play auth recreate allowlist.
 | 422 negotiation | Reset quality to Auto, retry once; second → device-can’t-play |
 | 404 | Channel not found; rail refreshes on return |
 | 403 `code: parental` (session start, or a live viewer's heartbeat once the server stops it) | The server's message ("Blocked by parental controls (rated TV-MA)") + pick another channel; no retry loop |
-| Mid-play failure | Bounded retry, then error + Try again |
+| Mid-play failure | Bounded retry, then **The stream stopped. Try again.** + Try again |
+| No answer (offline, timed out) | **Can't reach your Bowtie server. Check your connection and try again.** |
+| Anything else | The server's own message, else plain words; `errorCode` / raw bodies go to the debug log only |
 
 ## Settings
 
@@ -282,16 +325,19 @@ roku/
 ├── images/                 # icons, splash, amber focus 9-patch
 ├── source/
 │   ├── main.bs             # entry; selftest=1 → SelfTestScene
-│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideFilter, GuideLogic, Recordings, Registry, SleepTimer
+│   ├── lib/                # AuthState, BowtieClient, Caps, Commercials, ContinueWatching, DeviceAuth, Favorites, GuideFilter, GuideLogic, PairHttp, Qr, Recordings, Registry, SleepTimer
 │   └── tests/              # on-device fixtures
 └── components/
     ├── AppScene            # phase routing (connect/login/checking/home/settings/recordings/player)
-    ├── ConnectScene
+    ├── ConnectScene        # set up from a phone (QrCode + PairTask) or type the address
+    ├── QrCode              # QR drawn as Rectangles
     ├── LoginScene          # Sign in with your phone (QR + code, polling) or password
     ├── HomeScene           # Continue watching (RowList of ContinueItem) + Recent + filter chips (FilterChip) + MarkupList rail + guide join, * dialogs
     ├── RecordingsScene     # Upcoming / Recorded / Missed / Shows + VOD Video (RecordingItem rows); resume mode for Continue watching
     ├── PlayerScene         # Video + session-replace
     ├── SettingsScene
     ├── SelfTestScene
-    └── tasks/ApiTask       # sole HTTP + token holder
+    └── tasks/
+        ├── ApiTask         # sole HTTP + token holder
+        └── PairTask        # the phone set-up page (LAN listener)
 ```

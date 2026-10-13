@@ -1,10 +1,12 @@
 import Hls from 'hls.js'
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { CANT_PLAY_HERE, STREAM_STOPPED } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { canPlayNativeHls, detectCaps } from '../player/caps'
 import { isParentalBlock, startErrorFrom, type StartError } from '../player/errorModel'
 import { createHeartbeatController } from '../player/seekModel'
 import { bestEffortDelete, streamTokenFromPlaylist } from '../player/sessionStop'
+import { startingText, useSlowStart } from '../player/startingNote'
 import type { Tile } from './multiviewModel'
 import styles from './Multiview.module.css'
 
@@ -22,7 +24,7 @@ type Props = {
 type WebkitVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
 
 const PLAYBACK_FAILED: StartError = {
-  message: 'Playback failed. Try again.',
+  message: 'The picture stopped playing. Try again.',
   tunerBusy: false,
   retry: true,
 }
@@ -42,6 +44,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
 
   const { channelId } = tile.channel
   const { profile } = tile
+  const slowStart = useSlowStart(loading && !error, `${channelId}|${profile}|${epoch}`)
 
   useEffect(() => {
     let cancelled = false
@@ -110,10 +113,11 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
         hls.on(Hls.Events.MANIFEST_PARSED, () => play(video))
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (!data.fatal || cancelled) return
+          console.warn('Playback error:', data.type, data.details, data.error)
           release()
           setError(
             data.type === Hls.ErrorTypes.NETWORK_ERROR
-              ? { ...PLAYBACK_FAILED, message: 'Playback failed — network error. Try again.' }
+              ? { ...PLAYBACK_FAILED, message: STREAM_STOPPED }
               : PLAYBACK_FAILED,
           )
         })
@@ -122,7 +126,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
         play(video)
       } else {
         release()
-        setError({ ...PLAYBACK_FAILED, message: 'This browser cannot play HLS video.' })
+        setError({ ...PLAYBACK_FAILED, message: CANT_PLAY_HERE })
       }
     }
 
@@ -224,7 +228,7 @@ export function MultiviewTile({ tile, index, audio, programTitle, onAudio, onCha
     >
       <video ref={videoRef} className={styles.video} playsInline autoPlay muted />
 
-      {loading && !error ? <div className={styles.tileStatus}>Starting stream…</div> : null}
+      {loading && !error ? <div className={styles.tileStatus}>{startingText(slowStart)}</div> : null}
 
       {error ? (
         <div className={styles.tileError} role="alert">

@@ -13,6 +13,7 @@ struct TVRecordingsView: View {
     @State private var activePlayback: RecordingsModel.Playback?
     @State private var actionsFor: Recording?
     @State private var confirmDelete: Recording?
+    @State private var editingRule: RecordingRule?
     @State private var confirmStopRule: RecordingRule?
 
     private let refreshInterval: Duration = .seconds(30)
@@ -223,17 +224,24 @@ struct TVRecordingsView: View {
                     ruleRow(rule)
                 }
             }
+            .sheet(item: $editingRule) { rule in
+                EditRecordingRuleView(rule: rule, model: model)
+            }
             .listStyle(.plain)
             .focusSection()
         }
     }
 
-    /// Select (or press and hold) offers Stop Recording This Show when allowed.
+    /// Select edits a supported rule; press and hold also offers Stop Recording This Show.
     private func ruleRow(_ rule: RecordingRule) -> some View {
         let rowView = RecordingRuleRowView(rule: rule, large: true)
         return Button {
             if rule.canManage {
-                confirmStopRule = rule
+                if rule.editable == true {
+                    editingRule = rule
+                } else {
+                    confirmStopRule = rule
+                }
             }
         } label: {
             rowView
@@ -243,6 +251,9 @@ struct TVRecordingsView: View {
         .accessibilityLabel(rowView.accessibilityText)
         .contextMenu {
             if rule.canManage {
+                if rule.editable == true {
+                    Button("Edit") { editingRule = rule }
+                }
                 Button(role: .destructive) {
                     confirmStopRule = rule
                 } label: {

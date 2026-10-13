@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A QR code drawn from Rectangles: a white frame with the 4-module quiet
+     zone, then one black Rectangle per horizontal run of dark modules. -->
+<component name="QrCode" extends="Group">
+    <interface>
+        <field id="text" type="string" value="" />
+        <field id="moduleSize" type="integer" value="12" />
+        <!-- Width (= height) drawn, quiet zone included; 0 when nothing is drawn. -->
+        <field id="pixelSize" type="integer" value="0" />
+    </interface>
+    <script type="text/brightscript" uri="QrCode.bs" />
+</component>

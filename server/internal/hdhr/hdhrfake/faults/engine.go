@@ -129,7 +129,7 @@ func (e *Engine) Add(t Target, s Spec, liveConns []string) (string, error) {
 	switch {
 	case s.For > 0:
 		f.until = now.Add(s.For)
-	case s.Fault == Drop:
+	case s.Fault == Drop || s.Fault == PTSJump:
 		f.until = now.Add(dropFaultLife)
 	}
 	e.faults = append(e.faults, f)
@@ -242,6 +242,42 @@ func (e *Engine) Decide(channel, conn string, pkt []byte, track tsloop.Track) De
 			return Decision{Action: Close, Reset: f.Spec.Mode == "reset"}
 		}
 	}
+	out := pkt
+	var junk []byte
+	copied := false
+	own := func() {
+		if !copied {
+			out = append([]byte(nil), pkt...)
+			copied = true
+		}
+	}
+
+	// pts-jump: prepared before the stall/lock checks so a held packet doesn't
+	// lose the shot; it only counts as fired when this packet is emitted.
+	var jumped *fault
+	for _, f := range hits {
+		if f.Spec.Fault != PTSJump || f.fired[conn] || track != tsloop.TrackVideo || jumped != nil {
+			continue
+		}
+		pts, dts, hasPTS, hasDTS := tsloop.PESTimestamps(pkt)
+		if !hasPTS || (f.Spec.PTSOnly && !hasDTS) {
+			continue
+		}
+		by := int64(f.Spec.By/time.Microsecond) * 9 / 100 // 90 kHz ticks
+		if !f.Spec.PTSOnly {
+			dts += by
+		}
+		own()
+		tsloop.SetPESTimestamps(out, pts+by, dts) // writeTS masks to 33 bits; absent DTS is left absent
+		jumped = f
+	}
+	emit := func(d Decision) Decision {
+		if jumped != nil {
+			jumped.fired[conn] = true
+		}
+		return d
+	}
+
 	for _, f := range hits {
 		if f.Spec.Fault == Stall {
 			return Decision{Action: Hold, Burst: f.Spec.Burst}
@@ -263,16 +299,6 @@ func (e *Engine) Decide(channel, conn string, pkt []byte, track tsloop.Track) De
 				return Decision{Action: Skip}
 			}
 			e.slow[key]--
-		}
-	}
-
-	out := pkt
-	var junk []byte
-	copied := false
-	own := func() {
-		if !copied {
-			out = append([]byte(nil), pkt...)
-			copied = true
 		}
 	}
 
@@ -320,9 +346,9 @@ func (e *Engine) Decide(channel, conn string, pkt []byte, track tsloop.Track) De
 	}
 
 	if junk != nil {
-		return Decision{Action: Emit, Packets: [][]byte{junk, out}}
+		return emit(Decision{Action: Emit, Packets: [][]byte{junk, out}})
 	}
-	return Decision{Action: Emit, Packets: [][]byte{out}}
+	return emit(Decision{Action: Emit, Packets: [][]byte{out}})
 }
 
 func trackMatches(want string, t tsloop.Track) bool {

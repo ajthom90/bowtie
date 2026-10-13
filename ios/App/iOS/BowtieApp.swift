@@ -51,7 +51,9 @@ struct RootView: View {
         }
         // SharePlay: sessions arrive for the app's lifetime.
         .task {
+            #if SHAREPLAY
             await appModel.observeGroupSessions()
+            #endif
         }
         .onChange(of: appModel.pendingGroupJoin?.id) { _, _ in
             handOverGroupJoin()

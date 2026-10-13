@@ -119,6 +119,23 @@ func isDiscordHost(host string) bool {
 // Send delivers ev to rawURL once (no retry) and reports the outcome. A nil
 // client uses one with SendTimeout.
 func Send(ctx context.Context, client *http.Client, rawURL string, ev Event) Result {
+	return SendTo(ctx, client, Destination{URL: rawURL}, ev)
+}
+
+// Destination is where notifications go. Username/Password, when either is
+// set, are sent as HTTP Basic auth and override credentials in the URL (an
+// ntfy access token goes in Password with an empty Username).
+type Destination struct {
+	URL      string
+	Username string
+	Password string
+}
+
+func (d Destination) hasCredentials() bool { return d.Username != "" || d.Password != "" }
+
+// SendTo is Send with credentials kept apart from the URL.
+func SendTo(ctx context.Context, client *http.Client, dest Destination, ev Event) Result {
+	rawURL := dest.URL
 	if client == nil {
 		client = &http.Client{Timeout: SendTimeout, CheckRedirect: noRedirects}
 	}
@@ -132,7 +149,7 @@ func Send(ctx context.Context, client *http.Client, rawURL string, ev Event) Res
 		res.Error = "notification URL " + err.Error()
 		return res
 	}
-	req, err := buildRequest(ctx, rawURL, target, ev)
+	req, err := buildRequest(ctx, dest, target, ev)
 	if err != nil {
 		res.Error = cleanError(err, rawURL)
 		return res
@@ -165,8 +182,8 @@ func cleanError(err error, rawURL string) string {
 	return fmt.Sprintf("%s: %s", Host(rawURL), strings.ReplaceAll(err.Error(), rawURL, Host(rawURL)))
 }
 
-func buildRequest(ctx context.Context, rawURL, target string, ev Event) (*http.Request, error) {
-	u, err := url.Parse(rawURL)
+func buildRequest(ctx context.Context, dest Destination, target string, ev Event) (*http.Request, error) {
+	u, err := url.Parse(dest.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +222,10 @@ func buildRequest(ctx context.Context, rawURL, target string, ev Event) (*http.R
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("User-Agent", "Bowtie")
-	if user != nil {
+	switch {
+	case dest.hasCredentials():
+		req.SetBasicAuth(dest.Username, dest.Password)
+	case user != nil:
 		pass, _ := user.Password()
 		req.SetBasicAuth(user.Username(), pass)
 	}

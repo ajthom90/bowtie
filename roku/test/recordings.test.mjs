@@ -435,3 +435,18 @@ test('ruleOptionButtons: Stop recording this show only with canManage', () => {
     assert.deepEqual(out.theirs, []);
     assert.equal(out.note, 'Upcoming episodes are cancelled; recorded ones stay.');
 });
+
+
+test('Edit requires both server support and management permission', () => {
+    const out = runBrs(LIB, `
+        r = bowtie_recordings_parseRules(${bs([rule(), rule({editable: true}), rule({editable: false}), rule({editable: true, canManage: false})])})
+        out.old = bowtie_recordings_ruleOptionButtons(r[0])
+        out.edit = bowtie_recordings_ruleOptionButtons(r[1])
+        out.off = bowtie_recordings_ruleOptionButtons(r[2])
+        out.other = bowtie_recordings_ruleOptionButtons(r[3])
+    `);
+    assert.equal(out.old.some(b => b.id === 'editRule'), false);
+    assert.equal(out.edit[0].id, 'editRule');
+    assert.equal(out.off.some(b => b.id === 'editRule'), false);
+    assert.deepEqual(out.other, []);
+});

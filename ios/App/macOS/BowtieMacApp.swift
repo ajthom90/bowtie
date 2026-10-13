@@ -112,6 +112,26 @@ struct MacRootView: View {
                 break
             }
         }
+        // SharePlay: sessions arrive for the app's lifetime.
+        .task {
+            #if SHAREPLAY
+            await appModel.observeGroupSessions()
+            #endif
+        }
+        .onChange(of: appModel.pendingGroupJoin?.id) { _, _ in
+            handOverGroupJoin()
+        }
+        .alert(
+            "Watch Together",
+            isPresented: Binding(
+                get: { appModel.watchTogetherMessage != nil },
+                set: { if !$0 { appModel.watchTogetherMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(appModel.watchTogetherMessage ?? "")
+        }
         .onChange(of: appModel.phase) { previous, phase in
             // Real leave: stop playback when the auth shell replaces the main view.
             if previous == .ready && phase != .ready {
@@ -127,6 +147,16 @@ struct MacRootView: View {
     private func ensurePlayerModel() {
         guard playerModel == nil, let client = appModel.client else { return }
         playerModel = PlayerModel(client: client, caps: Caps.current())
+        handOverGroupJoin()
+    }
+
+    /// A SharePlay group the app model accepted goes to the player once one
+    /// exists for the (possibly just switched-to) server.
+    private func handOverGroupJoin() {
+        guard appModel.phase == .ready, let playerModel, let request = appModel.takeGroupJoin() else {
+            return
+        }
+        Task { await playerModel.receiveGroup(request.group) }
     }
 }
 

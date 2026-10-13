@@ -7,7 +7,8 @@ import {
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { type CreateSessionResponse, type SessionMeta } from '../api/client'
+import { type CreateSessionResponse, type ReceptionSignal, type SessionMeta } from '../api/client'
+import { CANT_PLAY_HERE, STREAM_STOPPED } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import type { WatchTarget } from '../guide/Guide'
 import { canPlayNativeHls, detectCaps } from './caps'
@@ -17,6 +18,8 @@ import { audioTrackLabel, loadTrackPrefs, pickAudioIndex, saveTrackPrefs } from 
 import { SeekBar } from './SeekBar'
 import { bestEffortDelete, streamTokenFromPlaylist } from './sessionStop'
 import { createSessionAttempt, type SessionAttempt, type SessionHandle } from './sessionLifecycle'
+import { signalStatsLine, weakSignalNote } from './signalModel'
+import { showsStarting, startingText, useAwaitingFirstFrame, useSlowStart } from './startingNote'
 import {
   OUT_OF_WINDOW_NOTICE,
   clampSeek,
@@ -140,6 +143,8 @@ export function Player({ target, onBack }: Props) {
   const [profile, setProfile] = useState<Profile>('original')
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [loading, setLoading] = useState(true)
+  /** The viewer is open but its first frame hasn't loaded yet. */
+  const [awaitingFrame, setAwaitingFrame] = useAwaitingFirstFrame(videoRef)
   const [error, setError] = useState<StartError | null>(null)
   const [playing, setPlaying] = useState(true)
   const [muted, setMuted] = useState(false)
@@ -148,6 +153,10 @@ export function Player({ target, onBack }: Props) {
   const [overlayVisible, setOverlayVisible] = useState(true)
   const [liveWindow, setLiveWindow] = useState<LiveWindow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** Antenna reception from the latest heartbeat (null = unknown). */
+  const [signal, setSignal] = useState<ReceptionSignal | null>(null)
+  const signalNote = weakSignalNote(signal)
+  const signalLine = signalStatsLine(signal)
   const [hlsStats, setHlsStats] = useState<HlsStats>({
     bandwidth: null,
     droppedFrames: null,
@@ -293,10 +302,11 @@ export function Player({ target, onBack }: Props) {
       })
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          console.warn('Playback error:', data.type, data.details, data.error)
           setError({
             message: data.type === Hls.ErrorTypes.NETWORK_ERROR
-              ? 'Playback failed — network error. Try again.'
-              : 'Playback failed. Try again or pick a lower quality.',
+              ? STREAM_STOPPED
+              : 'The picture stopped playing. Try again or pick a lower quality.',
             tunerBusy: false,
             retry: true,
           })
@@ -309,7 +319,7 @@ export function Player({ target, onBack }: Props) {
       })
     } else {
       setError({
-        message: 'This browser cannot play HLS video.',
+        message: CANT_PLAY_HERE,
         tunerBusy: false,
         retry: true,
       })
@@ -333,7 +343,7 @@ export function Player({ target, onBack }: Props) {
   }, [])
 
   // Open the viewer for this channel and quality (again on Try again). Starting
-  // can take 10–20 s: whichever of "created" and "cleanup" (Back, a new quality,
+  // can take up to about 50 s: whichever of "created" and "cleanup" (Back, a new quality,
   // StrictMode's dev remount) comes second stops the viewer, so leaving while
   // "Starting stream…" never strands a tuner until the server's reaper.
   useEffect(() => {
@@ -345,8 +355,10 @@ export function Player({ target, onBack }: Props) {
     // asked for, so the two never hold two tuners at once.
     const prevStop = pendingStopRef.current
     setLoading(true)
+    setAwaitingFrame(false)
     setError(null)
     setSessionMeta(null)
+    setSignal(null)
 
     void (async () => {
       await prevStop
@@ -365,6 +377,7 @@ export function Player({ target, onBack }: Props) {
       viewerIdRef.current = res.viewerId
       playlistUrlRef.current = res.playlistUrl
       setSessionMeta(res.session ?? null)
+      setAwaitingFrame(true)
       attachPlayback(res.playlistUrl)
       setLoading(false)
       bumpOverlay()
@@ -426,7 +439,12 @@ export function Player({ target, onBack }: Props) {
       if (!id || !playlist) return
       const token = streamTokenFromPlaylist(playlist)
       if (!token) return
-      void client.heartbeat(id, token).catch((err: unknown) => {
+      void client.heartbeat(id, token).then(
+        (reading) => {
+          // Ignore a beat that lands after this viewer was replaced or stopped.
+          if (viewerIdRef.current === id) setSignal(reading)
+        },
+        (err: unknown) => {
         // Parental controls stopped the stream (the program changed to a
         // blocked one): show why. Other failures are best-effort.
         if (isParentalBlock(err)) {
@@ -436,7 +454,8 @@ export function Player({ target, onBack }: Props) {
           destroyHls()
           setError(startErrorFrom(err))
         }
-      })
+        },
+      )
     }
 
     const ctrl = createHeartbeatController({ send })
@@ -523,6 +542,10 @@ export function Player({ target, onBack }: Props) {
     }, 1000)
     return () => window.clearInterval(id)
   }, [showStats])
+
+  // "Starting stream…" (and its slow-start note) stays up until the first frame.
+  const starting = showsStarting(loading, awaitingFrame, !!error)
+  const slowStart = useSlowStart(starting, `${target.channelId}|${profile}|${sessionEpoch}`)
 
   // Sync play state from video element.
   useEffect(() => {
@@ -634,7 +657,18 @@ export function Player({ target, onBack }: Props) {
           }}
         />
 
-        {loading && !error ? <div className={styles.loading}>Starting stream…</div> : null}
+        {starting ? (
+          <div className={styles.loading} role="status" aria-live="polite">
+            {startingText(slowStart)}
+          </div>
+        ) : null}
+
+        {/* Outside the auto-hiding overlay so it stays put while the signal is weak. */}
+        {signalNote && !loading && !error ? (
+          <div className={styles.signalNote} role="status" aria-live="polite">
+            {signalNote}
+          </div>
+        ) : null}
 
         {error ? (
           <div className={styles.errorBox}>
@@ -696,6 +730,7 @@ export function Player({ target, onBack }: Props) {
                 <span className={styles.statsKey}>buffer</span>
                 <span>{formatBuffer(hlsStats.bufferLength)}</span>
               </div>
+              {signalLine ? <div className={styles.statsLine}>{signalLine}</div> : null}
             </div>
           ) : null}
 

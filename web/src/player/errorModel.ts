@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { tunerBusyMessage } from './seekModel'
 
 /** What the player's error box shows. */
@@ -21,12 +22,10 @@ export function startErrorFrom(err: unknown): StartError {
   if (isParentalBlock(err)) {
     return { message: err.message || 'Blocked by parental controls.', tunerBusy: false, retry: false }
   }
-  if (err instanceof ApiError && err.status === 503) {
+  // The server's 503 (not a proxy's): every tuner is busy.
+  if (err instanceof ApiError && err.status === 503 && !err.technical) {
     const otherInUse = (err.body as { otherInUse?: number } | undefined)?.otherInUse
     return { message: tunerBusyMessage(otherInUse), tunerBusy: true, retry: true }
   }
-  if (err instanceof ApiError) {
-    return { message: err.message || 'Could not start playback.', tunerBusy: false, retry: true }
-  }
-  return { message: 'Could not start playback.', tunerBusy: false, retry: true }
+  return { message: viewerErrorText(err, 'Could not start playback.'), tunerBusy: false, retry: true }
 }

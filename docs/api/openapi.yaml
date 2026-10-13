@@ -430,6 +430,13 @@ paths:
                       type: string
                     locked:
                       type: boolean
+                    watchable:
+                      type: boolean
+                      description: |
+                        The channel can start right now, as `watchable` on
+                        GET /api/v1/channels (false only when every tuner on
+                        its HDHomeRun is busy with other channels). Apps hide
+                        Watch for a busy channel; Record stays available.
                     recording:
                       type: object
                       required: [id, state]
@@ -526,6 +533,53 @@ paths:
         schema:
           type: integer
           format: int64
+    patch:
+      summary: Edit a series recording rule
+      description: |
+        The owner or an admin can change any of these settings. Omitted settings
+        remain unchanged. Cancels only unstarted upcoming recordings that no
+        longer match and schedules new matches using normal series deduplication
+        and tuner handling. In-progress and completed recordings stay untouched.
+        Lowering keepLatest deletes nothing now: the existing retention path
+        applies the new limit as new episodes complete (protected recordings stay).
+      operationId: updateRecordingRule
+      tags: [dvr]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                newOnly:
+                  type: boolean
+                channelId:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: 0 for any channel; otherwise an existing channel accessible to the caller, as for creation.
+                keepLatest:
+                  type: integer
+                  minimum: 0
+                  description: 0 keeps all episodes.
+      responses:
+        '200':
+          description: Updated rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       summary: Stop recording a show (cancels its upcoming recordings; recorded ones stay)
       operationId: deleteRecordingRule
@@ -1379,12 +1433,16 @@ paths:
     get:
       summary: List Schedules Direct lineups on the configured account
       description: |
-        Requires SD username+password in settings. Error contract for the UI:
+        Requires SD username+password in settings. An account with no
+        lineups yet (SD 4102 NO_LINEUPS, e.g. a new trial) returns an empty
+        list. Error contract for the UI:
         - 422 when credentials are not configured
         - 401 when Schedules Direct rejects the credentials (auth-class:
           apiError code 4003/INVALID_USER, or Token() rejection including
           HTTP 200 with nonzero code)
-        - 502 when Schedules Direct is unreachable (transport/timeouts/5xx)
+        - 502 "Schedules Direct: <message> (code N)" when SD answers with
+          another error (e.g. an expired account), or "schedules direct is
+          unreachable" for transport failures
         Secrets are never echoed in error bodies.
       operationId: adminEPGLineups
       tags: [admin]
@@ -1414,7 +1472,118 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '502':
-          description: Schedules Direct is unreachable
+          description: Schedules Direct is unreachable or returned an error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Add a lineup to the Schedules Direct account
+      description: |
+        SD-JSON lineups are managed by the app (not on the SD website).
+        Schedules Direct limits accounts to a few lineups and a few adds per
+        day; its refusal comes back as a 502 with SD's message. Same 401/422
+        contract as GET.
+      operationId: adminEPGAddLineup
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lineupId]
+              properties:
+                lineupId:
+                  type: string
+                  example: USA-OTA-56071
+      responses:
+        '204':
+          description: Added (or already on the account)
+        '400':
+          description: Missing or malformed lineup id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing auth, or Schedules Direct rejected credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Schedules Direct credentials not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Schedules Direct is unreachable or returned an error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/admin/epg/headends:
+    get:
+      summary: Search Schedules Direct lineups by postal code
+      description: |
+        Lineups available in a postal code (SD GET /headends), flattened,
+        antenna lineups first. Add one with POST /api/v1/admin/epg/lineups.
+        Same 401/422/502 contract as the lineup list.
+      operationId: adminEPGHeadends
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: country
+          in: query
+          required: true
+          description: ISO 3166-1 alpha-3 country code
+          schema:
+            type: string
+            example: USA
+        - name: postalcode
+          in: query
+          required: true
+          schema:
+            type: string
+            example: '56071'
+      responses:
+        '200':
+          description: Lineups available in that postal code
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SDLineupSummary'
+        '400':
+          description: Missing country or postal code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing auth, or Schedules Direct rejected credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Schedules Direct credentials not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Schedules Direct is unreachable or returned an error
           content:
             application/json:
               schema:
@@ -1425,7 +1594,8 @@ paths:
       description: |
         A consistent snapshot of the SQLite database (accounts, channels,
         guide, recording list, rules and settings — not the recorded video).
-        It contains password hashes and the Schedules Direct password, so
+        It contains password hashes and the Schedules Direct and
+        notification passwords, so
         store it safely. Token-signing secrets and refresh tokens are removed.
         Restore: stop Bowtie, replace `bowtie.db` in the data directory with
         the file (removing any `-journal`/`-wal` file), start Bowtie; everyone
@@ -1496,9 +1666,13 @@ paths:
           required when `dvr` is present)
         - `dvr.quality` `"720p"` or `"1080p"` (optional; absent keeps the
           stored value)
-        - `notifications.url` empty (off) or an http(s) URL (required when
-          `notifications` is present); `notifications.events` and each event
-          are optional (absent keeps the stored choice)
+        - `notifications.url` empty (off, and forgets the username and
+          password) or an http(s) URL (required when `notifications` is
+          present); `notifications.events` and each event are optional
+          (absent keeps the stored choice); `notifications.username` absent
+          keeps it; `notifications.password` absent or empty keeps it and
+          `clearPassword: true` removes it. `user:pass@` in the URL is moved
+          into username/password (the stored URL has no credentials).
       operationId: adminPutSettings
       tags: [admin]
       security:
@@ -1526,8 +1700,10 @@ paths:
     post:
       summary: Send a test notification
       description: |
-        Sends "Bowtie test notification" to `url` from the body, or to the
-        saved `notifications.url` when the body (or its `url`) is absent, and
+        Sends "Bowtie test notification" to `url` from the body (with its
+        `username` and `password`; an empty password uses the saved one), or
+        to the saved destination and credentials when the body (or its
+        `url`) is absent, and
         reports how the target answered. The event choices and rate limit
         don't apply. One attempt, 5 s timeout, no retry. A failed delivery is
         still `200` with `ok: false`; `error` never contains the URL's path,
@@ -1546,6 +1722,14 @@ paths:
                 url:
                   type: string
                   description: Try this URL instead of the saved one (not saved)
+                username:
+                  type: string
+                  description: Basic-auth username to try with `url`
+                password:
+                  type: string
+                  description: |
+                    Basic-auth password or ntfy access token to try with
+                    `url`; empty uses the saved password
       responses:
         '200':
           description: Delivery result
@@ -1751,13 +1935,128 @@ paths:
           description: Signed stream token (preferred alternative to Bearer auth)
           schema:
             type: string
+        - name: signal
+          in: query
+          required: false
+          description: |
+            `1` asks for the channel's antenna reception (200 with a body)
+            for the player's "Weak signal" note. Without it the reply is an
+            empty 204, as older players expect.
+          schema:
+            type: string
+            enum: ['1']
       responses:
+        '200':
+          description: Viewer touched; reception (with `signal=1`)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [signal]
+                properties:
+                  signal:
+                    nullable: true
+                    description: |
+                      Null when unknown (no tuner on the channel right now, or
+                      the HDHomeRun can't be reached). Read from the
+                      HDHomeRun's status.json, cached about 10 s per device.
+                    type: object
+                    required: [strength, quality, symbolQuality, weak]
+                    properties:
+                      strength:
+                        type: integer
+                        description: Signal strength percent
+                      quality:
+                        type: integer
+                        description: Signal quality percent (SNR-based)
+                      symbolQuality:
+                        type: integer
+                        description: Symbol quality percent; below 100 means uncorrected errors
+                      weak:
+                        type: boolean
+                        description: |
+                          Show "Weak signal": the last two fresh readings both
+                          had symbol quality under 85% or signal quality under
+                          50%.
         '204':
-          description: Viewer touched
+          description: Viewer touched (no `signal=1`)
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/sessions/{viewerId}/timeline:
+    parameters:
+      - name: viewerId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Wall-clock map of the viewer's current window
+      description: |
+        Maps the session's playlist window to wall-clock time for clients
+        that can't read EXT-X-PROGRAM-DATE-TIME (Roku): a client turns a
+        broadcast moment T into an offset into the window. Times are RFC 3339
+        with milliseconds (UTC), the same values the playlists' PDT carry.
+        Requires the Bearer token of the user who owns the viewer (a
+        stream token does not qualify). Any other signed-in user, admins
+        included, gets the same 404 as a missing viewer.
+      operationId: getSessionTimeline
+      tags: [stream]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The current window
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mediaSequence, windowStart, liveEdge, segments]
+                properties:
+                  mediaSequence:
+                    type: integer
+                    format: int64
+                    description: Media sequence number of the first segment, as the served playlists number it (Bowtie's numbering, not the transcoder's).
+                  windowStart:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Wall-clock start of the first segment (null while the window is empty).
+                  liveEdge:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Wall-clock end of the last segment (null while the window is empty).
+                  segments:
+                    type: array
+                    description: |
+                      One `[startWallClock, durationSec]` pair per segment in
+                      playlist order. An outage shows as a start later than
+                      the previous segment's end.
+                    items:
+                      type: array
+                      minItems: 2
+                      maxItems: 2
+                      items: {}
+        '401':
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such viewer, or the caller doesn't own it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Streaming not available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/stream/{viewerId}/index.m3u8:
     parameters:
       - name: viewerId
@@ -2170,6 +2469,9 @@ components:
       type: object
       required: [id, title, seriesId, channelId, channelName, newOnly, keepLatest, scheduledBy, canManage, createdAt]
       properties:
+        editable:
+          type: boolean
+          description: True when this server supports PATCH. Older servers omit it; clients show Edit only when true and canManage is true.
         id:
           type: integer
           format: int64
@@ -2304,8 +2606,19 @@ components:
           format: date-time
     ViewerChannel:
       type: object
-      required: [id, guideNumber, name, logoUrl, reception, favorite]
+      required: [id, guideNumber, name, logoUrl, reception, favorite, watchable]
       properties:
+        watchable:
+          type: boolean
+          description: |
+            The channel can start right now: its HDHomeRun has a free tuner,
+            or Bowtie is already streaming or recording it (a viewer joins
+            that). False only when every tuner on its HDHomeRun is known to
+            be busy with other channels (including other apps such as Plex);
+            an HDHomeRun whose status can't be read counts as free. Read live
+            from the tuners on each request. When any channel is false,
+            clients show only watchable channels in channel lists and dim the
+            rest in the guide.
         favorite:
           type: boolean
           description: The caller has starred this channel
@@ -2333,8 +2646,19 @@ components:
           description: When reception was last learned; absent when unknown.
     GuideChannel:
       type: object
-      required: [channelId, guideNumber, name, logoUrl, programs, reception, favorite]
+      required: [channelId, guideNumber, name, logoUrl, programs, reception, favorite, watchable]
       properties:
+        watchable:
+          type: boolean
+          description: |
+            The channel can start right now: its HDHomeRun has a free tuner,
+            or Bowtie is already streaming or recording it (a viewer joins
+            that). False only when every tuner on its HDHomeRun is known to
+            be busy with other channels (including other apps such as Plex);
+            an HDHomeRun whose status can't be read counts as free. Read live
+            from the tuners on each request. When any channel is false,
+            clients show only watchable channels in channel lists and dim the
+            rest in the guide.
         favorite:
           type: boolean
           description: The caller has starred this channel
@@ -2495,17 +2819,24 @@ components:
       description: |
         Admin notifications. Delivery follows the URL: a host containing
         "ntfy" (ntfy.sh or self-hosted) gets an ntfy message (plain-text body
-        with `Title`, `Priority` and `Tags` headers; `https://user:pass@host/topic`
-        sends Basic auth); `discord.com`/`discordapp.com` `/api/webhooks/...`
+        with `Title`, `Priority` and `Tags` headers); `discord.com`/`discordapp.com` `/api/webhooks/...`
         gets Discord JSON `{"content": "**title**\nmessage"}`; anything else
         gets a JSON POST `{event, title, message, recordingId?, time}` (time
         RFC 3339). 5 s timeout, one retry after 30 s on no answer, 429 or
         5xx. The same event is sent at most once per 6 hours (a failed
-        recording once per recording).
+        recording once per recording). A username and/or password is sent
+        as HTTP Basic auth to any target (an ntfy access token goes in the
+        password with an empty username).
       properties:
         url:
           type: string
           description: Empty turns notifications off; otherwise an http(s) URL
+        username:
+          type: string
+          description: Basic-auth username (empty when none)
+        passwordConfigured:
+          type: boolean
+          description: A password or token is saved (it is never returned)
         events:
           $ref: '#/components/schemas/SettingsNotificationEvents'
     SettingsNotificationEvents:
@@ -2534,7 +2865,21 @@ components:
       properties:
         url:
           type: string
-          description: Empty turns notifications off; otherwise an http(s) URL
+          description: |
+            Empty turns notifications off (and forgets the credentials);
+            otherwise an http(s) URL. `user:pass@` is moved into username
+            and password.
+        username:
+          type: string
+          description: Basic-auth username; absent keeps the saved one
+        password:
+          type: string
+          description: |
+            Basic-auth password or ntfy access token; absent or empty keeps
+            the saved one
+        clearPassword:
+          type: boolean
+          description: Remove the saved password (ignored when `password` is set)
         events:
           type: object
           description: Each event is optional; absent keeps the stored choice.

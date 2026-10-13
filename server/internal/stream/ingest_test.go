@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -562,39 +564,285 @@ func TestSlowSubDropsInsteadOfClosing(t *testing.T) {
 		_, _ = pb.Write(chunk)
 	}
 	// 10s of a live stream: well past the old 2s cutoff, under the 30s rule.
-	feedAndStep(pb, clock, chunk, 10)
+	feedAndStep(t, im, pb, clock, chunk, 10)
 	if slow.isClosed() {
 		t.Fatal("slow subscriber was closed after 10s; want drops instead")
 	}
 	before := fastBytes.Load()
-	feedAndStep(pb, clock, chunk, 1)
+	feedAndStep(t, im, pb, clock, chunk, 1)
 	waitFor(t, 2*time.Second, func() bool { return fastBytes.Load() > before })
 	_ = slow.Close()
 	_ = fast.Close()
 }
 
-// A reader stuck for ingestSubStuckTimeout with data queued is closed.
-func TestStuckSubClosedAfter30s(t *testing.T) {
+// A reader that takes nothing is drained at the stuck timeout and closed only
+// after the grace period passes without a single byte written to it.
+func TestStuckSubDrainedThenClosedAfterGrace(t *testing.T) {
 	clock := newIngestClock(time.Date(2026, 10, 2, 20, 0, 0, 0, time.UTC))
 	pb := newPipeBody()
 	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
 	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
-	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)-2)
+	chunk := make([]byte, 188*10)
+	feedAndStep(t, im, pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)+2)
 	if stuck.isClosed() {
-		t.Fatal("closed before the 30s stuck timeout")
+		t.Fatal("closed at the stuck timeout; want a drain first")
 	}
-	feedAndStep(pb, clock, make([]byte, 188*10), 4)
+	if got := stuck.q.size(); got > 3*len(chunk) {
+		t.Fatalf("backlog %d bytes after the drain, want ≤ %d", got, 3*len(chunk))
+	}
+	feedAndStep(t, im, pb, clock, chunk, int(ingestSubKillGrace/time.Second)-4)
+	if stuck.isClosed() {
+		t.Fatal("closed before the grace period ended")
+	}
+	feedAndStep(t, im, pb, clock, chunk, 6)
 	waitFor(t, 2*time.Second, stuck.isClosed)
 }
 
-// feedAndStep plays a live device: write chunk, then advance the clock 1s,
-// steps times (a single big jump would look like silence to the watchdog).
-func feedAndStep(pb *pipeBody, clock *ingestClock, chunk []byte, steps int) {
+// A transcoder that reads again after the drain was slow, not hung: it stays.
+func TestStuckSubThatReadsAgainIsNotClosed(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 2, 21, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	sub, _ := im.Attach(context.Background(), 1, "u")
+	chunk := make([]byte, 188*10)
+	feedAndStep(t, im, pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)+2) // drained
+	go func() { _, _ = io.Copy(io.Discard, sub.R) }()
+	feedAndStep(t, im, pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+5)
+	if sub.isClosed() {
+		t.Fatal("a transcoder that read again was closed")
+	}
+	_ = sub.Close()
+}
+
+// A reader that keeps up is never idle, so the stuck rule must not copy the
+// join buffer for it.
+func TestHealthyReaderNeverSnapshotsJoin(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 12, 22, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	sub, _ := im.Attach(context.Background(), 1, "u")
+	im.mu.Lock()
+	ch := im.channels[1]
+	im.mu.Unlock()
+	var snaps atomic.Int32
+	ch.mu.Lock()
+	ch.onJoinSnapshot = func() { snaps.Add(1) }
+	ch.mu.Unlock()
+	t.Cleanup(func() {
+		ch.mu.Lock()
+		ch.onJoinSnapshot = nil
+		ch.mu.Unlock()
+	})
+	go func() { _, _ = io.Copy(io.Discard, sub.R) }()
+	chunk := make([]byte, 188*10)
+	// Past the stuck threshold. Each chunk is written through to the pipe
+	// before the clock moves, so the reader is never idle.
+	var want uint64
+	steps := int(ingestSubStuckTimeout/time.Second) + 5
 	for i := 0; i < steps; i++ {
-		_, _ = pb.Write(chunk)
-		time.Sleep(2 * time.Millisecond)
+		writeAndAwaitIngest(t, im, pb, chunk)
+		want += uint64(len(chunk))
+		waitFor(t, 2*time.Second, func() bool { return sub.q.writtenBytes() >= want })
 		clock.Advance(time.Second)
 	}
+	if n := snaps.Load(); n != 0 {
+		t.Fatalf("joinSnapshotLocked calls = %d, want 0 while the reader keeps up", n)
+	}
+	if sub.isClosed() {
+		t.Fatal("reader that kept up was closed")
+	}
+	_ = sub.Close()
+}
+
+// A slice write that lands between the backlog reset and the written-byte
+// baseline is progress after the drain, not the baseline itself. The reader
+// gets a fresh 30s, then another drain and grace — it is not killed on the
+// first grace.
+func TestWriteBetweenResetAndBaselineRestartsGrace(t *testing.T) {
+	clock := newIngestClock(time.Date(2026, 10, 12, 20, 0, 0, 0, time.UTC))
+	pb := newPipeBody()
+	im, _ := newTestIngest(t, func(ctx context.Context, url string) (io.ReadCloser, int, error) { return pb, 200, nil }, clock)
+	sub, _ := im.Attach(context.Background(), 1, "u") // never reads
+	var once sync.Once
+	sub.q.betweenResetAndBaseline = func() {
+		// q.mu is held. wrote would deadlock.
+		once.Do(func() { sub.q.wroteLocked(188) })
+	}
+	t.Cleanup(func() { sub.q.betweenResetAndBaseline = nil })
+	chunk := make([]byte, 188*10)
+	// First drain at 30s, then the 30s grace. Including the boundary step
+	// kills the sub when the raced write was swallowed into the baseline.
+	feedAndStep(t, im, pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+1)
+	if sub.isClosed() {
+		t.Fatal("closed on the first grace; a write between reset and the baseline must clear the drain")
+	}
+	if got := sub.q.size(); got > 3*len(chunk) {
+		t.Fatalf("backlog %d bytes after the fresh drain, want ≤ %d", got, 3*len(chunk))
+	}
+	feedAndStep(t, im, pb, clock, chunk, int(ingestSubKillGrace/time.Second)-4)
+	if sub.isClosed() {
+		t.Fatal("closed before the second grace ended")
+	}
+	feedAndStep(t, im, pb, clock, chunk, 6)
+	waitFor(t, 2*time.Second, sub.isClosed)
+}
+
+// A slow reader working through a 4 MiB join chunk (32 KiB per simulated
+// second: two minutes for the chunk) is making progress the whole time:
+// never drained, never closed.
+func TestSlowReaderOfLargeJoinIsNotStuck(t *testing.T) {
+	now := time.Date(2026, 10, 11, 21, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	pr, pw := io.Pipe()
+	s := &IngestSub{R: pr, pr: pr, pw: pw, q: newSubQueue(8<<20, clock)}
+	join := make([]byte, 4<<20)
+	go s.drain(join)
+	buf := make([]byte, 32<<10)
+	for sec := 0; sec < 70; sec++ {
+		if _, err := io.ReadFull(pr, buf); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond) // let drain record the slice it finished
+		mu.Lock()
+		now = now.Add(time.Second)
+		mu.Unlock()
+		if idle := s.q.idleFor(clock()); idle >= 4*time.Second {
+			t.Fatalf("at %ds idleFor=%v while the reader keeps reading", sec, idle)
+		}
+	}
+	_ = s.Close()
+}
+
+// writeAndAwaitIngest writes one device chunk and returns after ingest has
+// fanned it out. The clock must not advance before that: pb.Write unblocks
+// when the pump's Read returns, which is before ingestChunk.
+func writeAndAwaitIngest(t *testing.T, im *IngestManager, pb *pipeBody, chunk []byte) {
+	t.Helper()
+	done := make(chan struct{})
+	var once sync.Once
+	im.setChunkAck(func() { once.Do(func() { close(done) }) })
+	t.Cleanup(func() { im.setChunkAck(nil) })
+	if _, err := pb.Write(chunk); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ingest did not process the chunk")
+	}
+}
+
+// feedAndStep plays a live device one fake second at a time: write chunk,
+// wait until ingest has fanned it out and every subscriber drain is
+// quiescent, then advance the clock. A single big jump would look like
+// silence to the watchdog. Quiescent means the drain goroutine is blocked
+// in its pipe write (the popped chunk is in flight) or has caught up
+// (nothing queued and nothing in flight). The clock has to wait for that:
+// a push onto an empty queue with nothing in flight restarts lastProgress,
+// and after a reset that restart slides the next drain past an exact step.
+func feedAndStep(t *testing.T, im *IngestManager, pb *pipeBody, clock *ingestClock, chunk []byte, steps int) {
+	t.Helper()
+	for i := 0; i < steps; i++ {
+		writeAndAwaitIngest(t, im, pb, chunk)
+		awaitDrainQuiescent(t, im)
+		clock.Advance(time.Second)
+	}
+}
+
+// awaitDrainQuiescent waits until every subscriber drain has observed the
+// chunk ingest just fanned out. A reader that is not taking bytes blocks
+// in the pipe write with the chunk in flight; a reader that keeps up drains
+// the queue. Either state is stable across the following clock step.
+func awaitDrainQuiescent(t *testing.T, im *IngestManager) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if drainQuiescent(im) {
+			return
+		}
+		if time.Now().After(deadline) {
+			buf := make([]byte, 1<<16)
+			n := runtime.Stack(buf, true)
+			t.Fatalf("subscriber drain was not quiescent before the clock step\n%s", buf[:n])
+		}
+		runtime.Gosched()
+	}
+}
+
+type drainSnap struct {
+	closed   bool
+	size     int
+	inFlight int
+}
+
+func drainQuiescent(im *IngestManager) bool {
+	im.mu.Lock()
+	chs := make([]*channelIngest, 0, len(im.channels))
+	for _, ch := range im.channels {
+		chs = append(chs, ch)
+	}
+	im.mu.Unlock()
+
+	needWrite := 0
+	for _, ch := range chs {
+		ch.mu.Lock()
+		subs := make([]*IngestSub, 0, len(ch.subs))
+		for s := range ch.subs {
+			subs = append(subs, s)
+		}
+		ch.mu.Unlock()
+		for _, s := range subs {
+			if s.isClosed() {
+				continue
+			}
+			snap := snapDrain(s.q)
+			if snap.closed || (snap.size == 0 && snap.inFlight == 0) {
+				continue
+			}
+			// Bytes are queued and the drain goroutine has not popped them,
+			// so it cannot be blocked in the pipe write yet.
+			if snap.inFlight == 0 {
+				return false
+			}
+			needWrite++
+		}
+	}
+	if needWrite == 0 {
+		return true
+	}
+	return countDrainPipeWrites() >= needWrite
+}
+
+func snapDrain(q *subQueue) drainSnap {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return drainSnap{closed: q.closed, size: q.bytes, inFlight: q.inFlight}
+}
+
+// countDrainPipeWrites counts subscriber drain goroutines blocked inside
+// the pipe write. That frame is reached only after pop has moved the chunk
+// to inFlight, and the goroutine stays there until a reader takes the bytes,
+// so a later reset cannot abandon the chunk and drop inFlight to zero.
+func countDrainPipeWrites() int {
+	buf := make([]byte, 32<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return countDrainPipeWritesIn(buf[:n])
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+}
+
+func countDrainPipeWritesIn(stack []byte) int {
+	n := 0
+	for _, g := range strings.Split(string(stack), "\n\n") {
+		if strings.Contains(g, "io.(*pipe).write") && strings.Contains(g, "(*IngestSub).drain") {
+			n++
+		}
+	}
+	return n
 }
 
 func TestLastCloseTailThenDialClosed(t *testing.T) {
@@ -851,9 +1099,9 @@ func TestConcurrentCloseVsForceClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Bring the sub to the edge of the stuck timeout.
+	// Bring the sub to the edge of the kill (drained, grace nearly over).
 	chunk := make([]byte, 188*10)
-	feedAndStep(pb, clock, chunk, int(ingestSubStuckTimeout/time.Second)-1)
+	feedAndStep(t, im, pb, clock, chunk, int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)-1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -863,7 +1111,7 @@ func TestConcurrentCloseVsForceClose(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		feedAndStep(pb, clock, chunk, 2) // force-close path
+		feedAndStep(t, im, pb, clock, chunk, 2) // force-close path
 	}()
 	wg.Wait()
 	// No panic / race — second path is safe.
@@ -1050,7 +1298,7 @@ func TestStuckSubRunsForceCloseHook(t *testing.T) {
 	stuck, _ := im.Attach(context.Background(), 1, "u") // never reads
 	var stopped atomic.Bool
 	stuck.OnForceClose(func() { stopped.Store(true) })
-	feedAndStep(pb, clock, make([]byte, 188*10), int(ingestSubStuckTimeout/time.Second)+2)
+	feedAndStep(t, im, pb, clock, make([]byte, 188*10), int((ingestSubStuckTimeout+ingestSubKillGrace)/time.Second)+2)
 	waitFor(t, 2*time.Second, stopped.Load)
 }
 
@@ -1127,4 +1375,72 @@ func TestReceptionRecordsTuneOutcomes(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool { return clock.HasTimerIn(ingestReconnectMin) })
 	clock.Advance(ingestReconnectMin)
 	waitFor(t, 3*time.Second, func() bool { r, _ := im.Reception(1); return r.State == ReceptionNoSignal })
+}
+
+// The gate's clock counts only live source bytes reaching FFmpeg. A large
+// join snapshot drained slowly (during an outage, nothing else arrives),
+// a reset head and the PAT+PMT put back after an overflow are cached
+// copies: written, never fresh. Live chunks are fresh.
+func TestCachedBytesAreNotFresh(t *testing.T) {
+	now := time.Date(2026, 10, 11, 21, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	pr, pw := io.Pipe()
+	s := &IngestSub{R: pr, pr: pr, pw: pw, q: newSubQueue(1<<20, clock)}
+	drained := make(chan struct{})
+	go func() {
+		s.drain(make([]byte, 1<<20))
+		close(drained)
+	}()
+	t.Cleanup(func() {
+		s.q.close()
+		_ = s.Close()
+		select {
+		case <-drained:
+		case <-time.After(2 * time.Second):
+			t.Error("drain did not return after the queue closed")
+		}
+	})
+	read := func(n int) {
+		t.Helper()
+		if _, err := io.ReadFull(pr, make([]byte, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 16; i++ { // the 1 MiB join, 64 KiB at a time
+		read(64 << 10)
+		if f := s.FreshBytes(); f != 0 {
+			t.Fatalf("after %d KiB of the join, fresh = %d", (i+1)*64, f)
+		}
+	}
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == 0 && s.q.writtenBytes() == 1<<20
+	})
+	live := bytes.Repeat([]byte{0x47}, 10*tsPacketSize)
+	s.q.push(live, nil)
+	read(len(live))
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == uint64(len(live)) && s.q.writtenBytes() == uint64(1<<20+len(live))
+	})
+	s.q.reset(bytes.Repeat([]byte{0x47}, 4*tsPacketSize)) // a reset head
+	read(4 * tsPacketSize)
+	waitFor(t, time.Second, func() bool {
+		return s.FreshBytes() == uint64(len(live)) && s.q.writtenBytes() == uint64(1<<20+len(live)+4*tsPacketSize)
+	})
+	// Overflow on a queue nothing reads: the oldest chunks go (first an
+	// unread reset head) and PAT+PMT is put back at the head, cached; the
+	// live chunks after it are fresh.
+	q := newSubQueue(1000*tsPacketSize, clock)
+	tables := bytes.Repeat([]byte{0x47}, 2*tsPacketSize)
+	big := bytes.Repeat([]byte{0x47}, 400*tsPacketSize)
+	q.reset(tables)
+	for q.push(big, tables) == 0 {
+	}
+	if c, cached, _ := q.popChunk(); len(c) != len(tables) || !cached {
+		t.Fatalf("after an overflow popped %d bytes, cached %v; want the PAT+PMT, cached", len(c), cached)
+	}
+	for q.size() > 0 {
+		if _, cached, _ := q.popChunk(); cached {
+			t.Fatal("a live chunk after an overflow popped as cached")
+		}
+	}
 }

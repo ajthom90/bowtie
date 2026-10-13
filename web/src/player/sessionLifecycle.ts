@@ -20,7 +20,7 @@ export type SessionAttempt = {
 }
 
 /**
- * One try at opening a live viewer. Starting a stream can take 10–20 s;
+ * One try at opening a live viewer. Starting a stream can take up to about 50 s;
  * whichever of "created" and "let go" comes second stops the viewer, so
  * leaving early never strands a tuner. `stop` runs at most once.
  */

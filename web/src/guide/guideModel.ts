@@ -215,6 +215,8 @@ export const GUIDE_COPY = {
   noGuideData: 'No guide data — press to watch',
   /** Channel badge when the last tune got no signal (still tappable). */
   noSignal: 'No signal',
+  /** Channel badge when every tuner is busy with other channels (Watch is off). */
+  tunersBusy: 'Tuners busy',
 } as const
 
 /**
@@ -268,6 +270,17 @@ export function sortFavoritesFirst<T extends { guideNumber: string; favorite?: b
     .filter((c) => c.favorite === true)
     .sort((a, b) => compareGuideNumber(a.guideNumber, b.guideNumber))
   return [...favs, ...channels.filter((c) => c.favorite !== true)]
+}
+
+/** Guide copies have section-specific keys; picker and zap lists stay unique. */
+export function guideRows<T extends { channelId: number; guideNumber: string; favorite?: boolean }>(
+  channels: T[],
+): { key: string; channel: T }[] {
+  const favorites = sortFavoritesFirst(channels).filter((ch) => ch.favorite === true)
+  return [
+    ...favorites.map((channel) => ({ key: `favorites:${channel.channelId}`, channel })),
+    ...channels.map((channel) => ({ key: `all:${channel.channelId}`, channel })),
+  ]
 }
 
 /** The server sends `favorite`; older servers omit it (hide star and Recent row). */
