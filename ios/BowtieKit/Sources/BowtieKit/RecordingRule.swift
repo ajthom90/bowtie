@@ -3,6 +3,7 @@ import Foundation
 /// A series recording rule (openapi `RecordingRule`): record every matching
 /// episode of a show.
 public struct RecordingRule: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public let editable: Bool?
     public let id: Int64
     public let title: String
     public let seriesId: String
@@ -20,6 +21,7 @@ public struct RecordingRule: Codable, Equatable, Hashable, Identifiable, Sendabl
 
     public init(
         id: Int64,
+        editable: Bool? = nil,
         title: String,
         seriesId: String = "",
         channelId: Int64,
@@ -30,6 +32,7 @@ public struct RecordingRule: Codable, Equatable, Hashable, Identifiable, Sendabl
         canManage: Bool = false,
         createdAt: Date
     ) {
+        self.editable = editable
         self.id = id
         self.title = title
         self.seriesId = seriesId

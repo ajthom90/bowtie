@@ -1,0 +1,19 @@
+name: ptsjump-ptsonly
+duration: 45s
+timeline:
+  - {at: 8s, fault: pts-jump, by: 3s, ptsOnly: true}
+  - {at: 18s, fault: pts-jump, by: 6s, ptsOnly: true}
+  - {at: 28s, fault: pts-jump, by: 9s, ptsOnly: true}
+expect:
+  # A guard, not xfail: before Task 6, host FFmpeg 8.0.1 already kept the
+  # timeline (excess 1.0s in two runs) when only the PTS is wrong.
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxTimelineExcessSeconds: 2
+  minTimelineExcessSeconds: -2
+  maxAVStartSkewMs: 100
+  pairedAfterEachFault: true
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  noFetchErrors: true

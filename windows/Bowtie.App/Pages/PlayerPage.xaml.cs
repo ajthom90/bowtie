@@ -186,7 +186,7 @@ public sealed partial class PlayerPage : Page
         {
             case PlayerState.Starting:
                 StopMedia();
-                ShowOverlay(busy: true, title: $"Tuning {TitleLabel.Text}…", body: null, retry: false);
+                ShowOverlay(busy: true, title: _live.StartingText, body: null, retry: false);
                 break;
             case PlayerState.Playing:
                 if (_live.PlaylistUri is { } uri && uri != _loadedUri)

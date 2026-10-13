@@ -537,3 +537,70 @@ func TestServiceForgetsOldRateEntries(t *testing.T) {
 		t.Fatalf("rate memory has %d entries, want 1", n)
 	}
 }
+
+func basicAuthOf(t *testing.T, r captured) (string, string) {
+	t.Helper()
+	u, p, ok := (&http.Request{Header: r.header}).BasicAuth()
+	if !ok {
+		t.Fatalf("no basic auth; Authorization = %q", r.header.Get("Authorization"))
+	}
+	return u, p
+}
+
+func TestSendToUsesUsernameAndPassword(t *testing.T) {
+	// Passwords with URL-special characters work as separate fields.
+	tg := newTarget(t)
+	res := SendTo(context.Background(), rewrite(tg),
+		Destination{URL: "https://ntfy.example.com/alerts", Username: "alice", Password: "p@ss:w/rd#1"}, failedEvent(7))
+	if !res.OK {
+		t.Fatalf("result = %+v", res)
+	}
+	if u, p := basicAuthOf(t, tg.requests()[0]); u != "alice" || p != "p@ss:w/rd#1" {
+		t.Fatalf("basic auth = %q %q", u, p)
+	}
+}
+
+func TestSendToTokenAsPasswordWithEmptyUsername(t *testing.T) {
+	// ntfy takes an access token as the password with an empty username.
+	tg := newTarget(t)
+	SendTo(context.Background(), rewrite(tg), Destination{URL: "https://ntfy.sh/t", Password: "tk_abc123"}, failedEvent(7))
+	if u, p := basicAuthOf(t, tg.requests()[0]); u != "" || p != "tk_abc123" {
+		t.Fatalf("basic auth = %q %q", u, p)
+	}
+}
+
+func TestSendToFieldsOverrideURLCredentials(t *testing.T) {
+	tg := newTarget(t)
+	SendTo(context.Background(), rewrite(tg),
+		Destination{URL: "https://old:stale@ntfy.sh/t", Username: "alice", Password: "new"}, failedEvent(7))
+	if u, p := basicAuthOf(t, tg.requests()[0]); u != "alice" || p != "new" {
+		t.Fatalf("basic auth = %q %q", u, p)
+	}
+}
+
+func TestSendToNoCredentialsSendsNoAuth(t *testing.T) {
+	tg := newTarget(t)
+	SendTo(context.Background(), rewrite(tg), Destination{URL: "https://ntfy.sh/t"}, failedEvent(7))
+	if h := tg.requests()[0].header.Get("Authorization"); h != "" {
+		t.Fatalf("Authorization = %q, want none", h)
+	}
+}
+
+func TestServiceSendsSavedCredentials(t *testing.T) {
+	tg := newTarget(t)
+	s, box, _ := startService(t, tg.URL+"/h", Options{})
+	box.set(settings.Notifications{URL: tg.URL + "/h", Username: "bob", Password: "hunter2", Events: settings.DefaultNotificationEvents})
+	s.Notify(diskLow())
+	tg.wait(t, 1)
+	if u, p := basicAuthOf(t, tg.requests()[0]); u != "bob" || p != "hunter2" {
+		t.Fatalf("basic auth = %q %q", u, p)
+	}
+}
+
+func TestSendFailureHidesPassword(t *testing.T) {
+	ln := "127.0.0.1:1" // nothing listens
+	res := SendTo(context.Background(), nil, Destination{URL: "http://" + ln + "/t", Username: "u", Password: "hunter2"}, TestEvent(when))
+	if res.OK || strings.Contains(res.Error, "hunter2") {
+		t.Fatalf("result = %+v", res)
+	}
+}

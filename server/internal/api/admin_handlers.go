@@ -306,6 +306,10 @@ type viewerChannelJSON struct {
 	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
 	// Favorite: the caller has starred this channel.
 	Favorite bool `json:"favorite"`
+	// Watchable: it can start right now — its HDHomeRun has a free tuner, or
+	// Bowtie is already streaming or recording it (so a viewer joins). False
+	// only when all of its tuners are known to be busy with other channels.
+	Watchable bool `json:"watchable"`
 }
 
 func deviceToJSON(d store.Device) deviceJSON {
@@ -567,6 +571,7 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 	}
 	favs := s.callerFavorites(r)
 	policy := s.callerPolicy(r)
+	watch := s.channelWatchability(chans)
 	out := make([]viewerChannelJSON, 0, len(chans))
 	for _, c := range chans {
 		if !policy.ChannelAllowed(c.ID) {
@@ -583,6 +588,7 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 			LogoURL:     logo,
 			Reception:   "unknown",
 			Favorite:    favs[c.ID],
+			Watchable:   watch == nil || watch[c.ID],
 		}
 		if s.deps.Streams != nil {
 			if r, ok := s.deps.Streams.ChannelReception(c.ID); ok {

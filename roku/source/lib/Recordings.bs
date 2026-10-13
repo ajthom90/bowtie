@@ -493,6 +493,7 @@ namespace bowtie.recordings
                     "title": bowtie.recordings.asString(r.title)
                     "channelId": bowtie.recordings.asNumber(r.channelId)
                     "channelName": bowtie.recordings.asString(r.channelName)
+                    "editable": bowtie.recordings.isTrue(r.editable)
                     "newOnly": (r.newOnly = true)
                     "keepLatest": bowtie.recordings.asNumber(r.keepLatest)
                     "scheduledBy": bowtie.recordings.asString(r.scheduledBy)
@@ -533,6 +534,7 @@ namespace bowtie.recordings
     function ruleOptionButtons(rule as object) as object
         menu = []
         if rule.canManage <> true then return menu
+        if bowtie.recordings.isTrue(rule.editable) then menu.push({ id: "editRule", label: "Edit" })
         menu.push({ id: "stopRule", label: "Stop recording this show" })
         menu.push({ id: "close", label: "Close" })
         return menu

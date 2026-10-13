@@ -66,6 +66,15 @@ struct PlayerView: View {
             if showChrome || isBlockingError {
                 chromeLayer
                     .transition(.opacity)
+            } else if let note = playerModel.weakSignalNote {
+                // Stays on screen while the signal is weak; with the chrome up
+                // it sits under the Live pill instead.
+                WeakSignalNote(text: note)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
 
             if case .stalled = playerModel.state {
@@ -121,6 +130,8 @@ struct PlayerView: View {
         .onChange(of: playerModel.state) { _, newState in
             handleStateChange(newState)
         }
+        .announcesWeakSignal(playerModel)
+        .announcesSlowStart(playerModel)
         .onChange(of: bridge.playerErrorIsForbidden) { _, isForbidden in
             if isForbidden {
                 bridge.playerErrorIsForbidden = false
@@ -217,7 +228,8 @@ struct PlayerView: View {
                     StatsOverlay(
                         meta: metaOrNil,
                         indicatedBitrate: indicatedBitrate,
-                        droppedFrames: droppedFrames
+                        droppedFrames: droppedFrames,
+                        signalLine: playerModel.signalStatsLine
                     )
                     Spacer(minLength: 0)
                 }
@@ -246,6 +258,9 @@ struct PlayerView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         controlsRow
                     }
+                }
+                if let note = playerModel.weakSignalNote {
+                    WeakSignalNote(text: note)
                 }
             }
         }
@@ -355,9 +370,11 @@ struct PlayerView: View {
                 programEnd: { programEnd(shownChannel) },
                 onOpen: { bumpChrome(for: Self.menuOpenDelay) }
             )
+            #if SHAREPLAY
             if canShare || playerModel.groupRole != nil {
                 sharePlayButton
             }
+            #endif
 
             Button {
                 showStats.toggle()
@@ -533,14 +550,15 @@ struct PlayerView: View {
             ProgressView()
                 .tint(Theme.amber)
                 .scaleEffect(1.2)
-            Text(playerModel.state == .stalled ? "Reconnecting…" : "Starting…")
+            Text(playerModel.state == .stalled ? "Reconnecting…" : playerModel.startingText)
                 .font(Theme.body(14))
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.dim)
         }
         .padding(20)
         .background(Theme.bg.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : "Starting")
+        .accessibilityLabel(playerModel.state == .stalled ? "Reconnecting" : (playerModel.isSlowStart ? StartingCopy.slowStart : "Starting"))
     }
 
     // MARK: - Error panels

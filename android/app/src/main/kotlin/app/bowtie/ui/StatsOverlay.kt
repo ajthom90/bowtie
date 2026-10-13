@@ -29,6 +29,8 @@ fun StatsOverlay(
     bitrateBps: Int?,
     droppedFrames: Long?,
     modifier: Modifier = Modifier,
+    /** Antenna reception ([app.bowtie.core.SignalCopy.statsLine]); null hides the line. */
+    signalLine: String? = null,
 ) {
     Column(
         modifier = modifier
@@ -46,6 +48,9 @@ fun StatsOverlay(
             key = "dropped",
             value = droppedFrames?.toString() ?: "—",
         )
+        signalLine?.let {
+            Text(text = it, style = BowtieType.mono, color = BowtieColors.amber)
+        }
     }
 }
 

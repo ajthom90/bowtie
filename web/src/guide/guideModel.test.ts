@@ -4,6 +4,7 @@ import {
   currentProgramTitle,
   formatGuideTime,
   sortFavoritesFirst,
+  guideRows,
   supportsFavorites,
   withFavorite,
   GUIDE_COPY,
@@ -388,5 +389,33 @@ describe('withFavorite', () => {
     const input = [ch(1, '2.1', true)]
     expect(withFavorite(input, 1, false)[0].favorite).toBe(false)
     expect(withFavorite(input, 99, false)[0].favorite).toBe(true)
+  })
+})
+
+
+describe('guideRows', () => {
+  const input = [ch(1, '11.1', true), ch(2, '2.1', false), ch(3, '9.1', true)]
+
+  it('shows favorites twice with unique keys and the full list in server order', () => {
+    const rows = guideRows(input)
+    expect(rows.map((r) => r.channel.channelId)).toEqual([3, 1, 1, 2, 3])
+    expect(rows.map((r) => r.key)).toEqual(['favorites:3', 'favorites:1', 'all:1', 'all:2', 'all:3'])
+    expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length)
+    expect(ids(sortFavoritesFirst(input))).toEqual([3, 1, 2])
+    expect(new Set(ids(sortFavoritesFirst(input))).size).toBe(input.length)
+  })
+
+  it('updates both copies and preserves all-channel keys across toggles and rollback', () => {
+    const starred = guideRows(withFavorite(input, 2, true))
+    expect(starred.filter((r) => r.channel.channelId === 2).map((r) => r.channel.favorite)).toEqual([true, true])
+    const restored = guideRows(withFavorite(input, 1, false))
+    expect(restored.filter((r) => r.channel.channelId === 1).map((r) => r.key)).toEqual(['all:1'])
+    expect(guideRows(withFavorite(input, 2, false))).toEqual(guideRows(input))
+  })
+
+  it('keeps older servers and filtered inputs in server order', () => {
+    expect(guideRows([ch(1, '11.1'), ch(2, '2.1')]).map((r) => r.key)).toEqual(['all:1', 'all:2'])
+    expect(guideRows(input.filter((c) => c.channelId !== 1)).map((r) => r.key)).toEqual(['favorites:3', 'all:2', 'all:3'])
+    expect(guideRows([])).toEqual([])
   })
 })

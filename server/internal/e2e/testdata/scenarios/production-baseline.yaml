@@ -1,0 +1,25 @@
+name: production-baseline
+duration: 40s
+bowtie: {layout: production}
+expect:
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  renditionsMonotonic: true
+  # v480, v360, aac0, ac30 (480i source). No v480_vtt: the synthetic sources
+  # carry no CEA-608, and FFmpeg then writes no HLS output at all with a
+  # caption rendition, so e2e drops captions on synthetic sources
+  # (Options.NoCaptions). The OTA fault clips (Task 6) cover captions.
+  minRenditions: 4
+  noFetchErrors: true
+  minSegmentsAfterFault: 5
+  maxTailGapSeconds: 12
+  maxAudioHoleMs: 50
+  maxAVStartSkewMs: 100
+  maxStartAVOffsetMs: 100
+  pairedAfterEachFault: true
+  maxStartSeconds: 10
+  discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true

@@ -11,8 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +34,53 @@ type Config struct {
 	// HeartbeatEvery is the session heartbeat interval; default 15s.
 	HeartbeatEvery time.Duration
 	Client         *http.Client
+	// AllRenditions follows every rendition the master lists (all variants,
+	// audio and subtitle renditions), not only the first variant.
+	AllRenditions bool
+	// Probe, when set, runs on every new audio and video segment.
+	Probe SegmentProbe
+	// OnSegment, when set, is called (on the Run goroutine) after each
+	// probed segment with time-local measurements.
+	OnSegment func(SegmentEvent)
+}
+
+// Packet is one demuxed packet of a probed segment, in seconds.
+type Packet struct{ PTS, Dur float64 }
+
+// SegmentProbe lists the packets of the first stream in a TS segment.
+type SegmentProbe func(ctx context.Context, seg []byte) ([]Packet, error)
+
+// SegmentEvent is one probed segment, for time-local analysis (the soak).
+type SegmentEvent struct {
+	At        time.Time
+	Rendition string
+	Seq       int64
+	DNum      int64
+	AudioHole time.Duration // largest hole in/before this audio segment
+	AVSkew    time.Duration // skew against the PDT-paired segment of the other kind
+	Paired    bool          // a segment of the other kind was paired with this one
+	// TimelineExcess is the primary's running excess at this moment, anchored
+	// the same way as Report.TimelineExcess: durations after the reference
+	// segment minus wall time since the poll that observed it.
+	TimelineExcess float64
+}
+
+// CoverageWindow is what each rendition delivered between two Marks. Window
+// 0 starts at Start; each Mark (a fault's end) opens the next.
+type CoverageWindow struct {
+	Start, End time.Time
+	// Segments counts segments fetched OK per rendition.
+	Segments map[string]int
+	// Epochs counts them per rendition and discontinuity number.
+	Epochs map[string]map[int64]int
+	// Paired counts, per audio/video rendition and discontinuity number,
+	// this window's probed segments that were PDT-paired with a probed
+	// segment of the other kind (so their A/V skew was measured).
+	Paired map[string]map[int64]int
+	// Cues counts WebVTT cues per subtitle rendition; CuesTimed those
+	// timed against their video segment (by the window the cue's segment
+	// was fetched in).
+	Cues, CuesTimed map[string]int
 }
 
 // StartError is returned by Start when session creation is refused.
@@ -59,6 +109,66 @@ type Report struct {
 	// player the stream is over (it stops reloading).
 	EndList bool
 	Errors  []string
+
+	// Renditions are the media playlists followed, primary first.
+	Renditions []string
+	// TimelineExcess is how far the primary rendition's media runs ahead of
+	// the wall clock, in seconds. The newest segment of the first poll that
+	// listed any is the base and is not part of the measurement. The clock
+	// starts at the first later poll that observes a segment after the base.
+	// The newest segment of that poll is the reference, and no segment in
+	// that poll is counted, so a delayed poll cannot book a batch at zero
+	// wall time. From there TimelineExcess is Σ EXTINF of every newer
+	// primary segment, minus the wall time from the reference poll to the
+	// last poll that found a new segment. A stream that keeps real time
+	// reads ≈0 ± one segment's poll jitter, however long the wait before
+	// the reference. Media that arrives ahead of the clock reads positive;
+	// an outage the transcoder skipped reads negative by the media it skipped.
+	TimelineExcess float64
+	// MaxAudioHole is the largest gap between consecutive audio packets;
+	// AudioHoleBy is the same per audio rendition (aac0, ac30, …).
+	MaxAudioHole time.Duration
+	AudioHoleBy  map[string]time.Duration
+	// MaxAVStartSkew is the largest |(ptsA − ptsV) − (pdtA − pdtV)| over
+	// audio and video segments paired by PDT overlap (PairByPDT) with the
+	// same discontinuity number. AVPairs counts those comparisons.
+	MaxAVStartSkew time.Duration
+	AVPairs        int
+	// MaxStartAVOffset is the largest |first audio PTS − first video PTS|
+	// at the start of the stream and at each discontinuity. Each side is
+	// the first probed segment of that run (the same discontinuity
+	// number): video from the primary rendition, audio from aac0, or from
+	// the first audio rendition when the master has no aac0. The segments
+	// need not overlap in PDT. The difference uses the probed PTS values,
+	// unwrapped across the 33-bit MPEG-TS period.
+	// StartAVRuns counts discontinuities seen on either of those sides;
+	// StartAVMeasured counts the runs where both sides were probed.
+	// UnmeasuredStartAV lists the rest, ascending.
+	MaxStartAVOffset             time.Duration
+	StartAVRuns, StartAVMeasured int
+	UnmeasuredStartAV            []int64
+	ProbedAudio, ProbedVideo     int
+	// Consistency checks every polled media playlist (CheckConsistency).
+	Consistency Consistency
+	// FetchErrors counts every failed fetch: PlaylistErrors (any rendition,
+	// except a secondary's 404 before it was first served), SegmentErrors
+	// (any rendition) and ProbeErrors.
+	FetchErrors                 int
+	ProbeErrors, PlaylistErrors int
+	// RenditionSegments counts segments fetched OK per rendition;
+	// SegmentsSinceMark is the last window's Segments.
+	RenditionSegments, SegmentsSinceMark map[string]int
+	// Windows are the coverage windows, oldest first (see Mark).
+	Windows []CoverageWindow
+	// TailGap is, per rendition, the time from its last new segment to the
+	// end of the run (from Start when it delivered none).
+	TailGap map[string]time.Duration
+	// Cues is the number of WebVTT cues fetched; CuesTimed the cues whose
+	// time was checked against the PDT-paired video segment's PTS range
+	// (±1 s); CueErrors those outside it or with a malformed X-TIMESTAMP-MAP.
+	// A segment with no map is timed as MPEGTS:0, LOCAL:00:00:00.000
+	// (RFC 8216 §3.5).
+	Cues, CuesTimed, CueErrors int
 }
 
 // Player is one virtual viewer.
@@ -74,6 +184,26 @@ type Player struct {
 	lastNew  time.Time
 	stopped  time.Time
 	prevNews int64
+
+	started time.Time
+	primary *rendition
+	others  []*rendition
+	// cons checks every polled media playlist as it arrives; it keeps each
+	// rendition's last snapshot, not every poll.
+	cons    consistencyChecker
+	windows []*CoverageWindow
+	// pendingCues wait for the video segment they are timed against.
+	pendingCues []pendingCue
+
+	excessStarted bool
+	excessBase    int64     // newest segment at the first poll that listed any
+	excessFirst   time.Time // poll that first saw a segment after the base
+	excessAnchor  int64     // newest segment of that poll; nothing in the poll is counted
+	excessLast    time.Time // last poll that found a segment after the reference
+	excessSum     float64   // Σ EXTINF of primary segments after the reference
+	// starts is the first probed primary-video segment and the first probed
+	// preferred-audio segment of each discontinuity number.
+	starts map[int64]*startRun
 }
 
 // Start creates a session for cfg.ChannelID.
@@ -117,6 +247,7 @@ func Start(ctx context.Context, cfg Config) (*Player, error) {
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	return &Player{
 		cfg:         cfg,
 		viewerID:    out.ViewerID,
@@ -124,7 +255,10 @@ func Start(ctx context.Context, cfg Config) (*Player, error) {
 		streamToken: u.Query().Get("token"),
 		highest:     -1,
 		prevNews:    -1,
-		lastNew:     time.Now(),
+		lastNew:     now,
+		started:     now,
+		primary:     newRendition(renditionName(out.PlaylistURL), out.PlaylistURL, now),
+		windows:     []*CoverageWindow{newWindow(now)},
 	}, nil
 }
 
@@ -134,6 +268,7 @@ func (p *Player) ViewerID() string { return p.viewerID }
 // Run polls until ctx is done or the session disappears.
 func (p *Player) Run(ctx context.Context) {
 	defer func() {
+		p.drain()
 		p.mu.Lock()
 		p.stopped = time.Now()
 		p.mu.Unlock()
@@ -185,7 +320,89 @@ func (p *Player) Report() Report {
 	if tail := end.Sub(p.lastNew); tail > r.MaxGap {
 		r.MaxGap = tail
 	}
+	all := append([]*rendition{p.primary}, p.others...)
+	r.RenditionSegments = map[string]int{}
+	r.TailGap = map[string]time.Duration{}
+	for _, o := range all {
+		r.Renditions = append(r.Renditions, o.name)
+		r.RenditionSegments[o.name] = o.fetched
+		r.TailGap[o.name] = end.Sub(o.lastOK)
+	}
+	for i, w := range p.windows {
+		c := CoverageWindow{Start: w.Start, End: end, Segments: map[string]int{},
+			Epochs: map[string]map[int64]int{}, Paired: map[string]map[int64]int{}, Cues: map[string]int{}, CuesTimed: map[string]int{}}
+		if i+1 < len(p.windows) {
+			c.End = p.windows[i+1].Start
+		}
+		for _, o := range all {
+			c.Segments[o.name] = w.Segments[o.name]
+		}
+		for k, m := range w.Epochs {
+			c.Epochs[k] = copyCounts(m)
+		}
+		for k, m := range w.Paired {
+			c.Paired[k] = copyCounts(m)
+		}
+		for k, n := range w.Cues {
+			c.Cues[k] = n
+		}
+		for k, n := range w.CuesTimed {
+			c.CuesTimed[k] = n
+		}
+		r.Windows = append(r.Windows, c)
+	}
+	r.SegmentsSinceMark = r.Windows[len(r.Windows)-1].Segments
+	if r.AudioHoleBy != nil {
+		m := map[string]time.Duration{}
+		for k, v := range r.AudioHoleBy {
+			m[k] = v
+		}
+		r.AudioHoleBy = m
+	}
+	r.TimelineExcess = p.timelineExcessLocked()
+	r.StartAVRuns, r.StartAVMeasured, r.UnmeasuredStartAV = p.startCoverageLocked()
+	r.FetchErrors = r.PlaylistErrors + r.SegmentErrors + r.ProbeErrors
+	r.Consistency = p.cons.result()
 	return r
+}
+
+// Mark closes the current coverage window and opens the next. Scenarios
+// call it at the end of each fault, so each fault's aftermath is checked
+// on its own.
+func (p *Player) Mark() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.windows = append(p.windows, newWindow(time.Now()))
+}
+
+func newWindow(at time.Time) *CoverageWindow {
+	return &CoverageWindow{Start: at, Segments: map[string]int{}, Epochs: map[string]map[int64]int{},
+		Paired: map[string]map[int64]int{}, Cues: map[string]int{}, CuesTimed: map[string]int{}}
+}
+
+func copyCounts(m map[int64]int) map[int64]int {
+	out := make(map[int64]int, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func bump(m map[string]map[int64]int, name string, dnum int64) {
+	if m[name] == nil {
+		m[name] = map[int64]int{}
+	}
+	m[name][dnum]++
+}
+
+// fetchedLocked records a segment fetched OK in rendition o.
+func (p *Player) fetchedLocked(o *rendition, g SegmentObs, at time.Time) int {
+	o.fetched++
+	o.lastOK = at
+	w := p.windows[len(p.windows)-1]
+	w.Segments[o.name]++
+	bump(w.Epochs, o.name, g.DNum)
+	return len(p.windows) - 1
 }
 
 func (p *Player) errorf(format string, a ...any) {
@@ -213,22 +430,17 @@ func (p *Player) heartbeat(ctx context.Context) {
 	}
 }
 
-type entry struct {
-	abs           int64
-	uri           string
-	discontinuity bool
-}
-
-// poll fetches the playlist and any new segments; it returns true when the
-// session is gone.
+// poll fetches the primary playlist, its new segments and (AllRenditions)
+// every other rendition; it returns true when the session is gone.
 func (p *Player) poll(ctx context.Context) bool {
+	pollAt := time.Now()
 	body, status, err := p.get(ctx, p.playlistURL)
 	p.mu.Lock()
 	p.report.Polls++
 	p.mu.Unlock()
 	if err != nil {
 		if ctx.Err() == nil {
-			p.errorf("playlist: %v", err)
+			p.playlistErrorf("playlist: %v", err)
 		}
 		return false
 	}
@@ -239,14 +451,27 @@ func (p *Player) poll(ctx context.Context) bool {
 		return true
 	}
 	if status != http.StatusOK {
-		p.errorf("playlist: HTTP %d", status)
+		p.playlistErrorf("playlist: HTTP %d", status)
 		return false
 	}
 	if bytes.Contains(body, []byte("#EXT-X-STREAM-INF")) {
-		// Master playlist: follow the first variant, as a real player does.
-		if v := firstURI(body); v != "" {
+		// Master playlist: follow the first variant, as a real player does,
+		// and (AllRenditions) every other rendition too.
+		refs := renditionRefs(body)
+		if len(refs) > 0 {
 			p.mu.Lock()
-			p.playlistURL = resolveRef(p.playlistURL, v)
+			base := p.playlistURL
+			p.playlistURL = resolveRef(base, refs[0])
+			p.primary.name, p.primary.url = renditionName(refs[0]), p.playlistURL
+			if p.cfg.AllRenditions && p.others == nil {
+				seen := map[string]bool{p.primary.name: true}
+				for _, ref := range refs[1:] {
+					if n := renditionName(ref); !seen[n] {
+						seen[n] = true
+						p.others = append(p.others, newRendition(n, resolveRef(base, ref), p.started))
+					}
+				}
+			}
 			p.mu.Unlock()
 		}
 		return false
@@ -256,47 +481,516 @@ func (p *Player) poll(ctx context.Context) bool {
 		p.report.EndList = true
 		p.mu.Unlock()
 	}
-	entries := parsePlaylist(body)
-	if len(entries) == 0 {
-		return false
-	}
-	newest := entries[len(entries)-1].abs
+	snap := ParseSnapshot(p.primary.name, body, pollAt)
 	p.mu.Lock()
-	p.report.Newest = append(p.report.Newest, newest)
-	if p.prevNews >= 0 && newest < p.prevNews {
-		p.report.BackwardJumps++
+	p.cons.add(snap)
+	others := append([]*rendition(nil), p.others...)
+	if n := len(snap.Segments); n > 0 {
+		newest := snap.Segments[n-1].Seq
+		p.report.Newest = append(p.report.Newest, newest)
+		if p.prevNews >= 0 && newest < p.prevNews {
+			p.report.BackwardJumps++
+		}
+		p.prevNews = newest
+		if !p.excessStarted {
+			// The clock starts at the next poll that sees anything newer.
+			p.excessStarted, p.excessBase = true, newest
+		} else if p.excessFirst.IsZero() {
+			// Anchor on the newest segment of this poll. A batch that
+			// arrives together contributes nothing at zero wall time.
+			anchor, found := p.excessBase, false
+			for _, g := range snap.Segments {
+				if g.Seq > anchor {
+					anchor, found = g.Seq, true
+				}
+			}
+			if found {
+				p.excessFirst = pollAt
+				p.excessAnchor = anchor
+			}
+		}
 	}
-	p.prevNews = newest
 	p.mu.Unlock()
 
-	for _, e := range entries {
+	for _, g := range snap.Segments {
 		p.mu.Lock()
-		isNew := e.abs > p.highest
+		isNew := g.Seq > p.highest
 		p.mu.Unlock()
 		if !isNew {
 			continue
 		}
-		seg, segStatus, err := p.get(ctx, e.uri)
+		seg, segStatus, err := p.get(ctx, g.URI)
+		ok := err == nil && segStatus == http.StatusOK && len(seg) > 0 && seg[0] == 0x47
+		now := time.Now()
 		p.mu.Lock()
-		switch {
-		case err != nil || segStatus != http.StatusOK || len(seg) == 0 || seg[0] != 0x47:
-			p.report.SegmentErrors++
-		default:
+		win := -1
+		if ok {
 			p.report.SegmentsFetched++
+			win = p.fetchedLocked(p.primary, g, now)
+		} else {
+			p.report.SegmentErrors++
 		}
-		if e.discontinuity {
+		if g.Discontinuity {
 			p.report.Discontinuities++
 		}
-		now := time.Now()
 		if gap := now.Sub(p.lastNew); gap > p.report.MaxGap {
 			p.report.MaxGap = gap
 		}
 		p.lastNew = now
-		p.highest = e.abs
+		p.highest = g.Seq
+		if !p.excessFirst.IsZero() && g.Seq > p.excessAnchor {
+			p.excessSum += g.Duration
+			p.excessLast = pollAt
+		}
 		p.mu.Unlock()
+		if ok {
+			p.probe(ctx, p.primary, g, win, seg)
+		}
 	}
+	for _, r := range others {
+		p.pollRendition(ctx, r)
+	}
+	p.mu.Lock()
+	p.retryCuesLocked()
+	p.mu.Unlock()
 	return false
 }
+
+// playlistErrorf records a failed playlist fetch.
+func (p *Player) playlistErrorf(format string, a ...any) {
+	p.mu.Lock()
+	p.report.PlaylistErrors++
+	p.mu.Unlock()
+	p.errorf(format, a...)
+}
+
+// pollRendition polls a non-primary rendition: snapshot, new segments,
+// probes and cues. Only the Run goroutine touches r.highest.
+func (p *Player) pollRendition(ctx context.Context, r *rendition) {
+	body, status, err := p.get(ctx, r.url)
+	switch {
+	case err != nil:
+		if ctx.Err() == nil {
+			p.playlistErrorf("%s playlist: %v", r.name, err)
+		}
+		return
+	case status == http.StatusNotFound && !r.everOK:
+		return // not written yet
+	case status != http.StatusOK:
+		p.playlistErrorf("%s playlist: HTTP %d", r.name, status)
+		return
+	}
+	r.everOK = true
+	s := ParseSnapshot(r.name, body, time.Now())
+	p.mu.Lock()
+	p.cons.add(s)
+	p.mu.Unlock()
+	for _, g := range s.Segments {
+		if g.Seq <= r.highest {
+			continue
+		}
+		r.highest = g.Seq
+		seg, st, err := p.get(ctx, g.URI)
+		sub := isSubtitleRendition(r.name)
+		valid := len(seg) > 0 && seg[0] == 0x47
+		if sub {
+			valid = bytes.HasPrefix(seg, []byte("WEBVTT"))
+		}
+		if err != nil || st != http.StatusOK || !valid {
+			p.mu.Lock()
+			p.report.SegmentErrors++
+			p.mu.Unlock()
+			if ctx.Err() == nil {
+				p.errorf("%s segment %d: HTTP %d, %v", r.name, g.Seq, st, err)
+			}
+			continue
+		}
+		p.mu.Lock()
+		win := p.fetchedLocked(r, g, time.Now())
+		p.mu.Unlock()
+		if sub {
+			p.cues(r, g, win, seg)
+		} else {
+			p.probe(ctx, r, g, win, seg)
+		}
+	}
+}
+
+// probe measures audio holes and the A/V skew of one fetched segment of
+// rendition r, fetched in coverage window win.
+func (p *Player) probe(ctx context.Context, r *rendition, g SegmentObs, win int, seg []byte) {
+	if p.cfg.Probe == nil {
+		return
+	}
+	pk, err := p.cfg.Probe(ctx, seg)
+	if err != nil || len(pk) == 0 {
+		if ctx.Err() == nil {
+			p.mu.Lock()
+			p.report.ProbeErrors++
+			p.mu.Unlock()
+			p.errorf("probe %s segment %d: %v (%d packets)", r.name, g.Seq, err, len(pk))
+		}
+		return
+	}
+	ev := SegmentEvent{At: time.Now(), Rendition: r.name, Seq: g.Seq, DNum: g.DNum}
+	defer func() {
+		if p.cfg.OnSegment != nil {
+			p.cfg.OnSegment(ev)
+		}
+	}()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ev.TimelineExcess = p.timelineExcessLocked()
+	audio := isAudioRendition(r.name)
+	if audio {
+		p.report.ProbedAudio++
+		hole := time.Duration(0)
+		if r.lastSeq == g.Seq-1 && !g.Discontinuity {
+			hole = holeOf(pk[0].PTS - r.lastEnd)
+		}
+		for i := 1; i < len(pk); i++ {
+			if h := holeOf(pk[i].PTS - (pk[i-1].PTS + pk[i-1].Dur)); h > hole {
+				hole = h
+			}
+		}
+		ev.AudioHole = hole
+		if hole > p.report.MaxAudioHole {
+			p.report.MaxAudioHole = hole
+		}
+		if p.report.AudioHoleBy == nil {
+			p.report.AudioHoleBy = map[string]time.Duration{}
+		}
+		if hole > p.report.AudioHoleBy[r.name] {
+			p.report.AudioHoleBy[r.name] = hole
+		}
+		last := pk[len(pk)-1]
+		r.lastSeq, r.lastEnd = g.Seq, last.PTS+last.Dur
+	} else {
+		p.report.ProbedVideo++
+	}
+	last := pk[len(pk)-1]
+	rec := &probed{seg: PDTSeg{Start: g.PDT, Dur: g.Duration, DNum: g.DNum}, pts: pk[0].PTS, end: last.PTS + last.Dur, win: win}
+	// Pairing needs a wall-clock place. The start offset needs only the PTS
+	// and the discontinuity number, so a segment with no PDT is still recorded.
+	if !g.PDT.IsZero() {
+		r.addProbed(rec)
+		ev.Paired, ev.AVSkew = p.pairLocked(r, rec, false)
+	}
+	p.noteStartLocked(r, rec)
+}
+
+// startRun is one discontinuity's first probed video and audio segments.
+type startRun struct {
+	video, audio *probed
+	measured     bool
+}
+
+// noteStartLocked records |first audio PTS − first video PTS| for rec's
+// discontinuity once both sides of that run have been probed. The two
+// segments are each side's first probe of this discontinuity number; they
+// are the run's starts whether or not they carry a PDT. Video is the
+// primary rendition. Audio is aac0, or the first audio rendition when
+// the master lists no aac0. Later segments of the run are not part of the
+// offset. A run seen on only one side stays unmeasured.
+func (p *Player) noteStartLocked(r *rendition, rec *probed) {
+	audioRend := p.startAudioLocked()
+	video := r == p.primary && !isAudioRendition(r.name)
+	audio := audioRend != nil && r == audioRend
+	if !video && !audio {
+		return
+	}
+	if p.starts == nil {
+		p.starts = map[int64]*startRun{}
+	}
+	st := p.starts[rec.seg.DNum]
+	if st == nil {
+		st = &startRun{}
+		p.starts[rec.seg.DNum] = st
+	}
+	if video && st.video == nil {
+		st.video = rec
+	}
+	if audio && st.audio == nil {
+		st.audio = rec
+	}
+	if st.video == nil || st.audio == nil || st.measured {
+		return
+	}
+	if off := absSeconds(ptsDiff(st.audio.pts, st.video.pts)); off > p.report.MaxStartAVOffset {
+		p.report.MaxStartAVOffset = off
+	}
+	st.measured = true
+}
+
+// startCoverageLocked summarizes which discontinuities had a start pair.
+func (p *Player) startCoverageLocked() (runs, measured int, missing []int64) {
+	if len(p.starts) == 0 {
+		return 0, 0, nil
+	}
+	dnums := make([]int64, 0, len(p.starts))
+	for d := range p.starts {
+		dnums = append(dnums, d)
+	}
+	sort.Slice(dnums, func(i, j int) bool { return dnums[i] < dnums[j] })
+	for _, d := range dnums {
+		st := p.starts[d]
+		runs++
+		if st.measured && st.video != nil && st.audio != nil {
+			measured++
+			continue
+		}
+		missing = append(missing, d)
+	}
+	return runs, measured, missing
+}
+
+// startAudioLocked is aac0 when the master lists it, otherwise the first
+// audio rendition.
+func (p *Player) startAudioLocked() *rendition {
+	var first *rendition
+	for _, o := range append([]*rendition{p.primary}, p.others...) {
+		if !isAudioRendition(o.name) {
+			continue
+		}
+		if o.name == "aac0" {
+			return o
+		}
+		if first == nil {
+			first = o
+		}
+	}
+	return first
+}
+
+// pairLocked pairs rec (of rendition r) with the PDT-overlapping probed
+// segment of every rendition of the other kind and measures the skew.
+// A non-overlapping neighbour (within one segment) is accepted only once
+// the other rendition has passed rec's end; before that, the overlapping
+// segment may not be probed yet and pairs with rec when it is. final (the
+// end of observation) retries with overlapping segments only: a rendition
+// that stopped leaves its last moments unpaired, which coverage reports.
+func (p *Player) pairLocked(r *rendition, rec *probed, final bool) (bool, time.Duration) {
+	paired, max := false, time.Duration(0)
+	audio := isAudioRendition(r.name)
+	for _, o := range append([]*rendition{p.primary}, p.others...) {
+		if o == r || isSubtitleRendition(o.name) || isAudioRendition(o.name) == audio || len(o.probed) == 0 {
+			continue
+		}
+		k, ok := PairByPDT(rec.seg, o.pdtSegs(), durOf(rec.seg.Dur))
+		if !ok || o.probed[k].seg.DNum != rec.seg.DNum {
+			continue // unpaired, or a numbering mismatch Consistency reports
+		}
+		other := o.probed[k]
+		if !overlaps(rec.seg, other.seg) && (final || o.probed[len(o.probed)-1].seg.End().Before(rec.seg.End())) {
+			continue
+		}
+		s := absSeconds(ptsDiff(rec.pts, other.pts) - rec.seg.Start.Sub(other.seg.Start).Seconds())
+		p.report.AVPairs++
+		paired = true
+		if s > max {
+			max = s
+		}
+		if s > p.report.MaxAVStartSkew {
+			p.report.MaxAVStartSkew = s
+		}
+		p.pairedLocked(r, rec)
+		p.pairedLocked(o, other)
+	}
+	return paired, max
+}
+
+// drain finishes the comparisons still waiting at the end of observation:
+// every unpaired probed segment is retried against everything probed, and
+// cues still waiting for their video segment are timed or counted as
+// unmatched (CueErrors). Run calls it on return.
+func (p *Player) drain() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, r := range append([]*rendition{p.primary}, p.others...) {
+		for _, rec := range r.probed {
+			if !rec.paired {
+				p.pairLocked(r, rec, true)
+			}
+		}
+	}
+	waiting := p.pendingCues
+	p.pendingCues = nil
+	for _, c := range waiting {
+		if !p.timeCuesLocked(c) {
+			p.report.CueErrors += len(c.starts)
+			p.cueErrorf("%s segment %d: %d cue(s) with no probed %s segment to time them against", c.r.name, c.g.Seq, len(c.starts), strings.TrimSuffix(c.r.name, "_vtt"))
+		}
+	}
+}
+
+// pairedLocked counts rec once in the Paired coverage of the window it was
+// fetched in.
+func (p *Player) pairedLocked(r *rendition, rec *probed) {
+	if rec.paired {
+		return
+	}
+	rec.paired = true
+	bump(p.windows[rec.win].Paired, r.name, rec.seg.DNum)
+}
+
+var (
+	cueRe    = regexp.MustCompile(`^((?:\d+:)?\d{2}:\d{2}\.\d{3})\s+-->`)
+	mpegtsRe = regexp.MustCompile(`MPEGTS:(\d+)`)
+	localRe  = regexp.MustCompile(`LOCAL:((?:\d+:)?\d{2}:\d{2}\.\d{3})`)
+)
+
+// cueTolerance is how far a cue may start outside its video segment.
+const cueTolerance = 1.0
+
+// maxPendingCues bounds the WebVTT segments waiting for their video segment.
+const maxPendingCues = 64
+
+// pendingCue is a WebVTT segment's cues, waiting to be timed.
+type pendingCue struct {
+	r             *rendition
+	g             SegmentObs
+	win           int
+	starts        []float64
+	mpegts, local float64
+}
+
+// cues counts a WebVTT segment's cues and checks each cue's start, mapped
+// to PTS through X-TIMESTAMP-MAP, against the PTS range of the probed rung
+// segment it PDT-pairs with. A segment with no map header is timed as
+// MPEGTS:0, LOCAL:00:00:00.000 (RFC 8216 §3.5: cue time 0 maps to MPEG-TS
+// timestamp 0). Any line that starts with X-TIMESTAMP-MAP is a map header.
+// It is valid only as X-TIMESTAMP-MAP= with parseable MPEGTS and LOCAL;
+// anything else is a CueError, and a later valid map line does not clear
+// that. When the video segment isn't probed yet, the cues wait (retried
+// after every poll; drain counts what never matches).
+func (p *Player) cues(r *rendition, g SegmentObs, win int, body []byte) {
+	c := pendingCue{r: r, g: g, win: win}
+	malformed := false
+	sc := bufio.NewScanner(bytes.NewReader(body))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if strings.HasPrefix(line, "X-TIMESTAMP-MAP") {
+			a, b := mpegtsRe.FindStringSubmatch(line), localRe.FindStringSubmatch(line)
+			if strings.HasPrefix(line, "X-TIMESTAMP-MAP=") && a != nil && b != nil {
+				if !malformed {
+					n, _ := strconv.ParseFloat(a[1], 64)
+					c.mpegts, c.local = n/90000, vttSeconds(b[1])
+				}
+			} else {
+				malformed = true
+			}
+			continue
+		}
+		if m := cueRe.FindStringSubmatch(line); m != nil {
+			c.starts = append(c.starts, vttSeconds(m[1]))
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.report.Cues += len(c.starts)
+	p.windows[win].Cues[r.name] += len(c.starts)
+	switch {
+	case len(c.starts) == 0:
+	case malformed:
+		p.report.CueErrors += len(c.starts)
+		p.cueErrorf("%s segment %d: cues with a malformed X-TIMESTAMP-MAP", r.name, g.Seq)
+	case p.timeCuesLocked(c):
+	case len(p.pendingCues) >= maxPendingCues:
+		p.report.CueErrors += len(c.starts)
+		p.cueErrorf("%s segment %d: %d cue(s) never matched a video segment", r.name, g.Seq, len(c.starts))
+	default:
+		p.pendingCues = append(p.pendingCues, c)
+	}
+}
+
+// retryCuesLocked times the waiting cues whose video segment has arrived.
+func (p *Player) retryCuesLocked() {
+	waiting := p.pendingCues[:0]
+	for _, c := range p.pendingCues {
+		if !p.timeCuesLocked(c) {
+			waiting = append(waiting, c)
+		}
+	}
+	p.pendingCues = waiting
+}
+
+// timeCuesLocked times c against the rung's PDT-paired probed segment; false
+// when there is none yet.
+func (p *Player) timeCuesLocked(c pendingCue) bool {
+	var rung *rendition
+	for _, o := range append([]*rendition{p.primary}, p.others...) {
+		if o.name == strings.TrimSuffix(c.r.name, "_vtt") {
+			rung = o
+		}
+	}
+	if rung == nil || c.g.PDT.IsZero() || len(rung.probed) == 0 {
+		return false
+	}
+	k, ok := PairByPDT(PDTSeg{Start: c.g.PDT, Dur: c.g.Duration, DNum: c.g.DNum}, rung.pdtSegs(), durOf(c.g.Duration))
+	if !ok || !overlaps(rung.probed[k].seg, PDTSeg{Start: c.g.PDT, Dur: c.g.Duration}) {
+		return false
+	}
+	v := rung.probed[k]
+	for _, start := range c.starts {
+		pts := c.mpegts + (start - c.local)
+		p.report.CuesTimed++
+		p.windows[c.win].CuesTimed[c.r.name]++
+		lo, hi := ptsDiff(pts, v.pts), ptsDiff(pts, v.end)
+		if lo < -cueTolerance || hi > cueTolerance {
+			p.report.CueErrors++
+			p.cueErrorf("%s segment %d: cue at PTS %.3f outside %s segment %.3f–%.3f", c.r.name, c.g.Seq, pts, rung.name, v.pts, v.end)
+		}
+	}
+	return true
+}
+
+// cueErrorf records a cue problem (the first few only).
+func (p *Player) cueErrorf(format string, a ...any) {
+	if p.report.CueErrors <= 5 {
+		p.report.Errors = append(p.report.Errors, fmt.Sprintf(format, a...))
+	}
+}
+
+// vttSeconds parses [hh:]mm:ss.mmm.
+func vttSeconds(v string) float64 {
+	parts := strings.Split(v, ":")
+	sec := 0.0
+	for _, part := range parts {
+		f, _ := strconv.ParseFloat(part, 64)
+		sec = sec*60 + f
+	}
+	return sec
+}
+
+// timelineExcessLocked is Σ EXTINF of primary segments after the reference
+// minus the wall time from the poll that observed the reference to the last
+// poll that found a new segment. It is zero until a segment after the
+// reference has been observed.
+func (p *Player) timelineExcessLocked() float64 {
+	if p.excessLast.IsZero() {
+		return 0
+	}
+	return p.excessSum - p.excessLast.Sub(p.excessFirst).Seconds()
+}
+
+// ptsPeriod is the 33-bit MPEG-TS clock's wrap, in seconds.
+const ptsPeriod = float64(1<<33) / 90000
+
+// ptsDiff is a − b, unwrapped to the nearest 33-bit period.
+func ptsDiff(a, b float64) float64 {
+	d := math.Mod(a-b, ptsPeriod)
+	switch {
+	case d > ptsPeriod/2:
+		d -= ptsPeriod
+	case d < -ptsPeriod/2:
+		d += ptsPeriod
+	}
+	return d
+}
+
+func overlaps(a, b PDTSeg) bool { return a.Start.Before(b.End()) && b.Start.Before(a.End()) }
+
+func durOf(sec float64) time.Duration { return time.Duration(sec * float64(time.Second)) }
 
 func (p *Player) get(ctx context.Context, ref string) ([]byte, int, error) {
 	u := ref
@@ -316,39 +1010,98 @@ func (p *Player) get(ctx context.Context, ref string) ([]byte, int, error) {
 	return b, resp.StatusCode, err
 }
 
-func parsePlaylist(body []byte) []entry {
-	var out []entry
-	var seq int64
-	idx := int64(0)
-	disc := false
-	sc := bufio.NewScanner(bytes.NewReader(body))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		switch {
-		case strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"):
-			seq, _ = strconv.ParseInt(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"), 10, 64)
-		case line == "#EXT-X-DISCONTINUITY":
-			disc = true
-		case line == "" || strings.HasPrefix(line, "#"):
-		default:
-			out = append(out, entry{abs: seq + idx, uri: line, discontinuity: disc})
-			idx++
-			disc = false
-		}
+// maxProbed bounds the probed segments kept per rendition for pairing.
+const maxProbed = 64
+
+// probed is one probed segment: its wall-clock place and its PTS range.
+type probed struct {
+	seg      PDTSeg
+	pts, end float64
+	win      int
+	paired   bool
+}
+
+// rendition is one followed media playlist and its probe state.
+type rendition struct {
+	name    string
+	url     string
+	highest int64
+	lastSeq int64   // last probed audio segment (-2: none)
+	lastEnd float64 // end PTS of that segment
+	everOK  bool    // the playlist was served at least once
+	fetched int     // segments fetched OK
+	lastOK  time.Time
+	probed  []*probed // by PDT
+}
+
+func newRendition(name, url string, at time.Time) *rendition {
+	return &rendition{name: name, url: url, highest: -1, lastSeq: -2, lastOK: at}
+}
+
+func (r *rendition) addProbed(rec *probed) {
+	r.probed = append(r.probed, rec)
+	if len(r.probed) > maxProbed {
+		r.probed = append([]*probed(nil), r.probed[len(r.probed)-maxProbed:]...)
+	}
+}
+
+func (r *rendition) pdtSegs() []PDTSeg {
+	out := make([]PDTSeg, len(r.probed))
+	for i, x := range r.probed {
+		out[i] = x.seg
 	}
 	return out
 }
 
-// firstURI is the first non-tag line of a playlist.
-func firstURI(body []byte) string {
-	sc := bufio.NewScanner(bytes.NewReader(body))
+func isSubtitleRendition(name string) bool { return strings.HasSuffix(name, "_vtt") }
+
+func isAudioRendition(name string) bool {
+	return strings.HasPrefix(name, "aac") || strings.HasPrefix(name, "ac3")
+}
+
+// renditionName is a playlist reference's file name without .m3u8 or query.
+func renditionName(ref string) string {
+	if q := strings.IndexByte(ref, '?'); q >= 0 {
+		ref = ref[:q]
+	}
+	ref = ref[strings.LastIndexByte(ref, '/')+1:]
+	return strings.TrimSuffix(ref, ".m3u8")
+}
+
+var mediaURIRe = regexp.MustCompile(`URI="([^"]+)"`)
+
+// renditionRefs lists a master's variants (in order), then its audio and
+// subtitle renditions.
+func renditionRefs(master []byte) []string {
+	var variants, media []string
+	sc := bufio.NewScanner(bytes.NewReader(master))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			return line
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-MEDIA:") &&
+			(strings.Contains(line, "TYPE=AUDIO") || strings.Contains(line, "TYPE=SUBTITLES")):
+			if m := mediaURIRe.FindStringSubmatch(line); m != nil {
+				media = append(media, m[1])
+			}
+		case line != "" && !strings.HasPrefix(line, "#"):
+			variants = append(variants, line)
 		}
 	}
-	return ""
+	return append(variants, media...)
+}
+
+func holeOf(sec float64) time.Duration {
+	if sec <= 0 {
+		return 0
+	}
+	return time.Duration(sec * float64(time.Second))
+}
+
+func absSeconds(sec float64) time.Duration {
+	if sec < 0 {
+		sec = -sec
+	}
+	return time.Duration(sec * float64(time.Second))
 }
 
 // resolveRef resolves a playlist reference against the playlist it came from.

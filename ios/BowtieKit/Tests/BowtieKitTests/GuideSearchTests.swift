@@ -94,6 +94,20 @@ final class GuideSearchTests: XCTestCase {
         XCTAssertFalse(hit.isOnNow(at: TestFixtures.iso("2026-10-05T00:30:00Z")))
     }
 
+    func testCanWatchOnlyWhenOnNowAndTheChannelCanStart() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let onNow = TestFixtures.iso("2026-10-05T00:10:00Z")
+        // Older servers send no watchable: an on-now result stays watchable.
+        let noField = try decoder.decode(GuideSearchResult.self, from: Data(Self.hitJSON().utf8))
+        let busy = try decoder.decode(GuideSearchResult.self, from: Data(Self.hitJSON(extra: "\"watchable\":false").utf8))
+        let free = try decoder.decode(GuideSearchResult.self, from: Data(Self.hitJSON(extra: "\"watchable\":true").utf8))
+        XCTAssertTrue(noField.canWatch(at: onNow))
+        XCTAssertFalse(busy.canWatch(at: onNow), "all tuners busy: no Watch")
+        XCTAssertTrue(free.canWatch(at: onNow))
+        XCTAssertFalse(free.canWatch(at: TestFixtures.iso("2026-10-05T01:00:00Z")), "over: no Watch")
+    }
+
     func testResultIdsAreUniquePerChannelAndStart() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

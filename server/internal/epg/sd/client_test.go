@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,10 @@ type fakeSD struct {
 	tokenHTTP200Reject bool
 	// tokenDown: /token returns HTTP 503.
 	tokenDown bool
+	// headendsQuery records the last GET /headends query string.
+	headendsQuery string
+	// added records lineup IDs added with PUT /lineups/{id}.
+	added []string
 }
 
 func (f *fakeSD) handler() http.Handler {
@@ -125,8 +130,55 @@ func (f *fakeSD) handler() http.Handler {
 			},
 		})
 	})
+	mux.HandleFunc("/headends", func(w http.ResponseWriter, r *http.Request) {
+		if !f.checkToken(w, r) {
+			return
+		}
+		f.headendsQuery = r.URL.RawQuery
+		// Wiki-shaped GET /headends response: cable first, antenna last.
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"headend": "MN12345", "transport": "Cable", "location": "Mankato",
+				"lineups": []map[string]string{
+					{"name": "Charter Mankato - Digital", "lineup": "USA-MN12345-X", "uri": "/20141201/lineups/USA-MN12345-X"},
+				},
+			},
+			{
+				"headend": "56071", "transport": "Antenna", "location": "56071",
+				"lineups": []map[string]string{
+					{"name": "Antenna", "lineup": "USA-OTA-56071", "uri": "/20141201/lineups/USA-OTA-56071"},
+				},
+			},
+		})
+	})
 	mux.HandleFunc("/lineups/", func(w http.ResponseWriter, r *http.Request) {
 		if !f.checkToken(w, r) {
+			return
+		}
+		if r.Method == http.MethodPut {
+			id := strings.TrimPrefix(r.URL.Path, "/lineups/")
+			if id == "USA-SOFTFAIL-X" {
+				// HTTP 200 with a nonzero code: still a refusal.
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"response": "MAX_LINEUP_CHANGES_REACHED", "code": 4100,
+					"message": "Maximum number of lineup changes for today reached.",
+				})
+				return
+			}
+			if id == "USA-BOGUS-X" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"response": "INVALID_LINEUP",
+					"code":     2105,
+					"message":  "The lineup you submitted doesn't exist.",
+				})
+				return
+			}
+			f.added = append(f.added, id)
+			// SD sends changesRemaining as a number or a string.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"response": "OK", "code": 0, "message": "Added lineup.", "changesRemaining": "5",
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -576,5 +628,71 @@ func TestToStoreSeriesIDs(t *testing.T) {
 	}
 	if progs[1].SeriesID != "" || progs[1].IsNew {
 		t.Fatalf("movie %+v", progs[1])
+	}
+}
+
+func TestLineupsNoLineupsIsEmpty(t *testing.T) {
+	// A new account has no lineups: SD answers HTTP 400 code 4102 NO_LINEUPS.
+	f := &fakeSD{requireToken: true, lineupsStatus: http.StatusBadRequest,
+		lineupsJSON: []byte(`{"response":"NO_LINEUPS","code":4102,"message":"No lineups have been added to this account."}`)}
+	c := newTestClient(t, f)
+	list, err := c.Lineups(context.Background())
+	if err != nil {
+		t.Fatalf("Lineups: %v, want an empty list", err)
+	}
+	if list == nil || len(list) != 0 {
+		t.Fatalf("list = %+v, want empty non-nil", list)
+	}
+}
+
+func TestHeadendsFlattensAntennaFirst(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	list, err := c.Headends(context.Background(), "USA", "56071")
+	if err != nil {
+		t.Fatalf("Headends: %v", err)
+	}
+	if f.headendsQuery != "country=USA&postalcode=56071" {
+		t.Fatalf("query = %q", f.headendsQuery)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len = %d: %+v", len(list), list)
+	}
+	if list[0].LineupID != "USA-OTA-56071" || list[0].Transport != "Antenna" || list[0].Location != "56071" {
+		t.Fatalf("first = %+v, want the antenna lineup first", list[0])
+	}
+	if list[1].LineupID != "USA-MN12345-X" || list[1].Name != "Charter Mankato - Digital" || list[1].Location != "Mankato" {
+		t.Fatalf("second = %+v", list[1])
+	}
+}
+
+func TestAddLineupPuts(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	if err := c.AddLineup(context.Background(), "USA-OTA-56071"); err != nil {
+		t.Fatalf("AddLineup: %v", err)
+	}
+	if len(f.added) != 1 || f.added[0] != "USA-OTA-56071" {
+		t.Fatalf("added = %v", f.added)
+	}
+}
+
+func TestAddLineupErrorCarriesSDMessage(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	err := c.AddLineup(context.Background(), "USA-BOGUS-X")
+	msg, ok := APIMessage(err)
+	if !ok || msg != "The lineup you submitted doesn't exist. (code 2105)" {
+		t.Fatalf("APIMessage = %q, %v (err %v)", msg, ok, err)
+	}
+}
+
+func TestAddLineupHTTP200NonzeroCodeIsError(t *testing.T) {
+	f := &fakeSD{requireToken: true}
+	c := newTestClient(t, f)
+	err := c.AddLineup(context.Background(), "USA-SOFTFAIL-X")
+	msg, ok := APIMessage(err)
+	if !ok || msg != "Maximum number of lineup changes for today reached. (code 4100)" {
+		t.Fatalf("APIMessage = %q, %v (err %v)", msg, ok, err)
 	}
 }

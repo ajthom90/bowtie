@@ -5,7 +5,7 @@
 ' * on a row: Stop / Keep / Cancel / Delete for the scheduler or an admin
 ' (canManage); Delete asks first because it removes it for everyone.
 ' Shows tab: series rules (GET /recording-rules); * → Stop recording this
-' show (DELETE) for whoever set it up or an admin.
+' show (DELETE), or Edit (PATCH) when supported, for its owner or an admin.
 ' Focus: tabs (left/right) <-> list. Back: playback → list → Home.
 ' During playback: Skip ad (bowtie.ads) while the position is inside one of
 ' the recording's commercial segments — a focused "Skip ad ▸ (OK)" button,
@@ -16,7 +16,10 @@
 ' list, POST /play that recording and start at its saved position with no
 ' Resume / Start over question; when playback ends (Back, finished, sleep,
 ' error) the scene closes back to Home, which reloads Continue watching.
+' Errors are plain words (bowtie.client.viewerMessage); the Video node's
+' errorCode/errorMsg go to the log.
 
+import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Commercials.bs"
 import "pkg:/source/lib/ContinueWatching.bs"
 import "pkg:/source/lib/Recordings.bs"
@@ -51,6 +54,9 @@ sub init()
     m.observing = false
     m.reqSeq = 0
     m.pendingListId = ""
+    m.pendingEditChannelsId = ""
+    m.pendingEditRefreshId = ""
+    m.pendingActionKind = ""
     m.pendingActionId = ""
     m.pendingPlayId = ""
     ' Row to focus after a reload (after an action, or returning from playback).
@@ -195,6 +201,11 @@ sub loadTab()
     task = m.top.apiTask
     if task = invalid then return
     m.tabMarker.translation = [80 + m.tabIndex * 260, 172]
+    if bowtie.recordings.isRulesTab(currentTab())
+        m.hintLabel.text = "OK: show options · *: options · Back: channels"
+    else
+        m.hintLabel.text = "OK: play · *: options · Back: channels"
+    end if
     m.reqSeq = m.reqSeq + 1
     m.pendingListId = "rec-list-" + m.reqSeq.toStr()
     setLoading(true)
@@ -231,8 +242,7 @@ function listErrorText(err as dynamic) as string
     if code = 404 and bowtie.recordings.isRulesTab(currentTab()) then return "This server doesn't support series recording yet."
     if code = 404 then return "This server doesn't support recordings yet."
     if code = 503 then return "Recording isn't available on this server."
-    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
-    return "Couldn't load recordings."
+    return bowtie.client.viewerMessage(err, "Couldn't load recordings.")
 end function
 
 sub renderList()
@@ -361,6 +371,8 @@ sub onDialogButton()
     idx = m.dialog.buttonSelected
     mode = m.dialogMode
     menu = m.menu
+    keepText = ""
+    if mode = "editKeepNumber" then keepText = m.dialog.text
     closeDialog()
     restoreFocus()
 
@@ -381,7 +393,49 @@ sub onDialogButton()
         if idx = 0 then sendAction("deleteRecording", { id: m.target.id })
     else if mode = "ruleOptions"
         choice = bowtie.recordings.buttonId(menu, idx)
+        if choice = "editRule" then beginRuleEdit()
         if choice = "stopRule" then sendAction("deleteRecordingRule", { id: m.target.id })
+    else if mode = "editRule"
+        if idx = 0
+            m.editRule.newOnly = not m.editRule.newOnly
+            showRuleEdit()
+        else if idx = 1
+            labels = []
+            for each ch in m.editChannels
+                labels.push(ch.name)
+            end for
+            showDialog("editChannel", "Channel", [], labels)
+        else if idx = 2
+            showDialog("editKeep", "Keep episodes", ["The limit applies as new episodes finish recording."], ["Keep all", "Keep latest N", "Back"])
+        else if idx = 3
+            sendAction("updateRecordingRule", m.editRule)
+        end if
+    else if mode = "editChannel"
+        if idx >= 0 and idx < m.editChannels.count() then m.editRule.channelId = m.editChannels[idx].id
+        showRuleEdit()
+    else if mode = "editKeep"
+        if idx = 0 then m.editRule.keepLatest = 0
+        if idx = 1
+            showKeepNumber()
+        else
+            showRuleEdit()
+        end if
+    else if mode = "editKeepNumber"
+        if idx = 0
+            valid = keepText <> "" and Len(keepText) <= 9
+            for i = 1 to Len(keepText)
+                digit = Mid(keepText, i, 1)
+                if digit < "0" or digit > "9" then valid = false
+            end for
+            if valid and Val(keepText) > 0
+                m.editRule.keepLatest = Int(Val(keepText))
+                showRuleEdit()
+            else
+                showKeepNumber()
+            end if
+        else
+            showRuleEdit()
+        end if
     else if mode = "sleep"
         chooseSleep(idx)
     else if mode = "resume"
@@ -407,6 +461,7 @@ sub sendAction(kind as string, params as object)
     task = m.top.apiTask
     if task = invalid then return
     m.reqSeq = m.reqSeq + 1
+    m.pendingActionKind = kind
     m.pendingActionId = "rec-action-" + m.reqSeq.toStr()
     m.restoreIndex = m.recordingList.itemFocused
     task.request = { id: m.pendingActionId, kind: kind, params: params }
@@ -418,7 +473,13 @@ sub handleActionResponse(resp as object)
         showDialog("error", "Couldn't change the recording", [actionErrorText(resp.error)], ["OK"])
         return
     end if
-    loadTab()
+    if m.pendingActionKind = "updateRecordingRule"
+        m.reqSeq = m.reqSeq + 1
+        m.pendingEditRefreshId = "edit-refresh-" + m.reqSeq.toStr()
+        m.top.apiTask.request = { id: m.pendingEditRefreshId, kind: "recordings", params: { state: "upcoming" } }
+    else
+        loadTab()
+    end if
 end sub
 
 function actionErrorText(err as dynamic) as string
@@ -426,8 +487,7 @@ function actionErrorText(err as dynamic) as string
     if err <> invalid and err.code <> invalid then code = err.code
     if code = 403 then return "Only the person who scheduled it or an admin can do that."
     if code = 404 then return "That recording is gone."
-    if err <> invalid and err.message <> invalid and err.message <> "" then return err.message
-    return "Something went wrong. Try again."
+    return bowtie.client.viewerMessage(err, bowtie.client.somethingWrongText())
 end function
 
 ' ── Playback ─────────────────────────────────────────────────────────────────
@@ -447,15 +507,15 @@ sub handlePlayResponse(resp as object)
     setLoading(false)
     r = m.target
     if resp.ok <> true or r = invalid
-        msg = "Couldn't play this recording."
-        if resp.error <> invalid and resp.error.message <> invalid and resp.error.message <> "" then msg = resp.error.message
+        msg = bowtie.client.viewerMessage(resp.error, "Couldn't play this recording.")
         showDialog("error", "Can't play", [msg], ["OK"])
         return
     end if
     data = resp.data
     url = data.playlistUrl
     if url = invalid or url = ""
-        showDialog("error", "Can't play", ["The server sent no playlist."], ["OK"])
+        print "[recordings] play reply has no playlist URL"
+        showDialog("error", "Can't play", [bowtie.client.somethingWrongText()], ["OK"])
         return
     end if
     durationSec = data.durationSec
@@ -566,12 +626,11 @@ sub onVideoState()
         if r.durationSec <> invalid and r.durationSec > m.lastPosition then m.lastPosition = r.durationSec
         stopPlayback()
     else if st = "error"
-        msg = m.video.errorMsg
-        if msg = invalid then msg = ""
+        print "[recordings] playback error: errorCode="; m.video.errorCode; " errorMsg="; m.video.errorMsg
         ' In resume mode the scene closes once this dialog is dismissed.
         endPlayback()
         if m.resumeMode <> true then leavePlayback()
-        showDialog("error", "Playback failed", [msg], ["OK"])
+        showDialog("error", "Can't play", [bowtie.client.streamStoppedText()], ["OK"])
     end if
 end sub
 
@@ -772,7 +831,24 @@ sub onApiResponse()
     if m.top.visible <> true then return
     resp = task.response
     if resp = invalid or resp.id = invalid then return
-    if resp.id = m.pendingListId and m.pendingListId <> ""
+    if resp.id = m.pendingEditChannelsId and m.pendingEditChannelsId <> ""
+        m.pendingEditChannelsId = ""
+        if resp.ok = true
+            for each r in bowtie.recordings.parseList(resp.data)
+                if r.ruleId = m.target.id
+                    found = false
+                    for each ch in m.editChannels
+                        if ch.id = r.channelId then found = true
+                    end for
+                    if not found then m.editChannels.push({ id: r.channelId, name: r.channelName })
+                end if
+            end for
+        end if
+        showRuleEdit()
+    else if resp.id = m.pendingEditRefreshId and m.pendingEditRefreshId <> ""
+        m.pendingEditRefreshId = ""
+        loadTab()
+    else if resp.id = m.pendingListId and m.pendingListId <> ""
         handleListResponse(resp)
     else if resp.id = m.pendingActionId and m.pendingActionId <> ""
         handleActionResponse(resp)
@@ -889,3 +965,39 @@ function localUtcOffset() as integer
     dt = CreateObject("roDateTime")
     return -dt.GetTimeZoneOffset() * 60
 end function
+
+sub beginRuleEdit()
+    r = m.target
+    m.editRule = { id: r.id, newOnly: r.newOnly, channelId: r.channelId, keepLatest: r.keepLatest }
+    m.editChannels = [{ id: 0, name: "Any channel" }]
+    if r.channelId <> 0 then m.editChannels.push({ id: r.channelId, name: r.channelName })
+    m.reqSeq = m.reqSeq + 1
+    m.pendingEditChannelsId = "edit-channels-" + m.reqSeq.toStr()
+    m.top.apiTask.request = { id: m.pendingEditChannelsId, kind: "recordings", params: { state: "upcoming" } }
+end sub
+
+sub showRuleEdit()
+    episodes = "All episodes"
+    if m.editRule.newOnly then episodes = "New episodes only"
+    channel = "Any channel"
+    for each ch in m.editChannels
+        if ch.id = m.editRule.channelId then channel = ch.name
+    end for
+    keep = "Keep all"
+    if m.editRule.keepLatest > 0 then keep = "Keep latest " + m.editRule.keepLatest.toStr()
+    showDialog("editRule", "Edit " + m.target.title, ["Saving deletes no recorded episodes. The keep limit applies when new episodes finish recording."], [episodes, channel, keep, "Save", "Cancel"])
+end sub
+
+sub showKeepNumber()
+    closeDialog()
+    m.dialogMode = "editKeepNumber"
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Episodes to keep (positive whole number)"
+    dialog.text = m.editRule.keepLatest.toStr()
+    dialog.buttons = ["Done", "Cancel"]
+    dialog.keyboardDomain = "numeric"
+    dialog.observeField("buttonSelected", "onDialogButton")
+    dialog.observeField("wasClosed", "onDialogClosed")
+    m.dialog = dialog
+    m.top.getScene().dialog = dialog
+end sub

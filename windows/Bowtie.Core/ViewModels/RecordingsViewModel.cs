@@ -13,7 +13,7 @@ public sealed record PlayStart(
     bool OfferResume); // ask "Resume / Start over"; otherwise start from the beginning
 
 /// <summary>
-/// Recordings screen: Upcoming / Recorded / Missed tabs, cancel or delete,
+/// Recordings screen: Upcoming / Recorded / Missed / Shows, edit series, cancel or delete,
 /// stop, keep, and play with a resume decision. Position saves are queued
 /// and sent one at a time in order (the server keeps the last), never
 /// blocking the caller.
@@ -31,6 +31,8 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
     private RecordingTab _tab = RecordingTab.Recorded;
     private RecordingsStatus _status = RecordingsStatus.Loading;
     private IReadOnlyList<Recording> _items = Array.Empty<Recording>();
+    private IReadOnlyList<RecordingRule> _rules = Array.Empty<RecordingRule>();
+    private bool _showingShows;
     private string? _error;
     private string? _message;
 
@@ -58,6 +60,20 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _items, value);
     }
 
+    public bool ShowingShows
+    {
+        get => _showingShows;
+        private set => SetProperty(ref _showingShows, value);
+    }
+
+    public IReadOnlyList<RecordingRule> Rules
+    {
+        get => _rules;
+        private set => SetProperty(ref _rules, value);
+    }
+
+    public IReadOnlyList<Recording> Upcoming { get; private set; } = Array.Empty<Recording>();
+
     /// <summary>Why the tab failed to load (Failed only).</summary>
     public string? Error
     {
@@ -79,7 +95,16 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
 
     public async Task SelectTabAsync(RecordingTab tab, CancellationToken ct = default)
     {
+        ShowingShows = false;
         Tab = tab;
+        Items = Array.Empty<Recording>();
+        Status = RecordingsStatus.Loading;
+        await RefreshAsync(ct);
+    }
+
+    public async Task SelectShowsAsync(CancellationToken ct = default)
+    {
+        ShowingShows = true;
         Items = Array.Empty<Recording>();
         Status = RecordingsStatus.Loading;
         await RefreshAsync(ct);
@@ -89,19 +114,68 @@ public sealed class RecordingsViewModel : ObservableObject, IDisposable
     public async Task RefreshAsync(CancellationToken ct = default)
     {
         var tab = Tab;
+        var shows = ShowingShows;
         try
         {
-            var items = await _client.RecordingsAsync(tab, ct);
-            if (Tab != tab) return; // the user already left this tab
-            Items = items;
+            if (shows)
+            {
+                var rules = await _client.RecordingRulesAsync(ct);
+                if (!ShowingShows) return;
+                Rules = rules;
+            }
+            else
+            {
+                var items = await _client.RecordingsAsync(tab, ct);
+                if (Tab != tab || ShowingShows) return;
+                Items = items;
+                if (tab == RecordingTab.Upcoming) Upcoming = items;
+            }
             Error = null;
             Status = RecordingsStatus.Loaded;
         }
         catch (Exception e) when (!ct.IsCancellationRequested)
         {
-            if (Tab != tab) return;
+            if (Tab != tab || ShowingShows != shows) return;
             Error = RecordingLogic.ErrorMessage(e);
             Status = RecordingsStatus.Failed;
+        }
+    }
+
+    public async Task<IReadOnlyList<RecordingRuleEditor.ChannelOption>> RuleChannelsAsync(RecordingRule rule)
+    {
+        try
+        {
+            Upcoming = await _client.RecordingsAsync(RecordingTab.Upcoming);
+            return RecordingRuleEditor.Channels(rule, Upcoming);
+        }
+        catch (Exception)
+        {
+            // The rule's current channel remains available if upcoming can't load.
+            return RecordingRuleEditor.Channels(rule, Array.Empty<Recording>());
+        }
+    }
+
+    public async Task<bool> UpdateRuleAsync(RecordingRule rule, RecordingRuleEditor editor)
+    {
+        if (!rule.CanEdit) return false;
+        if (editor.Patch() is not { } patch)
+        {
+            Message = RecordingRuleEditor.InvalidCount;
+            return false;
+        }
+        try
+        {
+            await _client.UpdateRecordingRuleAsync(rule.Id, patch);
+            Rules = await _client.RecordingRulesAsync();
+            Upcoming = await _client.RecordingsAsync(RecordingTab.Upcoming);
+            if (!ShowingShows && Tab == RecordingTab.Upcoming) Items = Upcoming;
+            Message = null;
+            return true;
+        }
+        catch (Exception e)
+        {
+            Message = RecordingLogic.ErrorMessage(e);
+            return false;
         }
     }
 

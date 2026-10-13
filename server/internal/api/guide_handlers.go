@@ -55,8 +55,13 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 	s.markRecordings(guide)
 	guide = applyParental(guide, s.callerPolicy(r))
 	favs := s.callerFavorites(r)
+	var watch map[int64]bool
+	if chans, err := s.deps.Store.ListChannels(true); err == nil {
+		watch = s.channelWatchability(chans)
+	}
 	for i := range guide {
 		guide[i].Favorite = favs[guide[i].ChannelID]
+		guide[i].Watchable = watch == nil || watch[guide[i].ChannelID]
 		guide[i].Reception = "unknown"
 		if s.deps.Streams != nil {
 			if rx, ok := s.deps.Streams.ChannelReception(guide[i].ChannelID); ok {

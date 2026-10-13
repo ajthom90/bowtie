@@ -184,10 +184,8 @@ struct LoginView: View {
             switch error {
             case .unauthorized:
                 errorMessage = Self.wrongCredentialsCopy
-            case .network(let message):
-                errorMessage = message
-            case .server(_, let message):
-                errorMessage = message
+            case .network, .server, .badResponse:
+                errorMessage = ViewerErrorCopy.message(for: error)
             default:
                 errorMessage = Self.wrongCredentialsCopy
             }

@@ -53,6 +53,15 @@ type StreamController interface {
 	ChannelReception(channelID int64) (stream.Reception, bool)
 	// SessionMediaOf returns the viewer's session layout and quality ceiling.
 	SessionMediaOf(viewerID string) (stream.SessionMedia, bool)
+	// RetimePlaylist rewrites a rendition or caption playlist (name without
+	// .m3u8) from the session timeline (PDT, discontinuities); false when
+	// the viewer has no session.
+	RetimePlaylist(viewerID, playlist string, raw []byte) ([]byte, bool)
+	// ViewerOwner is the viewer's user ID; false when the viewer has no session.
+	ViewerOwner(viewerID string) (int64, bool)
+	// TimelineOf is the viewer's window on the wall clock (the observer's
+	// snapshot); false when the viewer has no session.
+	TimelineOf(viewerID string) (stream.WindowTimeline, bool)
 	// BlockedReason reports why parental controls stopped a viewer.
 	BlockedReason(viewerID string) (string, bool)
 }
@@ -181,25 +190,35 @@ func (s *Server) writeStartError(w http.ResponseWriter, err error, user store.Us
 	case strings.Contains(msg, "unknown channel"),
 		strings.Contains(msg, "is disabled"),
 		errors.Is(err, sql.ErrNoRows):
-		writeError(w, http.StatusNotFound, "channel not found")
+		writeError(w, http.StatusNotFound, msgChannelGone)
 	case strings.Contains(msg, "negotiate:"):
-		writeError(w, http.StatusUnprocessableEntity, msg)
+		writeError(w, http.StatusUnprocessableEntity, startErrorMessage(msgCantPlayHere, err, user))
 	case errors.Is(err, stream.ErrNoSignal):
 		log.Printf("session start: user=%s: %v", user.Username, err)
-		writeError(w, http.StatusBadGateway, startErrorMessage("no signal on this channel", err, user))
+		writeError(w, http.StatusBadGateway, startErrorMessage(msgNoSignal, err, user))
 	default:
 		log.Printf("session start failed: user=%s: %v", user.Username, err)
-		writeError(w, http.StatusInternalServerError, startErrorMessage("failed to start session", err, user))
+		writeError(w, http.StatusInternalServerError, startErrorMessage(msgStartFailed, err, user))
 	}
 }
 
-// startErrorMessage appends the underlying cause for admins, who can act on
-// it; viewers get the plain message.
+// What the apps show when a channel won't start: plain words for everyone
+// (the apps display the server's text as-is).
+const (
+	msgNoSignal     = "This channel isn't coming in right now — your antenna isn't getting a picture from it. Try again later or pick another channel."
+	msgStartFailed  = "Something went wrong starting this channel. Try again in a moment."
+	msgCantPlayHere = "This channel can't play on this device."
+	msgChannelGone  = "This channel isn't available anymore."
+)
+
+// startErrorMessage adds the technical cause for admins, who can act on it
+// ("… (Details: device returned HTTP 503: 807 No Video Data)"); viewers get
+// only the plain message.
 func startErrorMessage(msg string, err error, user store.User) string {
 	if user.Role != "admin" {
 		return msg
 	}
-	return msg + ": " + err.Error()
+	return msg + " (Details: " + err.Error() + ")"
 }
 
 // otherTunersInUse counts tuners busy for something other than Bowtie (e.g.
@@ -326,6 +345,15 @@ func (s *Server) serveMediaPlaylist(w http.ResponseWriter, r *http.Request, view
 			raw = repairCaptionPlaylist(raw, video, rung)
 		}
 	}
+	// Captions keep their own name: the timeline gives them the rung's
+	// stamps and their own MEDIA-SEQUENCE floor. False means the session
+	// was removed after the file was read; FFmpeg's bytes are not served.
+	retimed, ok := s.deps.Streams.RetimePlaylist(viewerID, strings.TrimSuffix(name, ".m3u8"), raw)
+	if !ok {
+		s.viewerGone(w, viewerID)
+		return
+	}
+	raw = retimed
 	rewritten := rewritePlaylist(string(raw), viewerID, r.URL.Query().Get("token"))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
@@ -469,7 +497,75 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.viewerGone(w, viewerID)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	// ?signal=1: the player wants the channel's reception for its "Weak
+	// signal" note. Without it the reply stays an empty 204 (older players).
+	if r.URL.Query().Get("signal") != "1" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	var sig *signalSample
+	if reading, ok := s.viewerSignal(r.Context(), viewerID); ok {
+		sig = &reading
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"signal": sig})
+}
+
+// handleSessionTimeline maps the viewer's current window to wall-clock time
+// for clients that can't read EXT-X-PROGRAM-DATE-TIME (Roku). The route
+// requires a Bearer token (auth.RequireUser); only the user who owns the
+// viewer sees it, and anyone else gets the same 404 as a missing viewer.
+// Authorization runs before any timeline is built.
+func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
+	viewerID := r.PathValue("viewerId")
+	if s.deps.Streams == nil {
+		writeError(w, http.StatusServiceUnavailable, "streaming not available")
+		return
+	}
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	owner, ok := s.deps.Streams.ViewerOwner(viewerID)
+	if !ok || owner != claims.UserID {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	win, ok := s.deps.Streams.TimelineOf(viewerID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	segs := make([][2]any, 0, len(win.Segments))
+	for _, sg := range win.Segments {
+		segs = append(segs, [2]any{stream.FormatWallClock(sg.Start), sg.Duration})
+	}
+	body := map[string]any{"mediaSequence": win.MediaSequence, "windowStart": nil, "liveEdge": nil, "segments": segs}
+	if len(win.Segments) > 0 {
+		body["windowStart"] = stream.FormatWallClock(win.WindowStart())
+		body["liveEdge"] = stream.FormatWallClock(win.LiveEdge())
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// viewerSignal is the reception of the tuner feeding viewerID's channel.
+func (s *Server) viewerSignal(ctx context.Context, viewerID string) (signalSample, bool) {
+	if s.deps.Store == nil || s.signal == nil {
+		return signalSample{}, false
+	}
+	info, ok := s.deps.Streams.SessionInfoOf(viewerID)
+	if !ok || info.ChannelID == 0 {
+		return signalSample{}, false
+	}
+	ch, err := s.deps.Store.ChannelByID(info.ChannelID)
+	if err != nil {
+		return signalSample{}, false
+	}
+	dev, err := s.deps.Store.DeviceByID(ch.DeviceID)
+	if err != nil {
+		return signalSample{}, false
+	}
+	return s.signal.read(ctx, dev, ch)
 }
 
 // authorizeViewerRequest accepts a valid Bearer JWT or a stream token matching viewerID.

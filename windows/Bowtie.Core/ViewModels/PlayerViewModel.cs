@@ -34,6 +34,8 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
     public const string DeviceCantPlayMessage = "This device can't play this channel at that quality";
     public const string PlaybackAuthFailedMessage = ErrorText.StreamStopped;
     public const string ChannelNotFoundMessage = "Channel not found";
+    public const string SlowStartNote = "Still starting — the stream is buffering. This can take a little while.";
+    public static readonly TimeSpan SlowStartAfter = TimeSpan.FromSeconds(5);
 
     public static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan DefaultDebounce = TimeSpan.FromMilliseconds(400);
@@ -43,6 +45,9 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
     private readonly TimeSpan _debounce;
     private readonly TimeSpan _heartbeatInterval;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly TimeProvider _timeProvider;
+    private CancellationTokenSource? _slowStartCts;
+    private bool _isSlowStart;
 
     private PlayerState _state = new PlayerState.Idle();
     private Channel? _channel;
@@ -64,13 +69,15 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         string maxQuality = "",
         TimeSpan? debounce = null,
         TimeSpan? heartbeatInterval = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        TimeProvider? timeProvider = null)
     {
         _client = client;
         _caps = caps;
         _debounce = debounce ?? DefaultDebounce;
         _heartbeatInterval = heartbeatInterval ?? DefaultHeartbeatInterval;
         _delay = delay ?? Task.Delay;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         AllowedProfiles = GuideLogic.AllowedProfiles(maxQuality);
     }
 
@@ -79,6 +86,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         get => _state;
         private set
         {
+            if (value is not PlayerState.Starting) ResetSlowStart();
             if (SetProperty(ref _state, value))
             {
                 OnPropertyChanged(nameof(PlaylistUri));
@@ -86,6 +94,18 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
             }
         }
     }
+
+    public bool IsSlowStart
+    {
+        get => _isSlowStart;
+        private set
+        {
+            if (SetProperty(ref _isSlowStart, value)) OnPropertyChanged(nameof(StartingText));
+        }
+    }
+
+    public string StartingText => IsSlowStart ? SlowStartNote : "Starting…";
+    internal Task SlowStartTask { get; private set; } = Task.CompletedTask;
 
     /// <summary>Reception from the latest heartbeat; null when unknown or no session is open.</summary>
     public ReceptionSignal? Signal
@@ -233,6 +253,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        ResetSlowStart();
         _replaceCts?.Cancel();
         StopHeartbeat();
     }
@@ -241,6 +262,7 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
 
     private void ScheduleReplace()
     {
+        ResetSlowStart();
         _replaceCts?.Cancel();
         _generation++;
         var gen = _generation;
@@ -263,6 +285,8 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
             StopHeartbeat();
             Signal = null;
             State = new PlayerState.Starting();
+            _slowStartCts = new CancellationTokenSource();
+            SlowStartTask = WaitForSlowStartAsync(gen, _slowStartCts.Token);
 
             // Not cancellable: the old viewer must go even when the user zaps again.
             if (oldViewerId != null) await _client.DeleteSessionAsync(oldViewerId);
@@ -277,6 +301,31 @@ public sealed class PlayerViewModel : ObservableObject, IDisposable
         {
             // Superseded by a newer replace or Stop.
         }
+    }
+
+    private async Task WaitForSlowStartAsync(long gen, CancellationToken ct)
+    {
+        try
+        {
+#if NET8_0_OR_GREATER
+            await Task.Delay(SlowStartAfter, _timeProvider, ct);
+#else
+            await _timeProvider.Delay(SlowStartAfter, ct);
+#endif
+            if (!ct.IsCancellationRequested && IsCurrent(gen) && State is PlayerState.Starting) IsSlowStart = true;
+        }
+        catch (OperationCanceledException)
+        {
+            // This start ended or was replaced.
+        }
+    }
+
+    private void ResetSlowStart()
+    {
+        _slowStartCts?.Cancel();
+        _slowStartCts?.Dispose();
+        _slowStartCts = null;
+        IsSlowStart = false;
     }
 
     private async Task CreateSessionAsync(Channel channel, long gen, bool isRetry, CancellationToken ct)

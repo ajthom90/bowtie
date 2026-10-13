@@ -51,6 +51,9 @@ private struct TVPhoneSignInView: View {
         .task {
             let current = model ?? DeviceSignInModel(client: client, deviceName: UIDevice.current.name)
             model = current
+            current.onWaiting = { [appModel, client] code in
+                appModel.pairing.codeIssued(server: client.serverURL, userCode: code.userCode)
+            }
             await current.start()
         }
         .onDisappear {

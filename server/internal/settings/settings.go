@@ -43,6 +43,8 @@ const (
 	// absent key reads as its default, and the URL (which may carry a token)
 	// never reaches the seed's override log.
 	KeyNotifyURL             = "notifications.url"
+	KeyNotifyUsername        = "notifications.username"
+	KeyNotifyPassword        = "notifications.password" // write-only in the API
 	KeyNotifyRecordingFailed = "notifications.recordingFailed"
 	KeyNotifyDiskLow         = "notifications.diskLow"
 	KeyNotifyRecordingReady  = "notifications.recordingReady"
@@ -136,9 +138,13 @@ type NotificationEvents struct {
 }
 
 // Notifications is the admin notification section. An empty URL is off.
+// Username/Password are sent as HTTP Basic auth (an ntfy access token goes in
+// Password with an empty Username).
 type Notifications struct {
-	URL    string
-	Events NotificationEvents
+	URL      string
+	Username string
+	Password string
+	Events   NotificationEvents
 }
 
 // DefaultNotificationEvents: failures and low disk on, ready recordings off.
@@ -152,6 +158,12 @@ func (p *Provider) Notifications() (Notifications, error) {
 		return Notifications{}, err
 	}
 	out := Notifications{URL: u, Events: DefaultNotificationEvents}
+	if out.Username, err = p.st.GetSetting(KeyNotifyUsername); err != nil {
+		return Notifications{}, err
+	}
+	if out.Password, err = p.st.GetSetting(KeyNotifyPassword); err != nil {
+		return Notifications{}, err
+	}
 	for _, f := range []struct {
 		key string
 		dst *bool
@@ -181,6 +193,8 @@ func (p *Provider) Notifications() (Notifications, error) {
 func (p *Provider) SetNotifications(v Notifications) error {
 	return p.st.SetSettings(map[string]string{
 		KeyNotifyURL:             v.URL,
+		KeyNotifyUsername:        v.Username,
+		KeyNotifyPassword:        v.Password,
 		KeyNotifyRecordingFailed: strconv.FormatBool(v.Events.RecordingFailed),
 		KeyNotifyDiskLow:         strconv.FormatBool(v.Events.DiskLow),
 		KeyNotifyRecordingReady:  strconv.FormatBool(v.Events.RecordingReady),

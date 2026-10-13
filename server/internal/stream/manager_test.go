@@ -1063,6 +1063,15 @@ func (r *raceRunner) Starts() int {
 // B must end with a working session (fresh dir + SessionDirOf), not a dead one.
 func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	st, cfg, clock, _, chID, userA := setupEnv(t)
+	var timelineMu sync.Mutex
+	var timelineCtxs []context.Context
+	fn := func(ctx context.Context) {
+		timelineMu.Lock()
+		timelineCtxs = append(timelineCtxs, ctx)
+		timelineMu.Unlock()
+	}
+	timelineRunHook.Store(&fn)
+	t.Cleanup(func() { timelineRunHook.Store(nil) })
 	runner := newRaceRunner()
 	im, _ := newManagerIngest(clock, nil)
 	m := NewManager(ManagerDeps{
@@ -1159,6 +1168,20 @@ func TestDuplicateKeyRaceDoesNotRegisterDeadSession(t *testing.T) {
 	}
 	if sessions[0].Viewers[0].Username != "bob" {
 		t.Errorf("viewer username = %q, want bob", sessions[0].Viewers[0].Username)
+	}
+	// A, then B's abandoned candidate (Run never starts; tlCancel must
+	// still fire), then B's live retry.
+	timelineMu.Lock()
+	got := append([]context.Context(nil), timelineCtxs...)
+	timelineMu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("observer contexts = %d, want 3 (A, abandoned B, B retry)", len(got))
+	}
+	if got[1].Err() == nil {
+		t.Fatal("duplicate-key abandon left the observer context running")
+	}
+	if got[2].Err() != nil {
+		t.Fatal("B's live observer context was cancelled")
 	}
 }
 
@@ -1753,4 +1776,613 @@ func readyPlaylistIn(dir string) error {
 		return fmt.Errorf("no v*.m3u8 in %s", dir)
 	}
 	return nil
+}
+
+func TestHLSListSizeOverride(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	im, _ := newManagerIngest(clock, nil)
+	t.Cleanup(im.Shutdown)
+	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond,
+		Cfg:               cfg, Store: st,
+		StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+		Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+		HLSListSize: 8,
+	})
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.LastSpec().HLSListSize; got != 8 {
+		t.Fatalf("HLSListSize=%d, want 8", got)
+	}
+}
+
+func TestForceAdaptiveLaddersSoftware(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	im, _ := newManagerIngest(clock, nil)
+	t.Cleanup(im.Shutdown)
+	m := NewManager(ManagerDeps{
+		TrackProbeTimeout: time.Millisecond,
+		Cfg:               cfg, Store: st,
+		StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+		Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+		ForceAdaptive: true,
+	})
+	if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(runner.LastSpec().Layout.Rungs); got < 2 {
+		t.Fatalf("%d rungs with ForceAdaptive and libx264, want a ladder", got)
+	}
+}
+
+func TestNoCaptionsDropsCaptionRendition(t *testing.T) {
+	for _, noCaptions := range []bool{false, true} {
+		st, cfg, clock, runner, chID, user := setupEnv(t)
+		im, _ := newManagerIngest(clock, nil)
+		t.Cleanup(im.Shutdown)
+		m := NewManager(ManagerDeps{
+			TrackProbeTimeout: time.Millisecond,
+			Cfg:               cfg, Store: st,
+			StreamURL: func(ch store.Channel) (string, error) { return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil },
+			Caps:      softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+			Multitrack: true, LiveCaptions: true, NoCaptions: noCaptions,
+		})
+		if _, err := m.Start(context.Background(), user, chID, clientCaps("")); err != nil {
+			t.Fatal(err)
+		}
+		l := runner.LastSpec().Layout
+		if l.Captions == noCaptions || !l.AC3Copy {
+			t.Fatalf("NoCaptions=%v: captions=%v ac3Copy=%v, want captions=%v with the AC-3 copy", noCaptions, l.Captions, l.AC3Copy, !noCaptions)
+		}
+	}
+}
+
+// TestLiveCaptionsOffByDefault: production leaves LiveCaptions false, so a
+// multitrack live session has no caption rendition, tap, fd 3 input or
+// SUBTITLES group. LiveCaptions true keeps the previous caption path.
+func TestLiveCaptionsOffByDefault(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		t.Run(fmt.Sprintf("LiveCaptions=%v", live), func(t *testing.T) {
+			st, cfg, clock, runner, chID, user := setupEnv(t)
+			im, _ := newManagerIngest(clock, nil)
+			t.Cleanup(im.Shutdown)
+			m := NewManager(ManagerDeps{
+				TrackProbeTimeout: time.Millisecond,
+				Cfg:               cfg, Store: st,
+				StreamURL: func(ch store.Channel) (string, error) {
+					return "http://127.0.0.1:5004/auto/v" + ch.GuideNumber, nil
+				},
+				Caps: softwareCaps(), Runner: runner, Clock: clock.Now, Ingest: im,
+				Multitrack: true, LiveCaptions: live,
+			})
+			h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := runner.LastSpec()
+			if spec.Layout.Captions != live || (spec.CaptionInput != nil) != live {
+				t.Fatalf("Captions=%v captionInput=%v, want %v", spec.Layout.Captions, spec.CaptionInput != nil, live)
+			}
+			m.mu.Lock()
+			var capSub *IngestSub
+			for _, s := range m.sessions {
+				capSub = s.capSub
+			}
+			m.mu.Unlock()
+			if (capSub != nil) != live {
+				t.Fatalf("capSub set=%v, want %v", capSub != nil, live)
+			}
+			wantAttaches := int64(1)
+			if live {
+				wantAttaches = 2 // video sub plus the caption tap
+			}
+			if n := im.attachCalls.Load(); n != wantAttaches {
+				t.Fatalf("attach calls=%d, want %d", n, wantAttaches)
+			}
+			argv := strings.Join(transcode.BuildArgs(spec), " ")
+			hasCaptionInput := strings.Contains(argv, "subcc") || strings.Contains(argv, "pipe:3") || strings.Contains(argv, `pipe\:3`)
+			if hasCaptionInput != live {
+				t.Fatalf("argv caption input=%v, want %v\n%s", hasCaptionInput, live, argv)
+			}
+			// The caption playlist existing is not enough: the master lists
+			// SUBTITLES only when the layout's caption rendition is on.
+			if err := os.WriteFile(filepath.Join(spec.OutDir, spec.Layout.CaptionPlaylist()), []byte("#EXTM3U\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			media, ok := m.SessionMediaOf(h.ViewerID)
+			if !ok {
+				t.Fatal("no session media")
+			}
+			_, statErr := os.Stat(filepath.Join(media.Dir, media.Layout.CaptionPlaylist()))
+			pl := transcode.MasterPlaylist(media.Layout, media.MaxHeight, "?token=t", media.Layout.Captions && statErr == nil)
+			if got := strings.Contains(pl, "SUBTITLES"); got != live {
+				t.Fatalf("master SUBTITLES=%v, want %v\n%s", got, live, pl)
+			}
+		})
+	}
+}
+
+// The session's observer starts with it. An append restart holds the new
+// run until every rendition has a publishable segment in it. A run that
+// still misses one after the gate timeout of fed time is expired and
+// restarted through the kill path, and never served; time without fresh
+// input isn't charged. Teardown stops the observer. Segment files are real
+// TS with PTS: a run opens only once its first PTS is read.
+func TestSessionTimelineGatesRestartedRuns(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	if got := strings.Join(media.Layout.Renditions(), ","); got != top+",aac0" {
+		t.Fatalf("renditions %s", got)
+	}
+	tl, _, _, ok := m.timelineOf(h.ViewerID)
+	if !ok {
+		t.Fatal("no timeline for the viewer")
+	}
+	g := newGateHarness(t, m, clock, runner, h)
+	g.write(top, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4)
+	tl.Observe()
+
+	runner.LastProc().Crash(errors.New("boom"))
+	g.restartTo(2)
+	raw := g.write(top, 1.4, 5.4, 1.4) // run 1: video only so far
+	tl.Observe()
+	if out, _ := m.RetimePlaylist(h.ViewerID, top, raw); strings.Contains(string(out), top+"_00002.ts") {
+		t.Fatalf("served a segment of a held run:\n%s", out)
+	}
+	for i := 0; i < 10; i++ { // 50 s with no fresh input: an outage, not a stall
+		g.tick(0, 0)
+	}
+	g.tick(64<<10, 0)
+	g.tick(64<<10, 0)
+	if runner.LastProc().Stopped() {
+		t.Fatal("stopped after 10 s of fed time")
+	}
+	g.tick(64<<10, 0)
+	if !runner.LastProc().Stopped() {
+		t.Fatal("a run missing aac0 after 15 s of fed time was not restarted")
+	}
+	g.restartTo(3)
+	raw = g.write(top, 1.4, 5.4, 1.4, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4, 1.42)
+	tl.Observe()
+	out, ok := m.RetimePlaylist(h.ViewerID, top, raw)
+	s := string(out)
+	if !ok || strings.Contains(s, top+"_00002.ts") || !strings.Contains(s, "#EXT-X-DISCONTINUITY\n#EXT-X-PROGRAM-DATE-TIME:") ||
+		strings.Count(s, "#EXT-X-DISCONTINUITY\n") != 1 || strings.Count(s, "#EXT-X-PROGRAM-DATE-TIME:") != 4 ||
+		!strings.Contains(s, "#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n") {
+		t.Fatalf("retimed playlist:\n%s", s)
+	}
+	if _, ok := m.RetimePlaylist("no-such-viewer", top, raw); ok {
+		t.Fatal("unknown viewer retimed")
+	}
+	// The segment after the last explicit Observe is published by Run.
+	raw = g.write(top, 1.4, 5.4, 1.4, 1.4, 5.4, 9.4)
+	published := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		out, ok := m.RetimePlaylist(h.ViewerID, top, raw)
+		if ok && strings.Contains(string(out), top+"_00005.ts") {
+			published = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !published {
+		t.Fatal("background observer did not publish a segment written after the last Observe")
+	}
+	dir := h.SessionDir
+	m.mu.Lock()
+	m.teardownSessionLocked(m.sessions[m.viewers[h.ViewerID].SessionID])
+	m.mu.Unlock()
+	if _, _, _, ok := m.timelineOf(h.ViewerID); ok {
+		t.Fatal("timeline outlived the session")
+	}
+	// A tick already in flight can finish after cancel. Let it land on the
+	// removed dir, then write a segment the stopped observer must not stamp.
+	time.Sleep(2 * timelineObserveEvery)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	late := g.write(top, 1.4, 5.4, 1.4, 1.4, 5.4, 9.4, 13.4)
+	deadline = time.Now().Add(1200 * time.Millisecond)
+	for {
+		s := string(tl.Retime(top, late))
+		if strings.Contains(s, top+"_00006.ts") {
+			t.Fatal("observer stamped a segment after teardown")
+		}
+		if !time.Now().Before(deadline) {
+			if !strings.Contains(s, top+"_00005.ts") {
+				t.Fatal("timeline lost the segment Run published before teardown")
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Fed sparsely (fresh bytes every 10 s), runs that publish nothing still
+// expire, and the third failed run ends the session: no further restart,
+// the viewer's session is gone (404 session not found, so the client
+// starts a fresh one), and the tuner is released after ingest's tail.
+func TestThirdGateStallEndsSessionAndFreesTuner(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	g.write(top, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4)
+	tl.Observe() // run 0 opens, then FFmpeg writes nothing more
+	for i := 0; i < 60 && !g.sessionGone(); i++ {
+		fresh := 0
+		if i%2 == 0 {
+			fresh = 64 << 10
+		}
+		g.tick(fresh, 0)
+	}
+	if !g.sessionGone() {
+		t.Fatalf("session still up after 5 min fed sparsely; %d starts", runner.Starts())
+	}
+	if runner.Starts() != timelineMaxStalls {
+		t.Fatalf("starts = %d, want %d", runner.Starts(), timelineMaxStalls)
+	}
+	for i := 0; i < 10; i++ {
+		g.tick(0, 0)
+	}
+	if runner.Starts() != timelineMaxStalls {
+		t.Fatalf("starts = %d after the session ended", runner.Starts())
+	}
+	g.waitTunerFreed(im)
+}
+
+// Ruling: opening doesn't reset the budget. Three runs that open and then
+// stop publishing the reference (audio goes on, FFmpeg is fed) end the
+// session; no fourth FFmpeg starts.
+func TestOpenThenStalledRunsUseUpTheBudget(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	var video, audio []float64
+	for cycle := 1; cycle <= timelineMaxStalls; cycle++ {
+		if cycle > 1 {
+			g.restartTo(cycle)
+		}
+		video = append(video, 1.4, 5.4) // a new run opens
+		audio = append(audio, 1.4, 5.4)
+		g.write(top, video...)
+		g.write("aac0", audio...)
+		tl.Observe()
+		tl.mu.Lock()
+		open := tl.cur.state == runOpen
+		tl.mu.Unlock()
+		if !open {
+			t.Fatalf("cycle %d: the run didn't open", cycle)
+		}
+		for i := 0; i < 8 && !runner.LastProc().Stopped() && !g.sessionGone(); i++ {
+			audio = append(audio, audio[len(audio)-1]+4) // the reference stopped; audio goes on
+			g.write("aac0", audio...)
+			tl.Observe()
+			g.tick(64<<10, 0)
+		}
+		if cycle < timelineMaxStalls && (!runner.LastProc().Stopped() || g.sessionGone()) {
+			t.Fatalf("cycle %d: stopped %v, session gone %v", cycle, runner.LastProc().Stopped(), g.sessionGone())
+		}
+	}
+	if !g.sessionGone() {
+		t.Fatal("three open-then-stalled runs did not end the session")
+	}
+	for i := 0; i < 10; i++ {
+		g.tick(0, 0)
+	}
+	if runner.Starts() != timelineMaxStalls {
+		t.Fatalf("starts = %d, want %d (no fourth FFmpeg)", runner.Starts(), timelineMaxStalls)
+	}
+	g.waitTunerFreed(im)
+}
+
+// An outage never tears the session down: not with no input at all, and
+// not while a restarted FFmpeg slowly drains the cached join (written
+// bytes move, fresh ones don't).
+func TestOutageAndCachedJoinNeverExpire(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	t.Cleanup(m.shutdownAll)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	g.write(top, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4)
+	tl.Observe()
+	for i := 0; i < 60; i++ { // 5 min of outage on the open run
+		g.tick(0, 0)
+	}
+	if runner.LastProc().Stopped() || g.sessionGone() {
+		t.Fatal("an outage stopped FFmpeg or ended the session")
+	}
+	runner.LastProc().Crash(errors.New("killed during the outage"))
+	g.restartTo(2)
+	for i := 0; i < 60; i++ { // the restart drains a big cached join, 64 KiB per tick
+		g.tick(0, 64<<10)
+	}
+	if runner.LastProc().Stopped() || g.sessionGone() || runner.Starts() != 2 {
+		t.Fatalf("a cached join during an outage counted as feeding: stopped %v, gone %v, starts %d",
+			runner.LastProc().Stopped(), g.sessionGone(), runner.Starts())
+	}
+}
+
+// Continuous feeding with every rendition publishing keeps the session
+// and, after 60 s, resets the stall budget a crash used.
+func TestContinuousFeedingResetsTheBudget(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m, _, _ := newTestManagerWithDial(st, cfg, clock, runner, nil)
+	t.Cleanup(m.shutdownAll)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	pts := []float64{1.4, 5.4}
+	g.write(top, pts...)
+	g.write("aac0", pts...)
+	tl.Observe()
+	runner.LastProc().Crash(errors.New("boom"))
+	g.restartTo(2)
+	tl.mu.Lock()
+	used := tl.stalls
+	tl.mu.Unlock()
+	if used != 1 {
+		t.Fatalf("stall budget used %d after a crash, want 1", used)
+	}
+	next := 1.4
+	for i := 0; i < 14; i++ { // 70 s: a segment per rendition per tick
+		pts = append(pts, next)
+		next += 4
+		g.write(top, pts...)
+		g.write("aac0", pts...)
+		tl.Observe()
+		g.tick(64<<10, 0)
+		if runner.LastProc().Stopped() {
+			t.Fatalf("a healthy run was stopped at tick %d", i)
+		}
+	}
+	tl.mu.Lock()
+	used = tl.stalls
+	tl.mu.Unlock()
+	if used != 0 || runner.Starts() != 2 {
+		t.Fatalf("stall budget %d, starts %d after 70 s of healthy output; want 0, 2", used, runner.Starts())
+	}
+}
+
+// A plain outage never ends a session, even when FFmpeg dies in it: the
+// restart's attaches fail with ErrNoSignal again and again (ingest closed
+// the device connection), and none of those attempts starts FFmpeg, so
+// none of them uses the stall budget or makes another run. Only the
+// process that actually died counts. When the signal returns, the
+// restart goes through and the viewer is still there.
+func TestNoSignalAttachRetriesDontUseTheBudget(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	var noSignal atomic.Bool
+	dial := func(ctx context.Context, url string) (io.ReadCloser, int, error) {
+		if noSignal.Load() {
+			return nil, 503, &DeviceError{Status: 503, Reason: "807 No Video Data"}
+		}
+		return newHangBody(), 200, nil
+	}
+	m, im, _ := newTestManagerWithDial(st, cfg, clock, runner, dial)
+	t.Cleanup(m.shutdownAll)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	g := newGateHarness(t, m, clock, runner, h)
+	g.write(top, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4)
+	tl.Observe() // run 0 opens
+
+	noSignal.Store(true)
+	runner.LastProc().Crash(errors.New("input ended: the antenna lost the signal"))
+	// Supervise closes the sub, which arms ingest's 5s tail. A restart
+	// inside that tail reuses the still-live device connection, so Attach
+	// would succeed instead of returning ErrNoSignal. Wait until the sub
+	// is closed, advance the fake clock past the tail, and wait until the
+	// device connection is gone — the conditions themselves, not a sleep —
+	// before any restart attempt.
+	waitFor(t, 2*time.Second, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		s := m.sessions[h.SessionID]
+		return s != nil && s.crashed && s.sub == nil
+	})
+	g.clock.Advance(ingestTailDuration + time.Second)
+	waitFor(t, 2*time.Second, func() bool {
+		return len(im.ActiveChannels()) == 0
+	})
+	attaches := im.AttachCalls()
+	for i := 0; i < 60; i++ { // 5 min of outage
+		g.tick(0, 0)
+	}
+	if n := im.AttachCalls() - attaches; n <= int64(timelineMaxStalls) {
+		t.Fatalf("only %d restart attaches during the outage; the test needs more than %d", n, timelineMaxStalls)
+	}
+	tl.mu.Lock()
+	used, runs := tl.stalls, tl.runs
+	tl.mu.Unlock()
+	if g.sessionGone() || runner.Starts() != 1 || used != 1 || runs != 2 {
+		t.Fatalf("after failed attaches: session gone %v, starts %d, budget used %d (want 1), runs %d (want 2)",
+			g.sessionGone(), runner.Starts(), used, runs)
+	}
+
+	noSignal.Store(false) // the signal returns
+	g.restartTo(2)
+	g.write(top, 1.4, 5.4, 1.4, 5.4)
+	g.write("aac0", 1.4, 5.4, 1.4, 5.4)
+	tl.Observe()
+	tl.mu.Lock()
+	used, open := tl.stalls, tl.cur.state == runOpen
+	tl.mu.Unlock()
+	if g.sessionGone() || !open || used != 1 {
+		t.Fatalf("after the signal returned: session gone %v, run open %v, budget used %d (want 1)", g.sessionGone(), open, used)
+	}
+	if _, ok := m.RetimePlaylist(h.ViewerID, top, g.write(top, 1.4, 5.4, 1.4, 5.4)); !ok {
+		t.Fatal("the viewer lost its session")
+	}
+}
+
+// gateHarness drives a session's FFmpeg runs for the gate tests: real
+// segment files, byte counters, and real 5 s maintain ticks.
+type gateHarness struct {
+	t      *testing.T
+	m      *Manager
+	clock  *fakeClock
+	runner *stubRunner
+	h      ViewerHandle
+}
+
+func newGateHarness(t *testing.T, m *Manager, clock *fakeClock, runner *stubRunner, h ViewerHandle) *gateHarness {
+	return &gateHarness{t: t, m: m, clock: clock, runner: runner, h: h}
+}
+
+// write replaces name's playlist with one segment per PTS (seconds), as
+// real TS files.
+func (g *gateHarness) write(name string, pts ...float64) []byte {
+	g.t.Helper()
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n")
+	for i, p := range pts {
+		uri := fmt.Sprintf("%s_%05d.ts", name, i)
+		if err := os.WriteFile(filepath.Join(g.h.SessionDir, uri), tsWithPTS(p), 0o644); err != nil {
+			g.t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "#EXTINF:4.0,\n%s\n", uri)
+	}
+	if err := os.WriteFile(filepath.Join(g.h.SessionDir, name+".m3u8"), []byte(b.String()), 0o644); err != nil {
+		g.t.Fatal(err)
+	}
+	return []byte(b.String())
+}
+
+// tick is one maintain tick: fresh source bytes and cached (join or reset)
+// bytes reach the current FFmpeg's input, the manager's clock moves 5 s,
+// and the viewer is still polling. (The stub process never reads its
+// input, so the bytes are recorded on its ingest queue directly.)
+func (g *gateHarness) tick(fresh, cached int) {
+	g.m.mu.Lock()
+	var sub *IngestSub
+	if v, ok := g.m.viewers[g.h.ViewerID]; ok {
+		sub = g.m.sessions[v.SessionID].sub
+	}
+	g.m.mu.Unlock()
+	if sub != nil {
+		if cached > 0 {
+			sub.q.wroteFrom(cached, true)
+		}
+		if fresh > 0 {
+			sub.q.wroteFrom(fresh, false)
+		}
+	}
+	g.clock.Advance(reaperInterval)
+	g.m.Touch(g.h.ViewerID)
+	g.m.maintain()
+	time.Sleep(10 * time.Millisecond) // let supervise see a stopped process
+}
+
+func (g *gateHarness) sessionGone() bool {
+	_, ok := g.m.SessionDirOf(g.h.ViewerID)
+	return !ok
+}
+
+// restartTo ticks (unfed) until the runner has started FFmpeg starts times.
+func (g *gateHarness) restartTo(starts int) {
+	g.t.Helper()
+	for i := 0; i < 40 && g.runner.Starts() < starts; i++ {
+		g.tick(0, 0)
+	}
+	if g.runner.Starts() != starts {
+		g.t.Fatalf("starts = %d, want %d", g.runner.Starts(), starts)
+	}
+}
+
+// waitTunerFreed advances the clock past ingest's tail until the device
+// connection is gone.
+func (g *gateHarness) waitTunerFreed(im *IngestManager) {
+	g.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for len(im.ActiveChannels()) != 0 && time.Now().Before(deadline) {
+		g.clock.Advance(ingestTailDuration + time.Second)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := im.ActiveChannels(); len(got) != 0 {
+		g.t.Fatalf("tuner still held for channels %v", got)
+	}
+}
+
+func TestTimelineOfReportsOwnerAndObservedWindow(t *testing.T) {
+	st, cfg, clock, runner, chID, user := setupEnv(t)
+	m := newTestManager(st, cfg, clock, runner)
+	h, err := m.Start(context.Background(), user, chID, clientCaps(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, ok := m.ViewerOwner(h.ViewerID); !ok || owner != user.ID {
+		t.Fatalf("ViewerOwner = %d, %v", owner, ok)
+	}
+	media, _ := m.SessionMediaOf(h.ViewerID)
+	top := media.Layout.TopName()
+	pl := "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:3\n#EXTINF:4.0,\n" + top + "_00003.ts\n#EXTINF:4.0,\n" + top + "_00004.ts\n"
+	if err := os.WriteFile(filepath.Join(h.SessionDir, top+".m3u8"), []byte(pl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Real TS files: run 0 opens only once its first PTS is read (Task 9).
+	for i, pts := range []float64{1.4, 5.4} {
+		if err := os.WriteFile(filepath.Join(h.SessionDir, fmt.Sprintf("%s_%05d.ts", top, 3+i)), tsWithPTS(pts), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tl, _, _, _ := m.timelineOf(h.ViewerID)
+	tl.Observe()
+	win, ok := m.TimelineOf(h.ViewerID)
+	// MediaSequence is Bowtie's own number (the served playlists'), not FFmpeg's 3.
+	if !ok || win.MediaSequence != 0 || len(win.Segments) != 2 {
+		t.Fatalf("TimelineOf = %+v ok=%v", win, ok)
+	}
+	if !win.LiveEdge().Equal(win.WindowStart().Add(8 * time.Second)) {
+		t.Fatalf("window %v → %v, want 8 s", win.WindowStart(), win.LiveEdge())
+	}
+	if _, ok := m.TimelineOf("no-such-viewer"); ok {
+		t.Fatal("unknown viewer has a timeline")
+	}
+	if _, ok := m.ViewerOwner("no-such-viewer"); ok {
+		t.Fatal("unknown viewer has an owner")
+	}
 }

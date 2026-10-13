@@ -222,6 +222,7 @@ public sealed record Recording
     public const string Failed = "failed";
 
     public long Id { get; set; }
+    public long? RuleId { get; set; }
     public string Title { get; set; } = "";
     public string Subtitle { get; set; } = "";
     public string Description { get; set; } = "";
@@ -273,6 +274,31 @@ public sealed record RecordingPlayback
     public int PositionSec { get; set; }
     public int DurationSec { get; set; }
 }
+
+/// <summary>A series rule; older servers omit Editable.</summary>
+public sealed record RecordingRule
+{
+    public long Id { get; set; }
+    public string Title { get; set; } = "";
+    public string SeriesId { get; set; } = "";
+    public long ChannelId { get; set; }
+    public string ChannelName { get; set; } = "";
+    public bool NewOnly { get; set; }
+    public int KeepLatest { get; set; }
+    public string ScheduledBy { get; set; } = "";
+    public bool CanManage { get; set; }
+    public bool? Editable { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+
+    [JsonIgnore]
+    public bool CanEdit => Editable == true && CanManage;
+}
+
+/// <summary>Omitted fields stay unchanged; zero means any channel / keep all.</summary>
+public sealed record RecordingRulePatch(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NewOnly = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ChannelId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? KeepLatest = null);
 
 // ── Wire envelopes ───────────────────────────────────────────────────────────
 
@@ -331,6 +357,10 @@ internal sealed record RecordingConflictBody
 [JsonSerializable(typeof(CreatedSession))]
 [JsonSerializable(typeof(Recording))]
 [JsonSerializable(typeof(List<Recording>))]
+[JsonSerializable(typeof(RecordingRule))]
+[JsonSerializable(typeof(List<RecordingRule>))]
+[JsonSerializable(typeof(RecordingRule[]))]
+[JsonSerializable(typeof(RecordingRulePatch))]
 [JsonSerializable(typeof(RecordingPlayback))]
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(RefreshRequest))]

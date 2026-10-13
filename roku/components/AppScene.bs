@@ -1,10 +1,13 @@
 ' App root: phase routing per A2.
-' registry server? no → Connect. Server, no refresh → Login.
+' registry server? no → Connect. Server, no refresh → Login (once ApiTask is ready).
 ' Refresh present → Checking (enqueue doRefresh; NEVER straight to Home).
 ' Refresh ok → Home. Refresh fail → Login (server kept).
 ' Home → Settings / Recordings / Player; Settings change-server → Connect; sign-out → Login.
 ' Home's Continue watching → Recordings, playing that recording → Home.
 ' A3: phase changes never orphan a live viewer (PlayerScene teardown on hide).
+' Pairing (set up from a phone): each arrival at Connect starts a fresh
+' PairTask (new token); it runs on through Login so the phone can be sent to
+' the sign-in code, and stops once signed in (showHome) or on its own.
 
 import "pkg:/source/lib/Registry.bs"
 
@@ -24,6 +27,9 @@ sub init()
     m.phase = "connect"
     m.bootRefreshId = "boot-refresh"
     m.serverUrl = ""
+    m.pairTask = invalid
+    ' Signed out at launch: Login waits on Checking until ApiTask is ready.
+    m.loginWhenReady = false
 
     ' Long-lived ApiTask — sole HTTP + token holder.
     m.apiTask = CreateObject("roSGNode", "ApiTask")
@@ -57,7 +63,7 @@ sub init()
 
     ' If the task thread already flipped ready before we finished routing.
     if m.phase = "checking" and m.apiTask.ready = true
-        enqueueBootRefresh()
+        onApiReady()
     end if
 end sub
 
@@ -76,7 +82,11 @@ sub routeFromRegistry()
     m.settingsScene.serverUrl = server
 
     if rt = invalid or rt = ""
-        setPhase("login")
+        ' Not Login yet: it asks for a sign-in code at once, and a request
+        ' written before ApiTask's thread observes its request field is lost
+        ' (Login sat on "Getting a code…"). onApiReady shows Login.
+        m.loginWhenReady = true
+        setPhase("checking")
     else
         ' A2: NEVER straight to Home — Checking + doRefresh.
         setPhase("checking")
@@ -85,9 +95,13 @@ end sub
 
 sub onApiReady()
     if m.apiTask.ready <> true then return
-    if m.phase = "checking"
-        enqueueBootRefresh()
+    if m.phase <> "checking" then return
+    if m.loginWhenReady = true
+        m.loginWhenReady = false
+        setPhase("login")
+        return
     end if
+    enqueueBootRefresh()
 end sub
 
 sub enqueueBootRefresh()
@@ -226,6 +240,7 @@ sub onPlayerChannelsStale()
 end sub
 
 sub showHome()
+    stopPairing()
     server = bowtie.registry.loadServer()
     if server <> invalid and server <> ""
         m.serverUrl = server
@@ -234,7 +249,26 @@ sub showHome()
     setPhase("home")
 end sub
 
+sub startPairing()
+    stopPairing()
+    task = CreateObject("roSGNode", "PairTask")
+    ' Hand it to the scenes before it runs so they see its first pairUrl.
+    m.connectScene.pairTask = task
+    m.loginScene.pairTask = task
+    task.control = "RUN"
+    m.pairTask = task
+end sub
+
+sub stopPairing()
+    if m.pairTask = invalid then return
+    m.pairTask.stop = true
+    m.pairTask = invalid
+    m.connectScene.pairTask = invalid
+    m.loginScene.pairTask = invalid
+end sub
+
 sub setPhase(phase as string)
+    previous = m.phase
     m.phase = phase
 
     m.checkingGroup.visible = false
@@ -254,6 +288,7 @@ sub setPhase(phase as string)
     end if
 
     if phase = "connect"
+        if previous <> "connect" or m.pairTask = invalid then startPairing()
         m.connectScene.visible = true
         m.connectScene.setFocus(true)
     else if phase = "login"

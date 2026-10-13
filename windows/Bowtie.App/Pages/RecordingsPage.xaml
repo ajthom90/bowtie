@@ -9,6 +9,21 @@
     mc:Ignorable="d">
 
     <Page.Resources>
+        <DataTemplate x:Key="RuleTemplate" x:DataType="local:RecordingRuleItem">
+            <Grid Padding="16,12" Margin="0,4" ColumnSpacing="16" CornerRadius="8"
+                  Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind Summary}" Opacity="0.7" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Edit" Visibility="{x:Bind EditVisibility}"
+                        Click="OnEditRuleClick" VerticalAlignment="Center" />
+            </Grid>
+        </DataTemplate>
         <DataTemplate x:Key="RecordingTemplate" x:DataType="local:RecordingItem">
             <Grid Padding="16,12" Margin="0,4" ColumnSpacing="16" CornerRadius="8"
                   Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
@@ -64,6 +79,7 @@
             <SelectorBarItem x:Name="UpcomingTab" Text="Upcoming" />
             <SelectorBarItem x:Name="RecordedTab" Text="Recorded" IsSelected="True" />
             <SelectorBarItem x:Name="MissedTab" Text="Missed" />
+            <SelectorBarItem x:Name="ShowsTab" Text="Shows" />
         </SelectorBar>
 
         <ScrollViewer Grid.Row="3">
@@ -77,6 +93,7 @@
                 </StackPanel>
                 <TextBlock x:Name="EmptyLabel" Visibility="Collapsed" TextWrapping="Wrap" Opacity="0.8" />
                 <ItemsControl x:Name="RecordingsList" ItemTemplate="{StaticResource RecordingTemplate}" />
+                <ItemsControl x:Name="RulesList" ItemTemplate="{StaticResource RuleTemplate}" Visibility="Collapsed" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

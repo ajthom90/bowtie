@@ -54,6 +54,9 @@ services:
       # BOWTIE_DEVICES: 192.168.1.50   # optional tuner IP seed
       # BOWTIE_RECORDINGS_DIR: /recordings  # DVR recordings (default /data/recordings)
       # BOWTIE_DVR_MIN_FREE_GB: "20"        # delete oldest unkept recordings below this
+      # BOWTIE_HDHOMERUN_GUIDE: "off"     # test/second servers sharing a tuner: don't
+      #                                   # download the free guide (SiliconDust limits
+      #                                   # downloads per tuner; let one server do it)
       # Product settings — first-boot seeds only (Admin → Settings is control plane):
       # BOWTIE_ENCODER: auto          # auto|qsv|vaapi|nvenc|software|videotoolbox
 

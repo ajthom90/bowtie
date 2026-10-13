@@ -30,11 +30,17 @@ const (
 
 	settingHDHomeRunLastSuccess = "epg.hdhomerun.lastSuccess"
 	settingHDHomeRunLastError   = "epg.hdhomerun.lastError"
+	// settingHDHomeRunNextAttempt is the earliest next download (RFC 3339),
+	// kept across restarts so neither a restart nor Admin → Refresh spends
+	// another download early.
+	settingHDHomeRunNextAttempt = "epg.hdhomerun.nextAttempt"
 
 	// SiliconDust asks for a refresh every 20-28 hours at a random time.
 	hdhomerunMinInterval = 20 * time.Hour
 	hdhomerunMaxInterval = 28 * time.Hour
-	// hdhomerunRetry is the wait after a failed refresh.
+	// hdhomerunRetry is the wait after a failed refresh that SiliconDust
+	// didn't refuse (no tuner answering, network errors, 5xx). A refusal
+	// (403: too many downloads for this tuner) waits the full 20-28 h.
 	hdhomerunRetry = time.Hour
 	// hdhomerunFetchTimeout bounds one guide download.
 	hdhomerunFetchTimeout = 2 * time.Minute
@@ -47,8 +53,16 @@ func hdhomerunInterval() time.Duration {
 	return hdhomerunMinInterval + time.Duration(rand.Int63n(int64(hdhomerunMaxInterval-hdhomerunMinInterval)+1))
 }
 
-// hdhomerunConfigured: the setting is on and at least one tuner is known.
+// DisableHDHomeRunGuide stops this server from downloading SiliconDust's
+// guide (BOWTIE_HDHOMERUN_GUIDE=off): the source reads as off. Call before Run.
+func (s *Service) DisableHDHomeRunGuide() { s.hdhrDisabled = true }
+
+// hdhomerunConfigured: the setting is on, the server allows downloads, and at
+// least one tuner is known.
 func (s *Service) hdhomerunConfigured() bool {
+	if s.hdhrDisabled {
+		return false
+	}
 	g, err := s.prov.HDHomeRunGuide()
 	if err != nil || !g.Enabled {
 		return false
@@ -58,7 +72,7 @@ func (s *Service) hdhomerunConfigured() bool {
 }
 
 func (s *Service) superviseHDHomeRun(ctx context.Context) {
-	var next time.Time // zero until the first configured tick
+	var next time.Time // in-memory floor, in case the setting can't be saved
 	for {
 		if ctx.Err() != nil {
 			return
@@ -71,31 +85,44 @@ func (s *Service) superviseHDHomeRun(ctx context.Context) {
 			continue
 		}
 		now := s.now()
-		if next.IsZero() {
-			next = s.hdhomerunFirstDue(now)
+		due := s.hdhomerunDue(now)
+		if next.After(due) {
+			due = next
 		}
-		if now.Before(next) {
-			if !s.sleepOrDone(ctx, sourceHDHomeRun, next.Sub(now)) {
+		if now.Before(due) {
+			if !s.sleepOrDone(ctx, sourceHDHomeRun, due.Sub(now)) {
 				return
 			}
 			continue
 		}
 
-		if err := s.refreshHDHomeRun(ctx); err != nil {
+		ran, after, err := s.refreshHDHomeRunIfDue(ctx)
+		switch {
+		case err != nil:
 			log.Printf("epg hdhomerun refresh: %v", err)
-			next = s.now().Add(withJitter(hdhomerunRetry))
-		} else {
+		case ran:
 			if perr := s.store.PrunePrograms(s.now().Add(-24 * time.Hour)); perr != nil {
 				log.Printf("epg prune: %v", perr)
 			}
-			next = s.now().Add(hdhomerunInterval())
+		}
+		if ran {
+			next = after
 		}
 	}
 }
 
-// hdhomerunFirstDue: fetch now unless a restart follows a recent success, in
-// which case wait out the rest of a fresh 20-28 h interval.
-func (s *Service) hdhomerunFirstDue(now time.Time) time.Time {
+// hdhomerunDue is the earliest next download: the saved next attempt, or —
+// with none saved (older versions) — now, unless a recent success asks to
+// wait out the rest of a fresh 20-28 h interval.
+func (s *Service) hdhomerunDue(now time.Time) time.Time {
+	if v, err := s.store.GetSetting(settingHDHomeRunNextAttempt); err == nil && v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			if t.After(now.Add(hdhomerunMaxInterval)) {
+				return now // clock went backwards: don't wait longer than a cycle
+			}
+			return t
+		}
+	}
 	v, err := s.store.GetSetting(settingHDHomeRunLastSuccess)
 	if err != nil || v == "" {
 		return now
@@ -105,6 +132,38 @@ func (s *Service) hdhomerunFirstDue(now time.Time) time.Time {
 		return now
 	}
 	return last.Add(hdhomerunInterval())
+}
+
+// refreshHDHomeRunIfDue downloads the guide unless it isn't due yet (ran is
+// false then), and saves when the next download may happen (next).
+func (s *Service) refreshHDHomeRunIfDue(ctx context.Context) (ran bool, next time.Time, err error) {
+	s.hdhrMu.Lock()
+	defer s.hdhrMu.Unlock()
+	if now := s.now(); now.Before(s.hdhomerunDue(now)) {
+		return false, time.Time{}, nil
+	}
+	err = s.refreshHDHomeRun(ctx)
+	wait := withJitter(hdhomerunRetry)
+	if err == nil || isGuideRefused(err) {
+		wait = hdhomerunInterval()
+	}
+	next = s.now().Add(wait)
+	if perr := s.store.SetSetting(settingHDHomeRunNextAttempt, next.UTC().Format(time.RFC3339)); perr != nil {
+		log.Printf("epg hdhomerun: persist nextAttempt: %v", perr)
+	}
+	return true, next, err
+}
+
+// guideHTTPError is a non-200 answer from SiliconDust's guide API.
+type guideHTTPError struct{ status int }
+
+func (e guideHTTPError) Error() string { return fmt.Sprintf("fetch: HTTP %d", e.status) }
+
+// isGuideRefused: SiliconDust said 403, which it does when a tuner has
+// downloaded the guide too often recently.
+func isGuideRefused(err error) bool {
+	var he guideHTTPError
+	return errors.As(err, &he) && he.status == http.StatusForbidden
 }
 
 func (s *Service) refreshHDHomeRun(ctx context.Context) error {
@@ -201,7 +260,7 @@ func (s *Service) fetchHDHomeRunGuide(ctx context.Context, deviceAuth string) (*
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch: HTTP %d", resp.StatusCode)
+		return nil, guideHTTPError{status: resp.StatusCode}
 	}
 	body, err := maybeGunzip(resp.Body)
 	if err != nil {

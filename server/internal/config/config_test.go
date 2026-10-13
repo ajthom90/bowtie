@@ -74,6 +74,29 @@ func TestMultitrackKillSwitchEnv(t *testing.T) {
 	}
 }
 
+// BOWTIE_HDHOMERUN_GUIDE=off|0|false stops SiliconDust guide downloads (test
+// servers sharing a tuner with production would use up its allowance).
+func TestHDHomeRunGuideKillSwitchEnv(t *testing.T) {
+	for _, v := range []string{"off", "0", "false", "OFF"} {
+		t.Setenv("BOWTIE_HDHOMERUN_GUIDE", v)
+		cfg, err := config.Load(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.DisableHDHomeRunGuide {
+			t.Errorf("BOWTIE_HDHOMERUN_GUIDE=%q: DisableHDHomeRunGuide=false", v)
+		}
+	}
+	t.Setenv("BOWTIE_HDHOMERUN_GUIDE", "")
+	cfg, err := config.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DisableHDHomeRunGuide {
+		t.Error("unset: DisableHDHomeRunGuide=true")
+	}
+}
+
 func TestRecordingsDirAndMinFree(t *testing.T) {
 	dir := t.TempDir()
 	cfg, err := config.Load(dir)

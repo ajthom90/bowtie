@@ -9,6 +9,8 @@ struct ChannelRailView: View {
     @Bindable var appModel: AppModel
     @Bindable var playerModel: PlayerModel
 
+    @FocusState private var focusedGuideRow: String?
+    @State private var refocusGuideRow: String?
     @State private var listModel: ChannelListModel?
     @State private var playingChannel: Channel?
     @State private var showSettings = false
@@ -21,10 +23,13 @@ struct ChannelRailView: View {
     @State private var recordingsModel: RecordingsModel?
     @State private var activePlayback: ContinuePlayback?
 
+    @Environment(\.scenePhase) private var scenePhase
+
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
 
-    private let refreshInterval: Duration = .seconds(5 * 60)
+    /// Busy tuners re-check; a full reload once the list is 5 minutes old.
+    private let recheckInterval: Duration = .seconds(30)
     private let clockTick: Duration = .seconds(30)
 
     var body: some View {
@@ -139,11 +144,13 @@ struct ChannelRailView: View {
             guard listModel != nil else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: refreshInterval)
+                    try await Task.sleep(for: recheckInterval)
                 } catch {
                     return
                 }
-                await listModel?.refreshIfStale()
+                // Behind the player the list isn't visible.
+                guard playingChannel == nil else { continue }
+                await listModel?.recheckTuners()
             }
         }
         .task {
@@ -154,6 +161,12 @@ struct ChannelRailView: View {
                 } catch {
                     return
                 }
+            }
+        }
+        // Back from the background: tuners may have freed up (or filled).
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await listModel?.recheckTuners() }
             }
         }
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
@@ -295,52 +308,71 @@ struct ChannelRailView: View {
             GuideFilterBar(selection: Bindable(model).filter)
                 .focusSection()
 
-            if visible.isEmpty, model.filter != .all {
+            // Busy channels are left out of the rail (and Recent).
+            if let note = model.tunersBusyNote {
+                TunersBusyNote(text: note)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+            }
+
+            if model.allTunersBusy {
+                Spacer(minLength: 0)
+            } else if visible.isEmpty, model.filter != .all {
                 GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     .frame(maxHeight: .infinity)
                     .focusSection()
             } else {
-                List {
-                    ForEach(visible) { row in
-                        // Once per row: the view and its VoiceOver label read the same answer.
-                        let highlight = model.highlight(for: row, at: now)
-                        Button {
-                            open(channel: row.channel)
-                        } label: {
-                            RailRowView(
-                                row: row,
-                                now: now,
-                                isPlaying: playerModel.currentChannel?.id == row.channel.id,
-                                highlight: highlight
-                            )
-                            .opacity(row.channel.hasNoSignal ? 0.55 : 1)
-                        }
-                        // Default button style → system focus scale / highlight.
-                        // Click-and-hold Select opens the menu.
-                        .contextMenu {
-                            if model.supportsFavorites {
-                                favoriteButton(for: row.channel, model: model)
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(model.guideRows(visible)) { entry in
+                            let row = entry.row
+                            // Once per row: the view and its VoiceOver label read the same answer.
+                            let highlight = model.highlight(for: row, at: now)
+                            Button {
+                                open(channel: row.channel)
+                            } label: {
+                                RailRowView(
+                                    row: row,
+                                    now: now,
+                                    isPlaying: playerModel.currentChannel?.id == row.channel.id,
+                                    highlight: highlight
+                                )
+                                .opacity(row.channel.hasNoSignal ? 0.55 : 1)
                             }
-                            RecordMenuItems(
-                                channel: row.channel,
-                                nowNext: row.nowNext,
-                                flow: recordFlow,
-                                openRecordings: { showRecordings = true }
-                            )
-                        }
-                        .listRowBackground(Theme.bg)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
-                        .accessibilityHint("Play this channel. Press and hold to favorite or record.")
-                        .accessibilityActions {
-                            if model.supportsFavorites {
-                                favoriteButton(for: row.channel, model: model)
+                            .focused($focusedGuideRow, equals: entry.id)
+                            // Default button style → system focus scale / highlight.
+                            // Click-and-hold Select opens the menu.
+                            .contextMenu {
+                                if model.supportsFavorites {
+                                    favoriteButton(for: entry, model: model)
+                                }
+                                RecordMenuItems(
+                                    channel: row.channel,
+                                    nowNext: row.nowNext,
+                                    flow: recordFlow,
+                                    openRecordings: { showRecordings = true }
+                                )
+                            }
+                            .listRowBackground(Theme.bg)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(accessibilityLabel(for: row, highlight: highlight))
+                            .accessibilityHint("Play this channel. Press and hold to favorite or record.")
+                            .accessibilityActions {
+                                if model.supportsFavorites {
+                                    favoriteButton(for: entry, model: model)
+                                }
                             }
                         }
                     }
+                    .listStyle(.plain)
+                    .focusSection()
+                    .onChange(of: model.guideRows(visible).map(\.id)) { _, ids in
+                        guard let target = refocusGuideRow, ids.contains(target) else { return }
+                        proxy.scrollTo(target)
+                        focusedGuideRow = target
+                        refocusGuideRow = nil
+                    }
                 }
-                .listStyle(.plain)
-                .focusSection()
             }
         }
         .bowtieToast(model.actionError ?? continueModel?.actionError) {
@@ -353,8 +385,10 @@ struct ChannelRailView: View {
     }
 
     /// "Favorite" / "Unfavorite" — shared by the context menu and VoiceOver.
-    private func favoriteButton(for channel: Channel, model: ChannelListModel) -> some View {
-        Button {
+    private func favoriteButton(for entry: ChannelListModel.GuideRow, model: ChannelListModel) -> some View {
+        let channel = entry.row.channel
+        return Button {
+            refocusGuideRow = entry.section == "favorites" ? "all:\(channel.id)" : entry.id
             Task { await model.toggleFavorite(channelId: channel.id) }
         } label: {
             if channel.isFavorite {

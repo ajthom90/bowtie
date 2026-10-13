@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, type GuideChannel, type GuideSearchResult } from '../api/client'
+import { viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { formatWhen } from '../recordings/recordingsModel'
 import type { WatchTarget } from './Guide'
@@ -15,6 +16,7 @@ import {
   resultActions,
   searchStatusText,
 } from './searchModel'
+import { isWatchable, watchableOnly } from './watchableModel'
 import styles from './GuideSearch.module.css'
 
 export type SearchSheetRequest = {
@@ -93,7 +95,7 @@ export function GuideSearch({
       (err: unknown) => {
         if (seq !== seqRef.current) return
         setResults(null)
-        setError(err instanceof ApiError && err.message ? err.message : 'Search failed. Try again.')
+        setError(viewerErrorText(err, 'Search failed. Try again.'))
         setLoading(false)
       },
     )
@@ -146,7 +148,7 @@ export function GuideSearch({
           initialConflict: { tunerCount: err.body.tunerCount, conflicts: err.body.conflicts },
         })
       } else {
-        setRowError(err instanceof ApiError && err.message ? err.message : 'Could not schedule the recording.')
+        setRowError(viewerErrorText(err, 'Could not schedule the recording.'))
       }
     } finally {
       setBusyKey(null)
@@ -154,7 +156,11 @@ export function GuideSearch({
   }
 
   const now = new Date()
-  const channelHits = query && channels ? matchChannels(channels, query) : []
+  // Channel hits start a channel straight away: only ones a tuner can take.
+  const channelHits = query && channels ? matchChannels(watchableOnly(channels), query) : []
+  const busyChannels = new Set(
+    (channels ?? []).filter((c) => !isWatchable(c)).map((c) => c.channelId),
+  )
   const status = searchStatusText({
     query,
     loading,
@@ -278,7 +284,7 @@ export function GuideSearch({
                       {r.subtitle ? <span className={styles.itemSub}>{r.subtitle}</span> : null}
                     </button>
                     <div className={styles.itemActions}>
-                      {a.watch ? (
+                      {a.watch && !busyChannels.has(r.channelId) ? (
                         <button
                           type="button"
                           className={`${styles.btn} ${styles.btnPrimary}`}

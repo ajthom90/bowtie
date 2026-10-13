@@ -83,6 +83,7 @@ dependencies {
 
     implementation(project(":core"))
     implementation(libs.okhttp)
+    implementation(libs.zxing.core)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

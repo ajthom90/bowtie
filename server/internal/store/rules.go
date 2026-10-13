@@ -67,6 +67,27 @@ func (s *Store) RuleByID(id int64) (RecordingRule, error) {
 	return RecordingRule{}, sql.ErrNoRows
 }
 
+// UpdateRule changes only the editable settings, preserving the rule's identity.
+func (s *Store) UpdateRule(r RecordingRule) error {
+	res, err := s.db.Exec(`UPDATE recording_rules SET new_only = ?, channel_id = ?, keep_latest = ? WHERE id = ?`, boolToInt(r.NewOnly), r.ChannelID, r.KeepLatest, r.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+// DeleteRuleSchedule removes an obsolete future schedule, unless another action
+// has started, stopped, or skipped it since reconciliation read the row.
+func (s *Store) DeleteRuleSchedule(id, ruleID int64, now time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM recordings WHERE id = ? AND rule_id = ? AND state = ? AND start > ?`,
+		id, ruleID, RecScheduled, formatTime(now))
+	return err
+}
+
 // DeleteRule removes a rule (its recordings stay).
 func (s *Store) DeleteRule(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM recording_rules WHERE id = ?`, id)

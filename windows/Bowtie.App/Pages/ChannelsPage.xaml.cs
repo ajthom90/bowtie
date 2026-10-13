@@ -5,6 +5,8 @@ using BowtieApp.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 
 namespace BowtieApp.Pages;
@@ -80,6 +82,10 @@ public sealed partial class ChannelsPage : Page
 
     private void Render()
     {
+        // Render can run before the page has a XamlRoot (first navigation).
+        var focused = XamlRoot is { } root ? FocusManager.GetFocusedElement(root) as Button : null;
+        var focusedKey = (focused?.DataContext as ChannelItem)?.Key;
+        var focusedAction = focused?.Tag as string;
         var status = _vm.Status;
         LoadingRing.IsActive = status == ChannelListStatus.Loading && _vm.Rows.Count == 0;
         FailedPanel.Visibility = status == ChannelListStatus.Failed ? Visibility.Visible : Visibility.Collapsed;
@@ -97,10 +103,11 @@ public sealed partial class ChannelsPage : Page
         var filter = _vm.Filter;
         SyncFilterBar(filter);
         var visible = _vm.VisibleRows(_vm.Rows, now);
-        ChannelItem Item(ChannelRow r) =>
-            new(r, _vm.LogoUri(r.Channel.LogoUrl), supported, now, _vm.Highlight(r, now));
-        var favorites = visible.Where(r => r.IsFavorite).Select(Item).ToList();
-        var others = visible.Where(r => !r.IsFavorite).Select(Item).ToList();
+        var guide = _vm.GuideRows(visible);
+        ChannelItem Item(GuideRow entry) =>
+            new(entry, _vm.LogoUri(entry.Row.Channel.LogoUrl), supported, now, _vm.Highlight(entry.Row, now));
+        var favorites = guide.Where(r => r.Section == "favorites").Select(Item).ToList();
+        var others = guide.Where(r => r.Section == "all").Select(Item).ToList();
         var recents = _vm.VisibleRecents.Select(r => new RecentItem(r, _vm.LogoUri(r.LogoUrl))).ToList();
 
         FavoritesList.ItemsSource = favorites;
@@ -117,6 +124,26 @@ public sealed partial class ChannelsPage : Page
         RecentPanel.Visibility = showLists && recents.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         FavoritesHeader.Visibility = showLists && favorites.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         AllHeader.Visibility = showLists && favorites.Count > 0 && others.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (focusedKey != null && GuideRow.RestoreKey(focusedKey, guide) is { } key)
+        {
+            UpdateLayout();
+            var list = key.StartsWith("favorites:", StringComparison.Ordinal) ? FavoritesList : OthersList;
+            var button = FindButton(list, key, focusedAction);
+            button?.Focus(FocusState.Programmatic);
+            if (key != focusedKey) button?.StartBringIntoView();
+        }
+    }
+
+    private static Button? FindButton(DependencyObject parent, string key, string? action)
+    {
+        if (parent is Button button && button.DataContext is ChannelItem item &&
+            item.Key == key && button.Tag as string == action) return button;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            if (FindButton(VisualTreeHelper.GetChild(parent, i), key, action) is { } found) return found;
+        }
+        return null;
     }
 
     private void OnRefreshClick(object sender, RoutedEventArgs e)

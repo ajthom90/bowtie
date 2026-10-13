@@ -1,0 +1,23 @@
+name: splice
+duration: 50s
+timeline:
+  # Ad-insertion timestamp steps; the content itself continues.
+  - {at: 10s, fault: timestamp-jump, by: 1500ms}
+  - {at: 20s, fault: timestamp-jump, by: 2500ms}
+  - {at: 30s, fault: timestamp-jump, by: -2s}
+  - {at: 38s, fault: timestamp-jump, by: 2s}
+expect:
+  xfail: "steps under FFmpeg's 10 s threshold are filled with duplicates (fixed in Task 6)"
+  xfailOn: "timeline excess"
+  minSegmentsAfterFault: 3
+  maxTailGapSeconds: 12
+  noFetchErrors: true
+  sessionSurvives: true
+  sequenceMonotonic: true
+  maxFfmpegRestarts: 0
+  maxTimelineExcessSeconds: 1.5
+  minTimelineExcessSeconds: -1.5
+  # maxAudioHoleMs: 50 returns in Task 6: before the fix the audio has a
+  # hole as long as the timestamp step (part of the known gap).
+  maxAVStartSkewMs: 100
+  pairedAfterEachFault: true

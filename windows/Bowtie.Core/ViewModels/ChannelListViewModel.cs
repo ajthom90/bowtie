@@ -12,6 +12,19 @@ public sealed record ChannelRow(Channel Channel, GuideLogic.NowNext NowNext, IRe
 
 public enum ChannelListStatus { Loading, Loaded, Empty, Failed }
 
+/// <summary>A favorite shortcut and its full-list copy have separate identities.</summary>
+public sealed record GuideRow(ChannelRow Row, string Section)
+{
+    public string Key => $"{Section}:{Row.Id}";
+
+    public static string? RestoreKey(string key, IReadOnlyList<GuideRow> rows)
+    {
+        if (rows.Any(r => r.Key == key)) return key;
+        var allKey = key.Replace("favorites:", "all:");
+        return rows.Any(r => r.Key == allKey) ? allKey : null;
+    }
+}
+
 /// <summary>
 /// Channel list: channels joined with a 4-hour guide window, favorites
 /// first (guide-number order) then the rest in server order, the Recent row,
@@ -149,6 +162,12 @@ public sealed class ChannelListViewModel : ObservableObject
     public IReadOnlyList<ChannelRow> Favorites => Rows.Where(r => r.IsFavorite).ToList();
 
     public IReadOnlyList<ChannelRow> Others => Rows.Where(r => !r.IsFavorite).ToList();
+
+    /// <summary>Favorite shortcuts, then every visible channel in its server position. Rows stays unique for zapping.</summary>
+    public IReadOnlyList<GuideRow> GuideRows(IReadOnlyList<ChannelRow> visible) =>
+        visible.Where(r => r.IsFavorite).Select(r => new GuideRow(r, "favorites"))
+            .Concat(visible.OrderBy(r => (_serverOrder.TryGetValue(r.Id, out var order) ? order : int.MaxValue))
+                .Select(r => new GuideRow(r, "all"))).ToList();
 
     /// <summary>Recently watched channels, newest first; empty when none or unsupported.</summary>
     public IReadOnlyList<RecentChannel> Recents

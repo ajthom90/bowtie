@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,6 +175,10 @@ func (c *Client) Lineups(ctx context.Context) ([]LineupSummary, error) {
 		Lineups []LineupSummary `json:"lineups"`
 	}
 	if err := c.doAuthed(ctx, http.MethodGet, "/lineups", nil, &resp); err != nil {
+		if isNoLineups(err) {
+			// A new account has none yet; that's an empty list, not a failure.
+			return []LineupSummary{}, nil
+		}
 		return nil, err
 	}
 	if resp.Code != 0 {
@@ -205,6 +211,67 @@ func IsAuthError(err error) bool {
 	// responses with a nonzero code (credential / account rejection).
 	msg := err.Error()
 	return strings.Contains(msg, "sd: token: code ")
+}
+
+// Headends searches the lineups available in a postal code (lineups are
+// added to the account with AddLineup). Antenna lineups come first.
+// GET /headends?country=USA&postalcode=56071
+func (c *Client) Headends(ctx context.Context, country, postalCode string) ([]LineupSummary, error) {
+	var resp []struct {
+		Transport string `json:"transport"`
+		Location  string `json:"location"`
+		Lineups   []struct {
+			Name   string `json:"name"`
+			Lineup string `json:"lineup"`
+		} `json:"lineups"`
+	}
+	q := url.Values{"country": {country}, "postalcode": {postalCode}}
+	if err := c.doAuthed(ctx, http.MethodGet, "/headends?"+q.Encode(), nil, &resp); err != nil {
+		return nil, err
+	}
+	out := []LineupSummary{}
+	for _, he := range resp {
+		for _, lu := range he.Lineups {
+			out = append(out, LineupSummary{LineupID: lu.Lineup, Name: lu.Name, Location: he.Location, Transport: he.Transport})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Transport == "Antenna" && out[j].Transport != "Antenna"
+	})
+	return out, nil
+}
+
+// AddLineup adds a lineup to the account (SD allows a few adds a day).
+// PUT /lineups/{lineupID}
+func (c *Client) AddLineup(ctx context.Context, lineupID string) error {
+	var resp apiError
+	if err := c.doAuthed(ctx, http.MethodPut, "/lineups/"+url.PathEscape(lineupID), nil, &resp); err != nil {
+		return err
+	}
+	if resp.Code != 0 {
+		return resp
+	}
+	return nil
+}
+
+// isNoLineups reports whether SD said the account has no lineups added
+// (code 4102 NO_LINEUPS) — the normal state of a brand-new account.
+func isNoLineups(err error) bool {
+	var ae apiError
+	return errors.As(err, &ae) && (ae.Code == 4102 || strings.EqualFold(ae.Response, "NO_LINEUPS"))
+}
+
+// APIMessage returns SD's own description when SD answered with an error
+// (as opposed to a transport failure, where ok is false).
+func APIMessage(err error) (msg string, ok bool) {
+	var ae apiError
+	if !errors.As(err, &ae) {
+		return "", false
+	}
+	if ae.Message == "" {
+		return fmt.Sprintf("error code %d", ae.Code), true
+	}
+	return fmt.Sprintf("%s (code %d)", ae.Message, ae.Code), true
 }
 
 // Schedules fetches schedule data for the given stations and dates.

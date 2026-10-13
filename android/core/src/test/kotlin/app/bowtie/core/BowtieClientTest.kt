@@ -196,6 +196,38 @@ class BowtieClientTest {
         assertTrue("cancel took ${tookMs}ms; the request kept running", tookMs < 1_000)
     }
 
+    /**
+     * The server answers createSession only once the stream is ready, which
+     * can take ~50 s. createSession must outwait the client's usual read
+     * timeout (OkHttp's default is 10 s), or a slow start reads as "can't
+     * reach". Here the usual timeout is 1 s and the start takes 2 s.
+     */
+    @Test
+    fun createSessionOutwaitsTheUsualReadTimeout() = runBlocking {
+        server.enqueue(MockResponse().setBody(tokenPairJson()))
+        server.enqueue(
+            MockResponse()
+                .setBody("""{"viewerId":"v1","playlistUrl":"/api/v1/stream/v1/index.m3u8?token=t"}""")
+                .setHeadersDelay(2, TimeUnit.SECONDS),
+        )
+        server.enqueue(MockResponse().setBody("[]").setHeadersDelay(2, TimeUnit.SECONDS))
+        val c = client(OkHttpClient.Builder().readTimeout(1, TimeUnit.SECONDS).build())
+        c.login("alice", "secret")
+        val caps = ClientCaps(listOf("h264"), listOf("aac"), maxHeight = 0, profile = "")
+
+        val created = c.createSession(channelId = 7L, caps = caps)
+        assertEquals("v1", created.viewerId)
+
+        // Other requests keep the usual timeout: no answer → can't reach.
+        try {
+            c.channels()
+            fail("expected a timeout")
+        } catch (e: BowtieError.Network) {
+            assertEquals(ViewerErrors.CANT_REACH_SERVER, ViewerErrors.message(e))
+        }
+        assertTrue(BowtieClient.SESSION_START_TIMEOUT_SECONDS > 5 + 12 + 3 + 15 + 15)
+    }
+
     // ── single-flight refresh ───────────────────────────────────────────────
 
     @Test

@@ -38,7 +38,8 @@ struct MacMainView: View {
     /// Spec-mandated empty copy (verbatim).
     static let emptyCopy = "No channels yet. Ask your admin to enable some."
 
-    private let refreshInterval: Duration = .seconds(5 * 60)
+    /// Busy tuners re-check; a full reload once the list is 5 minutes old.
+    private let recheckInterval: Duration = .seconds(30)
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -53,16 +54,17 @@ struct MacMainView: View {
             await ensureListModel()
             await listModel?.load()
         }
-        // Auto-refresh every 5 minutes while signed in.
+        // Every 30 s while signed in: which channels can start now (and a
+        // full reload every 5 minutes).
         .task(id: listModel != nil) {
             guard listModel != nil else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: refreshInterval)
+                    try await Task.sleep(for: recheckInterval)
                 } catch {
                     return
                 }
-                await listModel?.refreshIfStale()
+                await listModel?.recheckTuners()
             }
         }
         .onAppear {
@@ -78,7 +80,7 @@ struct MacMainView: View {
             activeRecording = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await listModel?.refreshIfStale() }
+            Task { await listModel?.recheckTuners() }
         }
         // Player create-session 404 → reload channel list (disabled/unknown channel).
         .onChange(of: playerModel.channelsStaleGeneration) { _, _ in
@@ -90,6 +92,11 @@ struct MacMainView: View {
         }
         .onChange(of: selection) { old, new in
             selectionChanged(from: old, to: new)
+        }
+        // SharePlay: joining a group (or the group changing channel) shows
+        // that channel's player, whatever the sidebar had selected.
+        .onChange(of: groupChannelKey) { _, _ in
+            showGroupChannel()
         }
         // PiP ended after the live view was left (e.g. for Recordings).
         .onChange(of: bridge.pipDidEndAndShouldStop) { _, shouldStop in
@@ -206,31 +213,38 @@ struct MacMainView: View {
                 Section {
                     GuideFilterBar(selection: Bindable(model).filter)
                         .listRowInsets(EdgeInsets())
+                    // Busy channels are left out of the sidebar (and Recent).
+                    if let note = model.tunersBusyNote {
+                        TunersBusyNote(text: note)
+                    }
                 }
             }
 
             // The selected channel stays listed (dimmed) under a filter it
             // doesn't match: dropping its row would clear the selection and stop playback.
             let shown = model.filteredRows(at: now, keeping: keptChannelID)
-            let favorites = shown.rows.filter { $0.channel.isFavorite }
+            let guide = model.guideRows(shown.rows)
+            let favorites = guide.filter { $0.section == "favorites" }
             if !favorites.isEmpty {
                 Section("Favorites") {
-                    ForEach(favorites) { row in
+                    ForEach(favorites) { entry in
+                        let row = entry.row
                         rowWithMenu(row, section: .favorites, model: model, dimmed: row.id == shown.keptId)
                     }
                 }
             }
 
-            Section("Channels") {
+            Section(model.supportsFavorites ? "All channels" : "Channels") {
                 if case .empty = model.state {
                     Text(Self.emptyCopy)
                         .font(Theme.body(13))
                         .foregroundStyle(Theme.dim)
                 } else {
-                    ForEach(shown.rows.filter { !$0.channel.isFavorite }) { row in
+                    ForEach(guide.filter { $0.section == "all" }) { entry in
+                        let row = entry.row
                         rowWithMenu(row, section: .all, model: model, dimmed: row.id == shown.keptId)
                     }
-                    if shown.hasNoMatches, model.filter != .all, case .loaded = model.state {
+                    if shown.hasNoMatches, model.filter != .all, !model.allTunersBusy, case .loaded = model.state {
                         GuideFilterEmptyView(filter: model.filter) { model.filter = .all }
                     }
                 }
@@ -316,6 +330,9 @@ struct MacMainView: View {
             .contextMenu {
                 if model.supportsFavorites {
                     Button {
+                        if row.channel.isFavorite, selection == .channel(row.id, .favorites) {
+                            selection = .channel(row.id, .all)
+                        }
                         Task { await model.toggleFavorite(channelId: row.channel.id) }
                     } label: {
                         if row.channel.isFavorite {
@@ -459,6 +476,19 @@ struct MacMainView: View {
         return false
     }
 
+    /// The channel a SharePlay group is on (changes when joining or zapping).
+    private var groupChannelKey: Int64? {
+        playerModel.groupRole == nil ? nil : playerModel.currentChannel?.id
+    }
+
+    private func showGroupChannel() {
+        guard let id = groupChannelKey else { return }
+        if case .channel(let selected, _) = selection, selected == id { return }
+        // The player is already starting this channel, so selecting it
+        // doesn't start another session (see selectionChanged).
+        selection = .channel(id, .all)
+    }
+
     private func selectionChanged(from old: SidebarItem?, to new: SidebarItem?) {
         if old == .recordings, new != .recordings {
             activeRecording?.finish()
@@ -492,7 +522,7 @@ struct MacMainView: View {
         return playerModel.currentChannel?.id
     }
 
-    /// Next / previous in the sidebar's order (favorites, then the rest), wrapping.
+    /// Next / previous in unique zap order (favorites, then non-favorites), wrapping.
     /// Under a category filter it steps through the channels the sidebar shows.
     private func stepChannel(by delta: Int) {
         guard let model = listModel else { return }

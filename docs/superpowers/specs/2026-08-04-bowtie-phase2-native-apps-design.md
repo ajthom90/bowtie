@@ -84,7 +84,8 @@ trailing slash.
 - Error mapping (from the actual API shapes): **503** `TunersBusyError` →
   "All tuners are in use" + the `sessions[]` list rendered as "who's
   watching" + retry; **422** (negotiation) → "This device can't play this
-  channel at that quality" + fall back to Auto; **404** (unknown/disabled
+  channel at that quality" + fall back to Auto (since 0.22.0 the apps say
+  "This channel can't play on this device." — plain-words error copy); **404** (unknown/disabled
   channel) → refresh channel list and inform; **mid-play playlist/segment
   403** (expired/killed viewer token) → silently create a fresh session once,
   then surface an error; network loss → player retry with backoff, then error

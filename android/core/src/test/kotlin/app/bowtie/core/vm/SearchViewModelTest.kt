@@ -49,11 +49,13 @@ class SearchViewModelTest {
         locked: Boolean = false,
         rating: String = "TV-PG",
         recording: String? = null,
+        watchable: Boolean? = null,
     ) = """
         {"channelId":5,"guideNumber":"5.1","channelName":"KSTP","logoUrl":"/logo.png",
          "start":"$start","stop":"$stop","title":"Jeopardy!","subtitle":"Teen Tournament",
          "description":"","category":"Game","rating":"$rating","locked":$locked
-         ${if (recording != null) ""","recording":$recording""" else ""}}
+         ${if (recording != null) ""","recording":$recording""" else ""}
+         ${if (watchable != null) ""","watchable":$watchable""" else ""}}
     """.trimIndent()
 
     @Before
@@ -159,6 +161,18 @@ class SearchViewModelTest {
         assertTrue(m.isOnNow(now))
         assertFalse(m.isOnNow(later))
         assertEquals(Channel(id = 5, guideNumber = "5.1", name = "KSTP", logoUrl = "/logo.png"), m.channelFor(now))
+    }
+
+    @Test
+    fun canWatch_onlyWhenOnNowAndTheChannelCanStart() = runBlocking {
+        // Older servers send no watchable: on-now results stay watchable.
+        searchBody = """[${result()},${result(watchable = false)},${result(start = "2026-10-04T01:00:00Z", stop = "2026-10-04T01:30:00Z", watchable = true)}]"""
+        val m = vm()
+        m.search("jeopardy")
+        val (noField, busy, later) = m.loaded().items
+        assertTrue(m.canWatch(noField))
+        assertFalse("busy tuners: no Watch", m.canWatch(busy))
+        assertFalse("not on now: no Watch", m.canWatch(later))
     }
 
     @Test

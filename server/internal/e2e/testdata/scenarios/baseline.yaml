@@ -5,3 +5,12 @@ expect:
   maxGapSeconds: 10
   sessionSurvives: true
   maxFfmpegRestarts: 0
+  maxStartSeconds: 10
+  maxTailGapSeconds: 12
+  maxAudioHoleMs: 50
+  maxStartAVOffsetMs: 100
+  renditionsMonotonic: true
+  discontinuitySequenceOK: true
+  discontinuitiesAligned: true
+  pdtMonotonic: true
+  pdtAligned: true

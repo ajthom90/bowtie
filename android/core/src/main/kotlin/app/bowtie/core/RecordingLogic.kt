@@ -232,7 +232,7 @@ object RecordingLogic {
         is BowtieError.Parental -> e.message
         is BowtieError.NotFound -> "That program isn't in the guide anymore."
         is BowtieError.Server ->
-            if (e.status == 503) "Recording isn't available on this server." else e.message
+            if (e.status == 503) "Recording isn't available on this server." else ViewerErrors.message(e)
         else -> errorMessage(e)
     }
 
@@ -254,11 +254,9 @@ object RecordingLogic {
         is BowtieError.Server -> when (e.status) {
             403 -> "Only the person who scheduled it or an admin can change it."
             503 -> "Recording isn't available on this server."
-            else -> e.message
+            else -> ViewerErrors.message(e)
         }
-        is BowtieError.Network -> "Couldn't reach the server."
-        is BowtieError -> e.message ?: "Something went wrong"
-        else -> e.message ?: "Something went wrong"
+        else -> ViewerErrors.message(e)
     }
 
     private val DAY_NAMES = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

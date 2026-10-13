@@ -91,22 +91,21 @@ namespace bowtie.deviceauth
 
     ' ── helpers ──────────────────────────────────────────────────────────────
 
+    ' The response comes back through ApiTask's assocarray field, which boxes
+    ' its numbers (Type "roInt"), so any numeric type counts.
     function errorCode(resp as dynamic) as integer
-        if resp = invalid or resp.error = invalid then return 0
+        if resp = invalid then return 0
+        if resp.error = invalid then return 0
         code = resp.error.code
         if code = invalid then return 0
-        t = Type(code)
-        if t = "Integer" or t = "roInteger" then return code
-        if t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" then return Int(code)
-        return 0
+        if not bowtie.client.isNumber(code) then return 0
+        return Int(code)
     end function
 
     function positive(v as dynamic, fallback as integer) as integer
         if v = invalid then return fallback
-        t = Type(v)
-        if t = "Integer" or t = "roInteger" or t = "LongInteger" or t = "roLongInteger" or t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble"
-            if v >= 1 then return Int(v)
-        end if
+        if not bowtie.client.isNumber(v) then return fallback
+        if v >= 1 then return Int(v)
         return fallback
     end function
 

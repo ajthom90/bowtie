@@ -8,6 +8,8 @@ import app.bowtie.core.BowtieError
 import app.bowtie.core.Channel
 import app.bowtie.core.ClientCaps
 import app.bowtie.core.CreatedSession
+import app.bowtie.core.SignalReading
+import app.bowtie.core.ViewerErrors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -31,6 +33,9 @@ import kotlinx.coroutines.launch
  * - Zap / quality: cancel in-flight → DELETE old → debounce → POST new.
  * - Heartbeats (spec C / A6): 15s while session is open (Playing OR Stalled);
  *   stream-token auth; stop only on real leave.
+ * - Slow start: after [SLOW_START_MS] still [State.Starting], [slowStart] turns
+ *   true and the player shows [SLOW_START_NOTE] instead of "Starting…". Every
+ *   zap / new start resets it.
  */
 class PlayerViewModel(
     private val client: BowtieClient,
@@ -62,13 +67,22 @@ class PlayerViewModel(
 
         /** Surface after a second mid-play 403 without a successful silent replace. */
         const val PLAYBACK_AUTH_FAILED_MESSAGE =
-            "Playback authorization failed"
+            ViewerErrors.STREAM_STOPPED
 
         const val CHANNEL_NOT_FOUND_MESSAGE = "Channel not found"
 
         /** Out-of-window clamp notice (spec B) — exact copy. */
         const val OUT_OF_WINDOW_NOTICE =
             "Jumped to live — paused longer than the buffer"
+
+        /** Shown instead of "Starting…" once a start has taken [SLOW_START_MS]. */
+        const val SLOW_START_NOTE =
+            "Still starting — the stream is buffering. This can take a little while."
+
+        const val SLOW_START_MS = 5_000L
+
+        /** The spinner's text while [State.Starting]. */
+        fun startingText(slow: Boolean): String = if (slow) SLOW_START_NOTE else "Starting…"
 
         /** Client heartbeat interval (spec C). */
         const val HEARTBEAT_INTERVAL_MS = 15_000L
@@ -113,10 +127,35 @@ class PlayerViewModel(
     private val _channelsStale = MutableStateFlow(false)
     val channelsStale: StateFlow<Boolean> = _channelsStale.asStateFlow()
 
+    private val _signal = MutableStateFlow<SignalReading?>(null)
+
+    /**
+     * Antenna reception from the latest heartbeat; null when unknown (older
+     * server, no reading yet, a failed beat). Cleared on zap and leave.
+     */
+    val signal: StateFlow<SignalReading?> = _signal.asStateFlow()
+
+    private val _weakSignal = MutableStateFlow(false)
+
+    /**
+     * The latest heartbeat says the picture may break up. The server already
+     * needs two bad readings in a row, so this follows each beat as-is.
+     */
+    val weakSignal: StateFlow<Boolean> = _weakSignal.asStateFlow()
+
+    private val _slowStart = MutableStateFlow(false)
+
+    /**
+     * The current start has been [State.Starting] for [SLOW_START_MS]: show
+     * [SLOW_START_NOTE]. Only meaningful while the state is Starting.
+     */
+    val slowStart: StateFlow<Boolean> = _slowStart.asStateFlow()
+
     /** `""` = Auto. */
     var selectedProfile: String = ""
 
     private var replaceJob: Job? = null
+    private var slowStartJob: Job? = null
     private var heartbeatJob: Job? = null
     private var activeViewerId: String? = null
     /** Last successfully created session — used to recover from [State.Stalled]. */
@@ -151,6 +190,7 @@ class PlayerViewModel(
     fun stop() {
         replaceJob?.cancel()
         replaceJob = null
+        resetSlowStart()
         stopHeartbeat()
         generation++
 
@@ -218,11 +258,24 @@ class PlayerViewModel(
 
     private fun scheduleReplace() {
         replaceJob?.cancel()
+        // The old session's beats (and its signal reading) end now, not after the DELETE.
+        stopHeartbeat()
         generation++
         val gen = generation
+        resetSlowStart()
+        slowStartJob = workScope.launch {
+            delay(SLOW_START_MS)
+            if (isCurrent(gen) && _state.value is State.Starting) _slowStart.value = true
+        }
         replaceJob = workScope.launch {
             performReplace(gen)
         }
+    }
+
+    private fun resetSlowStart() {
+        slowStartJob?.cancel()
+        slowStartJob = null
+        _slowStart.value = false
     }
 
     private suspend fun performReplace(gen: Long) {
@@ -265,6 +318,7 @@ class PlayerViewModel(
             lastSession = session
             _channelsStale.value = false
             _state.value = State.Playing(session)
+            resetSlowStart()
             startHeartbeat(viewerId = session.viewerId, playlistUrl = session.playlistUrl)
         } catch (e: CancellationException) {
             throw e
@@ -273,7 +327,8 @@ class PlayerViewModel(
             handleCreateError(e, channel, gen, isRetry)
         } catch (e: Exception) {
             if (!isCurrent(gen)) return
-            _state.value = State.Failed(e.message ?: e.toString())
+            // e.g. an undecodable response: plain words; the cause goes to the log.
+            _state.value = State.Failed(ViewerErrors.message(e))
         }
     }
 
@@ -293,13 +348,16 @@ class PlayerViewModel(
                 // A6: continue while this viewer is still active (Playing or Stalled).
                 if (activeViewerId != viewerId) return@launch
                 try {
-                    client.heartbeat(viewerId, token)
+                    val reading = client.heartbeat(viewerId, token)
+                    // A zap or leave during the beat: its reading is for the old channel.
+                    if (activeViewerId == viewerId) setSignal(reading)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: BowtieError.Parental) {
                     // Parental controls stopped this viewer (the program changed): say why.
                     if (activeViewerId != viewerId) return@launch
                     activeViewerId = null
+                    setSignal(null)
                     _state.value = State.Failed(e.message)
                     return@launch
                 } catch (_: Exception) {
@@ -309,12 +367,20 @@ class PlayerViewModel(
         }
     }
 
+    /** Ends the beat loop; its reading no longer describes what's playing. */
     private fun stopHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        setSignal(null)
+    }
+
+    private fun setSignal(reading: SignalReading?) {
+        _signal.value = reading
+        _weakSignal.value = reading?.weak == true
     }
 
     override fun onCleared() {
+        resetSlowStart()
         stopHeartbeat()
         replaceJob?.cancel()
         super.onCleared()
@@ -347,19 +413,14 @@ class PlayerViewModel(
                 _state.value = State.Failed(CHANNEL_NOT_FOUND_MESSAGE)
             }
             is BowtieError.Unauthorized -> {
-                _state.value = State.Failed("Signed out")
+                _state.value = State.Failed(ViewerErrors.SESSION_ENDED)
             }
-            is BowtieError.Server -> {
-                _state.value = State.Failed(error.message)
-            }
-            is BowtieError.RecordingConflict -> {
-                // Only POST /recordings returns this; listed for exhaustiveness.
-                _state.value = State.Failed(error.message)
-            }
-            is BowtieError.Network -> {
-                _state.value = State.Failed(
-                    error.cause2.message ?: error.cause2.toString(),
-                )
+            is BowtieError.Server,
+            is BowtieError.RecordingConflict, // Only POST /recordings returns this; listed for exhaustiveness.
+            is BowtieError.Network,
+            -> {
+                // The server's own message as-is; otherwise plain words (cause logged).
+                _state.value = State.Failed(ViewerErrors.message(error))
             }
         }
     }

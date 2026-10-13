@@ -83,14 +83,18 @@ in the app first).
   stopped; right-click (or Shift+F10) → **Remove from Continue watching**
   starts it over next time.
 - **Live TV**: favorites first, then every channel; **Recent** shows what you
-  watched lately. Click ☆ to star a channel. F5 refreshes. **All · Sports ·
+  watched lately. Favorites also stay in their normal place under **All
+  channels**. Click ☆ to star a channel. F5 refreshes. **All · Sports ·
   Movies · News · Kids · New** filter by what's on in the next four hours:
   channels with nothing matching are hidden, lines outside the filter dim,
   and a later match shows as "Later: …". The choice is remembered on this PC.
 - **Player**: the system controls play/pause, show the seek bar and volume.
   - ← / → skip 30 seconds; the pause/rewind buffer is set by your server
     admin (15 minutes by default). **Go Live** (or End) jumps back to live.
-  - Page Up / Page Down change channel (in the list's order).
+  - Page Up / Page Down change channel (favorites first, each channel once).
+  - After five seconds of **Starting…**, a note explains that the stream is
+    still buffering. It clears when the server has the stream ready; starts
+    wait up to 60 seconds for the server to answer.
   - **Quality** caps the stream (Auto, or Original/High/Medium/Low as your
     account allows); audio and captions menus appear when the broadcast has
     choices.
@@ -101,11 +105,16 @@ in the app first).
   - In recordings, **Skip ad** (or S) appears during a detected commercial
     break. Turn on **Skip ads automatically** in the account menu to skip each
     break once.
-- **Recordings**: Upcoming / Recorded / Missed. Play asks whether to resume
+- **Recordings**: Upcoming / Recorded / Missed / Shows. Play asks whether to resume
   where you stopped; your position is saved every 15 seconds. Keep protects a
   recording from automatic cleanup; Delete removes it for everyone. A
   recording blocked by parental controls shows 🔒 and its rating and can't
   be played.
+  - **Shows → Edit** changes new or all episodes, the channel, and how many
+    episodes to keep. It appears when the server supports editing and you
+    can manage the show. Saving updates upcoming recordings and deletes no
+    recorded episodes; the keep limit applies as new episodes finish.
+    Schedule new series using the guide in another Bowtie app.
 
 ## Build
 

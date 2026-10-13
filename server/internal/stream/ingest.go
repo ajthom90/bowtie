@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -102,21 +103,31 @@ func (e *DeviceError) Is(target error) bool {
 type DialFunc func(ctx context.Context, url string) (io.ReadCloser, int, error)
 
 const (
-	ingestChunkSize  = 64 * 1024
-	ingestJoinBufMax = 1 * 1024 * 1024
+	ingestChunkSize = 64 * 1024
+	// ingestJoinBufMax bounds the join buffer (tables + the stream since the
+	// join point): a 19 Mbps MPEG-2 GOP fits.
+	ingestJoinBufMax = 4 << 20
+	// keyScanBytes is how much of each video PES payload is scanned for a
+	// key (SEI before the IDR can be a few hundred bytes).
+	keyScanBytes = 16 * 184
 	// ingestSubQueueMax bounds each transcoder's backlog (≈7s at 19 Mbps);
 	// beyond it the oldest data is dropped instead of cutting FFmpeg off.
 	ingestSubQueueMax = 16 << 20
-	// ingestSubStuckTimeout: a transcoder that takes nothing for this long is
-	// hung and its input is closed so the manager restarts it.
+	// ingestSubStuckTimeout: a transcoder that takes no bytes for this long
+	// while data waits is drained: its backlog is dropped and it gets the
+	// stream headers again.
 	ingestSubStuckTimeout = 30 * time.Second
-	ingestTailDuration    = 5 * time.Second
-	ingestReconnectMin    = 1 * time.Second
-	ingestReconnectMax    = 30 * time.Second
-	ingestGiveUpAfter     = 60 * time.Second
-	tsPacketSize          = 188
-	tsSyncByte            = 0x47
-	tsPIDPAT              = 0
+	// ingestSubKillGrace: a drained transcoder that still takes no bytes for
+	// this long is hung (a wedged encoder); its input is closed and the
+	// manager kills and restarts it.
+	ingestSubKillGrace = 30 * time.Second
+	ingestTailDuration = 5 * time.Second
+	ingestReconnectMin = 1 * time.Second
+	ingestReconnectMax = 30 * time.Second
+	ingestGiveUpAfter  = 60 * time.Second
+	tsPacketSize       = 188
+	tsSyncByte         = 0x47
+	tsPIDPAT           = 0
 )
 
 // Reception states, learned from real tunes (the HDHomeRun reports signal only
@@ -140,6 +151,10 @@ type IngestManager struct {
 	after func(time.Duration) <-chan time.Time
 
 	attachCalls atomic.Int64
+
+	// chunkAck, if set, runs after each device chunk has been fanned out.
+	// Tests wait on it before advancing a fake clock. Nil outside tests.
+	chunkAck atomic.Pointer[func()]
 
 	mu       sync.Mutex
 	channels map[int64]*channelIngest
@@ -301,6 +316,11 @@ type IngestSub struct {
 	// lastDropLog rate-limits the "transcoder behind" log (under channelIngest.mu).
 	lastDropLog time.Time
 
+	// drainedAt is when ingest dropped this stuck sub's backlog (zero: not
+	// drained); writtenAtDrain is the bytes written to its pipe then. Under channelIngest.mu.
+	drainedAt      time.Time
+	writtenAtDrain uint64
+
 	onForceClose atomic.Pointer[func()]
 }
 
@@ -310,6 +330,11 @@ type IngestSub struct {
 func (s *IngestSub) OnForceClose(f func()) {
 	s.onForceClose.Store(&f)
 }
+
+// FreshBytes is how many live source bytes have reached this subscriber's
+// transcoder (Task 10's gate clock). The join snapshot, a reset head and
+// PAT+PMT put back after an overflow are cached copies and don't count.
+func (s *IngestSub) FreshBytes() uint64 { return s.q.freshBytes() }
 
 // forceClose closes the sub on ingest's initiative and runs the owner's hook.
 func (s *IngestSub) forceClose() {
@@ -337,24 +362,59 @@ func (s *IngestSub) isClosed() bool {
 	return s.closed.Load()
 }
 
+// pipeWriteSlice is how much drain hands FFmpeg's pipe at once (whole TS
+// packets): every completed slice counts as progress, so a slow reader of
+// a large join chunk is never mistaken for a stuck one. A reader slower
+// than about one slice per 30s (~2 KiB/s, roughly 1000x slower than real
+// time for broadcast TS) is treated as stuck; it cannot keep up anyway.
+const pipeWriteSlice = 348 * tsPacketSize
+
 func (s *IngestSub) drain(join []byte) {
 	defer func() {
 		_ = s.pw.Close()
 	}()
 	if len(join) > 0 {
-		if _, err := s.pw.Write(join); err != nil {
+		s.q.addInFlight(len(join))
+		if !s.writeChunk(join, true) { // the join snapshot is a cached copy
 			return
 		}
 	}
 	for {
-		chunk, ok := s.q.pop()
+		chunk, cached, ok := s.q.popChunk()
 		if !ok {
 			return
 		}
-		if _, err := s.pw.Write(chunk); err != nil {
+		if !s.writeChunk(chunk, cached) {
 			return
 		}
 	}
+}
+
+// writeChunk writes chunk in slices, recording each as progress. After a
+// reset (drain) it abandons the rest of the chunk at the next slice
+// boundary, so the fresh headers follow at most one slice of old data.
+// False when the pipe is closed.
+func (s *IngestSub) writeChunk(chunk []byte, cached bool) bool {
+	gen := s.q.resetGen()
+	for off := 0; off < len(chunk); {
+		if s.q.resetGen() != gen {
+			s.q.abandon(len(chunk) - off)
+			return true
+		}
+		end := off + pipeWriteSlice
+		if end > len(chunk) {
+			end = len(chunk)
+		}
+		n, err := s.pw.Write(chunk[off:end])
+		if n > 0 {
+			s.q.wroteFrom(n, cached)
+		}
+		if err != nil {
+			return false
+		}
+		off = end
+	}
+	return true
 }
 
 // channelIngest is the per-channel single-flight device stream + fan-out.
@@ -378,11 +438,28 @@ type channelIngest struct {
 	lastPMT []byte
 	// videoPID and sourceHeight come from the PMT and the first MPEG-2
 	// sequence header; sessions size their quality ladder from them.
-	videoPID     uint16
-	sourceHeight int
-	pmtPIDs      map[uint16]struct{}
-	sincePAT     []byte // non-table packets since last PAT
-	tsScrap      []byte // partial packet across chunk boundaries
+	videoPID        uint16
+	videoStreamType byte
+	sourceHeight    int
+	pmtPIDs         map[uint16]struct{}
+	sinceJoin       []byte // since the join point: a complete key if joinValid, else the last PAT
+	joinValid       bool   // sinceJoin starts at a complete video key
+	pesOff          int    // offset in sinceJoin of the current video PES (-1: before the buffer)
+	pesScan         []byte // its first keyScanBytes of elementary stream
+	pesHdr          []byte // PES header bytes until pesHdrDone
+	pesHdrDone      bool   // pesScan holds elementary stream, not header bytes
+	pesDone         bool   // the current PES was classified
+	pesPromoted     bool   // that classification moved the join to this PES
+	videoCC         int    // last video payload continuity counter, -1 if none
+	videoPay        []byte // that packet's payload, for one legal duplicate
+	paramOff        int    // offset of the last PES with an H.264 SPS since the join (-1: none)
+	ppsSeen         bool   // a PPS was seen at or after paramOff
+
+	// onJoinSnapshot, if set, runs at the start of joinSnapshotLocked with
+	// c.mu held (it must not acquire c.mu). Tests count stuck-rule snapshots.
+	// Nil outside tests.
+	onJoinSnapshot func()
+	tsScrap        []byte // partial packet across chunk boundaries
 
 	// tail: after last Close, keep device open this long
 	tailCancel chan struct{}
@@ -398,6 +475,9 @@ func newChannelIngest(im *IngestManager, channelID int64) *channelIngest {
 		channelID: channelID,
 		subs:      make(map[*IngestSub]struct{}),
 		pmtPIDs:   make(map[uint16]struct{}),
+		pesOff:    -1,
+		paramOff:  -1,
+		videoCC:   -1,
 	}
 }
 
@@ -467,14 +547,17 @@ func (c *channelIngest) addSubLocked() *IngestSub {
 }
 
 func (c *channelIngest) joinSnapshotLocked() []byte {
-	n := len(c.lastPAT) + len(c.lastPMT) + len(c.sincePAT)
+	if c.onJoinSnapshot != nil {
+		c.onJoinSnapshot()
+	}
+	n := len(c.lastPAT) + len(c.lastPMT) + len(c.sinceJoin)
 	if n == 0 {
 		return nil
 	}
 	out := make([]byte, 0, n)
 	out = append(out, c.lastPAT...)
 	out = append(out, c.lastPMT...)
-	out = append(out, c.sincePAT...)
+	out = append(out, c.sinceJoin...)
 	return out
 }
 
@@ -748,6 +831,8 @@ func (c *channelIngest) pump() {
 					return
 				}
 				c.body = body
+				// The new stream's PAT must not keep a pre-outage key.
+				c.resetJoinOnReconnectLocked()
 				c.mu.Unlock()
 				// Resume outer read loop; reset failure window on successful dial.
 				failStart = time.Time{}
@@ -786,15 +871,65 @@ func (c *channelIngest) ingestChunk(chunk []byte) {
 			s.lastDropLog = now
 			log.Printf("ingest: channel %d: transcoder behind, dropped %d KiB of old data", c.channelID, n>>10)
 		}
-		if s.q.idleFor(now) >= ingestSubStuckTimeout {
+		if c.checkStuckLocked(s, now) {
 			stuck = append(stuck, s)
 		}
 	}
 	c.mu.Unlock()
 	for _, s := range stuck {
-		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout)
+		log.Printf("ingest: channel %d: transcoder stuck for %v, closing its input", c.channelID, ingestSubStuckTimeout+ingestSubKillGrace)
 		s.forceClose()
 	}
+	c.im.noteChunk()
+}
+
+// setChunkAck installs the per-chunk test hook. Nil clears it.
+func (m *IngestManager) setChunkAck(fn func()) {
+	if fn == nil {
+		m.chunkAck.Store(nil)
+		return
+	}
+	f := fn
+	m.chunkAck.Store(&f)
+}
+
+// noteChunk runs the test hook, if any, after a device chunk is fanned out.
+func (m *IngestManager) noteChunk() {
+	if p := m.chunkAck.Load(); p != nil && *p != nil {
+		(*p)()
+	}
+}
+
+// checkStuckLocked applies the stuck rule to one sub and reports whether its
+// input must be closed. A transcoder that takes no bytes for
+// ingestSubStuckTimeout is drained first: its backlog is replaced by PAT,
+// PMT and the stream since the join point, as after an overflow. It is
+// closed only if no byte reaches it for ingestSubKillGrace after that; one
+// that reads again was just slow and is left alone.
+func (c *channelIngest) checkStuckLocked(s *IngestSub, now time.Time) bool {
+	if !s.drainedAt.IsZero() {
+		if s.q.writtenBytes() != s.writtenAtDrain {
+			log.Printf("ingest: channel %d: transcoder reading again %v after its backlog was dropped",
+				c.channelID, now.Sub(s.drainedAt).Round(time.Second))
+			s.drainedAt = time.Time{}
+			return false
+		}
+		return now.Sub(s.drainedAt) >= ingestSubKillGrace
+	}
+	// Cheap guard: the join snapshot copies up to 4 MiB under c.mu, so it is
+	// built only after this reader has already been idle. beginDrain
+	// re-checks under the queue lock; a write in between does not drain.
+	if s.q.idleFor(now) < ingestSubStuckTimeout {
+		return false
+	}
+	dropped, baseline, idle, drained := s.q.beginDrain(now, ingestSubStuckTimeout, c.joinSnapshotLocked())
+	if !drained {
+		return false
+	}
+	s.drainedAt, s.writtenAtDrain = now, baseline
+	log.Printf("ingest: channel %d: transcoder read nothing for %v; dropped its %d KiB backlog and resent the stream headers",
+		c.channelID, idle.Round(time.Second), dropped>>10)
+	return false
 }
 
 // tablesLocked returns a fresh copy of the current PAT+PMT (nil if unknown).
@@ -832,21 +967,249 @@ func (c *channelIngest) handleTSPacketLocked(pkt []byte) {
 	case pid == tsPIDPAT:
 		c.lastPAT = pkt
 		c.pmtPIDs = parsePATPMTPIDs(pkt)
-		c.sincePAT = c.sincePAT[:0]
+		if !c.joinValid {
+			c.restartJoinOnPATLocked()
+		}
 		c.capJoinLocked()
 	case c.isPMTPID(pid):
 		c.lastPMT = pkt
-		c.videoPID = parsePMT(pkt).VideoPID
-		// Tables are served from lastPAT/lastPMT; do not duplicate into sincePAT.
+		info := parsePMT(pkt)
+		if info.VideoPID != c.videoPID || info.VideoStreamType != c.videoStreamType {
+			c.videoPID, c.videoStreamType = info.VideoPID, info.VideoStreamType
+			// Old PID's parameter sets and open PES must not validate the new one.
+			c.restartJoinLocked()
+		}
+		// Tables are served from lastPAT/lastPMT; do not duplicate into sinceJoin.
 		c.capJoinLocked()
 	default:
-		if c.sourceHeight == 0 && c.videoPID != 0 && pid == c.videoPID {
-			// A header split across packets only delays detection.
-			c.sourceHeight = sequenceHeaderHeight(pkt[4:])
+		if c.videoPID != 0 && pid == c.videoPID {
+			if c.sourceHeight == 0 {
+				// A header split across packets only delays detection.
+				c.sourceHeight = sequenceHeaderHeight(pkt[4:])
+			}
+			c.videoPacketLocked(pkt)
+		} else {
+			c.sinceJoin = append(c.sinceJoin, pkt...)
 		}
-		c.sincePAT = append(c.sincePAT, pkt...)
 		c.capJoinLocked()
 	}
+}
+
+// restartJoinOnPATLocked restarts the since-PAT buffer. A PAT that arrives
+// while a candidate PES is still unclassified keeps that PES and, when an
+// earlier PES holds its parameter sets, keeps from there too.
+func (c *channelIngest) restartJoinOnPATLocked() {
+	if !c.pesDone && c.pesOff >= 0 {
+		off := c.pesOff
+		if c.paramOff >= 0 && c.paramOff < off {
+			off = c.paramOff
+		}
+		if off > 0 {
+			c.sinceJoin = c.sinceJoin[off:]
+			c.pesOff -= off
+			if c.paramOff >= 0 {
+				c.paramOff -= off
+			}
+		}
+		c.joinValid = false
+		return
+	}
+	c.restartJoinLocked()
+}
+
+// restartJoinLocked empties the buffer (today's join: since the last PAT).
+func (c *channelIngest) restartJoinLocked() {
+	c.sinceJoin = c.sinceJoin[:0]
+	c.pesOff, c.paramOff, c.ppsSeen = -1, -1, false
+	// Keep the backing arrays. A nil slice would be reallocated on the next scan.
+	c.pesScan, c.pesHdr = c.pesScan[:0], c.pesHdr[:0]
+	c.pesHdrDone, c.pesDone, c.pesPromoted = false, false, false
+	c.videoCC, c.videoPay = -1, nil
+	c.joinValid = false
+}
+
+// resetJoinOnReconnectLocked drops a pre-outage key and any partial packet
+// so the new stream's first PAT starts a fresh since-PAT join.
+func (c *channelIngest) resetJoinOnReconnectLocked() {
+	c.restartJoinLocked()
+	c.tsScrap = nil
+}
+
+// keyCodec reports whether joins can start at a video key for this stream.
+func (c *channelIngest) keyCodec() bool {
+	switch c.videoStreamType {
+	case 0x01, 0x02, 0x1B:
+		return true
+	}
+	return false
+}
+
+// videoPacketLocked appends a video packet, scanning each PES (across TS
+// packets) for a key; a complete key moves the join point to it.
+func (c *channelIngest) videoPacketLocked(pkt []byte) {
+	if !c.keyCodec() {
+		c.sinceJoin = append(c.sinceJoin, pkt...)
+		return
+	}
+	afc := (pkt[3] >> 4) & 0x3
+	if afc == 0 || afc == 2 { // no payload: the continuity counter does not increment
+		if tsDiscontinuity(pkt) && pkt[1]&0x40 == 0 {
+			c.damagePESLocked()
+		}
+		c.sinceJoin = append(c.sinceJoin, pkt...)
+		return
+	}
+	payload := tsPayload(pkt)
+	cc := int(pkt[3] & 0x0F)
+	tei := pkt[1]&0x80 != 0
+	disc := tsDiscontinuity(pkt)
+	// One identical copy is legal only when the packet is clean. TEI and a
+	// discontinuity are damage even if the payload repeats.
+	if !tei && !disc && c.videoCC >= 0 && cc == c.videoCC && bytes.Equal(payload, c.videoPay) {
+		return
+	}
+	pusi := pkt[1]&0x40 != 0
+	loss := tei // transport_error_indicator: do not scan
+	if c.videoCC >= 0 && cc != (c.videoCC+1)&0x0F && !disc {
+		loss = true // missing packet: don't splice the two sides together
+	}
+	if disc && !pusi {
+		loss = true // discontinuity mid-PES
+	}
+	c.videoCC = cc
+	c.videoPay = append(c.videoPay[:0], payload...)
+	switch {
+	case pusi && tei:
+		c.damagePESLocked()
+		c.pesOff, c.pesDone = -1, true
+	case pusi && disc:
+		// Splice: the previous PES did not finish, so do not classify it.
+		if !c.pesDone {
+			c.abandonCandidateLocked()
+		}
+		c.startPESLocked(payload)
+	case pusi && loss:
+		c.damagePESLocked()
+		c.startPESLocked(payload)
+	case pusi:
+		c.classifyPESLocked()
+		c.startPESLocked(payload)
+	case loss:
+		c.damagePESLocked()
+	default:
+		c.scanPESLocked(payload)
+	}
+	c.sinceJoin = append(c.sinceJoin, pkt...)
+	if !c.pesDone && len(c.pesScan) >= keyScanBytes {
+		c.classifyPESLocked()
+	}
+}
+
+// startPESLocked begins a candidate PES at the packet about to be appended.
+func (c *channelIngest) startPESLocked(payload []byte) {
+	c.pesOff, c.pesDone, c.pesPromoted = len(c.sinceJoin), false, false
+	c.pesHdrDone = false
+	c.pesHdr = append(c.pesHdr[:0], payload...)
+	c.pesScan = c.pesScan[:0]
+	c.finishPESHeaderLocked()
+}
+
+// scanPESLocked appends elementary stream from a continuation packet.
+func (c *channelIngest) scanPESLocked(payload []byte) {
+	if c.pesDone || c.pesOff < 0 || len(c.pesScan) >= keyScanBytes {
+		return
+	}
+	if c.pesHdrDone {
+		c.pesScan = append(c.pesScan, payload...)
+		return
+	}
+	c.pesHdr = append(c.pesHdr, payload...)
+	c.finishPESHeaderLocked()
+}
+
+// damagePESLocked drops loss inside the current video PES. Only the PES that
+// established the join is invalidated. Damage to any other PES, including one
+// classified early at the scan cap, leaves the previous key in place.
+func (c *channelIngest) damagePESLocked() {
+	if c.pesPromoted {
+		cc := c.videoCC
+		pay := append([]byte(nil), c.videoPay...)
+		c.restartJoinLocked()
+		c.videoCC = cc
+		c.videoPay = pay
+		return
+	}
+	c.abandonCandidateLocked()
+}
+
+// abandonCandidateLocked drops the open PES. It is not classified, and the
+// previous complete key stays the join point.
+func (c *channelIngest) abandonCandidateLocked() {
+	if c.pesDone || c.pesOff < 0 {
+		return
+	}
+	c.pesDone = true
+	c.pesOff = -1
+	c.pesPromoted = false
+	c.pesScan = c.pesScan[:0]
+	c.pesHdr = c.pesHdr[:0]
+	c.pesHdrDone = false
+}
+
+// finishPESHeaderLocked moves elementary-stream bytes out of an assembled
+// PES header into the scan buffer. A header split across packets stays out
+// of the scan until it is complete.
+func (c *channelIngest) finishPESHeaderLocked() {
+	if _, ok := pesHeaderLen(c.pesHdr); !ok {
+		return
+	}
+	c.pesHdrDone = true
+	if es := pesPayload(c.pesHdr); len(es) > 0 {
+		c.pesScan = append(c.pesScan, es...)
+	}
+}
+
+// classifyPESLocked looks at the current PES once and moves the join point
+// when it completes a key.
+func (c *channelIngest) classifyPESLocked() {
+	if c.pesDone || c.pesOff < 0 || !c.keyCodec() {
+		c.pesDone = true
+		return
+	}
+	c.pesDone = true
+	f := scanVideoKey(c.pesScan, c.videoStreamType)
+	switch c.videoStreamType {
+	case 0x01, 0x02:
+		if f.seq {
+			c.joinAtLocked(c.pesOff)
+		}
+	case 0x1B:
+		if f.sps {
+			c.paramOff, c.ppsSeen = c.pesOff, f.pps
+		} else if f.pps && c.paramOff >= 0 {
+			c.ppsSeen = true
+		}
+		switch {
+		case f.idr && f.sps && f.pps:
+			c.joinAtLocked(c.pesOff)
+		case f.idr && c.paramOff >= 0 && c.ppsSeen:
+			c.joinAtLocked(c.paramOff) // keep the parameter sets ahead of the IDR
+		}
+		// An IDR without parameter sets is not a decodable join: keep the old one.
+	}
+}
+
+// joinAtLocked makes sinceJoin start at off (a complete key).
+func (c *channelIngest) joinAtLocked(off int) {
+	c.sinceJoin = append(c.sinceJoin[:0], c.sinceJoin[off:]...)
+	c.pesOff -= off
+	if c.paramOff >= off {
+		c.paramOff -= off
+	} else {
+		c.paramOff, c.ppsSeen = -1, false
+	}
+	c.joinValid = true
+	c.pesPromoted = true
 }
 
 func (c *channelIngest) isPMTPID(pid uint16) bool {
@@ -855,13 +1218,115 @@ func (c *channelIngest) isPMTPID(pid uint16) bool {
 }
 
 func (c *channelIngest) capJoinLocked() {
-	for len(c.lastPAT)+len(c.lastPMT)+len(c.sincePAT) > ingestJoinBufMax && len(c.sincePAT) >= tsPacketSize {
-		c.sincePAT = c.sincePAT[tsPacketSize:]
+	trimmed := 0
+	for len(c.lastPAT)+len(c.lastPMT)+len(c.sinceJoin)-trimmed > ingestJoinBufMax && len(c.sinceJoin)-trimmed >= tsPacketSize {
+		trimmed += tsPacketSize
 	}
-	// If still over (tables alone > 1MB — impossible for single packets), drop since.
-	if len(c.lastPAT)+len(c.lastPMT)+len(c.sincePAT) > ingestJoinBufMax {
-		c.sincePAT = nil
+	if trimmed == 0 {
+		return
 	}
+	// Reslice. Compacting with append copies the whole buffer on every packet
+	// once the cap is reached, which stalls the ingest pump.
+	c.sinceJoin = c.sinceJoin[trimmed:]
+	// The key at the head is gone: not a decodable join any more.
+	c.joinValid = false
+	c.pesPromoted = false
+	c.pesOff -= trimmed
+	if c.pesOff < 0 {
+		c.pesOff, c.pesDone = -1, true
+	}
+	c.paramOff -= trimmed
+	if c.paramOff < 0 {
+		c.paramOff, c.ppsSeen = -1, false
+	}
+}
+
+// tsDiscontinuity reports the adaptation-field discontinuity_indicator.
+func tsDiscontinuity(pkt []byte) bool {
+	afc := (pkt[3] >> 4) & 0x3
+	if (afc != 2 && afc != 3) || len(pkt) < 6 || pkt[4] == 0 {
+		return false
+	}
+	return pkt[5]&0x80 != 0
+}
+
+// tsPayload is the packet's payload after any adaptation field (nil if none).
+func tsPayload(pkt []byte) []byte {
+	if len(pkt) < tsPacketSize {
+		return nil
+	}
+	off := 4
+	switch (pkt[3] >> 4) & 0x3 {
+	case 0, 2:
+		return nil
+	case 3:
+		off += 1 + int(pkt[4])
+	}
+	if off >= len(pkt) {
+		return nil
+	}
+	return pkt[off:]
+}
+
+// pesHeaderLen is the size of a PES header: 6 bytes + 3 + PES_header_data_length.
+// ok is false when the header is split and more bytes are needed. A buffer
+// that is not a PES start is elementary stream (0, true).
+func pesHeaderLen(b []byte) (int, bool) {
+	if len(b) >= 3 && (b[0] != 0 || b[1] != 0 || b[2] != 1) {
+		return 0, true
+	}
+	if len(b) < 9 {
+		return 0, false
+	}
+	n := 9 + int(b[8])
+	if len(b) < n {
+		return 0, false
+	}
+	return n, true
+}
+
+// pesPayload strips a PES header. An incomplete header yields nil so header
+// bytes are never scanned as elementary stream.
+func pesPayload(p []byte) []byte {
+	n, ok := pesHeaderLen(p)
+	if !ok || n > len(p) {
+		return nil
+	}
+	return p[n:]
+}
+
+// nalFlags is what scanVideoKey found in a PES's first bytes.
+type nalFlags struct{ seq, sps, pps, idr bool }
+
+// scanVideoKey finds an MPEG-2 sequence header (stream types 0x01/0x02) or
+// H.264 SPS, PPS and IDR NAL units (0x1B). Other codecs report nothing.
+func scanVideoKey(b []byte, streamType byte) nalFlags {
+	var f nalFlags
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] != 0 || b[i+1] != 0 || b[i+2] != 1 {
+			continue
+		}
+		code := b[i+3]
+		switch streamType {
+		case 0x01, 0x02:
+			if code == 0xB3 {
+				f.seq = true
+			}
+		case 0x1B:
+			if code&0x80 != 0 { // forbidden_zero_bit: not a NAL header
+				break
+			}
+			switch code & 0x1F {
+			case 7:
+				f.sps = true
+			case 8:
+				f.pps = true
+			case 5:
+				f.idr = true
+			}
+		}
+	}
+	return f
 }
 
 func tsPID(pkt []byte) uint16 {

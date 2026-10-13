@@ -51,6 +51,12 @@ type Service struct {
 	after func(time.Duration) <-chan time.Time
 	// hdhrGuideURL overrides SiliconDust's guide endpoint (tests).
 	hdhrGuideURL string
+	// hdhrMu serializes HDHomeRun guide downloads (supervisor and Admin →
+	// Refresh share one schedule).
+	hdhrMu sync.Mutex
+	// hdhrDisabled: this server never downloads the HDHomeRun guide
+	// (BOWTIE_HDHOMERUN_GUIDE=off). Set before Run.
+	hdhrDisabled bool
 
 	waitMu   sync.Mutex
 	lastWait map[string]time.Duration // source name → last computed wait
@@ -105,6 +111,9 @@ type GuideChannel struct {
 	ReceptionCheckedAt *time.Time `json:"receptionCheckedAt,omitempty"`
 	// Favorite is filled by the API layer: the caller starred this channel.
 	Favorite bool `json:"favorite"`
+	// Watchable is filled by the API layer: the channel can start right now
+	// (a free tuner, or Bowtie already streams or records it).
+	Watchable bool `json:"watchable"`
 }
 
 // GuideProgram is a single programme block for the guide grid.
@@ -149,7 +158,9 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 		}
 	}
 	if s.hdhomerunConfigured() {
-		if err := s.refreshHDHomeRun(ctx); err != nil {
+		// Not before its next allowed time: SiliconDust refuses downloads
+		// that come too often.
+		if _, _, err := s.refreshHDHomeRunIfDue(ctx); err != nil {
 			errs = append(errs, "hdhomerun: "+err.Error())
 		}
 	}

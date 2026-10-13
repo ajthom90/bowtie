@@ -1,7 +1,13 @@
 ' THE auth actor: sole HTTP + token holder.
 ' Port-form observeField on request; internal FIFO; reduce-driven refresh.
 ' Action order on refreshOk: persistRefreshToken STRICTLY before retryPending.
+' Queue rules (bowtie.apiqueue): a newer createSession replaces a waiting one;
+' deleteSession goes ahead of a waiting createSession. While a request is in
+' flight the task keeps reading its port, so a `cancel` (request id) or a
+' newer createSession stops an in-flight createSession at once (AsyncCancel:
+' the server drops that start, no viewer is left behind).
 
+import "pkg:/source/lib/ApiQueue.bs"
 import "pkg:/source/lib/AuthState.bs"
 import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Registry.bs"
@@ -13,6 +19,9 @@ end sub
 sub taskRun()
     m.port = CreateObject("roMessagePort")
     m.queue = []
+    m.currentId = ""
+    m.currentKind = ""
+    m.cancelCurrent = false
     m.top.queueDepth = 0
     m.authState = bowtie.auth.initialState()
     m.baseUrl = ""
@@ -29,24 +38,45 @@ sub taskRun()
 
     ' Port-form observe — never render-thread callbacks (A1).
     m.top.observeField("request", m.port)
+    m.top.observeField("cancel", m.port)
     m.top.ready = true
 
     while true
         msg = wait(0, m.port)
-        if type(msg) = "roSGNodeEvent"
-            field = msg.getField()
-            if field = "request"
-                ' The event payload, not m.top.request: back-to-back writes from two
-                ' scenes would otherwise drop the first request (e.g. a DELETE).
-                req = msg.getData()
-                if req <> invalid
-                    m.queue.push(req)
-                    m.top.queueDepth = m.queue.count()
-                end if
-            end if
-        end if
+        onTaskEvent(msg)
         drainQueue()
     end while
+end sub
+
+' A request or cancel written by a scene (also read while a request is in flight).
+sub onTaskEvent(msg as dynamic)
+    if type(msg) <> "roSGNodeEvent" then return
+    field = msg.getField()
+    ' The event payload, not m.top.request: back-to-back writes from two
+    ' scenes would otherwise drop the first request (e.g. a DELETE).
+    data = msg.getData()
+    if field = "request"
+        if data = invalid then return
+        dropped = bowtie.apiqueue.add(m.queue, data)
+        m.top.queueDepth = m.queue.count()
+        for each item in dropped
+            emitResponse(bowtie.apiqueue.idOf(item), bowtie.apiqueue.supersededResponse())
+        end for
+        ' A newer channel start makes the one in flight pointless.
+        if bowtie.apiqueue.kindOf(data) = "createSession" and m.currentKind = "createSession"
+            m.cancelCurrent = true
+        end if
+    else if field = "cancel"
+        if data = invalid then return
+        if data = "" then return
+        if data = m.currentId
+            m.cancelCurrent = true
+            return
+        end if
+        removed = bowtie.apiqueue.removeId(m.queue, data)
+        m.top.queueDepth = m.queue.count()
+        if removed <> invalid then emitResponse(data, bowtie.apiqueue.supersededResponse())
+    end if
 end sub
 
 sub drainQueue()
@@ -54,7 +84,13 @@ sub drainQueue()
         item = m.queue[0]
         m.queue.Delete(0)
         m.top.queueDepth = m.queue.count()
+        m.currentId = bowtie.apiqueue.idOf(item)
+        m.currentKind = bowtie.apiqueue.kindOf(item)
+        m.cancelCurrent = false
         handleRequest(item)
+        m.currentId = ""
+        m.currentKind = ""
+        m.cancelCurrent = false
     end while
 end sub
 
@@ -100,6 +136,10 @@ sub handleRequest(item as object)
     end if
 
     result = doHttp(built)
+    if result.cancelled = true
+        emitResponse(id, bowtie.apiqueue.supersededResponse())
+        return
+    end if
     parsed = bowtie.client.parseResponse(kind, result.httpCode, result.body, baseUrl)
 
     ' Login success (password, or an approved quick sign-in) → hold
@@ -239,6 +279,10 @@ sub retryRequest(item as object)
         return
     end if
     result = doHttp(built)
+    if result.cancelled = true
+        emitResponse(item.id, bowtie.apiqueue.supersededResponse())
+        return
+    end if
     parsed = bowtie.client.parseResponse(kind, result.httpCode, result.body, baseUrl)
     emitResponse(item.id, parsed)
 end sub
@@ -366,7 +410,7 @@ sub emitResponse(id as string, parsed as object)
 end sub
 
 ' Synchronous HTTP via roUrlTransfer. Certs on every transfer. Per-request timeout
-' (healthz=2000ms from buildRequest; default 10000ms).
+' (healthz=2000ms, createSession=60000ms from buildRequest; default 10000ms).
 function doHttp(built as object) as object
     empty = { httpCode: 0, body: "" }
     if built = invalid or built.url = invalid or built.url = ""
@@ -382,7 +426,10 @@ function doHttp(built as object) as object
     xfer.RetainBodyOnError(true)
     xfer.EnableEncodings(true)
 
-    httpPort = CreateObject("roMessagePort")
+    ' The task's own port: scene requests and cancels keep arriving while
+    ' this transfer runs (see onTaskEvent).
+    httpPort = m.port
+    if httpPort = invalid then httpPort = CreateObject("roMessagePort")
     xfer.SetMessagePort(httpPort)
 
     headers = built.headers
@@ -399,6 +446,11 @@ function doHttp(built as object) as object
     if built.method <> invalid then method = UCase(built.method)
     body = ""
     if built.body <> invalid then body = built.body
+
+    ' Cancelled while an earlier step (a token refresh) ran: don't start it.
+    if m.cancelCurrent = true and built.cancellable = true
+        return { httpCode: 0, body: "", cancelled: true }
+    end if
 
     sent = false
     if method = "GET"
@@ -419,19 +471,39 @@ function doHttp(built as object) as object
 
     if sent <> true then return empty
 
-    msg = wait(timeoutMs, httpPort)
-    if msg = invalid
-        ' Timed out — cancel best-effort.
-        xfer.AsyncCancel()
-        return { httpCode: 0, body: "", timedOut: true }
-    end if
-
-    if type(msg) <> "roUrlEvent"
-        return empty
-    end if
-
-    return {
-        httpCode: msg.GetResponseCode()
-        body: msg.GetString()
-    }
+    clock = CreateObject("roTimespan")
+    clock.Mark()
+    myId = xfer.GetIdentity()
+    while true
+        remainingMs = timeoutMs - clock.TotalMilliseconds()
+        if remainingMs <= 0
+            ' Timed out — cancel best-effort.
+            xfer.AsyncCancel()
+            return { httpCode: 0, body: "", timedOut: true }
+        end if
+        msg = wait(remainingMs, httpPort)
+        if msg = invalid
+            xfer.AsyncCancel()
+            return { httpCode: 0, body: "", timedOut: true }
+        end if
+        t = type(msg)
+        if t = "roUrlEvent"
+            ' Events of an earlier, cancelled transfer are ignored.
+            if msg.GetSourceIdentity() = myId
+                return {
+                    httpCode: msg.GetResponseCode()
+                    body: msg.GetString()
+                }
+            end if
+        else
+            onTaskEvent(msg)
+            if m.cancelCurrent = true and built.cancellable = true
+                ' Superseded (zap) or cancelled (Back): hang up, so the
+                ' server drops this start and opens no viewer.
+                xfer.AsyncCancel()
+                return { httpCode: 0, body: "", cancelled: true }
+            end if
+        end if
+    end while
+    return empty
 end function

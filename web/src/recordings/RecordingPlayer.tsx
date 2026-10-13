@@ -1,6 +1,7 @@
 import Hls from 'hls.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, type CommercialBreak, type Recording } from '../api/client'
+import { type CommercialBreak, type Recording } from '../api/client'
+import { CANT_PLAY_HERE, STREAM_STOPPED, viewerErrorText } from '../api/errorText'
 import { useAuth } from '../auth/AuthContext'
 import { canPlayNativeHls } from '../player/caps'
 import { loadTrackPrefs, pickAudioIndex } from '../player/tracksModel'
@@ -62,7 +63,7 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
       await client.redetectCommercials(recording.id)
       setRedetect('queued')
     } catch (err) {
-      setRedetectError(err instanceof Error ? err.message : 'Could not start')
+      setRedetectError(viewerErrorText(err, 'Could not start'))
       setRedetect('error')
     }
   }
@@ -222,12 +223,13 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
         })
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (data.fatal) {
+            console.warn('Playback error:', data.type, data.details, data.error)
             setPhase({
               kind: 'error',
               message:
                 data.type === Hls.ErrorTypes.NETWORK_ERROR
-                  ? 'Playback failed — network error. Try again.'
-                  : 'Playback failed. Try again.',
+                  ? STREAM_STOPPED
+                  : 'The picture stopped playing. Try again.',
             })
           }
         })
@@ -246,7 +248,7 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
           /* autoplay may be blocked; the controls still work */
         })
       } else {
-        setPhase({ kind: 'error', message: 'This browser cannot play HLS video.' })
+        setPhase({ kind: 'error', message: CANT_PLAY_HERE })
       }
     },
     [destroy],
@@ -273,8 +275,7 @@ export function RecordingPlayer({ recording, onBack, autoResume = false }: Props
         if (cancelled) return
         setPhase({
           kind: 'error',
-          message:
-            err instanceof ApiError && err.message ? err.message : 'Could not start playback.',
+          message: viewerErrorText(err, 'Could not start playback.'),
         })
       })
     return () => {

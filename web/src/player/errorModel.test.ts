@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
+import { CANT_REACH_SERVER } from '../api/errorText'
 import { isParentalBlock, startErrorFrom } from './errorModel'
 
 const parental = () =>
@@ -43,11 +44,28 @@ describe('startErrorFrom', () => {
   })
 
   it('uses the server message for other API errors', () => {
-    expect(startErrorFrom(new ApiError(502, 'no signal on this channel'))).toEqual({
-      message: 'no signal on this channel',
+    const noSignal =
+      "This channel isn't coming in right now — your antenna isn't getting a picture from it. Try again later or pick another channel."
+    expect(startErrorFrom(new ApiError(502, noSignal))).toEqual({
+      message: noSignal,
       tunerBusy: false,
       retry: true,
     })
+  })
+
+  it("says the server can't be reached when the network fails", () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(startErrorFrom(new TypeError('Failed to fetch')).message).toBe(CANT_REACH_SERVER)
+    // A proxy's 503 page is not the server's tuners-busy answer.
+    const proxy = startErrorFrom(new ApiError(503, 'Service Unavailable', undefined, true))
+    expect(proxy).toEqual({ message: CANT_REACH_SERVER, tunerBusy: false, retry: true })
+  })
+
+  it('hides technical text', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(startErrorFrom(new ApiError(500, 'Internal Server Error', undefined, true)).message).toBe(
+      'Could not start playback.',
+    )
   })
 
   it('falls back for unknown errors', () => {

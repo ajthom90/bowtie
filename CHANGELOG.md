@@ -9,16 +9,289 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Windows: weak signal, busy tuners and plain-words errors.** The player
-  shows "Weak signal (46%) — the picture may break up." next to LIVE when
-  the antenna reception is poor (read on the 15-second heartbeat), and a
-  Signal button shows the latest reading ("Signal quality 46% · strength
-  96% · error-free 0%"). When every
-  tuner is busy, Live TV, Favorites and Recent list only the channels you
-  can join, under a note, and check again every 30 seconds and when the
-  window comes back to the front. Error messages are plain words ("Can't
-  reach your Bowtie server…", "The stream stopped. Try again."); the
-  technical detail goes to the trace log.
+- **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
+  and ARM PCs (Surface Pro X and Copilot+ PCs). Sign in to your server once
+  (it's remembered in the Windows Credential Locker), then watch live TV
+  with favorites (shown at the top and in their normal place) and a Recent
+  row, pause and rewind live TV (← and → skip 30 seconds), jump back with
+  **Go Live**, pick quality, audio and captions, change channels with Page
+  Up/Page Down, and go full screen with F11 or a double-click. **Recordings**
+  play with resume and can be kept, stopped or deleted, with **Skip ad**
+  over detected commercial breaks (and **Skip ads automatically** in the
+  account menu). A **sleep timer**, the **All · Sports · Movies · News · Kids
+  · New** guide filters and **Continue watching** work like the other apps,
+  and so do weak-signal notes, busy-tuner channel lists and plain-words
+  errors. Slow starts show a note after five seconds and wait up to 60
+  seconds for the server. **Recordings → Shows → Edit** changes an existing
+  series recording's episodes, channel and keep limit on supported servers.
+  Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
+  before installing) plus zips that run without installing; see
+  `windows/README.md`.
+
+## [0.25.0] — 2026-10-13
+
+### Added
+
+- **Edit a series recording without starting over.** In Recordings → Shows,
+  Edit changes new or all episodes, the channel, and how many to keep, on
+  web, Apple, Android, Android TV and Roku. Upcoming recordings update right
+  away; recordings in progress or finished stay as they are. A lower keep
+  count applies as new episodes finish, so saving never deletes anything.
+
+### Changed
+
+- **Favorites stay in the full channel list.** All clients show favorites at
+  the top and again in their normal place in All channels. Starring either
+  copy updates both; player channel up/down still visits each channel once.
+- **App versions match the release.** TestFlight builds of the Apple apps
+  and the Roku channel now carry the release version (0.25.0) instead of a
+  fixed placeholder.
+
+### Fixed
+
+- **One slow channel no longer holds up the others.** When the disk was
+  slow, Bowtie could stall every live stream while it read one stream's
+  files. It now reads them without blocking the others.
+- **Timestamps in the stream timeline are rounded to the nearest
+  millisecond** instead of cut off.
+
+## [0.24.0] — 2026-10-12
+
+### Fixed
+
+- **Live TV no longer freezes during ads or shows without captions.** While
+  a channel sent no captions, the transcoder could stop reading the video,
+  so the picture froze until captions came back, and after a minute Bowtie
+  restarted the stream. The same thing made some channels slow to start.
+  Live captions are off for now to fix this (see Changed).
+- **Live sound stays in step after a reception glitch.** Missing audio is
+  filled with silence, so it no longer drifts away from the picture. The
+  Dolby Digital (AC-3) track is now re-encoded (384 kb/s) for live TV
+  instead of copied, so its dropouts are filled too.
+- **A slow transcoder is no longer restarted.** When FFmpeg stops reading
+  for 30 seconds, Bowtie first drops its backlog and lets it catch up; it
+  restarts FFmpeg only if it still reads nothing 30 seconds later.
+- **Restarts pick up faster and cleaner.** A restarted transcoder starts at
+  the last full video frame instead of mid-picture.
+- **Players keep their place across a restart.** Every playlist carries
+  Bowtie's own clock (program date-time) and marks a restart at the same
+  moment in every quality and audio track, so players and SharePlay stay
+  in step. A restarted transcoder's output is held back until every quality
+  and audio track has started, so no player sees half a restart; if a track
+  doesn't start within 15 seconds, Bowtie restarts the transcoder again.
+- **Old caption files are cleaned up** after a transcoder restart.
+
+### Changed
+
+- **Live captions are temporarily off.** They come back in a later release,
+  run in their own process so they can't hold up the video.
+
+### Added
+
+- `GET /api/v1/sessions/{viewerId}/timeline` maps the current live window
+  to wall-clock time, for players that can't read program date-time. It
+  needs the signed-in owner's Bearer token; anyone else gets 404.
+
+### Notes for Intel Quick Sync (QSV) servers
+
+After updating, please watch the server log around ad breaks for:
+- `transcoder stuck` (should no longer appear on a healthy encoder);
+- `transcoder read nothing … dropped its … backlog` followed by
+  `transcoder reading again` (a slow moment that recovered — expected);
+- `stream: timeline … gap before` outside real reception problems;
+- `restarting it` or `discarded before it was complete` (a restart
+  that didn't produce every track in time), and `ending the session`
+  (three failed runs in a row: viewers reconnect to a fresh session).
+
+## [0.23.0] — 2026-10-11
+
+### Added
+
+- **TV setup from your phone.** Apple TV, Android TV / Fire TV and Roku
+  show a QR code on the Connect screen. Scan it, type your server address
+  on the phone, and sign in on your server's own page — no typing on the
+  TV. The phone and TV need to be on the same Wi-Fi; typing the address on
+  the TV still works. Apple TV may ask for Local Network access the first
+  time Connect shows.
+- **A slow channel start says so.** On Roku, iPhone, iPad, Apple TV, Mac,
+  Android phone and TV, and the web player and multiview tiles, when a
+  channel is still starting after 5 seconds, "Starting…" changes to "Still
+  starting — the stream is buffering. This can take a little while." Each
+  new channel, quality change or Try again starts the count over, and
+  "Reconnecting…" stays as it is. On Roku and in the web player the
+  spinner and note stay up until the first frame plays; in the Apple and
+  Android apps and in multiview tiles they end when the server has the
+  stream ready and the picture starts loading. On Roku, a reconnect's
+  "Reconnecting… (n/3)" now also stays up until the picture is back.
+
+### Changed
+
+- **Android TV / Fire TV sign-in opens on "Sign in with your phone"**, as on
+  Apple TV and Roku, and asks for a code by itself; "Use a password
+  instead" switches to the username and password form.
+
+### Fixed
+
+- **A slow start no longer reads as "Can't reach your Bowtie server".**
+  Roku and Android gave up on starting a channel after 10 seconds, while
+  the server can take up to about 50 (tuning, then the first segment).
+  They now wait up to 60 seconds, like the Apple apps; a server that
+  doesn't answer at all still shows "Can't reach".
+- **Roku: changing channel or going back during a slow start no longer
+  waits for it.** The old start is hung up at once, so the server drops it
+  instead of opening a viewer that held a tuner and counted against the
+  account's stream limit ("already watching") while the next channel
+  started.
+- **Roku: a server that refuses the connection or can't be found** now
+  shows "Can't reach your Bowtie server. Check your connection and try
+  again." instead of "Playback failed".
+
+## [0.22.1] — 2026-10-06
+
+### Fixed
+
+- **Search hides Watch on busy channels.** Guide search results now say
+  whether their channel can start, so the iPhone, iPad, Apple TV, Mac and
+  Android apps only offer Watch on a program that's on now when a tuner
+  can play it. Record and Record series stay available.
+
+## [0.22.0] — 2026-10-06
+
+### Added
+
+- **Apple apps (iPhone, iPad, Apple TV, Mac): weak signal, busy tuners and
+  plain-words errors.** Live TV shows "Weak signal (46%) — the picture may
+  break up." when the antenna reading is poor, and the stats panel shows
+  "Signal quality 46% · strength 96% · error-free 0%". When every tuner is
+  busy, the channel lists show only channels you can join, under "All
+  tuners are in use — showing channels you can join." (or "All tuners are
+  in use. Try again in a few minutes." when none can start), and check
+  again every 30 seconds and when the app comes back. Errors read in plain
+  words ("Can't reach your Bowtie server. Check your connection and try
+  again.") instead of network or decoder text; the detail goes to the log.
+- **Android phone and TV apps: weak signal, busy tuners and plain-words
+  errors.** While a channel's reception is poor, the player shows a small
+  "Weak signal (46%) — the picture may break up." note by the channel name,
+  and the stats overlay shows "Signal quality 46% · strength 96% ·
+  error-free 0%". When every tuner is busy, the channel list (with
+  Favorites and Recent) shows only the channels you can join, with a note
+  that says so, and checks again every 30 seconds so channels come back
+  as soon as a tuner frees up. Error messages are now plain words ("Can't
+  reach your Bowtie server. Check your connection and try again.") instead
+  of exception text, HTTP codes or player error codes; a failed sign-in
+  because the server can't be reached no longer says "Wrong username or
+  password."
+
+## [0.21.0] — 2026-10-06
+
+### Added
+
+- **Server: antenna reception for the players.** While someone watches live
+  TV, the player's heartbeat can ask for the tuner's reception (signal
+  quality, strength and error-free percentage, read from the HDHomeRun and
+  cached for 10 seconds). The server calls it weak only after two bad
+  readings in a row, so a single blip never shows a warning. Older apps are
+  unaffected.
+- **Roku: weak signal, busy tuners and plain-words errors.** The Roku
+  player's top bar shows the antenna reading ("Signal quality 46% · strength
+  96% · error-free 0%"), and when the server says the signal is weak a small
+  note reads "Weak signal (46%) — the picture may break up." (Audio Guide
+  reads it out). When every tuner a channel needs is busy, the channel list,
+  Recent row and Up/Down zapping show only the channels you can join, with
+  "All tuners are in use — showing channels you can join." (or "All tuners
+  are in use. Try again in a few minutes." with Try again when none are
+  left); the list re-checks every 30 seconds so channels come back when a
+  tuner frees up. Error screens no longer show player error codes or raw
+  server pages: they say "Can't reach your Bowtie server…", "The stream
+  stopped. Try again." or the server's own message, and keep the detail in
+  the debug log.
+- **Web: weak-signal note and reception in Stats.** While a live channel's
+  antenna signal is weak, the player shows a small, steady note — "Weak
+  signal (46%) — the picture may break up." — and Stats shows the latest
+  reading ("Signal quality 46% · strength 96% · error-free 0%"). Nothing
+  shows against older servers or for recordings.
+- **Web: all tuners busy.** When every tuner is busy with other channels,
+  the Recent row, channel search and the Multiview picker show only the
+  channels you can join, under "All tuners are in use — showing channels
+  you can join." (or "All tuners are in use. Try again in a few minutes."
+  when none can start). The guide keeps every row for browsing and
+  recording, but dims busy channels and turns off their Watch actions. The
+  guide and an open Multiview picker check again every 30 seconds and when
+  you come back to the tab.
+
+### Changed
+
+- **Web: plain-words errors.** HTTP status text, proxy pages and browser
+  network errors no longer reach viewers: they see "Can't reach your Bowtie
+  server. Check your connection and try again.", "The stream stopped. Try
+  again." or a plain fallback, with the detail in the browser console. The
+  server's own messages are shown as before.
+
+## [0.20.1] — 2026-10-06
+
+### Changed
+
+- **Plain-words errors when a channel won't start.** Instead of messages
+  like "no signal on this channel: ingest dial: device returned HTTP 503:
+  807 No Video Data", everyone now sees what happened and what to do —
+  "This channel isn't coming in right now — your antenna isn't getting a
+  picture from it. Try again later or pick another channel." — in every app.
+  Admins also get the technical cause in parentheses. A device that can't
+  play a channel's format no longer shows the raw codec error to viewers.
+
+## [0.20.0] — 2026-10-05
+
+### Added
+
+- **Notifications: username and password.** Admin → Settings →
+  Notifications has **Username** and **Password or access token** fields
+  for a protected ntfy topic (or any URL behind a login); for an ntfy
+  access token, leave Username empty. The password is never sent back to
+  the page, an empty field keeps the saved one, and **Remove the saved
+  password** clears it. A `user:pass@` already in the URL keeps working
+  and moves into the fields the next time you save, so it's no longer
+  shown in the URL. **Send test** uses what's in the form.
+- **Mac app: SharePlay.** Watch Together works in the Mac app too, with
+  iPhone, iPad, Apple TV or another Mac on a FaceTime call: the SharePlay
+  button in the player's top bar shares the channel, and joining a group
+  opens its channel and follows the sharer's channel changes.
+- **`BOWTIE_HDHOMERUN_GUIDE=off`** stops a server from downloading the free
+  HDHomeRun guide, so a test or second server sharing a tuner doesn't use
+  up the downloads your main server needs.
+
+### Fixed
+
+- **Free HDHomeRun guide never arriving.** SiliconDust limits how often each
+  tuner may download its guide and answers HTTP 403 once that's used up.
+  Bowtie retried every hour, which kept it refused. Now a 403 waits the
+  same 20-28 hours as a successful download, the next allowed time is kept
+  across restarts, and Admin → EPG → Refresh follows the same schedule. The
+  Admin message no longer claims a once-a-day limit.
+- **Channels in number order.** Channel lists, the guide and the IPTV
+  playlist listed channels as text, so 11.1 came before 5.1. They're now in
+  channel-number order (5.1, 5.2, 5.10, 9.1, 11.1) in every app.
+
+## [0.19.2] — 2026-10-05
+
+### Added
+
+- **Find and add your Schedules Direct lineup in Bowtie.** Admin → Settings
+  → Schedules Direct → **Find your lineup**: enter a ZIP or postal code,
+  then **Add** a lineup (antenna lineups are listed first). Bowtie adds it
+  to your Schedules Direct account and picks it; press Save. Bowtie uses
+  Schedules Direct's newer JSON service, whose lineups are managed in the
+  app — the "Add a new lineup" link on the Schedules Direct website is for
+  its older XML service and doesn't apply.
+
+### Fixed
+
+- **Schedules Direct: clear errors instead of "unreachable".** A new
+  account (a trial, say) has no lineups; Load lineups said "schedules
+  direct is unreachable" and now says the account has no lineups yet and
+  points you to Find your lineup. Other Schedules Direct errors (an expired
+  account, for one) show what Schedules Direct said; "unreachable" now
+  means only that the server couldn't reach Schedules Direct, and the
+  server log records the underlying error.
 - **Xbox: weak signal, busy tuners and plain-words errors.** The player
   keeps "Weak signal (46%) — the picture may break up." in the corner while
   the antenna reception is poor (Narrator reads it when it appears), and
@@ -281,19 +554,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   once than you have tuners asks before going ahead. Mark a recording
   **Keep** so it's never deleted to free space. Recordings are stored in
   `/data/recordings` (`BOWTIE_RECORDINGS_DIR`); see the TrueNAS guide.
-- **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
-  and ARM PCs (Surface Pro X and Copilot+ PCs). Sign in to your server once
-  (it's remembered in the Windows Credential Locker), then watch live TV
-  with favorites first and a Recent row, pause and rewind live TV (← and →
-  skip 30 seconds), jump back with **Go Live**, pick quality, audio and
-  captions, change channels with Page Up/Page Down, and go full screen with
-  F11 or a double-click. **Recordings** play with resume and can be kept,
-  stopped or deleted, with **Skip ad** over detected commercial breaks (and
-  **Skip ads automatically** in the account menu). A **sleep timer**, the
-  **All · Sports · Movies · News · Kids · New** guide filters and **Continue
-  watching** work like the other apps. Each release attaches `bowtie-windows.msixbundle` (and
-  the `.cer` to trust before installing) plus zips that run without
-  installing; see `windows/README.md`.
 
 ### Fixed
 

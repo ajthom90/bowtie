@@ -122,6 +122,32 @@ class RecordingsViewModel(
 
     suspend fun stop(r: Recording): Boolean = act { client.stopRecording(r.id) }
 
+    /** Saves settings, then refreshes upcoming recordings and the current tab. */
+    suspend fun updateRule(
+        rule: RecordingRule,
+        newOnly: Boolean,
+        channelId: Long,
+        keepLatest: Int,
+    ): Boolean = act {
+        client.updateRecordingRule(rule.id, newOnly, channelId, keepLatest)
+        client.recordings(Tab.Upcoming)
+    }
+
+    suspend fun ruleChannels(rule: RecordingRule): Map<Long, String> {
+        val channels = mutableMapOf<Long, String>()
+        if (rule.channelId != 0L) channels[rule.channelId] = rule.channelName
+        try {
+            client.recordings(Tab.Upcoming).filter { it.ruleId == rule.id }.forEach {
+                channels[it.channelId] = it.channelName
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Keep the current channel available.
+        }
+        return channels
+    }
+
     /** "Stop recording this show": deletes the rule (its upcoming recordings are cancelled). */
     suspend fun stopShow(rule: RecordingRule): Boolean = act { client.deleteRecordingRule(rule.id) }
 

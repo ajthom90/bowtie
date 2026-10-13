@@ -33,6 +33,12 @@ export interface ViewerChannel {
   receptionCheckedAt?: string
   /** Starred by the caller. Absent on servers older than Favorites/Recents. */
   favorite?: boolean
+  /**
+   * False when every tuner on this channel's HDHomeRun is busy with other
+   * channels and nobody in Bowtie is on this one (starting it would fail).
+   * Absent on older servers: treat as true.
+   */
+  watchable?: boolean
 }
 
 export interface GuideProgram {
@@ -140,6 +146,7 @@ export interface CommercialBreak {
 
 /** A series recording rule (GET/POST /recording-rules). */
 export interface RecordingRule {
+  editable?: boolean
   id: number
   title: string
   seriesId: string
@@ -220,6 +227,8 @@ export interface GuideChannel {
   receptionCheckedAt?: string
   /** Starred by the caller. Absent on servers older than Favorites/Recents. */
   favorite?: boolean
+  /** As ViewerChannel.watchable (absent on older servers: treat as true). */
+  watchable?: boolean
   programs: GuideProgram[]
 }
 
@@ -244,6 +253,32 @@ export interface SessionMeta {
   profile?: string
   backend?: string
   channelName?: string
+}
+
+/** Antenna reception for the channel a viewer is on (heartbeat with signal=1). */
+export interface ReceptionSignal {
+  strength: number
+  quality: number
+  symbolQuality: number
+  /** Show "Weak signal": the server saw two bad readings in a row. */
+  weak: boolean
+}
+
+/** The `signal` of a heartbeat body; null when unknown or not understood. */
+export function parseHeartbeatSignal(body: unknown): ReceptionSignal | null {
+  if (typeof body !== 'object' || body === null) return null
+  const sig = (body as { signal?: unknown }).signal
+  if (typeof sig !== 'object' || sig === null) return null
+  const { strength, quality, symbolQuality, weak } = sig as Record<string, unknown>
+  if (
+    typeof strength !== 'number' ||
+    typeof quality !== 'number' ||
+    typeof symbolQuality !== 'number' ||
+    typeof weak !== 'boolean'
+  ) {
+    return null
+  }
+  return { strength, quality, symbolQuality, weak }
 }
 
 /** POST /api/v1/sessions — session meta may be absent on older servers. */
@@ -619,31 +654,31 @@ export class ApiClient {
   }
 
   /**
-   * POST /api/v1/sessions/{viewerId}/heartbeat with the stream token query param.
+   * POST /api/v1/sessions/{viewerId}/heartbeat?signal=1 with the stream token query param.
    * Prefer token over Bearer so mid-session access-token refresh cannot race the beat.
-   * Best-effort: non-204 responses throw ApiError; callers may ignore.
+   * Resolves with the channel's reception (null when unknown, or an older
+   * server's empty 204). Best-effort: non-2xx responses throw ApiError; callers may ignore.
    */
-  async heartbeat(viewerId: string, streamToken: string): Promise<void> {
-    const q = new URLSearchParams({ token: streamToken })
+  async heartbeat(viewerId: string, streamToken: string): Promise<ReceptionSignal | null> {
+    const q = new URLSearchParams({ token: streamToken, signal: '1' })
     const path = `/api/v1/sessions/${encodeURIComponent(viewerId)}/heartbeat?${q}`
     // No Authorization header — stream token alone authorizes (spec C).
     const res = await fetch(path, { method: 'POST' })
-    if (res.status === 204) {
-      return
-    }
-    let msg = res.statusText
     let body: unknown
     try {
       const text = await res.text()
-      if (text) {
-        const data = JSON.parse(text) as { error?: string }
-        body = data
-        if (data.error) msg = data.error
-      }
+      if (text) body = JSON.parse(text)
     } catch {
       // ignore parse errors
     }
-    throw new ApiError(res.status, msg || 'heartbeat failed', body)
+    if (res.ok) {
+      return parseHeartbeatSignal(body)
+    }
+    const error = (body as { error?: unknown } | undefined)?.error
+    if (typeof error === 'string' && error) {
+      throw new ApiError(res.status, error, body)
+    }
+    throw new ApiError(res.status, res.statusText || 'heartbeat failed', body, true)
   }
 
   // ── DVR ──────────────────────────────────────────────────────────────────
@@ -655,6 +690,14 @@ export class ApiClient {
   /** Records a show from one of its guide programs; schedules upcoming airings now. */
   async createRecordingRule(body: CreateRecordingRuleRequest): Promise<CreateRecordingRuleResponse> {
     return this.request<CreateRecordingRuleResponse>('POST', '/api/v1/recording-rules', body)
+  }
+
+  /** Updates a show and reconciles its upcoming recordings. */
+  async patchRecordingRule(
+    id: number,
+    body: Partial<Pick<RecordingRule, 'newOnly' | 'channelId' | 'keepLatest'>>,
+  ): Promise<RecordingRule> {
+    return this.request<RecordingRule>('PATCH', `/api/v1/recording-rules/${id}`, body)
   }
 
   /** Stops recording a show: upcoming recordings are cancelled, recorded ones stay. */
@@ -748,14 +791,18 @@ export class ApiClient {
   }
 
   /**
-   * Admin: send a test notification to `url`, or to the saved URL when
+   * Admin: send a test notification to `url` (with `username`/`password`; an
+   * empty password uses the saved one), or to the saved destination when
    * omitted. Resolves with the delivery result (ok=false when it failed).
    */
-  async testNotification(url?: string): Promise<NotificationTestResult> {
+  async testNotification(
+    url?: string,
+    creds?: { username: string; password: string },
+  ): Promise<NotificationTestResult> {
     return this.request<NotificationTestResult>(
       'POST',
       '/api/v1/admin/notifications/test',
-      url ? { url } : {},
+      url ? { url, ...(creds ?? {}) } : {},
     )
   }
 
@@ -770,6 +817,17 @@ export class ApiClient {
 
   async getEPGLineups(): Promise<SDLineupSummary[]> {
     return this.request<SDLineupSummary[]>('GET', '/api/v1/admin/epg/lineups')
+  }
+
+  /** Admin: lineups available in a postal code (antenna first). */
+  async searchEPGLineups(country: string, postalCode: string): Promise<SDLineupSummary[]> {
+    const q = new URLSearchParams({ country, postalcode: postalCode })
+    return this.request<SDLineupSummary[]>('GET', `/api/v1/admin/epg/headends?${q}`)
+  }
+
+  /** Admin: add a lineup to the Schedules Direct account. */
+  async addEPGLineup(lineupId: string): Promise<void> {
+    await this.request<void>('POST', '/api/v1/admin/epg/lineups', { lineupId })
   }
 
   async getAdminUsers(): Promise<User[]> {
@@ -841,7 +899,7 @@ export class ApiClient {
       }
       if (res.status === 401 || !ok) {
         this.onAuthFail()
-        throw new ApiError(401, 'unauthorized')
+        throw new ApiError(401, 'unauthorized', undefined, true)
       }
     }
     return res
@@ -898,17 +956,16 @@ export class ApiClient {
         data = JSON.parse(text)
       } catch {
         if (!res.ok) {
-          throw new ApiError(res.status, text || res.statusText)
+          throw new ApiError(res.status, text || res.statusText, undefined, true)
         }
-        throw new ApiError(res.status, 'invalid JSON response')
+        throw new ApiError(res.status, 'invalid JSON response', undefined, true)
       }
     }
     if (!res.ok) {
-      const msg =
-        data && typeof data === 'object' && data !== null && 'error' in data
-          ? String((data as { error: unknown }).error)
-          : res.statusText
-      throw new ApiError(res.status, msg, data)
+      if (data && typeof data === 'object' && 'error' in data) {
+        throw new ApiError(res.status, String((data as { error: unknown }).error), data)
+      }
+      throw new ApiError(res.status, res.statusText, data, true)
     }
     return data as T
   }
@@ -918,11 +975,17 @@ export class ApiError extends Error {
   status: number
   /** Parsed JSON error body, when the server sent one. */
   body?: unknown
+  /**
+   * The message is not the server's own words (an HTTP status text, a
+   * proxy's page, an unreadable body): keep it for logs, not for viewers.
+   */
+  technical: boolean
 
-  constructor(status: number, message: string, body?: unknown) {
+  constructor(status: number, message: string, body?: unknown, technical = false) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.body = body
+    this.technical = technical
   }
 }

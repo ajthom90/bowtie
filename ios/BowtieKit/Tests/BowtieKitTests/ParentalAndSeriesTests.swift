@@ -143,8 +143,11 @@ final class ParentalAndSeriesTests: XCTestCase {
         }
         let client = await makeClient()
 
-        let error = await client.heartbeat(viewerId: "v1", token: "tok")
+        let result = await client.heartbeat(viewerId: "v1", token: "tok")
 
+        guard case .failure(let error) = result else {
+            return XCTFail("expected a refusal, got \(result)")
+        }
         XCTAssertEqual(error, .parental("Blocked by parental controls (rated TV-14)"))
     }
 
@@ -152,9 +155,9 @@ final class ParentalAndSeriesTests: XCTestCase {
         StubURLProtocol.handler = { _ in (204, Data(), [:]) }
         let client = await makeClient()
 
-        let error = await client.heartbeat(viewerId: "v1", token: "tok")
+        let result = await client.heartbeat(viewerId: "v1", token: "tok")
 
-        XCTAssertNil(error)
+        XCTAssertEqual(try? result.get(), .some(nil))
     }
 
     @MainActor

@@ -37,7 +37,7 @@ namespace bowtie.favorites
     end function
 
     ' raw: /channels body (bare array or {channels: [...]}).
-    ' → { channels: [{id, guideNumber, name, favorite, order}], supported }
+    ' → { channels: [{id, guideNumber, name, favorite, watchable, order}], supported }
     function normalizeChannels(raw as object) as object
         list = bowtie.favorites.asArray(raw, "channels")
         channels = []
@@ -49,11 +49,18 @@ namespace bowtie.favorites
                     supported = true
                     fav = (c.favorite = true)
                 end if
+                ' All tuners busy (bowtie.tuners): only an explicit false.
+                watchable = true
+                w = c.watchable
+                if w <> invalid and (Type(w) = "Boolean" or Type(w) = "roBoolean")
+                    if w = false then watchable = false
+                end if
                 channels.push({
                     id: bowtie.favorites.orZero(c.id)
                     guideNumber: bowtie.favorites.asString(c.guideNumber)
                     name: bowtie.favorites.asString(c.name)
                     favorite: fav
+                    watchable: watchable
                     order: channels.count()
                 })
             end if
@@ -77,6 +84,39 @@ namespace bowtie.favorites
         rail.append(favs)
         rail.append(rest)
         return rail
+    end function
+
+    ' Guide shortcuts followed by every channel in server order. Zap state stays unique.
+    function guideChannels(channels as object) as object
+        favorites = []
+        all = []
+        for each ch in bowtie.favorites.sortChannels(channels)
+            if ch.favorite = true
+                favorites.push(bowtie.favorites.guideCopy(ch, "favorites"))
+            end if
+            bowtie.favorites.insertSorted(all, bowtie.favorites.guideCopy(ch, "all"), false)
+        end for
+        favorites.append(all)
+        return favorites
+    end function
+
+    function guideCopy(ch as object, section as string) as object
+        copy = {}
+        copy.append(ch)
+        copy.rowKey = section + ":" + bowtie.favorites.idKey(ch.id)
+        return copy
+    end function
+
+    ' Keep the same copy; a removed favorite shortcut falls back to All channels.
+    function indexOfGuideRow(channels as object, focused as dynamic) as integer
+        if focused = invalid then return -1
+        for i = 0 to channels.count() - 1
+            if channels[i].rowKey = focused.rowKey then return i
+        end for
+        for i = 0 to channels.count() - 1
+            if channels[i].rowKey = "all:" + bowtie.favorites.idKey(focused.id) then return i
+        end for
+        return -1
     end function
 
     ' Stable insertion: byGuide orders by guide number then order; else by order.

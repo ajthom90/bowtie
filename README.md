@@ -3,7 +3,12 @@
 # Bowtie
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/ajthom90/bowtie/actions/workflows/ci.yml/badge.svg)](https://github.com/ajthom90/bowtie/actions/workflows/ci.yml)
+[![Server](https://github.com/ajthom90/bowtie/actions/workflows/server.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/server.yml)
+[![Web](https://github.com/ajthom90/bowtie/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/web.yml)
+[![iOS](https://github.com/ajthom90/bowtie/actions/workflows/ios.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/ios.yml)
+[![Android](https://github.com/ajthom90/bowtie/actions/workflows/android.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/android.yml)
+[![Roku](https://github.com/ajthom90/bowtie/actions/workflows/roku.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/roku.yml)
+[![Docker](https://github.com/ajthom90/bowtie/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/docker.yml)
 
 **Open-source HDHomeRun live TV streaming with hardware transcoding** — share your antenna with your family.
 
@@ -12,7 +17,8 @@ for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
 - Finds your HDHomeRun tuners and streams over-the-air channels to every
   screen as HLS, with hardware transcoding (Quick Sync, NVENC, VAAPI,
-  VideoToolbox) when available, captions, every broadcast audio track and 5.1
+  VideoToolbox) when available, every broadcast audio track and 5.1
+  (live captions are temporarily off)
 - Shows a TV guide — free from your HDHomeRun, or XMLTV / Schedules Direct —
   with search, favorites, recents and **All · Sports · Movies · News · Kids ·
   New** filters
@@ -30,6 +36,83 @@ for iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV and Roku. It:
 
 **Project status:** see [CHANGELOG.md](CHANGELOG.md) for the latest release
 and [docs/roadmap.md](docs/roadmap.md) for what's next.
+
+## Features
+
+✅ available now · 🚧 in progress · 🗓️ planned
+
+### Watching
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Live TV from your HDHomeRun on every screen | ✅ | Web, iPhone/iPad, Apple TV, Mac, Android, Android TV/Fire TV, Roku |
+| Watch away from home | ✅ | Through a reverse proxy, Cloudflare Tunnel or Tailscale ([Remote access](#remote-access)) |
+| Hardware transcoding | ✅ | Quick Sync, NVENC, VAAPI, VideoToolbox; software fallback |
+| Choose a quality (Original 1080p, High/Medium 720p, Low 480p) | ✅ | Per viewer; the admin can cap it per account |
+| Automatic quality as the connection changes | ✅ | Admin setting, off by default; hardware encoders only |
+| HEVC for devices that can play it | ✅ | Admin setting, off by default; not with automatic quality yet |
+| Every broadcast audio track, 5.1 sound | ✅ | |
+| Live captions | 🚧 | Off since 0.24.0: they held up the video during caption gaps. Coming back in their own process |
+| Pause and rewind live TV | ✅ | 15 minutes by default; the admin can raise it to 60 |
+| Multiview (up to 4 channels at once) | ✅ | Web app |
+| Sleep timer | ✅ | Every TV and mobile app |
+| SharePlay (watch together) | ✅ | Apple devices |
+| Smooth recovery from weak antenna signal | 🚧 | No jump to the start of the rewind window, no audio drifting out of sync |
+| Pick up at the same moment after a dropout | 🚧 | Not at live, not at the start |
+| Resume a show where you left off | 🚧 | Across devices, while the show is being recorded or watched |
+| Free a tuner sooner when changing channels | 🗓️ | Avoids "All tuners are in use" when flipping quickly |
+| Roku rewind, fast-forward and back to live | 🗓️ | |
+| HEVC with automatic quality | 🗓️ | |
+| AV1 for newer hardware | 🗓️ | Needs an AV1 encoder (e.g. Intel Arc / Core Ultra) and a device that decodes AV1 |
+| Multiview on TVs | 🗓️ | Apple TV and Android TV |
+| Cast from the web app (Chromecast, AirPlay) | 🗓️ | |
+
+### Guide
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Free guide from your HDHomeRun | ✅ | About 2–3 days |
+| XMLTV and Schedules Direct | ✅ | Schedules Direct gives 14 days |
+| Search, favorites, recents | ✅ | Favorites appear at the top and in their normal place in All channels. |
+| All · Sports · Movies · News · Kids · New filters | ✅ | Every app |
+| Guide from the broadcast signal itself (PSIP/EIT) | 🗓️ | About 12 hours, no account; a last-resort fallback |
+
+### Recording
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Record shows and whole series | ✅ | New episodes only, keep the latest N, start/end padding |
+| Record by time | ✅ | Web app now; 🗓️ TV and mobile apps |
+| Recording quality (720p / up to 1080p) | ✅ | |
+| Find and skip commercials | ✅ | Comskip; Skip ad and auto-skip in every app |
+| Continue watching | ✅ | Every app |
+| Fix a commercial break by hand | 🗓️ | |
+| HEVC recordings | 🗓️ | Roughly half the size |
+
+### Accounts and admin
+
+| Feature | Status | Notes |
+|---|:---:|---|
+| Sign a TV in by scanning a QR code | ✅ | Apple TV, Android TV/Fire TV, Roku |
+| Parental controls and per-account stream limits | ✅ | Ratings and blocked channels |
+| Personal M3U/XMLTV feed | ✅ | For Kodi, TiviMate and others |
+| Users, tuners, channels, sessions, storage gauge | ✅ | Admin pages |
+| Notifications (ntfy, Discord, webhook) | ✅ | Failed recordings, disk filling up |
+| Backup and restore | ✅ | |
+| Reminders as phone notifications | 🗓️ | "A show you like starts in 5 minutes" |
+
+### Apps
+
+| Platform | Status | Notes |
+|---|:---:|---|
+| Web app (any modern browser) | ✅ | Installable on phones and computers |
+| iPhone, iPad, Apple TV, Mac | ✅ | See [`ios/README.md`](ios/README.md) |
+| Android, Android TV, Fire TV | ✅ | See [docs/install/android.md](docs/install/android.md) |
+| Roku | ✅ | Sideload for now; see [`roku/README.md`](roku/README.md) |
+| Windows | 🚧 | Built; waiting on a test on a real PC |
+| Xbox | 🚧 | Native app built, untested; Kodi with the M3U/XMLTV feed works today |
+| Samsung / LG TVs | — | No app planned; the web app works in the TV's browser |
+| PlayStation | — | Not possible (no third-party apps) |
 
 ---
 
@@ -167,8 +250,12 @@ mapped yourself are never changed. Turn it off with
 (setting `epg.hdhomerun`); its health is under `hdhomerun` in
 `GET /api/v1/admin/epg/status`. It works alongside XMLTV and Schedules Direct.
 
-SiliconDust allows about one download a day: a second download soon after
-the first gets HTTP 403, and Bowtie simply retries hourly until it's allowed.
+SiliconDust limits how often each tuner may download the guide: once a
+tuner has used its allowance, downloads get HTTP 403 for a while. After a
+403 Bowtie waits the same 20-28 hours before trying again (it remembers this
+across restarts, and Admin → EPG → Refresh follows the same schedule).
+**Only one Bowtie server per tuner should download it**: on test or
+secondary servers that share the tuner, set `BOWTIE_HDHOMERUN_GUIDE=off`.
 The free guide carries titles, episodes, series IDs (series recording works)
 and new/repeat flags, but **no age ratings**; to limit accounts by rating
 (parental controls), add Schedules Direct. Channel restrictions work either way.
@@ -225,7 +312,7 @@ add devices by IP.
 | Source | Keys |
 |--------|------|
 | Flag / env | `--data-dir` / `BOWTIE_DATA_DIR` (default `./data`, Docker `/data`) |
-| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
+| Env (infra every start) | `BOWTIE_LISTEN_ADDR`, `BOWTIE_FFMPEG_PATH`, `BOWTIE_SEGMENT_DIR`, `BOWTIE_DEVICES`, `BOWTIE_MULTITRACK` (`off` disables captions, extra audio and 5.1), `BOWTIE_HDHOMERUN_GUIDE` (`off` stops this server downloading the free HDHomeRun guide — use it on test servers sharing a tuner), `BOWTIE_RECORDINGS_DIR` (DVR, default `<data>/recordings`), `BOWTIE_DVR_MIN_FREE_GB` (default 20), `BOWTIE_COMSKIP_PATH` / `BOWTIE_COMSKIP_INI` ([commercial detection](#commercial-detection)) |
 | Env / yaml (first-boot seeds) | `BOWTIE_ENCODER`; yaml `xmltv.*`, `schedulesDirect.*`, `encoder` / allow HEVC |
 | Control plane (runtime) | **Admin → Settings** — XMLTV, Schedules Direct, encoder, HEVC, buffer, adaptive quality (DB-backed) |
 | Control plane (DVR) | **Admin → Recordings** — padding, and recording quality: 720p (default, ~1.7 GB/hour) or up to 1080p (1080i kept at full resolution, deinterlaced; ~3.4 GB/hour), applied to recordings converted afterwards |
@@ -275,7 +362,9 @@ Notifications**, paste a URL, pick the events, **Save**, and **Send test**:
 
 - **ntfy** (free phone app): `https://ntfy.sh/your-topic` (pick a hard-to-guess
   topic), or your own ntfy server — any host with `ntfy` in its name. For a
-  protected topic use `https://user:pass@ntfy.example.com/topic`.
+  protected topic fill in **Username** and **Password**; for an ntfy access
+  token leave Username empty and paste the token as the password. The
+  password is never shown again (Remove the saved password clears it).
 - **Discord**: a channel webhook URL (`https://discord.com/api/webhooks/…`).
 - **Anything else** gets a JSON POST:
   `{"event": "recordingFailed", "title": "…", "message": "…", "recordingId": 42, "time": "2026-10-04T18:30:00Z"}`
@@ -297,7 +386,7 @@ mappings, series rules, the recording list and settings. It is taken safely
 while Bowtie runs. Recorded video is not included — back up
 `<data>/recordings` (or `BOWTIE_RECORDINGS_DIR`) separately if you want it.
 The file holds password hashes, the Schedules Direct password and the
-notification URL; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
+notification URL and password; keep it private. Token-signing keys and sign-in sessions are left out, so a restored
 server makes new keys and everyone signs in again.
 
 The snapshot is written next to `bowtie.db` while the download is prepared

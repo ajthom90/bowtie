@@ -15,7 +15,7 @@ requests that come up most in their forums and subreddits.
 | Pause and rewind live TV | Yes, up to 60 minutes |
 | Record shows and whole series | Yes — one-off, series ("new episodes only"), keep latest N, padding |
 | Skip commercials | Yes — Comskip finds the breaks; Skip ad / auto-skip in every app |
-| Easy sign-in on a TV | Yes — scan a QR code with your phone |
+| Easy sign-in on a TV | Yes — scan a QR code with your phone, which also enters the server address |
 | Several games at once | Multiview on the web (up to 4) |
 | Use it in other apps (Kodi, TiviMate, Xbox via Kodi) | Yes — personal M3U + XMLTV feed |
 | Kids' accounts | Yes — parental ratings, blocked channels, per-account stream limits |
@@ -42,11 +42,29 @@ requests that come up most in their forums and subreddits.
 6. **More free guide data.** Over-the-air PSIP/EIT from the tuner itself
    (about 12 hours, no account) as a last-resort fallback.
 
+## Also planned
+
+- **Smooth recovery from weak signal** (in progress): no jump to the start
+  of the rewind window and no A/V drift after a dropout; pick up at the same
+  moment; resume a show where you left off while it is recorded or watched.
+- **Newer FFmpeg in the Docker image** (after 0.24.1): move the image from
+  Debian 12 (FFmpeg 5.1) to Debian 13 (FFmpeg 7.1, newer Intel drivers),
+  then check Quick Sync on a real Intel server before release.
+- **Live captions back**, run in their own FFmpeg process so a caption gap
+  can't hold up the video.
+- **Free a tuner sooner when changing channels**, so flipping quickly
+  doesn't hit "All tuners are in use".
+- **Roku rewind, fast-forward and back to live.**
+- **HEVC with automatic quality** (today HEVC is single-quality only).
+- **AV1** where the server has an AV1 encoder (Intel Arc / Core Ultra) and
+  the device decodes it, with every app checking for AV1 support.
+
 ## Known rough edges
 
-- **First start on some channels takes ~20 s** when FFmpeg's full layout
-  (all renditions, captions) times out and Bowtie falls back to one rung.
-  Seen intermittently on FOX 9 locally.
+- **Live captions are off** (0.24.0). FFmpeg stopped reading the video
+  while it waited for the next caption, which froze the picture during ads
+  and made some starts slow. They come back once they run in their own
+  FFmpeg process.
 - **Record by time** is on the web only (0.19.0); the TV and mobile apps
   still need guide data to record.
 - **Recording list/details** can't tell "commercial detection hasn't run"
