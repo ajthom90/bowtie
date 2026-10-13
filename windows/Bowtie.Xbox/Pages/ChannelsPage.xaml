@@ -31,7 +31,7 @@
 
         <TextBlock Grid.Row="1" x:Name="HintLabel" Style="{StaticResource BodyText}" FontSize="18"
                    Foreground="{StaticResource BowtieMuted}" Margin="0,0,0,8"
-                   Text="A to watch · Y to add or remove a favorite · B to go back" />
+                   Text="A / Enter to watch · Y / F favorite · B / Esc back" />
 
         <!-- Every tuner is busy: only channels that can start are listed. -->
         <TextBlock Grid.Row="2" x:Name="TunersLabel" Style="{StaticResource BodyText}" FontSize="22"

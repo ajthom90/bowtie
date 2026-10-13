@@ -29,7 +29,7 @@ namespace BowtieXbox.Pages
     /// </summary>
     public sealed partial class ChannelsPage : Page
     {
-        private const string Hint = "A to watch · Y to add or remove a favorite · B to go back";
+        private const string Hint = "A / Enter to watch · Y / F favorite · B / Esc back";
 
         private readonly DispatcherTimer _pollTimer;
         private ChannelListViewModel? _vm;

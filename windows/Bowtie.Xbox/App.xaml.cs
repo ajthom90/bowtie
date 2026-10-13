@@ -97,7 +97,7 @@ namespace BowtieXbox
             else _ = dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => action());
         }
 
-        // ── Back: controller B / Back, Escape ───────────────────────────────
+        // ── Back: controller B / Back, Escape, Backspace in the player ──────
 
         private void OnBackRequested(object sender, BackRequestedEventArgs e)
         {
@@ -107,7 +107,10 @@ namespace BowtieXbox
 
         private void OnKeyDown(CoreWindow sender, KeyEventArgs e)
         {
-            if (e.VirtualKey == VirtualKey.Escape && GoBack()) e.Handled = true;
+            // Backspace too in the player (PCs without a controller); elsewhere it may be typing.
+            var back = e.VirtualKey == VirtualKey.Escape
+                       || (e.VirtualKey == VirtualKey.Back && _frame?.Content is PlayerPage);
+            if (back && GoBack()) e.Handled = true;
         }
 
         private bool GoBack()
