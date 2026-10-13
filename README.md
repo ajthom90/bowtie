@@ -3,7 +3,12 @@
 # Bowtie
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/ajthom90/bowtie/actions/workflows/ci.yml/badge.svg)](https://github.com/ajthom90/bowtie/actions/workflows/ci.yml)
+[![Server](https://github.com/ajthom90/bowtie/actions/workflows/server.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/server.yml)
+[![Web](https://github.com/ajthom90/bowtie/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/web.yml)
+[![iOS](https://github.com/ajthom90/bowtie/actions/workflows/ios.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/ios.yml)
+[![Android](https://github.com/ajthom90/bowtie/actions/workflows/android.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/android.yml)
+[![Roku](https://github.com/ajthom90/bowtie/actions/workflows/roku.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/roku.yml)
+[![Docker](https://github.com/ajthom90/bowtie/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/ajthom90/bowtie/actions/workflows/docker.yml)
 
 **Open-source HDHomeRun live TV streaming with hardware transcoding** — share your antenna with your family.
 

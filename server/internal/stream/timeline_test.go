@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1263,6 +1264,102 @@ func TestTimelineCaptionSkipsSurviveALaggingPlaylist(t *testing.T) {
 	// The on-disk playlist the observer last saw is still the pre-slide one.
 	if _, _, stale := served(t, tl, "v720_vtt", c0); len(stale) != 2 {
 		t.Fatalf("captions the observer saw: %+v", stale)
+	}
+}
+
+// 4.004 s is not an exact binary fraction. Truncating the product lands one
+// nanosecond under 4004 ms, and a timestamp formatted from that is a
+// millisecond early. Serialization rounds to the millisecond the duration
+// already states, the same way on a playlist and on the timeline endpoint.
+func TestSecondsAndWallClockRound(t *testing.T) {
+	if got := seconds(4.004); got != 4004*time.Millisecond {
+		t.Fatalf("seconds(4.004) = %d, want %d", got, 4004*time.Millisecond)
+	}
+	start := time.Date(2026, 10, 11, 20, 0, 0, 900_000, time.UTC)
+	if got := FormatWallClock(start); got != "2026-10-11T20:00:00.001Z" {
+		t.Fatalf("start %s, want .001Z", got)
+	}
+	edge := start.Add(seconds(4.004))
+	if got := FormatWallClock(edge); got != "2026-10-11T20:00:04.005Z" {
+		t.Fatalf("live edge %s, want .005Z (start .001 plus 4.004)", got)
+	}
+}
+
+// A stalled segment read on one session must not hold the timeline lock
+// across the manager lock. maintain takes the manager lock and then the
+// timeline lock (ExpireStalledRun); another session's Touch takes the
+// manager lock. Both have to finish while the read is still blocked.
+func TestBlockedSegmentReadDoesNotStallOtherSession(t *testing.T) {
+	dir := t.TempDir()
+	tl, _, _ := newTestTimeline(dir, "v480")
+	writeRun(t, dir, "v480", 0, seg{4, 4, 10})
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	defer letGo()
+	tl.segmentRead = func(path string, dur float64, now time.Time) (time.Time, bool, int64, bool) {
+		once.Do(func() { close(started) })
+		<-release
+		obs, file := tl.observedStart(path, dur, now)
+		raw, has := segmentFirstPTS(path)
+		return obs, file, raw, has
+	}
+
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	proc := newStubProcess()
+	m := &Manager{
+		clock:    func() time.Time { return now },
+		sessions: map[string]*session{},
+		viewers:  map[string]*Viewer{},
+	}
+	m.sessions["a"] = &session{id: "a", proc: proc, timeline: tl, lastTick: now, viewers: map[string]*Viewer{}}
+	m.sessions["b"] = &session{id: "b", viewers: map[string]*Viewer{}}
+	m.viewers["vb"] = &Viewer{ID: "vb", SessionID: "b", LastSeen: now}
+
+	obsDone := make(chan struct{})
+	go func() {
+		tl.Observe()
+		close(obsDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("segment read never started")
+	}
+
+	maintainDone := make(chan struct{})
+	go func() {
+		m.maintain()
+		close(maintainDone)
+	}()
+	touchDone := make(chan bool, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		touchDone <- m.Touch("vb")
+	}()
+
+	deadline := time.After(2 * time.Second)
+	select {
+	case <-maintainDone:
+	case <-deadline:
+		t.Fatal("maintain blocked while another session's segment read was stalled")
+	}
+	select {
+	case ok := <-touchDone:
+		if !ok {
+			t.Fatal("Touch returned false")
+		}
+	case <-deadline:
+		t.Fatal("Touch blocked while another session's segment read was stalled")
+	}
+	letGo()
+	select {
+	case <-obsDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("observe did not finish after the segment read was released")
 	}
 }
 

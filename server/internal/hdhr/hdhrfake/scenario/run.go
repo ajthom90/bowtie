@@ -63,6 +63,10 @@ type Observed struct {
 	TimelineExcess             float64 // seconds
 	MaxAudioHole               time.Duration
 	MaxAVStartSkew             time.Duration
+	MaxStartAVOffset           time.Duration // |first audio PTS − first video PTS|, max over runs
+	StartAVRuns                int           // discontinuities seen on video or the chosen audio
+	StartAVMeasured            int           // those with both sides probed
+	UnmeasuredStartAV          []int64       // discontinuity numbers with no start pair, ascending
 	ProbedAudio, ProbedVideo   int
 	MinSegmentsAfterFault      int // fewest segments any rendition fetched after the last fault
 	FetchErrors                int // testplayer Report.FetchErrors: every failed fetch
@@ -129,6 +133,20 @@ func (e *Expect) Check(o Observed) []string {
 			v = append(v, "no audio/video segment pairs probed")
 		case ms(o.MaxAVStartSkew) > *e.MaxAVStartSkewMs:
 			v = append(v, fmt.Sprintf("A/V start skew = %.0fms, want ≤ %.0fms", ms(o.MaxAVStartSkew), *e.MaxAVStartSkewMs))
+		}
+	}
+	if e.MaxStartAVOffsetMs != nil {
+		if o.ProbedAudio == 0 || o.ProbedVideo == 0 {
+			v = append(v, "no audio/video start offset measured")
+		}
+		for _, d := range o.UnmeasuredStartAV {
+			v = append(v, fmt.Sprintf("start A/V offset not measured for discontinuity %d", d))
+		}
+		if o.ProbedAudio > 0 && o.ProbedVideo > 0 && o.StartAVMeasured == 0 && len(o.UnmeasuredStartAV) == 0 {
+			v = append(v, "no start A/V run measured")
+		}
+		if ms(o.MaxStartAVOffset) > *e.MaxStartAVOffsetMs {
+			v = append(v, fmt.Sprintf("A/V start offset = %.0fms, want ≤ %.0fms", ms(o.MaxStartAVOffset), *e.MaxStartAVOffsetMs))
 		}
 	}
 	if e.MinFfmpegRestarts != nil && o.FfmpegRestarts < *e.MinFfmpegRestarts {
