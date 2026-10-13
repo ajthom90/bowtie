@@ -11,6 +11,7 @@ using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Automation.Peers;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Data;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Navigation;
 
@@ -35,6 +36,8 @@ namespace BowtieXbox.Pages
         /// <summary>The row focused in its place while it's missing from the list, else null.</summary>
         private string? _fallbackKey;
         private string? _shown;
+        /// <summary>The rows shown, in list order.</summary>
+        private List<ChannelItem>? _items;
         private bool _polling;
 
         public ChannelsPage()
@@ -65,7 +68,7 @@ namespace BowtieXbox.Pages
             Window.Current.VisibilityChanged += OnVisibilityChanged;
             Render();
             // Where the channel just watched sits now, in case the re-check drops it.
-            var shownIndex = _focusKey != null && ChannelList.ItemsSource is List<ChannelItem> shown
+            var shownIndex = _focusKey != null && _items is List<ChannelItem> shown
                 ? Math.Max(0, shown.FindIndex(i => i.Key == _focusKey))
                 : 0;
             // Back from the player a tuner just freed up: re-check now.
@@ -149,17 +152,17 @@ namespace BowtieXbox.Pages
                     }
                     var guide = vm.GuideRows(vm.VisibleRows(vm.Rows, now));
                     var hasFavorites = guide.Any(r => r.Section == "favorites");
-                    var items = new List<ChannelItem>();
-                    string? previousSection = null;
-                    foreach (var entry in guide)
-                    {
-                        var header = hasFavorites && entry.Section != previousSection
-                            ? (entry.Section == "favorites" ? "Favorites" : "All channels")
-                            : null;
-                        items.Add(new ChannelItem(entry, now, header));
-                        previousSection = entry.Section;
-                    }
-                    ShowList(items);
+                    var items = guide.Select(entry => new ChannelItem(entry, now)).ToList();
+                    // Headers only when there are favorites; otherwise one plain list.
+                    var groups = hasFavorites
+                        ? items.GroupBy(i => i.Entry.Section).Select(g =>
+                          {
+                              var group = new ChannelGroup(g.Key == "favorites" ? "Favorites" : "All channels");
+                              group.AddRange(g);
+                              return group;
+                          }).ToList()
+                        : null;
+                    ShowList(items, groups);
                     break;
             }
             ShowTunersNote(note);
@@ -189,9 +192,10 @@ namespace BowtieXbox.Pages
         /// the list, it stays on the same copy, falls back to All channels,
         /// or moves to the neighbor when that channel dropped out.
         /// </summary>
-        private void ShowList(List<ChannelItem> items)
+        private void ShowList(List<ChannelItem> items, List<ChannelGroup>? groups)
         {
-            var shown = string.Join("\n", items.Select(i => $"{i.Key}|{i.SectionHeader}|{i.Star}|{i.Now}|{i.Next}|{i.NoSignalVisibility}"));
+            var shown = (groups != null ? "grouped\n" : "") +
+                        string.Join("\n", items.Select(i => $"{i.Key}|{i.Star}|{i.Now}|{i.Next}|{i.NoSignalVisibility}"));
             var wasVisible = ChannelList.Visibility == Visibility.Visible;
             if (wasVisible && shown == _shown) return;
 
@@ -210,7 +214,18 @@ namespace BowtieXbox.Pages
             Spinner.IsActive = false;
             RetryButton.Visibility = Visibility.Collapsed;
             ChannelList.Visibility = Visibility.Visible;
-            ChannelList.ItemsSource = items;
+            // Grouped, the list's items are still just the rows, in order (headers aren't items).
+            if (groups != null)
+            {
+                var source = (CollectionViewSource)Resources["ChannelGroups"];
+                source.Source = groups;
+                ChannelList.ItemsSource = source.View;
+            }
+            else
+            {
+                ChannelList.ItemsSource = items;
+            }
+            _items = items;
             _shown = shown;
 
             if (focusedIndex != null || focusInStatus) FocusList(focusedIndex ?? 0);
@@ -259,7 +274,7 @@ namespace BowtieXbox.Pages
         private void FocusList(int fallbackIndex = 0)
         {
             if (ChannelList.Visibility != Visibility.Visible || ChannelList.Items.Count == 0) return;
-            var items = ChannelList.ItemsSource as List<ChannelItem>;
+            var items = _items;
             var index = Math.Max(0, Math.Min(fallbackIndex, ChannelList.Items.Count - 1));
             if (_focusKey != null && items != null)
             {
