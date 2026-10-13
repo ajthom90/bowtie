@@ -48,8 +48,10 @@ the bundle you are installing.
    Add-AppxPackage -Path .\bowtie-xbox-<version>.msixbundle -DependencyPath (Get-ChildItem .\Dependencies\x64\*.appx).FullName
    ```
 
-3. Start **Bowtie** from the Start menu. It opens full screen; Escape goes
-   back, and an Xbox controller connected to the PC works as on the console.
+3. Start **Bowtie** from the Start menu. It opens full screen. The keyboard
+   works without a controller: arrow keys move, Enter watches, **F** adds or
+   removes a favorite, and Escape (or Backspace in the player) goes back. An
+   Xbox controller connected to the PC works as on the console.
 
 It installs next to the desktop app: the package identity is `Bowtie.Xbox`
 (the desktop app is `Bowtie.LiveTV`).
@@ -95,21 +97,24 @@ reachable `https://` address).
   Credential Locker; there's a **Change server** button on this screen.
 - **Channels:** favorites first, then every channel in server order, with
   what's on now and next. **Favorites** and **All channels** headers appear
-  when there are favorites. D-pad to move, **A** to watch, **Y** to add or
-  remove a favorite from either copy. Focus stays on that copy, or moves to
-  its All channels copy when the favorite shortcut disappears. Coming back
-  from the player remembers the copy you opened.
+  when there are favorites; the D-pad skips them. D-pad (or arrow keys) to
+  move, **A** (or Enter) to watch, **Y** (or **F**) to add or remove a
+  favorite from either copy. Focus stays on that copy, or moves to its All
+  channels copy when the favorite shortcut disappears. Coming back from the
+  player puts focus back on the copy you opened, including once it
+  reappears in a list that left it out while it was still starting.
   **Refresh** and **Sign out** are above the list. When every tuner is busy,
   only the channels you can join are listed, under a note; the list checks
   again every 30 seconds and when you come back to the app.
-- **Watching:** live video full screen. **B** goes back to the channels and
-  frees the tuner. If every tuner is busy, the channel has no signal or
+- **Watching:** live video full screen. **B** (or Escape or Backspace) goes
+  back to the channels and frees the tuner. If every tuner is busy, the channel has no signal or
   parental controls block it, the player says so and offers **Try again**.
   After five seconds of starting, a note explains that the stream is still
   buffering. Suspending the app (Home button, or the console sleeping) also
-  stops the stream. Press any button to see the channel and its signal ("Signal
-  quality 46% · strength 96% · error-free 0%"); when reception is poor, a
-  "Weak signal (46%) — the picture may break up." note stays in the corner.
+  stops the stream. Press any button or key to see the channel and its
+  signal ("Signal quality 46% · strength 96% · error-free 0%"); when
+  reception is poor, a "Weak signal (46%) — the picture may break up." note
+  stays in the corner.
 
 ## Build it yourself
 
