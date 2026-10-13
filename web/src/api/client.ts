@@ -146,6 +146,7 @@ export interface CommercialBreak {
 
 /** A series recording rule (GET/POST /recording-rules). */
 export interface RecordingRule {
+  editable?: boolean
   id: number
   title: string
   seriesId: string
@@ -689,6 +690,14 @@ export class ApiClient {
   /** Records a show from one of its guide programs; schedules upcoming airings now. */
   async createRecordingRule(body: CreateRecordingRuleRequest): Promise<CreateRecordingRuleResponse> {
     return this.request<CreateRecordingRuleResponse>('POST', '/api/v1/recording-rules', body)
+  }
+
+  /** Updates a show and reconciles its upcoming recordings. */
+  async patchRecordingRule(
+    id: number,
+    body: Partial<Pick<RecordingRule, 'newOnly' | 'channelId' | 'keepLatest'>>,
+  ): Promise<RecordingRule> {
+    return this.request<RecordingRule>('PATCH', `/api/v1/recording-rules/${id}`, body)
   }
 
   /** Stops recording a show: upcoming recordings are cancelled, recorded ones stay. */

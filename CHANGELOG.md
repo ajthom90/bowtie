@@ -7,6 +7,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Edit a series recording without starting over.** In Recordings → Shows,
+  Edit changes new or all episodes, the channel, and how many to keep, on
+  web, Apple, Android, Android TV and Roku. Upcoming recordings update right
+  away; recordings in progress or finished stay as they are. A lower keep
+  count applies as new episodes finish, so saving never deletes anything.
+
 ### Changed
 
 - **Favorites stay in the full channel list.** All clients show favorites at

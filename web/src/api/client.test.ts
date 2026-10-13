@@ -628,3 +628,18 @@ describe('ApiClient DVR admin', () => {
     })
   })
 })
+
+
+describe('series rule edits', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('PATCH sends explicit false and zeros and returns the editable rule', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 4, editable: true })))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient(() => 'token', () => {})
+    const updated = await client.patchRecordingRule(4, { newOnly: false, channelId: 0, keepLatest: 0 })
+    expect(updated.editable).toBe(true)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/recording-rules/4')
+    expect(fetchMock.mock.calls[0][1].method).toBe('PATCH')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ newOnly: false, channelId: 0, keepLatest: 0 })
+  })
+})

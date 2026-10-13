@@ -20,6 +20,7 @@ import {
   type RecordingListTab,
   type RecordingsTab,
 } from './recordingsModel'
+import { EditRuleDialog } from './EditRuleDialog'
 import { ruleSummary, stopShowConfirmText } from './seriesModel'
 import { ContinueWatching } from './ContinueWatching'
 import { ManualRecordDialog } from './ManualRecordDialog'
@@ -312,6 +313,7 @@ function RecordingList({
 /** Series rules: every show being recorded. */
 function ShowsList() {
   const { client } = useAuth()
+  const [editing, setEditing] = useState<RecordingRule | null>(null)
   const [rules, setRules] = useState<RecordingRule[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -351,6 +353,16 @@ function ShowsList() {
 
   return (
     <>
+      {editing ? (
+        <EditRuleDialog
+          rule={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            await load()
+            setEditing(null)
+          }}
+        />
+      ) : null}
       {actionError ? (
         <p className={styles.statusError} role="alert">
           {actionError}
@@ -381,6 +393,16 @@ function ShowsList() {
               </div>
               {rule.canManage ? (
                 <div className={styles.rowActions}>
+                  {rule.editable === true ? (
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      disabled={busyId === rule.id}
+                      onClick={() => setEditing(rule)}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className={`${styles.btn} ${styles.btnDanger}`}

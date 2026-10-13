@@ -13,6 +13,7 @@ struct RecordingsView: View {
     @State private var pendingResume: RecordingsModel.Playback?
     @State private var activePlayback: RecordingsModel.Playback?
     @State private var confirmDelete: Recording?
+    @State private var editingRule: RecordingRule?
     @State private var confirmStopRule: RecordingRule?
 
     @Environment(\.scenePhase) private var scenePhase
@@ -224,6 +225,9 @@ struct RecordingsView: View {
                     ruleRow(rule)
                 }
             }
+            .sheet(item: $editingRule) { rule in
+                EditRecordingRuleView(rule: rule, model: model)
+            }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .refreshable { await model.load() }
@@ -242,6 +246,9 @@ struct RecordingsView: View {
             .accessibilityLabel(rowView.accessibilityText)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 if rule.canManage {
+                    if rule.editable == true {
+                        Button("Edit") { editingRule = rule }
+                    }
                     Button {
                         confirmStopRule = rule
                     } label: {
@@ -252,6 +259,9 @@ struct RecordingsView: View {
             }
             .contextMenu {
                 if rule.canManage {
+                    if rule.editable == true {
+                        Button("Edit") { editingRule = rule }
+                    }
                     Button(role: .destructive) {
                         confirmStopRule = rule
                     } label: {
