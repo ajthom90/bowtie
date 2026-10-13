@@ -24,7 +24,16 @@ namespace BowtieXbox.Pages
             NoSignalVisibility = row.Channel.HasNoSignal ? Visibility.Visible : Visibility.Collapsed;
             Progress = GuideLogic.Progress(now, at) * 100;
             ProgressVisibility = now == null ? Visibility.Collapsed : Visibility.Visible;
+
+            var spoken = new List<string> { string.IsNullOrEmpty(Number) ? Name : $"{Number} {Name}" };
+            if (row.IsFavorite) spoken.Add("favorite");
+            if (row.Channel.HasNoSignal) spoken.Add("no signal");
+            if (now != null) spoken.Add($"now {now.Title}");
+            if (next != null) spoken.Add($"next {next.Start.ToLocalTime():t} {next.Title}");
+            _spoken = string.Join(", ", spoken);
         }
+
+        private readonly string _spoken;
 
         public GuideRow Entry { get; }
         public string Key => Entry.Key;
@@ -37,6 +46,12 @@ namespace BowtieXbox.Pages
         public double Progress { get; }
         public Visibility ProgressVisibility { get; }
         public Visibility NoSignalVisibility { get; }
+
+        /// <summary>
+        /// What Narrator reads for the row (a list item's UI Automation name is
+        /// its item's ToString): "9.1 FOX 9, favorite, now …, next 2:00 PM …".
+        /// </summary>
+        public override string ToString() => _spoken;
     }
 
     /// <summary>A list section ("Favorites" or "All channels"); its header is a group header.</summary>
@@ -45,5 +60,8 @@ namespace BowtieXbox.Pages
         public ChannelGroup(string header) => Header = header;
 
         public string Header { get; }
+
+        /// <summary>The group header's UI Automation name.</summary>
+        public override string ToString() => Header;
     }
 }
