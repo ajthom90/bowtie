@@ -9,6 +9,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Xbox: favorites in place, slow starts and reception notes.** Favorites
+  appear at the top and again in server order under All channels, with
+  section headers only when there are favorites. Pressing Y on either copy
+  updates both and keeps focus on that copy, or its All channels copy when
+  the favorite shortcut disappears. Returning from the player remembers
+  the copy you opened. After five seconds of starting, the player explains
+  that the stream is still buffering and may take a little while. It
+  keeps "Weak signal (46%) — the picture may break up." in the corner while
+  the antenna reception is poor (Narrator reads it when it appears), and
+  the channel name that any button brings up now shows the latest reading
+  ("Signal quality 46% · strength 96% · error-free 0%"). When every tuner
+  is busy, the channel list shows only the channels you can join, under a
+  note, and checks again every 30 seconds and when you come back to the
+  app, keeping the controller's focus on the same channel (or its
+  neighbor). Player errors are plain words ("The stream stopped. Try
+  again."); the detail goes to the app's log.
+
+## [0.25.1] — 2026-10-13
+
+### Added
+
 - **Windows app.** A native app for Windows 10 and 11 on Intel/AMD (x64)
   and ARM PCs (Surface Pro X and Copilot+ PCs). Sign in to your server once
   (it's remembered in the Windows Credential Locker), then watch live TV
@@ -27,22 +48,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
   Each release attaches `bowtie-windows.msixbundle` (and the `.cer` to trust
   before installing) plus zips that run without installing; see
   `windows/README.md`.
-- **Xbox: favorites in place, slow starts and reception notes.** Favorites
-  appear at the top and again in server order under All channels, with
-  section headers only when there are favorites. Pressing Y on either copy
-  updates both and keeps focus on that copy, or its All channels copy when
-  the favorite shortcut disappears. Returning from the player remembers
-  the copy you opened. After five seconds of starting, the player explains
-  that the stream is still buffering and may take a little while. It
-  keeps "Weak signal (46%) — the picture may break up." in the corner while
-  the antenna reception is poor (Narrator reads it when it appears), and
-  the channel name that any button brings up now shows the latest reading
-  ("Signal quality 46% · strength 96% · error-free 0%"). When every tuner
-  is busy, the channel list shows only the channels you can join, under a
-  note, and checks again every 30 seconds and when you come back to the
-  app, keeping the controller's focus on the same channel (or its
-  neighbor). Player errors are plain words ("The stream stopped. Try
-  again."); the detail goes to the app's log.
+
+### Fixed
+
+- **Windows and Xbox no longer fail the first start of a channel.** Live TV
+  waits briefly for every quality and audio track to be ready. Tracks that
+  take longer are left out until they appear, so playback can still start.
+  The Windows app also retries a stream that fails to open, so it starts
+  on older servers too.
 
 ## [0.25.0] — 2026-10-13
 

@@ -35,6 +35,9 @@ const (
 	reaperInterval      = 5 * time.Second
 	playlistPollEvery   = 20 * time.Millisecond
 	startMaxAttempts    = 3
+	// renditionReadyGrace lets audio playlists catch up after the lowest video
+	// rung appears, without holding playback indefinitely for a missing track.
+	renditionReadyGrace = 3 * time.Second
 )
 
 // timelineRunHook, when set, sees the context a session observer runs on.
@@ -379,7 +382,7 @@ func (m *Manager) startAttempt(ctx context.Context, user store.User, res *reserv
 	// The caption tap gets no such hook: a stalled tap stops captions only.
 	sub.OnForceClose(proc.Stop)
 
-	if err := m.waitPlaylist(ctx, dir, layout.ReadyPlaylist(), proc); err != nil {
+	if err := m.waitPlaylist(ctx, dir, layout, proc); err != nil {
 		proc.Stop()
 		procCancel()
 		_ = sub.Close()
@@ -491,15 +494,16 @@ func (m *Manager) addViewerLocked(sess *session, user store.User, res *reservati
 	}, nil
 }
 
-// waitPlaylist polls for the layout's ready playlist up to playlistTimeout
-// using the injectable clock. FFmpeg failures match errPlaylistNotReady.
-func (m *Manager) waitPlaylist(ctx context.Context, dir, name string, proc Process) error {
+// waitPlaylist waits for every rendition, allowing a short grace after the
+// lowest video rung appears. The overall playlistTimeout still bounds startup.
+// It is only used for initial starts; the timeline gates appended restart output.
+// FFmpeg failures match errPlaylistNotReady.
+func (m *Manager) waitPlaylist(ctx context.Context, dir string, layout transcode.Layout, proc Process) error {
 	deadline := m.now().Add(playlistTimeout)
-	path := filepath.Join(dir, name)
+	var graceDeadline time.Time
+	names := layout.Renditions()
+	readyName := layout.ReadyPlaylist()
 	for {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -510,8 +514,31 @@ func (m *Manager) waitPlaylist(ctx context.Context, dir, name string, proc Proce
 			return playlistNotReadyError{fmt.Errorf("ffmpeg exited before playlist ready")}
 		default:
 		}
-		if !m.now().Before(deadline) {
-			return playlistNotReadyError{fmt.Errorf("playlist timeout waiting for %s", name)}
+		now := m.now()
+		var missing []string
+		ready := true
+		for _, name := range names {
+			if _, err := os.Stat(filepath.Join(dir, name+".m3u8")); err != nil {
+				missing = append(missing, name)
+				if name+".m3u8" == readyName {
+					ready = false
+				}
+			}
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if !now.Before(deadline) {
+			return playlistNotReadyError{fmt.Errorf("playlist timeout waiting for %s", strings.Join(missing, ","))}
+		}
+		if ready {
+			if graceDeadline.IsZero() {
+				graceDeadline = now.Add(renditionReadyGrace)
+			}
+			if !now.Before(graceDeadline) {
+				log.Printf("stream: session %s: playlist grace expired; missing renditions: %s", filepath.Base(dir), strings.Join(missing, ","))
+				return nil
+			}
 		}
 		time.Sleep(playlistPollEvery)
 	}

@@ -16,6 +16,10 @@
   windows/README.md). The manifest's Publisher is set to the certificate's
   subject, which MSIX requires.
 
+  When all three Store identity parameters (or WINDOWS_STORE_* environment
+  variables) are set, also builds an unsigned .msixupload for Partner Center.
+  Missing values skip the Store upload and leave sideload builds available.
+
 .PARAMETER Version
   Three-part version (0.11.0). The package version becomes 0.11.0.0.
 
@@ -27,11 +31,39 @@ param(
     [string]$Label = $Version,
     [string]$PfxPath = "",
     [string]$PfxPassword = "",
-    [string[]]$Platforms = @("x64", "ARM64")
+    [string[]]$Platforms = @("x64", "ARM64"),
+    [string]$StoreIdentityName = $env:WINDOWS_STORE_IDENTITY_NAME,
+    [string]$StorePublisher = $env:WINDOWS_STORE_PUBLISHER,
+    [string]$StorePublisherDisplayName = $env:WINDOWS_STORE_PUBLISHER_DISPLAY_NAME
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Validate before deleting previous outputs or invoking Windows tools.
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3, got '$Version'" }
+# Both identities use the supplied version; the Store reserves the fourth part.
+$packageVersion = "$Version.0"
+
+$hasStoreName = -not [string]::IsNullOrWhiteSpace($StoreIdentityName)
+$hasStorePublisher = -not [string]::IsNullOrWhiteSpace($StorePublisher)
+$hasStoreDisplayName = -not [string]::IsNullOrWhiteSpace($StorePublisherDisplayName)
+$buildStore = $hasStoreName -and $hasStorePublisher -and $hasStoreDisplayName
+if ($hasStoreName) {
+    # MSIX package strings: ASCII letters/digits/dot/dash, 3–50 characters,
+    # no reserved DOS names (including prefixes), trailing dot or IDN prefixes.
+    if ($StoreIdentityName -cnotmatch '\A[A-Za-z0-9.-]{3,50}\z' -or
+        $StoreIdentityName -match '^(con|prn|aux|nul|com[1-9]|lpt[1-9])($|\.)' -or
+        $StoreIdentityName.EndsWith('.') -or $StoreIdentityName -match '(^|\.)xn--') {
+        throw "StoreIdentityName must be a valid MSIX identity name (3–50 ASCII letters, digits, dots or dashes; no reserved names)."
+    }
+}
+if ($hasStorePublisher -and -not $StorePublisher.StartsWith('CN=', [StringComparison]::Ordinal)) {
+    throw "StorePublisher must start with 'CN='; copy Package/Identity/Publisher from Partner Center."
+}
+if (-not $buildStore) {
+    Write-Host "Skipping Store upload: set all three WINDOWS_STORE_* identity values (or Store parameters) to enable it."
+}
 
 $windows = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $windows "Bowtie.App\Bowtie.App.csproj"
@@ -40,9 +72,6 @@ $out = Join-Path $windows "out"
 $dist = Join-Path $out "dist"
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $dist | Out-Null
-
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3, got '$Version'" }
-$packageVersion = "$Version.0"
 
 function Invoke-Checked([string]$exe, [string[]]$arguments) {
     Write-Host ">> $exe $($arguments -join ' ')"
@@ -101,42 +130,74 @@ function Sign([string]$file) {
     if ($LASTEXITCODE -ne 0) { throw "signtool failed for $file with exit code $LASTEXITCODE" }
 }
 
-# ── Stamp the manifest (restored afterwards) ────────────────────────────────
-$originalManifest = Get-Content $manifest -Raw
-try {
-    [xml]$xml = $originalManifest
-    $xml.Package.Identity.Version = $packageVersion
-    $xml.Package.Identity.Publisher = $publisher
-    $xml.Save($manifest)
-
-    # ── MSIX per architecture, then one bundle ──────────────────────────────
-    $bundleInput = Join-Path $out "bundle-input"
+# Build from the currently stamped manifest. Keep each identity's packages
+# separate, and sign only the sideload pass.
+function Build-Bundle([string]$buildRoot, [string]$bundle, [switch]$SignPackages, [string]$symbolDir = "") {
+    $bundleInput = Join-Path $buildRoot "bundle-input"
     New-Item -ItemType Directory -Force $bundleInput | Out-Null
     foreach ($platform in $Platforms) {
         Reset-AppBuild
-        $packageDir = Join-Path $out "msix\$platform\"
-        Invoke-Checked "msbuild" @(
+        $packageDir = Join-Path $buildRoot "msix\$platform\"
+        $arguments = @(
             $project, "/restore", "/m", "/v:minimal", "/nologo",
             "/p:Configuration=Release", "/p:Platform=$platform",
             "/p:Version=$Version",
             "/p:GenerateAppxPackageOnBuild=true",
             "/p:AppxPackageSigningEnabled=false",
             "/p:AppxBundle=Never",
+            # We assemble the Store upload ourselves from these unsigned packages.
             "/p:UapAppxPackageBuildMode=SideloadOnly",
             "/p:AppxPackageDir=$packageDir")
+        if ($symbolDir) { $arguments += "/p:AppxSymbolPackageEnabled=true" }
+        Invoke-Checked "msbuild" $arguments
         $msix = Get-ChildItem $packageDir -Recurse -Filter "*.msix" | Select-Object -First 1
         if (-not $msix) { throw "No .msix produced for $platform under $packageDir" }
         $target = Join-Path $bundleInput "Bowtie_$($Version)_$platform.msix"
         Copy-Item $msix.FullName $target
-        Sign $target
+        if ($SignPackages) { Sign $target }
+        if ($symbolDir) {
+            # Copy before Reset-AppBuild removes this architecture's intermediates.
+            Get-ChildItem $packageDir -Recurse -Filter "*.appxsym" | ForEach-Object {
+                Copy-Item $_.FullName (Join-Path $symbolDir "$($platform)_$($_.Name)")
+            }
+        }
     }
+    Invoke-Checked $makeappx @("bundle", "/d", $bundleInput, "/p", $bundle, "/bv", $packageVersion, "/o")
+    if ($SignPackages) { Sign $bundle }
+}
+
+# ── Stamp the manifest (restored afterwards, including on failure) ──────────
+$originalManifest = [IO.File]::ReadAllBytes($manifest)
+try {
+    [xml]$xml = Get-Content $manifest -Raw
+    $xml.Package.Identity.Version = $packageVersion
+    $xml.Package.Identity.Publisher = $publisher
+    $xml.Save($manifest)
 
     $bundle = Join-Path $dist "bowtie-windows-$Label.msixbundle"
-    Invoke-Checked $makeappx @("bundle", "/d", $bundleInput, "/p", $bundle, "/bv", $packageVersion, "/o")
-    Sign $bundle
+    Build-Bundle -buildRoot $out -bundle $bundle -SignPackages
     Copy-Item $bundle (Join-Path $dist "bowtie-windows.msixbundle")
+
+    if ($buildStore) {
+        $xml.Package.Identity.Name = $StoreIdentityName
+        $xml.Package.Identity.Publisher = $StorePublisher
+        $xml.Package.Properties.PublisherDisplayName = $StorePublisherDisplayName
+        $xml.Save($manifest)
+
+        $storeRoot = Join-Path $out "store"
+        $uploadDir = Join-Path $storeRoot "upload"
+        New-Item -ItemType Directory -Force $uploadDir | Out-Null
+        $storeBundle = Join-Path $uploadDir "bowtie-windows-$Label.msixbundle"
+        Build-Bundle -buildRoot $storeRoot -bundle $storeBundle -symbolDir $uploadDir
+
+        # Partner Center accepts a zip containing the bundle and optional symbols.
+        # ZipFile supports the .msixupload extension and puts files at the root.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $upload = Join-Path $dist "bowtie-windows-$Label.msixupload"
+        [IO.Compression.ZipFile]::CreateFromDirectory($uploadDir, $upload)
+    }
 } finally {
-    Set-Content -Path $manifest -Value $originalManifest -NoNewline
+    [IO.File]::WriteAllBytes($manifest, $originalManifest)
 }
 
 # ── Unpackaged, self-contained zips ─────────────────────────────────────────

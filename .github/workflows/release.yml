@@ -276,4 +276,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ls -l windows-dist
-          gh release upload "$GITHUB_REF_NAME" windows-dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          # Store uploads remain workflow artifacts for manual Partner Center submission.
+          gh release upload "$GITHUB_REF_NAME" windows-dist/*.msixbundle windows-dist/*.cer windows-dist/*.zip --clobber --repo "$GITHUB_REPOSITORY"

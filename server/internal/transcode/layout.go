@@ -118,8 +118,9 @@ func rungName(r Rung) string { return fmt.Sprintf("v%d", r.Height) }
 // TopName is the top rung's variant name (captions ride it).
 func (l Layout) TopName() string { return rungName(l.rungs()[0]) }
 
-// ReadyPlaylist is the playlist whose existence means the session can play
-// (the lowest rung, written last by FFmpeg's variant loop).
+// ReadyPlaylist is the lowest video rung's playlist, the minimum for playback.
+// FFmpeg writes audio renditions after the video rungs; full readiness requires
+// every playlist in Renditions, not just this one.
 func (l Layout) ReadyPlaylist() string {
 	r := l.rungs()
 	return rungName(r[len(r)-1]) + ".m3u8"
@@ -233,29 +234,48 @@ func (l Layout) videoCodecs() string {
 // ceiling are omitted (the lowest rung is always kept); query (e.g.
 // "?token=…") is appended to every URI.
 func MasterPlaylist(l Layout, ceiling int, query string, captionsReady bool) string {
+	return MasterPlaylistAvailable(l, ceiling, query, captionsReady, nil)
+}
+
+// MasterPlaylistAvailable omits renditions absent from available (names without
+// .m3u8); nil includes all renditions. Audio indexes and names stay stable, and
+// the first available track in each group becomes its default. With no audio
+// available at all it lists everything, as MasterPlaylist does: video alone
+// would play silently for the whole session (players read the master once).
+func MasterPlaylistAvailable(l Layout, ceiling int, query string, captionsReady bool, available map[string]bool) string {
+	if available != nil && !anyAudio(l, available) {
+		available = nil
+	}
+	has := func(name string) bool { return available == nil || available[name] }
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-	writeGroup := func(group, channels, uriPrefix string, tracks []AudioTrack) {
+	writeGroup := func(group, channels, uriPrefix string, tracks []AudioTrack) bool {
 		names := uniqueNames(tracks)
+		written := false
 		for i, t := range tracks {
+			if !has(fmt.Sprintf("%s%d", uriPrefix, i)) {
+				continue
+			}
 			fmt.Fprintf(&b, `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="%s",NAME="%s"`, group, names[i])
 			if lang := t.BCP47(); lang != "" {
 				fmt.Fprintf(&b, `,LANGUAGE="%s"`, lang)
 			}
 			def := "NO"
-			if i == 0 {
+			if !written {
 				def = "YES"
 			}
+			written = true
 			fmt.Fprintf(&b, `,DEFAULT=%s,AUTOSELECT=YES,CHANNELS="%s",URI="%s%d.m3u8%s"`, def, channels, uriPrefix, i, query)
 			if t.Described {
 				b.WriteString(`,CHARACTERISTICS="public.accessibility.describes-video"`)
 			}
 			b.WriteByte('\n')
 		}
+		return written
 	}
 	aac, ac3 := l.AACTracks(), l.AC3Tracks()
-	writeGroup("aac", strconv.Itoa(aacGroupChannels), "aac", aac)
-	writeGroup("ac3", strconv.Itoa(ac3GroupChannels), "ac3", ac3)
+	hasAAC := writeGroup("aac", strconv.Itoa(aacGroupChannels), "aac", aac)
+	hasAC3 := writeGroup("ac3", strconv.Itoa(ac3GroupChannels), "ac3", ac3)
 	if captionsReady {
 		fmt.Fprintf(&b, `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English CC",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI="%s%s"`+"\n", l.CaptionPlaylist(), query)
 	}
@@ -263,6 +283,9 @@ func MasterPlaylist(l Layout, ceiling int, query string, captionsReady bool) str
 	rs := visibleRungs(l.rungs(), ceiling)
 	variants := func(group, audioCodec string, audioKbps int) {
 		for _, r := range rs {
+			if !has(rungName(r)) {
+				continue
+			}
 			bw := (r.VideoKbps*12/10 + audioKbps) * 1100
 			fmt.Fprintf(&b, `#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS="%s,%s",AUDIO="%s"`,
 				bw, (r.Height*16/9+1)/2*2, r.Height, l.videoCodecs(), audioCodec, group)
@@ -272,11 +295,28 @@ func MasterPlaylist(l Layout, ceiling int, query string, captionsReady bool) str
 			fmt.Fprintf(&b, "\n%s.m3u8%s\n", rungName(r), query)
 		}
 	}
-	variants("aac", "mp4a.40.2", l.AudioKbps)
-	if len(ac3) > 0 {
+	if hasAAC {
+		variants("aac", "mp4a.40.2", l.AudioKbps)
+	}
+	if hasAC3 {
 		variants("ac3", "ac-3", 384)
 	}
 	return b.String()
+}
+
+// anyAudio reports whether at least one of l's audio renditions is available.
+func anyAudio(l Layout, available map[string]bool) bool {
+	for i := range l.AACTracks() {
+		if available[fmt.Sprintf("aac%d", i)] {
+			return true
+		}
+	}
+	for i := range l.AC3Tracks() {
+		if available[fmt.Sprintf("ac3%d", i)] {
+			return true
+		}
+	}
+	return false
 }
 
 // visibleRungs drops rungs above ceiling (keeping the lowest) and orders them

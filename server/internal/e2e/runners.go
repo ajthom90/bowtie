@@ -206,9 +206,11 @@ func (r *StubRunner) BytesIn() int64 { return r.bytesIn.Load() }
 // Start implements stream.Runner.
 func (r *StubRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.Process, error) {
 	p := &stubProc{done: make(chan error, 1), stop: make(chan struct{})}
-	name := strings.TrimSuffix(spec.Layout.ReadyPlaylist(), ".m3u8")
-	if err := writeStubPlaylist(spec.OutDir, name, 1); err != nil {
-		return nil, err
+	names := spec.Layout.Renditions()
+	for _, name := range names {
+		if err := writeStubPlaylist(spec.OutDir, name, 1); err != nil {
+			return nil, err
+		}
 	}
 	eof := make(chan struct{})
 	if spec.Stdin != nil {
@@ -241,7 +243,9 @@ func (r *StubRunner) Start(ctx context.Context, spec transcode.JobSpec) (stream.
 				return
 			case <-tick.C:
 				n++
-				_ = writeStubPlaylist(spec.OutDir, name, n)
+				for _, name := range names {
+					_ = writeStubPlaylist(spec.OutDir, name, n)
+				}
 			}
 		}
 	}()
