@@ -46,10 +46,10 @@
         />
         <Button
             id="recordingsButton"
-            translation="[1260, 48]"
+            translation="[1180, 48]"
             text="Recordings"
             minWidth="240"
-            maxWidth="296"
+            maxWidth="360"
             height="56"
         />
         <Button
@@ -247,6 +247,7 @@
         <!-- Channel rail (only the channels the filter keeps) -->
         <MarkupList
             id="channelList"
+            vertFocusAnimationStyle="floatingFocus"
             translation="[80, 208]"
             itemComponentName="ChannelRailItem"
             itemSize="[1760, 120]"

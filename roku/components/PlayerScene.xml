@@ -88,6 +88,20 @@
                 font="font:SmallSystemFont"
                 visible="false"
             />
+            <!-- bowtie.live: "● Live" (red) at the live point, "Live −1:30"
+                 (amber) behind it; hidden until a stream plays. -->
+            <Label
+                id="liveLabel"
+                translation="[1340, 96]"
+                width="500"
+                height="32"
+                text=""
+                horizAlign="right"
+                vertAlign="center"
+                color="0xE4574BFF"
+                font="font:SmallBoldSystemFont"
+                visible="false"
+            />
         </Group>
 
         <!-- Weak signal (the heartbeat's ?signal=1 report says weak): a small
@@ -265,6 +279,8 @@
         <Timer id="heartbeatTimer" duration="15" repeat="true" />
         <!-- Sleep timer tick (bowtie.sleep) while it is on -->
         <Timer id="sleepTimer" duration="1" repeat="true" />
+        <!-- Live label tick (bowtie.live) while playing: notes duration changes, keeps the count up through a pause -->
+        <Timer id="liveTimer" duration="1" repeat="true" />
         <!-- Slow start: "Starting…" becomes a note after 5 s (duration set in init) -->
         <Timer id="slowStartTimer" duration="5" repeat="false" />
     </children>

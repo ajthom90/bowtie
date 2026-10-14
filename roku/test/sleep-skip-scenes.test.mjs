@@ -32,7 +32,8 @@ test('live: the Right-key Options dialog ends with Sleep timer, which opens its 
     assert.match(open, /buttons\.push\("Sleep timer"\)/);
     assert.match(open, /dialog\.message = optionsMessage\(\)/);
     assert.match(body(player, 'function optionsMessage('), /bowtie\.sleep\.statusText\(m\.sleep/);
-    assert.match(body(player, 'sub onQualityButton('), /idx = options\.count\(\)[\s\S]*?openSleepDialog\(\)/);
+    assert.match(body(player, 'sub openQualityDialog('), /buttons\.push\("Sleep timer"\)\s*\n\s*m\.optionIds\.push\("sleep"\)/);
+    assert.match(body(player, 'sub onQualityButton('), /if chosen = "sleep"\s*\n\s*openSleepDialog\(\)/);
     const sleep = body(player, 'sub openSleepDialog(');
     assert.match(sleep, /bowtie\.sleep\.options\(currentProgramEndSec\(\), nowSec\(\)\)/);
     assert.match(sleep, /bowtie\.sleep\.buttonLabels\(/);

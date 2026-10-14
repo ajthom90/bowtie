@@ -7,6 +7,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Roku: rewind live TV and get back to live.** Rewind, Left and Instant
+  Replay go back 10 seconds; Fast Forward goes 10 seconds ahead and stops
+  at live. Options starts with **Go to live** while you're behind, and the
+  top bar shows "● Live", or "Live −1:30" when you're 1 minute 30 seconds
+  behind. Before, Rewind jumped to the start of the server's buffer with no
+  way back but changing channel.
+
+### Fixed
+
+- **Roku: live TV starts at live.** Tuning to a channel someone was already
+  watching (or that was still running from a moment ago) started at the
+  oldest part of the server's buffer, up to its whole length (15 minutes by
+  default) behind live. It now jumps to live as soon as the picture starts.
+- **Roku: Up reaches the filters, Recent and the Recordings and Settings
+  buttons.** Up on the first channel wrapped round to the last one, so the
+  header buttons couldn't be reached from the channel list (the Recordings
+  list had the same wrap). The Recordings button's name is no longer cut
+  off.
+
 ## [0.26.0] — 2026-10-13
 
 ### Added

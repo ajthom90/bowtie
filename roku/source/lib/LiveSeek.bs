@@ -1,0 +1,168 @@
+' Live TV rewind: 10-second skips back and forward, back to live, and
+' starting at live. Mirrors the Mac app's LiveEdge
+' (ios/BowtieKit/.../LiveEdge.swift): within 10 s of the live point counts as
+' live, and further back shows "Live −1:30".
+'
+' On a Roku, a live HLS Video's position and duration share one timeline: the
+' first segment of the playlist as loaded is 0, and duration is the end of the
+' newest segment (measured on a Streaming Stick 4K, OS 15.3: ECP
+' stream_segment time = position). So the live point is duration less the
+' distance the player keeps from the end (edgeMarginSec). Two Roku quirks this works around:
+' - duration stops updating while paused (the playlist isn't refreshed), so
+'   the live edge is the last duration plus the time since it last changed;
+' - joining a stream already running starts at the oldest segment of the
+'   server's window, up to its buffer (15 min) behind live, so the player
+'   seeks to live once the first frame plays.
+'
+' Pure: the clock is injected. Calls that need the time take `atSec`, so
+' tests drive it with plain numbers. State is a plain AA from newState(),
+' mutated in place. Seconds are floats (Video.position / duration).
+
+namespace bowtie.live
+
+    ' One Rewind or Fast Forward press.
+    function skipSec() as integer
+        return 10
+    end function
+
+    ' Drift (seconds) still shown as live; more than this is "behind".
+    function toleranceSec() as integer
+        return 10
+    end function
+
+    ' How far from the newest segment's end the live point is: the Roku keeps
+    ' about 3 segments back (17–20 s with the server's 4 s segments; a seek
+    ' nearer the end stops there).
+    function edgeMarginSec() as integer
+        return 20
+    end function
+
+    function newState() as object
+        return { duration: -1, durationAt: 0, seekTo: -1 }
+    end function
+
+    ' A new stream (start, zap, quality change): nothing known yet.
+    sub reset(s as object)
+        s.duration = -1
+        s.durationAt = 0
+        s.seekTo = -1
+    end sub
+
+    ' The Video's duration now. Notes when it last changed, so the live edge
+    ' can move on while the player isn't refreshing it.
+    sub observe(s as object, duration as dynamic, atSec as dynamic)
+        if duration = invalid or duration <= 0 or atSec = invalid then return
+        if duration <> s.duration
+            s.duration = duration
+            s.durationAt = atSec
+        end if
+    end sub
+
+    function known(s as object) as boolean
+        return s.duration > 0
+    end function
+
+    ' The live point on the Video's timeline (-1 while unknown).
+    function livePosition(s as object, atSec as dynamic) as float
+        if not bowtie.live.known(s) then return -1
+        elapsed = 0
+        if atSec <> invalid and atSec > s.durationAt then elapsed = atSec - s.durationAt
+        p = s.duration + elapsed - bowtie.live.edgeMarginSec()
+        if p < 0 then p = 0
+        return p
+    end function
+
+    ' Where playback is: a seek still under way counts as done.
+    function effectivePosition(s as object, position as dynamic) as float
+        if s.seekTo >= 0 then return s.seekTo
+        if position = invalid then return 0
+        return position
+    end function
+
+    ' Whole seconds behind live (0 while unknown).
+    function behindSec(s as object, position as dynamic, atSec as dynamic) as integer
+        live = bowtie.live.livePosition(s, atSec)
+        if live < 0 then return 0
+        b = live - bowtie.live.effectivePosition(s, position)
+        if b < 0 then return 0
+        return Int(b + 0.5)
+    end function
+
+    function isLive(behind as integer) as boolean
+        return behind < bowtie.live.toleranceSec()
+    end function
+
+    ' A skip of deltaSec (negative = back). Returns {target, live}: the
+    ' position to seek to and whether it is the live point. Forward never
+    ' passes live: a skip that would reach it goes to live. Back stops at 0
+    ' (the player also stops at the oldest segment still on the server).
+    function skip(s as object, position as dynamic, deltaSec as integer, atSec as dynamic) as object
+        from = bowtie.live.effectivePosition(s, position)
+        target = from + deltaSec
+        if deltaSec >= 0
+            live = bowtie.live.livePosition(s, atSec)
+            if live >= 0 and target > live - bowtie.live.toleranceSec()
+                return bowtie.live.goLive(s, position, atSec)
+            end if
+        else if target < 0
+            target = 0
+        end if
+        s.seekTo = target
+        return { target: target, live: false }
+    end function
+
+    ' Back to the live point. Unknown live point: stays where it is.
+    function goLive(s as object, position as dynamic, atSec as dynamic) as object
+        live = bowtie.live.livePosition(s, atSec)
+        if live < 0 then live = bowtie.live.effectivePosition(s, position)
+        s.seekTo = live
+        return { target: live, live: true }
+    end function
+
+    ' Playback is going again after a seek: the Video's position is real again.
+    sub seekLanded(s as object)
+        s.seekTo = -1
+    end sub
+
+    ' First frame: a stream joined mid-window starts at its oldest segment.
+    ' Returns the live point to seek to, or -1 when it already plays at live.
+    function startTarget(s as object, position as dynamic, atSec as dynamic) as float
+        if not bowtie.live.known(s) then return -1
+        if bowtie.live.isLive(bowtie.live.behindSec(s, position, atSec)) then return -1
+        return bowtie.live.goLive(s, position, atSec).target
+    end function
+
+    ' "Live" at the live point, else "Live −1:30" (90 seconds behind).
+    function label(behind as integer) as string
+        if bowtie.live.isLive(behind) then return "Live"
+        return "Live " + bowtie.live.behindText(behind)
+    end function
+
+    ' "−1:30" for 90 seconds (U+2212 minus, like the other apps).
+    function behindText(behind as integer) as string
+        mins = Int(behind / 60)
+        secs = behind - mins * 60
+        pad = ""
+        if secs < 10 then pad = "0"
+        return Chr(8722) + mins.toStr() + ":" + pad + secs.toStr()
+    end function
+
+    ' What a screen reader says for the label.
+    function spokenText(behind as integer) as string
+        if bowtie.live.isLive(behind) then return "Watching live"
+        mins = Int(behind / 60)
+        secs = behind - mins * 60
+        parts = []
+        if mins > 0 then parts.push(bowtie.live.count(mins, "minute"))
+        if secs > 0 then parts.push(bowtie.live.count(secs, "second"))
+        text = parts[0]
+        if parts.count() > 1 then text = text + " " + parts[1]
+        return text + " behind live"
+    end function
+
+    function count(n as integer, unit as string) as string
+        if n = 1 then return "1 " + unit
+        return n.toStr() + " " + unit + "s"
+    end function
+
+end namespace

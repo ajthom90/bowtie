@@ -97,6 +97,7 @@
 
         <MarkupList
             id="recordingList"
+            vertFocusAnimationStyle="floatingFocus"
             translation="[80, 200]"
             itemComponentName="RecordingItem"
             itemSize="[1760, 112]"
