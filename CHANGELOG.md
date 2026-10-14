@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.1] — 2026-10-14
+
 ### Added
 
 - **Roku: rewind live TV and get back to live.** Rewind, Left and Instant
