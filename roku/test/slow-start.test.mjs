@@ -115,7 +115,7 @@ test('the spinner stays up through "buffering" until the first frame plays', () 
     assert.doesNotMatch(start, /m\.loadingGroup\.visible = false/);
     const state = body(scene, 'sub onVideoState()');
     assert.doesNotMatch(state, /st = "buffering"/);
-    assert.match(state, /else if st = "playing"\n[^]*?if m\.uiPhase = "starting" or m\.awaitingFirstFrame = true\n[^]*?hideLoading\(\)/);
+    assert.match(state, /else if st = "playing"\n[^]*?firstFrame = \(m\.uiPhase = "starting" or m\.awaitingFirstFrame = true\)\n\s*if firstFrame\n[^]*?hideLoading\(\)/);
 });
 
 test('leaving the start (first frame, error, busy, leave) stops the timer', () => {

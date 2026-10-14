@@ -224,7 +224,7 @@ function qualityHintText() as string
     if m.selectedProfile <> invalid and m.selectedProfile <> ""
         label = m.selectedProfile
     end if
-    return "Quality: " + label + " · OK play/pause · Rewind/FF: 10 s · Right: options"
+    return "Quality: " + label + " · OK pause · Rew/FF 10 s · Right: options"
 end function
 
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
@@ -645,19 +645,20 @@ sub onVideoState()
         handleVideoError()
     else if st = "playing"
         ' First frame (or recovered from a reconnect): the spinner goes.
-        if m.uiPhase = "starting" or m.awaitingFirstFrame = true
+        firstFrame = (m.uiPhase = "starting" or m.awaitingFirstFrame = true)
+        if firstFrame
             m.uiPhase = "playing"
             hideErrorOverlays()
             hideLoading()
         end if
         ' Successful frame → reset mid-play retry counter.
         m.retryAttempt = 0
-        ' However it resumed (OK, a seek, the player itself), a pause is over.
-        bowtie.live.resumed(m.live, nowSec())
-        bowtie.live.seekLanded(m.live, m.video.position)
+        bowtie.live.seekLanded(m.live)
+        ' Joining a stream already running starts at the server's oldest
+        ' segment, up to its whole buffer behind: go to live instead.
+        if firstFrame then startAtLive()
         refreshLiveLabel()
     else if st = "paused"
-        bowtie.live.paused(m.live, nowSec())
         refreshLiveLabel()
     end if
     ' "buffering" before the first frame keeps the spinner (and the
@@ -1219,10 +1220,8 @@ sub togglePlayPause()
     st = m.video.state
     if st = "playing"
         m.video.control = "pause"
-        bowtie.live.paused(m.live, nowSec())
     else if st = "paused"
         m.video.control = "resume"
-        bowtie.live.resumed(m.live, nowSec())
     else if m.playlistUrl <> invalid and m.playlistUrl <> ""
         m.video.control = "play"
     end if
@@ -1239,33 +1238,50 @@ end function
 
 sub skipLive(deltaSec as integer)
     if not canSeekLive() then return
+    observeLive()
     r = bowtie.live.skip(m.live, m.video.position, deltaSec, nowSec())
     m.video.seek = r.target
     showChrome()
     refreshLiveLabel()
-    announce(bowtie.live.spokenText(bowtie.live.behindSec(m.live, nowSec())))
+    announce(bowtie.live.spokenText(liveBehind()))
 end sub
 
 ' Back to the live point, playing (a pause ends here).
 sub goToLive()
     if not canSeekLive() then return
+    observeLive()
     r = bowtie.live.goLive(m.live, m.video.position, nowSec())
     m.video.seek = r.target
-    if m.video.state = "paused"
-        m.video.control = "resume"
-        bowtie.live.resumed(m.live, nowSec())
-    end if
+    if m.video.state = "paused" then m.video.control = "resume"
     showChrome()
     refreshLiveLabel()
     announce(bowtie.live.spokenText(0))
 end sub
 
+sub startAtLive()
+    observeLive()
+    target = bowtie.live.startTarget(m.live, m.video.position, nowSec())
+    if target >= 0 then m.video.seek = target
+end sub
+
+' The Video's latest duration (where the live edge is).
+sub observeLive()
+    if m.video <> invalid then bowtie.live.observe(m.live, m.video.duration, nowSec())
+end sub
+
+function liveBehind() as integer
+    if m.video = invalid then return 0
+    return bowtie.live.behindSec(m.live, m.video.position, nowSec())
+end function
+
 function behindLive() as boolean
-    return not bowtie.live.isLive(bowtie.live.behindSec(m.live, nowSec()))
+    observeLive()
+    return not bowtie.live.isLive(liveBehind())
 end function
 
 ' "Live" (red) at the live point, "Live −1:30" (amber) behind it. Ticks once
-' a second while paused, so the count keeps up.
+' a second while playing: duration changes are noted when they happen, and
+' the count keeps up through a pause.
 sub refreshLiveLabel()
     if m.liveLabel = invalid then return
     if not canSeekLive()
@@ -1273,7 +1289,8 @@ sub refreshLiveLabel()
         if m.liveTimer <> invalid then m.liveTimer.control = "stop"
         return
     end if
-    behind = bowtie.live.behindSec(m.live, nowSec())
+    observeLive()
+    behind = liveBehind()
     m.liveLabel.visible = true
     if bowtie.live.isLive(behind)
         m.liveLabel.text = Chr(9679) + " " + bowtie.live.label(behind)
@@ -1282,14 +1299,7 @@ sub refreshLiveLabel()
         m.liveLabel.text = bowtie.live.label(behind)
         m.liveLabel.color = "0xF0A428FF"
     end if
-    ticking = m.live.pausedAt >= 0
-    if m.liveTimer <> invalid
-        if ticking and m.liveTimer.control <> "start"
-            m.liveTimer.control = "start"
-        else if not ticking
-            m.liveTimer.control = "stop"
-        end if
-    end if
+    if m.liveTimer <> invalid and m.liveTimer.control <> "start" then m.liveTimer.control = "start"
 end sub
 
 sub leavePlayer()

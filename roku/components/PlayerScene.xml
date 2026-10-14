@@ -279,7 +279,7 @@
         <Timer id="heartbeatTimer" duration="15" repeat="true" />
         <!-- Sleep timer tick (bowtie.sleep) while it is on -->
         <Timer id="sleepTimer" duration="1" repeat="true" />
-        <!-- Live label tick (bowtie.live) while paused: the count keeps up -->
+        <!-- Live label tick (bowtie.live) while playing: notes duration changes, keeps the count up through a pause -->
         <Timer id="liveTimer" duration="1" repeat="true" />
         <!-- Slow start: "Starting…" becomes a note after 5 s (duration set in init) -->
         <Timer id="slowStartTimer" duration="5" repeat="false" />

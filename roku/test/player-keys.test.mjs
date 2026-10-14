@@ -14,7 +14,7 @@ test('Right opens the options dialog (quality, sleep timer) during playback', ()
 });
 
 test('chrome hint names the Right key for options', () => {
-    assert.match(src, /"Quality: " \+ label \+ " · OK play\/pause · Rewind\/FF: 10 s · Right: options"/);
+    assert.match(src, /"Quality: " \+ label \+ " · OK pause · Rew\/FF 10 s · Right: options"/);
 });
 
 test('* (options) reaches the system menu (audio tracks, closed captioning)', () => {
@@ -45,15 +45,27 @@ test('Options starts with Go to live while behind; Go to live resumes a pause', 
     const pick = src.slice(src.indexOf('sub onQualityButton('), src.indexOf('end sub', src.indexOf('sub onQualityButton(')));
     assert.match(pick, /if chosen = "live"\s*\n\s*goToLive\(\)/);
     const go = src.slice(src.indexOf('sub goToLive('), src.indexOf('end sub', src.indexOf('sub goToLive(')));
-    assert.match(go, /m\.video\.control = "resume"\s*\n\s*bowtie\.live\.resumed/);
+    assert.match(go, /m\.video\.seek = r\.target/);
+    assert.match(go, /if m\.video\.state = "paused" then m\.video\.control = "resume"/);
 });
 
-test('a new stream starts at live; pause and resume are counted; a landed seek is checked', () => {
+// The live point is the Video's duration (less a margin); see LiveSeek.bs.
+test('a new stream starts at live: reset on start, seek to live on the first frame', () => {
     const start = src.slice(src.indexOf('sub startPlayback('), src.indexOf('end sub', src.indexOf('sub startPlayback(')));
     assert.match(start, /bowtie\.live\.reset\(m\.live\)/);
-    const toggle = src.slice(src.indexOf('sub togglePlayPause('), src.indexOf('end sub', src.indexOf('sub togglePlayPause(')));
-    assert.match(toggle, /"pause"\s*\n\s*bowtie\.live\.paused\(m\.live, nowSec\(\)\)/);
-    assert.match(toggle, /"resume"\s*\n\s*bowtie\.live\.resumed\(m\.live, nowSec\(\)\)/);
     const state = src.slice(src.indexOf('sub onVideoState('), src.indexOf('end sub', src.indexOf('sub onVideoState(')));
-    assert.match(state, /bowtie\.live\.seekLanded\(m\.live, m\.video\.position\)/);
+    assert.match(state, /bowtie\.live\.seekLanded\(m\.live\)/);
+    assert.match(state, /if firstFrame then startAtLive\(\)/);
+    const at = src.slice(src.indexOf('sub startAtLive('), src.indexOf('end sub', src.indexOf('sub startAtLive(')));
+    assert.match(at, /bowtie\.live\.startTarget\(m\.live, m\.video\.position, nowSec\(\)\)/);
+    assert.match(at, /if target >= 0 then m\.video\.seek = target/);
+});
+
+test('the live point follows the Video duration, noted once a second while playing', () => {
+    const obs = src.slice(src.indexOf('sub observeLive('), src.indexOf('end sub', src.indexOf('sub observeLive(')));
+    assert.match(obs, /bowtie\.live\.observe\(m\.live, m\.video\.duration, nowSec\(\)\)/);
+    assert.match(src, /m\.liveTimer\.observeField\("fire", "refreshLiveLabel"\)/);
+    const refresh = src.slice(src.indexOf('sub refreshLiveLabel('), src.indexOf('end sub', src.indexOf('sub refreshLiveLabel(')));
+    assert.match(refresh, /observeLive\(\)/);
+    assert.match(refresh, /m\.liveTimer\.control = "start"/);
 });
