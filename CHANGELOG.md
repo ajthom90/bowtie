@@ -7,6 +7,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Roku: rewind live TV and get back to live.** Rewind, Left and Instant
+  Replay go back 10 seconds; Fast Forward goes 10 seconds ahead and stops
+  at live. Options starts with **Go to live** while you're behind, and the
+  top bar shows "● Live", or "Live −1:30" when you're 1 minute 30 seconds
+  behind. Before, Rewind jumped to the start of the server's buffer with no
+  way back but changing channel.
+
 ## [0.26.0] — 2026-10-13
 
 ### Added

@@ -1,0 +1,146 @@
+' Live TV rewind: 10-second skips back and forward, and back to live. Mirrors
+' the Mac app's LiveEdge (ios/BowtieKit/.../LiveEdge.swift): within 10 s of
+' the live point counts as live, and further back shows "Live −1:30".
+'
+' The Roku Video node doesn't report where the live point is, so this keeps
+' count of how far behind live playback is: skips add or remove their seconds,
+' time spent paused adds to it, and a seek the player cut short at the start
+' of the server's window (Rewind past the oldest segment) is corrected from
+' where playback really landed.
+'
+' Pure: the clock is injected. Calls that need the time take `atSec` (whole
+' seconds), so tests drive it with plain numbers. State is a plain AA from
+' newState(), mutated in place.
+
+namespace bowtie.live
+
+    ' One Rewind or Fast Forward press.
+    function skipSec() as integer
+        return 10
+    end function
+
+    ' Drift (seconds) still shown as live; more than this is "behind".
+    function toleranceSec() as integer
+        return 10
+    end function
+
+    function newState() as object
+        return { behind: 0, pausedAt: -1, seekFrom: -1, seekTo: -1 }
+    end function
+
+    ' A new stream (start, zap, quality change) plays at the live point.
+    sub reset(s as object)
+        s.behind = 0
+        s.pausedAt = -1
+        s.seekFrom = -1
+        s.seekTo = -1
+    end sub
+
+    ' Seconds behind live now, counting a pause still in progress.
+    function behindSec(s as object, atSec as dynamic) as integer
+        b = s.behind
+        if s.pausedAt >= 0 and atSec <> invalid and atSec > s.pausedAt then b = b + (atSec - s.pausedAt)
+        return b
+    end function
+
+    function isLive(behind as integer) as boolean
+        return behind < bowtie.live.toleranceSec()
+    end function
+
+    sub paused(s as object, atSec as integer)
+        if s.pausedAt < 0 then s.pausedAt = atSec
+    end sub
+
+    ' Playback resumed: the pause becomes part of how far behind it is.
+    sub resumed(s as object, atSec as integer)
+        s.behind = bowtie.live.behindSec(s, atSec)
+        s.pausedAt = -1
+    end sub
+
+    ' A skip of deltaSec (negative = back) from position. Returns the position
+    ' to seek to and whether it is the live point. Forward never passes live:
+    ' a skip that would reach it goes to live. A pause in progress stays paused.
+    function skip(s as object, position as dynamic, deltaSec as integer, atSec as integer) as object
+        if position = invalid then position = 0
+        ' Presses faster than the player seeks build on the seek still under way.
+        startFrom = position
+        if s.seekTo >= 0
+            position = s.seekTo
+            startFrom = s.seekFrom
+        end if
+        b = bowtie.live.behindSec(s, atSec)
+        if s.pausedAt >= 0 then s.pausedAt = atSec
+        if deltaSec >= 0
+            if b - deltaSec < bowtie.live.toleranceSec()
+                return bowtie.live.goLive(s, position, atSec)
+            end if
+            target = position + deltaSec
+            s.behind = b - deltaSec
+        else
+            target = position + deltaSec
+            if target < 0 then target = 0
+            s.behind = b + (position - target)
+        end if
+        s.seekFrom = startFrom
+        s.seekTo = target
+        return { target: target, live: false }
+    end function
+
+    ' Back to the live point: the position it is behind by.
+    function goLive(s as object, position as dynamic, atSec as integer) as object
+        if position = invalid then position = 0
+        if s.seekTo >= 0 then position = s.seekTo
+        target = position + bowtie.live.behindSec(s, atSec)
+        s.behind = 0
+        if s.pausedAt >= 0 then s.pausedAt = atSec
+        s.seekFrom = -1
+        s.seekTo = -1
+        return { target: target, live: true }
+    end function
+
+    ' Playback is going again after a seek, at position. A rewind the player
+    ' stopped short (the window's oldest segment) is behind by less than counted.
+    sub seekLanded(s as object, position as dynamic)
+        if s.seekTo < 0 or position = invalid then return
+        if s.seekTo < s.seekFrom and position > s.seekTo + 1
+            s.behind = s.behind - (position - s.seekTo)
+            if s.behind < 0 then s.behind = 0
+        end if
+        s.seekFrom = -1
+        s.seekTo = -1
+    end sub
+
+    ' "Live" at the live point, else "Live −1:30" (90 seconds behind).
+    function label(behind as integer) as string
+        if bowtie.live.isLive(behind) then return "Live"
+        return "Live " + bowtie.live.behindText(behind)
+    end function
+
+    ' "−1:30" for 90 seconds (U+2212 minus, like the other apps).
+    function behindText(behind as integer) as string
+        mins = Int(behind / 60)
+        secs = behind - mins * 60
+        pad = ""
+        if secs < 10 then pad = "0"
+        return Chr(8722) + mins.toStr() + ":" + pad + secs.toStr()
+    end function
+
+    ' What a screen reader says for the label.
+    function spokenText(behind as integer) as string
+        if bowtie.live.isLive(behind) then return "Watching live"
+        mins = Int(behind / 60)
+        secs = behind - mins * 60
+        parts = []
+        if mins > 0 then parts.push(bowtie.live.count(mins, "minute"))
+        if secs > 0 then parts.push(bowtie.live.count(secs, "second"))
+        text = parts[0]
+        if parts.count() > 1 then text = text + " " + parts[1]
+        return text + " behind live"
+    end function
+
+    function count(n as integer, unit as string) as string
+        if n = 1 then return "1 " + unit
+        return n.toStr() + " " + unit + "s"
+    end function
+
+end namespace

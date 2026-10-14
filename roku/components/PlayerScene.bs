@@ -22,10 +22,15 @@
 '   bowtie.client.slowStartSeconds() of that, "Starting…" becomes the
 '   slow-start note; every zap / new start resets it, and a reconnect's
 '   "Reconnecting… (n/3)" is never replaced.
+' Rewind (bowtie.live): Rewind, Left and Instant Replay go back 10 s, Fast
+'   Forward goes 10 s ahead but never past live; Options offers Go to live
+'   while behind. The top bar shows "Live" or "Live −1:30". A new stream
+'   (start, zap, quality) plays at the live point.
 
 import "pkg:/source/lib/BowtieClient.bs"
 import "pkg:/source/lib/Caps.bs"
 import "pkg:/source/lib/GuideLogic.bs"
+import "pkg:/source/lib/LiveSeek.bs"
 import "pkg:/source/lib/SleepTimer.bs"
 import "pkg:/source/lib/Tuners.bs"
 
@@ -75,6 +80,11 @@ sub init()
     m.signalNote = m.top.findNode("signalNote")
     m.signalNoteLabel = m.top.findNode("signalNoteLabel")
     m.signalLabel = m.top.findNode("signalLabel")
+    m.liveLabel = m.top.findNode("liveLabel")
+    m.liveTimer = m.top.findNode("liveTimer")
+    ' How far behind live (bowtie.live); Options' button ids while it is open.
+    m.live = bowtie.live.newState()
+    m.optionIds = []
     ' The latest reading as text for the info bar and overlay ("" unknown).
     m.signalStats = ""
     ' Audio Guide (created when the note first needs announcing).
@@ -115,6 +125,7 @@ sub init()
     m.chromeTimer.observeField("fire", "onChromeTimerFire")
     m.heartbeatTimer.observeField("fire", "onHeartbeatFire")
     m.sleepTimer.observeField("fire", "onSleepTick")
+    m.liveTimer.observeField("fire", "refreshLiveLabel")
     m.slowStartTimer.duration = bowtie.client.slowStartSeconds()
     m.slowStartTimer.observeField("fire", "onSlowStartFire")
     m.video.observeField("state", "onVideoState")
@@ -213,7 +224,7 @@ function qualityHintText() as string
     if m.selectedProfile <> invalid and m.selectedProfile <> ""
         label = m.selectedProfile
     end if
-    return "Quality: " + label + " · OK play/pause · Right: options"
+    return "Quality: " + label + " · OK play/pause · Rewind/FF: 10 s · Right: options"
 end function
 
 ' ── Session-replace machine (A3) ─────────────────────────────────────────────
@@ -238,6 +249,7 @@ sub scheduleReplace()
     stopVideo()
 
     m.uiPhase = "starting"
+    refreshLiveLabel()
     m.awaitingFirstFrame = false
     showStarting("Starting…")
     restartSlowStartTimer()
@@ -600,6 +612,8 @@ sub startPlayback(playlistUrl as string)
     m.video.content = content
     m.video.control = "play"
     m.uiPhase = "playing"
+    bowtie.live.reset(m.live)
+    refreshLiveLabel()
     hideErrorOverlays()
     ' The spinner (and its text) stays up until the first frame plays.
     m.awaitingFirstFrame = true
@@ -611,6 +625,7 @@ sub startPlayback(playlistUrl as string)
 end sub
 
 sub stopVideo()
+    if m.liveTimer <> invalid then m.liveTimer.control = "stop"
     if m.video <> invalid
         m.video.control = "stop"
         m.video.content = invalid
@@ -637,6 +652,13 @@ sub onVideoState()
         end if
         ' Successful frame → reset mid-play retry counter.
         m.retryAttempt = 0
+        ' However it resumed (OK, a seek, the player itself), a pause is over.
+        bowtie.live.resumed(m.live, nowSec())
+        bowtie.live.seekLanded(m.live, m.video.position)
+        refreshLiveLabel()
+    else if st = "paused"
+        bowtie.live.paused(m.live, nowSec())
+        refreshLiveLabel()
     end if
     ' "buffering" before the first frame keeps the spinner (and the
     ' slow-start note) up; mid-play the Video node shows its own.
@@ -739,6 +761,7 @@ sub startBoundedRetry()
     delaySec = delays[m.retryAttempt]
     m.retryAttempt = m.retryAttempt + 1
     m.uiPhase = "starting"
+    refreshLiveLabel()
     stopSlowStartTimer()
     showStarting("Reconnecting… (" + m.retryAttempt.toStr() + "/3)")
     m.retryTimer.duration = delaySec
@@ -778,6 +801,7 @@ sub showFailed(title as string, detail as string)
     m.errorDetail.text = detail
     m.retryButton.setFocus(true)
     updateDebugOverlay()
+    refreshLiveLabel()
 end sub
 
 sub showTunersBusy(sessions as object)
@@ -791,6 +815,7 @@ sub showTunersBusy(sessions as object)
     m.tunersList.text = formatSessionsList(sessions)
     m.tunersRetryButton.setFocus(true)
     updateDebugOverlay()
+    refreshLiveLabel()
 end sub
 
 function formatSessionsList(sessions as object) as string
@@ -904,15 +929,26 @@ sub openQualityDialog()
     end if
     allowed = bowtie.guide.allowedProfiles(maxQ)
 
-    buttons = ["Auto"]
+    ' Ids for onQualityButton: "live", a profile ("" = Auto), "sleep".
+    buttons = []
+    m.optionIds = []
+    ' First while behind live: back to the live point.
+    if canSeekLive() and behindLive()
+        buttons.push("Go to live")
+        m.optionIds.push("live")
+    end if
+    buttons.push("Auto")
+    m.optionIds.push("")
     for each p in allowed
         if p <> invalid and p <> ""
             buttons.push(p)
+            m.optionIds.push(p)
         end if
     end for
 
     ' Last button: the sleep timer (its own dialog).
     buttons.push("Sleep timer")
+    m.optionIds.push("sleep")
 
     m.dialogMode = "quality"
     dialog = CreateObject("roSGNode", "StandardMessageDialog")
@@ -940,34 +976,26 @@ end function
 sub onQualityButton()
     if m.dialog = invalid then return
     idx = m.dialog.buttonSelected
-    maxQ = ""
-    task = m.top.apiTask
-    if task <> invalid and task.user <> invalid and task.user.maxQuality <> invalid
-        maxQ = task.user.maxQuality
-    end if
-    allowed = bowtie.guide.allowedProfiles(maxQ)
-    options = ["Auto"]
-    for each p in allowed
-        if p <> invalid and p <> "" then options.push(p)
-    end for
+    ids = m.optionIds
     closeDialog()
 
-    if idx <> invalid and idx = options.count()
-        openSleepDialog()
-        return
-    end if
-
-    if idx = invalid or idx < 0 or idx >= options.count()
+    if idx = invalid or idx < 0 or idx >= ids.count()
         m.top.setFocus(true)
         return
     end if
 
-    chosen = options[idx]
-    if chosen = "Auto"
-        m.selectedProfile = ""
-    else
-        m.selectedProfile = chosen
+    chosen = ids[idx]
+    if chosen = "sleep"
+        openSleepDialog()
+        return
     end if
+    if chosen = "live"
+        goToLive()
+        m.top.setFocus(true)
+        return
+    end if
+
+    m.selectedProfile = chosen
     updateChromeLabels()
     m.authRetried = false
     scheduleReplace()
@@ -1155,10 +1183,23 @@ function onKeyEvent(key as string, press as boolean) as boolean
         return true
     end if
 
-    ' Right opens Options (quality, sleep timer). * (options) is left to the
-    ' system: its overlay offers the stream's audio tracks (e.g. Español) and
-    ' closed captioning.
-    if key = "right" or key = "replay"
+    ' Rewind / Fast Forward: 10 s skips within the server's window (handled
+    ' here so the Video node's own trick play can't jump to the window's start
+    ' with no way back).
+    if key = "rewind" or key = "left" or key = "replay"
+        skipLive(-bowtie.live.skipSec())
+        return true
+    end if
+
+    if key = "fastforward"
+        skipLive(bowtie.live.skipSec())
+        return true
+    end if
+
+    ' Right opens Options (go to live, quality, sleep timer). * (options) is
+    ' left to the system: its overlay offers the stream's audio tracks (e.g.
+    ' Español) and closed captioning.
+    if key = "right"
         openQualityDialog()
         return true
     end if
@@ -1178,12 +1219,77 @@ sub togglePlayPause()
     st = m.video.state
     if st = "playing"
         m.video.control = "pause"
+        bowtie.live.paused(m.live, nowSec())
     else if st = "paused"
         m.video.control = "resume"
+        bowtie.live.resumed(m.live, nowSec())
     else if m.playlistUrl <> invalid and m.playlistUrl <> ""
         m.video.control = "play"
     end if
+    refreshLiveLabel()
     updateDebugOverlay()
+end sub
+
+' ── Rewind / live point ──────────────────────────────────────────────────────
+
+' Only once a stream is playing (not while it starts or after an error).
+function canSeekLive() as boolean
+    return m.video <> invalid and m.uiPhase = "playing" and m.awaitingFirstFrame <> true
+end function
+
+sub skipLive(deltaSec as integer)
+    if not canSeekLive() then return
+    r = bowtie.live.skip(m.live, m.video.position, deltaSec, nowSec())
+    m.video.seek = r.target
+    showChrome()
+    refreshLiveLabel()
+    announce(bowtie.live.spokenText(bowtie.live.behindSec(m.live, nowSec())))
+end sub
+
+' Back to the live point, playing (a pause ends here).
+sub goToLive()
+    if not canSeekLive() then return
+    r = bowtie.live.goLive(m.live, m.video.position, nowSec())
+    m.video.seek = r.target
+    if m.video.state = "paused"
+        m.video.control = "resume"
+        bowtie.live.resumed(m.live, nowSec())
+    end if
+    showChrome()
+    refreshLiveLabel()
+    announce(bowtie.live.spokenText(0))
+end sub
+
+function behindLive() as boolean
+    return not bowtie.live.isLive(bowtie.live.behindSec(m.live, nowSec()))
+end function
+
+' "Live" (red) at the live point, "Live −1:30" (amber) behind it. Ticks once
+' a second while paused, so the count keeps up.
+sub refreshLiveLabel()
+    if m.liveLabel = invalid then return
+    if not canSeekLive()
+        m.liveLabel.visible = false
+        if m.liveTimer <> invalid then m.liveTimer.control = "stop"
+        return
+    end if
+    behind = bowtie.live.behindSec(m.live, nowSec())
+    m.liveLabel.visible = true
+    if bowtie.live.isLive(behind)
+        m.liveLabel.text = Chr(9679) + " " + bowtie.live.label(behind)
+        m.liveLabel.color = "0xE4574BFF"
+    else
+        m.liveLabel.text = bowtie.live.label(behind)
+        m.liveLabel.color = "0xF0A428FF"
+    end if
+    ticking = m.live.pausedAt >= 0
+    if m.liveTimer <> invalid
+        if ticking and m.liveTimer.control <> "start"
+            m.liveTimer.control = "start"
+        else if not ticking
+            m.liveTimer.control = "stop"
+        end if
+    end if
 end sub
 
 sub leavePlayer()
